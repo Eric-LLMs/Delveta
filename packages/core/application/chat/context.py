@@ -96,6 +96,10 @@ class ChatTurnContext:
     # The kernel run(context=…) payload, assembled per route (see build_turn_context)
     agent_context: dict | None = None
     disable_thinking: bool = False
+    # Shadow-live A/B (2026-09-27): the funnel observation task + its join key.
+    # Observation only — the Agent path never reads these back.
+    funnel_shadow_task: Any = None
+    funnel_turn_key: str = ""
 
 
 async def attach_note(

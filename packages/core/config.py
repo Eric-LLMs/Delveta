@@ -188,6 +188,13 @@ class Settings(BaseSettings):
     # their own switch, default OFF — registering a capability never routes it.
     chat_funnel_private_enabled: bool = False    # private-knowledge capabilities
     chat_funnel_web_enabled: bool = False        # web-search capabilities
+    # Shadow-live (A/B validation, 2026-09-27): run the FULL cascade as a
+    # background observation on every real (non-research) chat turn while the
+    # production gates stay closed. Deliberately independent of
+    # chat_fast_paths_enabled/chat_funnel_enabled — opening those would change
+    # real execution semantics; this flag only measures. Fail-safe by
+    # construction: the observation task can never touch the Agent's turn.
+    chat_funnel_shadow_live: bool = False
 
     # ── Web search (agent web_search tool) ──
     # provider is free text: aggregate/keyless (no key) | duckduckgo (no key) | tavily |

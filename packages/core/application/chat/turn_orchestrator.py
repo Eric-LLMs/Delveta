@@ -20,6 +20,7 @@ import json
 import logging
 import time
 from collections.abc import AsyncIterator
+from typing import Any
 
 from core.application.chat import intent_funnel
 from core.application.chat.context import ChatTurnContext
@@ -76,6 +77,84 @@ def _escalation_note(plan: ExecutionPlan) -> str | None:
     if plan.source_policy in ("private_only", "private_first"):
         return _HONEST_NOTE + _PRIVATE_ONLY_NOTE
     return _HONEST_NOTE
+
+
+# ── Shadow-live A/B observation (2026-09-27, settings.chat_funnel_shadow_live) ──
+# Two correlated log lines per real chat turn, joined offline on turn_key:
+#   funnel_ab_shadow — the funnel's routing verdict + stage timings (emitted by
+#     the observation task; also persisted as a chat_funnel_events row with
+#     execution_mode=shadow);
+#   funnel_ab_turn  — what the Agent ACTUALLY did (plan kind, wall-clock, LLM
+#     call count derived from the turn's new messages, tool names).
+# Neither line exists when the flag is off (empty turn_key = silent), so dark
+# launch stays byte-identical.
+
+async def _shadow_live(ctx, deps, requirements: TurnRequirements) -> None:
+    """Body of the fire-and-forget observation task. Runs the FULL active
+    cascade as a dry-run (Matcher → Recall → ToolIntentModel → Binder, stops
+    before any dispatch, usage pinned execution_mode=shadow) with the
+    PRODUCTION gate parameters, mirrors what the live chain would have
+    decided. Fail-safe by construction: every fault ends in one info line."""
+    turn_key = ctx.funnel_turn_key
+    try:
+        from core.application.chat.intent_funnel import guardrails
+        from core.application.chat.intent_funnel.funnel import cascade_shadow
+
+        veto = guardrails.turn_veto(ctx.body.message or "", requirements, ctx)
+        if veto is not None:
+            logger.info(
+                "funnel_ab_shadow turn_key=%s deepest_stage=entry matcher=- "
+                "recall_count=0 recall_top=- tool_intent=- final_route=agent "
+                "fallback_reason=%s would_route=f would_capability=- funnel_ms=0",
+                turn_key, veto,
+            )
+            return
+        res = await cascade_shadow(
+            ctx, deps=deps, requirements=requirements,
+            recall_min_score=settings.chat_funnel_min_score,
+            model_candidate_floor=None,  # production semantics: no extra floor
+            persist_event=True, turn_key=turn_key,
+        )
+        would = res.get("would_execute") or {}
+        logger.info(
+            "funnel_ab_shadow turn_key=%s deepest_stage=%s matcher=%s "
+            "recall_count=%d recall_top=%s tool_intent=%s final_route=%s "
+            "fallback_reason=%s would_route=%s would_capability=%s funnel_ms=%d",
+            turn_key, res["deepest_stage"], res["matcher"],
+            res["recall_count"], res["recall_top"], res["tool_intent"],
+            res["final_route"], res["fallback_reason"],
+            "t" if res["final_route"] == "action" else "f",
+            would.get("capability_id") or "-", res["total_ms"],
+        )
+    except Exception as exc:  # noqa: BLE001 — observation never propagates
+        logger.info("funnel_ab_shadow turn_key=%s status=error error=%r",
+                    turn_key, exc)
+
+
+def _ab_turn_line(ctx, plan: ExecutionPlan, *, agent_ms: float, status: str,
+                  messages: Any, usage: Any) -> None:
+    """The Agent-side half of the A/B pair. llm_calls is derived from the
+    turn's NEW messages (the kernel returns history + this turn's user
+    message + the new steps, so slicing after len(history)+1 counts exactly
+    the assistant replies = LLM calls this turn produced)."""
+    if not ctx.funnel_turn_key:
+        return  # flag off / turn excluded — no AB pair for this turn
+    hist_len = len(ctx.history or []) + 1
+    new = messages[hist_len:] if isinstance(messages, list) else []
+    llm_calls = sum(1 for m in new
+                    if isinstance(m, dict) and m.get("role") == "assistant")
+    tools = [
+        str((tc.get("function") or {}).get("name") or "?")
+        for m in new if isinstance(m, dict)
+        for tc in (m.get("tool_calls") or []) if isinstance(tc, dict)
+    ]
+    total_tokens = int((usage or {}).get("total_tokens") or 0)
+    logger.info(
+        "funnel_ab_turn turn_key=%s plan_kind=%s status=%s agent_ms=%.0f "
+        "llm_calls=%d total_tokens=%d agent_tools=%s",
+        ctx.funnel_turn_key, plan.kind.value, status, agent_ms,
+        llm_calls, total_tokens, ",".join(tools) or "-",
+    )
 
 
 class TurnOrchestrator:
@@ -135,6 +214,21 @@ class TurnOrchestrator:
             requirements = await intent_funnel.route(
                 ctx, deps=deps, requirements=requirements,
             )
+        # Shadow-live A/B (2026-09-27): measure the funnel on REAL traffic
+        # without touching it. Independent of every execution gate on purpose
+        # — the fast-paths master switch would change plan semantics, this
+        # flag only observes. Fire-and-forget task, production cascade
+        # parameters, research turns excluded from the denominator by ruling;
+        # the response path never awaits it and every fault is fail-quiet.
+        if (settings.chat_funnel_shadow_live
+                and (deps or self.deps) is not None
+                and not ctx.research_turn and not ctx.effective_handoff):
+            import uuid
+
+            ctx.funnel_turn_key = uuid.uuid4().hex[:12]
+            ctx.funnel_shadow_task = asyncio.create_task(
+                _shadow_live(ctx, deps or self.deps, requirements)
+            )
         plan = build_execution_plan(requirements, policy)
         # Sink the SOURCE POLICY for the Agent's sandbox (see Sandbox._turn_denied):
         # fencing comes from the ORIGINAL request, and only when the control plane is
@@ -160,6 +254,7 @@ class TurnOrchestrator:
         logger.info(
             "chat.plan-resolved turn_kind=%s reason=%s", plan.kind.value, plan.reason
         )
+        t_agent = time.perf_counter()
         try:
             try:
                 result = await executor.run(req)
@@ -183,6 +278,10 @@ class TurnOrchestrator:
             # interactive turn to the worker chain unless it hit a stop condition; the
             # single-task run slot is released only when the run is NOT handed off.
             research_continuing = await handle_research_post_turn(ctx, self.deps)
+        _ab_turn_line(
+            ctx, plan, agent_ms=(time.perf_counter() - t_agent) * 1000,
+            status="ok", messages=result.messages, usage=result.usage,
+        )
         payload = {
             "answer": result.final_answer,
             "messages": result.messages,
@@ -254,6 +353,7 @@ class TurnOrchestrator:
                 frames.put_nowait(("agent", {"type": "done", "data": None}))
 
         pump_task = asyncio.create_task(pump(executor))
+        t_agent = time.perf_counter()
         final = None
         research_continuing = False
         # Stream Commit Point: set on the first user-visible content delta. Until then
@@ -356,6 +456,11 @@ class TurnOrchestrator:
             reset_log_context(log_tokens)
 
         # Normal completion path: the loop broke on the run's done frame.
+        _ab_turn_line(
+            ctx, plan, agent_ms=(time.perf_counter() - t_agent) * 1000,
+            status="ok", messages=(final or {}).get("messages"),
+            usage=(final or {}).get("usage"),
+        )
         t_fin = time.perf_counter()
         done = await finalize_turn(ctx, deps, final, tool="chat_stream")
         logger.info(

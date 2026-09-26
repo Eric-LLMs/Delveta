@@ -316,7 +316,9 @@ async def preview(message: str, *, deps) -> dict:
 
 async def cascade_shadow(ctx, *, deps, requirements=None,
                          recall_min_score: float = 0.0,
-                         model_candidate_floor: float = 0.58) -> dict:
+                         model_candidate_floor: float = 0.58,
+                         persist_event: bool = False,
+                         turn_key: str = "") -> dict:
     """Phase-E Cascade Shadow: one dry-run turn through the SAME node body as
     production (:func:`_run_nodes` — zero orchestration duplication, so the
     shadow can never drift from shipped semantics), with the raw-score seam
@@ -330,7 +332,14 @@ async def cascade_shadow(ctx, *, deps, requirements=None,
     ``would_execute`` is the certified turn's metadata, NOT a permission —
     by construction the cascade cannot execute anything from here.
     Never raises: faults surface as 8.10 fallback reasons, exactly as in
-    production."""
+    production.
+
+    Shadow-live A/B seam (2026-09-27, both defaults = byte-identical replay):
+    ``persist_event=True`` also writes the 8.12 event row (still pinned
+    ``execution_mode=shadow``) so live observation accumulates in the same
+    table the observability admin reads; ``turn_key`` rides the row's
+    trace_json (plus the stage captures — never the query) as the join key
+    against the orchestrator's ``funnel_ab_turn`` line."""
     from core.infrastructure.request_context import (
         reset_request_execution_mode,
         set_request_execution_mode,
@@ -349,6 +358,21 @@ async def cascade_shadow(ctx, *, deps, requirements=None,
                                  recall_min_score=recall_min_score,
                                  model_candidate_floor=model_candidate_floor,
                                  capture=capture)
+        if persist_event:
+            # Inside the pin: the row says execution_mode=shadow (8.14). The
+            # trace_json carries the turn_key join anchor + stage captures,
+            # never the raw query (same no-query rule as production rows).
+            _act = (out.requested_action or {}) if out is not None else {}
+            await _persist_event(deps, ctx, trace, {
+                "turn_key": turn_key or None,
+                "matcher": capture.get("matcher"),
+                "candidates": capture.get("candidates", []),
+                "model_verdict": capture.get("tool_intent"),
+                "would_execute": {
+                    k: _act.get(k) for k in
+                    ("capability_id", "args", "funnel_stage", "funnel_kind")
+                } if _act else None,
+            })
     finally:
         reset_request_execution_mode(token)
     _log_trace(trace)
