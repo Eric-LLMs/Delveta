@@ -88,10 +88,13 @@ class TurnRequirements:
 # Anything time-sensitive or world-current belongs on the Agent path (which owns the
 # ``web_search`` tool), never on a tool-less direct answer. Deliberately narrow: a
 # false "needs_web" only costs the fast path, it never misroutes into a stale answer.
+# NOTE (2026-09-27 shadow-A/B finding): the CJK alternatives ride WITHOUT the \b
+# wrapper — between two CJK chars there is no word boundary, so "\b新闻\b" never
+# matches "重要新闻吗" and every mid-sentence Chinese web cue was missed.
 _WEB_PAT = re.compile(
     r"\b(today|yesterday|now|current(ly)?|latest|recent(ly)?|this week|this month|"
-    r"this year|news|weather|score|price|stock|version|as of|"
-    r"今天|昨天|现在|目前|最新|最近|本周|本月|今年|新闻|天气|比分|股价|版本)\b",
+    r"this year|news|weather|score|price|stock|version|as of)\b"
+    r"|今天|昨天|现在|目前|最新|最近|本周|本月|今年|新闻|天气|比分|股价|版本",
     re.IGNORECASE,
 )
 # Private-knowledge demand: asks the assistant to look inside the user's own corpus.

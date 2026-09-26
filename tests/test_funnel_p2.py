@@ -1142,6 +1142,153 @@ async def test_stub_confident_without_extraction_exits_bind_missing(monkeypatch,
     assert "deepest_stage=binder" in line
 
 
+async def test_bare_create_folder_demand_is_a_correct_clarification_exit(
+    monkeypatch, caplog
+):
+    """Sim-A/B item 1 pin (2026-09-27): "新建一个文件夹" IS a real capability
+    demand but the sentence carries NO name. The model must not invent one and
+    the Binder must not guess one: CONFIDENT-without-args -> MISSING -> Agent
+    owns the clarification. This is the designed fallback (report class
+    binder_missing_fallback), never a Funnel defect and never a takeover."""
+    _open(monkeypatch)
+    bare = "新建一个文件夹"
+    llm = _LLM([{"capability_id": "cap-a", "confidence": 0.9}])  # honest: no name to extract
+    idx = _index([("cap-a", [bare], [[1.0, 0.0]])])
+    view = _view([_entry("cap-a", examples=(bare,), parameters=_NAME_SCHEMA)])
+    _, deps = _wire(monkeypatch, view=view, index=idx,
+                    embedder=_Embedder([1.0, 0.0]), llm=llm)
+    req = _req()
+    with caplog.at_level(logging.INFO, logger="core.application.chat.intent_funnel"):
+        out = await funnel.route(_ctx(bare), deps=deps, requirements=req)
+    assert out is req                       # Agent keeps the turn, byte-identical
+    line = next(r.getMessage() for r in caplog.records if "funnel_trace" in r.getMessage())
+    assert f"fallback_reason={REASON_BIND_MISSING}" in line
+    assert "deepest_stage=binder" in line and "final_route=agent" in line
+
+
+async def test_self_contained_schemaless_summary_certifies(monkeypatch):
+    """Sim-A/B item 3 counterpart, re-pinned for the input-context rule (③): a
+    deictic summary demand certifies ONLY with a legitimate viewer present —
+    with the report on screen, "总结这份研究报告" has a workable target and the
+    empty parameter schema means "no slots to wait for". Without the viewer the
+    same sentence is vetoed at entry (referenced_input_absent, pinned below);
+    "把上面的内容总结一下" never reaches this node either (memory-deixis veto).
+    """
+    _open(monkeypatch)
+    sent = "总结这份研究报告"
+    viewer = types.SimpleNamespace(asset_id="r-1", page=None, selections=[])
+    ctx = _ctx(sent, body=types.SimpleNamespace(
+        message=sent, attach=None, viewer=viewer))
+    llm = _LLM([{"capability_id": "cap-s", "confidence": 0.93}])
+    idx = _index([("cap-s", [sent], [[1.0, 0.0]])])
+    view = _view([_entry("cap-s", corpus=(sent,), tool="summary_gen",
+                         parameters={})])
+    _, deps = _wire(monkeypatch, view=view, index=idx,
+                    embedder=_Embedder([1.0, 0.0]), llm=llm)
+    out = await funnel.route(ctx, deps=deps, requirements=_req())
+    act = out.requested_action
+    assert act["tool"] == "summary_gen" and act["args"] == {}
+    assert act["funnel_stage"] == "tool_intent"
+    assert len(llm.prompts) == 1
+
+
+# ── input-context veto (shadow-A/B follow-up 2026-09-27, suspects a403c4b341e1
+# / d795e47fe617): empty-schema capabilities must never takeover when the turn
+# names its input object only by a demonstrative and NOTHING is on screen. ──────
+
+_DEICTIC_TURNS = ("把这份笔记做成思维导图",        # cap-mindmap standard query
+                  "把这个术语加入我的词汇库")    # cap-add-term standard query
+
+
+def test_deictic_input_turn_is_vetoed_without_viewer_or_attach():
+    """①/② the two suspects, word level: the veto fires on the exact
+    Registry sentences and reports its own reason (no cascade runs)."""
+    req = _req()
+    ctx = _ctx(_DEICTIC_TURNS[0])
+    for msg in _DEICTIC_TURNS:
+        assert guardrails.turn_veto(msg, req, _ctx(msg)) == "referenced_input_absent"
+
+
+def test_deictic_veto_lifts_with_viewer_attach_or_explicit_input():
+    """③ the ONLY lifts are context facts or an inline quoted object — never a
+    table edit: viewer present, attachment present, or the term written out in
+    quotes all let the cascade proceed."""
+    req = _req()
+    viewer = types.SimpleNamespace(asset_id="a-1", page=None, selections=[])
+    v_ctx = _ctx(_DEICTIC_TURNS[0], body=types.SimpleNamespace(
+        message=_DEICTIC_TURNS[0], attach=None, viewer=viewer))
+    assert guardrails.turn_veto(_DEICTIC_TURNS[0], req, v_ctx) is None
+    a_ctx = _ctx(_DEICTIC_TURNS[0], body=types.SimpleNamespace(
+        message=_DEICTIC_TURNS[0], attach={"asset_id": "d-1"}, viewer=None))
+    assert guardrails.turn_veto(_DEICTIC_TURNS[0], req, a_ctx) is None
+    explicit = '把"光合作用"这个术语加入我的词汇库'
+    assert guardrails.turn_veto(explicit, req, _ctx(explicit)) is None
+
+
+async def test_vetoed_deictic_turn_never_reaches_the_cascade(monkeypatch, caplog):
+    """Route level: the veto exits at the gate — the Registry is not even read,
+    the Agent keeps the turn byte-identical, and no model hop is spent."""
+    _open(monkeypatch)
+    view = _view([_entry("cap-m", corpus=_DEICTIC_TURNS, tool="mindmap_gen",
+                         parameters={})])
+    idx = _index([("cap-m", list(_DEICTIC_TURNS), [[1.0, 0.0]])])
+    llm = _LLM([{"capability_id": "cap-m", "confidence": 0.9}])
+    _, deps = _wire(monkeypatch, view=view, index=idx,
+                    embedder=_Embedder([1.0, 0.0]), llm=llm)
+    req = _req()
+    out = await funnel.route(_ctx(_DEICTIC_TURNS[0]), deps=deps, requirements=req)
+    assert out is req and llm.prompts == []   # gate closed: zero model calls
+    # funnel_live short-circuits BEFORE the cascade, so no funnel_trace line.
+    assert not any("funnel_trace" in r.getMessage() for r in caplog.records)
+
+
+async def test_deictic_turn_with_viewer_certifies_through_the_cascade(monkeypatch):
+    """③ end to end: the SAME sentence with a legitimate viewer is takeover
+    material — Matcher HIT → ToolIntent CONFIDENT → empty-schema certify."""
+    _open(monkeypatch)
+    sent = _DEICTIC_TURNS[0]
+    viewer = types.SimpleNamespace(asset_id="n-1", page=None, selections=[])
+    ctx = _ctx(sent, body=types.SimpleNamespace(
+        message=sent, attach=None, viewer=viewer))
+    llm = _LLM([{"capability_id": "cap-m", "confidence": 0.9}])
+    idx = _index([("cap-m", [sent], [[1.0, 0.0]])])
+    view = _view([_entry("cap-m", corpus=(sent,), tool="mindmap_gen",
+                         parameters={})])
+    _, deps = _wire(monkeypatch, view=view, index=idx,
+                    embedder=_Embedder([1.0, 0.0]), llm=llm)
+    out = await funnel.route(ctx, deps=deps, requirements=_req())
+    assert (out.requested_action or {}).get("tool") == "mindmap_gen"
+    assert out.requested_action["capability_id"] == "cap-m"
+
+
+def test_input_veto_stays_narrow_on_non_input_demonstratives():
+    """The veto names ON-SCREEN INPUT OBJECTS, not every 这/this: plain folder
+    demands, quoted-name creates and topic questions must pass untouched
+    (false vetoes only cost the funnel, but a bloated veto hides real bugs)."""
+    req = _req()
+    for msg in ('新建文件夹"季度报告"', "新建一个文件夹", "这个软件怎么用?",
+                "帮我查一下北京今天的天气", "these are great ideas, thanks"):
+        assert guardrails.turn_veto(msg, req, _ctx(msg)) is None
+
+
+def test_web_and_deixis_lexical_gates_cover_mid_sentence_cjk():
+    """Sim-A/B items 3/4 word-level pins: the \\b wrapper does not exist
+    between two CJK chars, so the web cues ride without it; and the chat-
+    deixis class ("上面") joins the memory prefilter — while the curated
+    "刚才" corpus sentences of cap-add-term must STAY unvetoed."""
+    from core.application.chat import understanding as U
+    from core.config import settings
+
+    assert U._lex_web("2026年9月AI行业有什么重要新闻?")
+    assert U._lex_web("今天天气怎么样")
+    assert U._lex_web("the latest news")            # English unchanged
+    assert not U._lex_web("把这份笔记做成思维导图")    # no web cue -> no veto
+    assert U._memory_trigger("把上面的内容总结一下")
+    assert not U._memory_trigger("把刚才这个术语记到我的词汇表")  # curated corpus
+    assert "上面" in settings.memory_recall_trigger_words
+    assert "刚才" not in settings.memory_recall_trigger_words
+
+
 async def test_below_floor_verdict_returns_original(monkeypatch, caplog):
     _open(monkeypatch)
     llm = _LLM([{"capability_id": "cap-a", "confidence": 0.3}])   # under the floor

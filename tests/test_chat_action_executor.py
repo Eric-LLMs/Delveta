@@ -108,6 +108,46 @@ async def test_malformed_action_escalates_and_never_touches_the_seam():
     assert calls == []  # pre-execution failure: the seam was NEVER entered
 
 
+# Shadow-A/B #17 pin (2026-09-27): cap-summary carries an EMPTY registry
+# schema, so a certified action arrives with args={}; the live summary_gen
+# roster entry requires ["paths"] (workspace files only, per soul.md). The
+# takeover is therefore SEMANTICALLY DEAD: it always escalates at the schema
+# gate, pre-execution, seam untouched. Fail-safe — but it can never produce a
+# true hit for attachment-summarization turns, which is why #17 stays suspect.
+_SUMMARY_ROSTER = SimpleNamespace(runtime=SimpleNamespace(schemas=lambda: [
+    {"name": "summary_gen", "description": "d",
+     "parameters": {
+         "type": "object",
+         "properties": {"paths": {"type": "array", "minItems": 1,
+                                  "items": {"type": "string"}},
+                        "output_dir": {"type": "string"}},
+         "required": ["paths"]}},
+]))
+
+
+async def test_registry_empty_schema_summary_always_escalates_at_the_gate():
+    calls = []
+
+    async def run_tool(*a):
+        calls.append(a)
+        return {"ok": True}
+
+    ctx = SimpleNamespace(user_text="帮我总结一下这份文档", session_memory=_SM(),
+                          history=[])
+    deps = ChatDeps(
+        session_factory=None, queue=None, drive=None, agent=_SUMMARY_ROSTER,
+        llm=None, embedder=None, viewer=None, new_approval_bridge=None,
+        persist_turn_meta=None, log_usage=None, resolve_research=None,
+        run_tool=run_tool,
+    )
+    plan = ExecutionPlan(kind=PlanKind.ACTION,
+                         action={"tool": "summary_gen", "args": {}})
+    req = TurnRequest(ctx=ctx, deps=deps, plan=plan)
+    with pytest.raises(EscalateToAgent, match="schema"):
+        await _drain(req)
+    assert calls == []  # the certified-but-empty args never reach the seam
+
+
 async def test_certified_tool_missing_from_roster_is_terminal_integrity():
     # (ruling 2026-09-26) tool existence is a C2 system-integrity fact: a turn
     # naming a tool the live roster does not register terminates honestly —

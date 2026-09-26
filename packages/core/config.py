@@ -290,6 +290,11 @@ class Settings(BaseSettings):
         "remember", "recall", "earlier", "before", "previously", "prior",
         "last time", "we discussed", "we talked", "you told me",
         "你记得", "记得", "上次", "之前", "以前", "说过", "你说过", "我们说过",
+        # Chat-deixis class (shadow-A/B finding 2026-09-27): "把上面的内容总结一下"
+        # names no workable target — the object IS the prior conversation, which is
+        # the Agent's (memory) domain, never a funnel takeover. "刚才" is
+        # deliberately NOT added: cap-add-term curates 刚才-sentences as corpus.
+        "上面", "上述", "above", "just said",
     ]
     history_max_messages: int = 40             # chat history length that triggers compaction
     history_keep_messages: int = 20            # most-recent messages kept after compaction

@@ -144,7 +144,11 @@ def _ab_turn_line(ctx, plan: ExecutionPlan, *, agent_ms: float, status: str,
     llm_calls = sum(1 for m in new
                     if isinstance(m, dict) and m.get("role") == "assistant")
     tools = [
-        str((tc.get("function") or {}).get("name") or "?")
+        # the kernel loop records {id, name, arguments} at the top level (its
+        # internal shape); accept the OpenAI {function:{name}} form too. Without
+        # the kernel shape every agent_tools field degraded to "?" and the
+        # true_hit/suspect classifier lost its evidence.
+        str(tc.get("name") or (tc.get("function") or {}).get("name") or "?")
         for m in new if isinstance(m, dict)
         for tc in (m.get("tool_calls") or []) if isinstance(tc, dict)
     ]
@@ -222,12 +226,27 @@ class TurnOrchestrator:
         # the response path never awaits it and every fault is fail-quiet.
         if (settings.chat_funnel_shadow_live
                 and (deps or self.deps) is not None
-                and not ctx.research_turn and not ctx.effective_handoff):
+                and not ctx.research_turn and not ctx.effective_handoff
+                # Yield to production: whenever the live cascade already owns
+                # the turn (all gates open + not vetoed), its verdict is REAL
+                # routing and already fully traced — a shadow would double-log
+                # the cascade for one turn. A/B observes the turns production
+                # did NOT take.
+                and not intent_funnel.funnel_live(
+                    requirements, deps or self.deps, ctx)):
             import uuid
 
             ctx.funnel_turn_key = uuid.uuid4().hex[:12]
+            # The shadow must see the SAME requirements the production cascade
+            # would compute with its gates open: the plan keeps the neutral
+            # object on a dark launch (byte-identical), but a shadow fed the
+            # neutral defaults could never observe the web/memory entry vetoes
+            # — those turns would be mis-attributed to NO_CANDIDATE.
+            shadow_requirements = (
+                requirements if policy.fast_paths_enabled
+                else resolve_requirements(ctx, ctx.body.message))
             ctx.funnel_shadow_task = asyncio.create_task(
-                _shadow_live(ctx, deps or self.deps, requirements)
+                _shadow_live(ctx, deps or self.deps, shadow_requirements)
             )
         plan = build_execution_plan(requirements, policy)
         # Sink the SOURCE POLICY for the Agent's sandbox (see Sandbox._turn_denied):

@@ -178,6 +178,104 @@ async def test_shadow_fault_is_fail_quiet(monkeypatch, caplog, _no_fast_paths):
                for r in caplog.records)
 
 
+# ── shadow requirements (A/B fix 2026-09-27, item 4/3): the web/memory entry
+# vetoes must be OBSERVABLE on a dark launch. Before the fix the shadow saw the
+# neutral default requirements, so these turns were all mis-attributed to
+# NO_CANDIDATE at the recall stage. ────────────────────────────────────────────
+
+async def _shadow_line_for(monkeypatch, caplog, msg):
+    monkeypatch.setattr(settings, "chat_funnel_shadow_live", True)
+    ctx = _ctx(msg)
+    with caplog.at_level(logging.INFO, logger="core.application.chat.turn_orchestrator"):
+        plan = await _orch().resolve_plan(ctx)
+        await ctx.funnel_shadow_task
+    line = next(r.getMessage() for r in caplog.records
+                if "funnel_ab_shadow" in r.getMessage())
+    return plan, ctx, line
+
+
+async def test_mid_sentence_cjk_web_turn_is_entry_vetoed_in_shadow(
+    monkeypatch, caplog, _no_fast_paths
+):
+    """Item 4 (sim #14): "重要新闻" sits mid-sentence — the old "\\b(…|新闻)\\b"
+    never matched CJK, and the neutral shadow requirements hid the veto twice
+    over. Both legs fixed: the sentence classifies needs_web=HIGH and the
+    shadow line reports the DESIGN exit, not a fake NO_CANDIDATE."""
+    plan, ctx, line = await _shadow_line_for(
+        monkeypatch, caplog, "2026年9月AI行业有什么重要新闻?")
+    assert "deepest_stage=entry" in line
+    assert "fallback_reason=turn_demands_web_or_memory" in line
+    # ⑦ the Agent is completely unaffected: its own turn stays byte-identical
+    assert plan.kind.value == "agent" and ctx.body.message == "2026年9月AI行业有什么重要新闻?"
+
+
+async def test_anaphoric_summary_turn_is_contextual_fallback_not_a_takeover(
+    monkeypatch, caplog, _no_fast_paths
+):
+    """Item 3 (sim #9): "把上面的内容总结一下" points at the CONVERSATION — the
+    sentence carries no workable target, so the memory-deixis veto must stop
+    the funnel BEFORE any cascade (never a summary capability match)."""
+    plan, ctx, line = await _shadow_line_for(
+        monkeypatch, caplog, "把上面的内容总结一下")
+    assert "deepest_stage=entry" in line
+    assert "fallback_reason=turn_demands_web_or_memory" in line
+    assert plan.kind.value == "agent"
+
+
+async def test_deictic_input_suspects_are_entry_vetoed_in_shadow(
+    monkeypatch, caplog, _no_fast_paths
+):
+    """Shadow-A/B follow-up (suspects a403c4b341e1 / d795e47fe617): the two
+    empty-schema standard-query sentences named their input object nowhere but
+    an absent screen — the shadow must report the DESIGN exit at entry with the
+    dedicated reason, and the Agent turn stays untouched."""
+    for msg in ("把这份笔记做成思维导图", "把这个术语加入我的词汇库"):
+        async def boom(**kw):  # the veto must short-circuit before the cascade
+            raise AssertionError("cascade must not run on an input-vetoed turn")
+
+        monkeypatch.setattr(
+            "core.application.chat.intent_funnel.registry.active_view", boom
+        )
+        plan, ctx, line = await _shadow_line_for(monkeypatch, caplog, msg)
+        assert "deepest_stage=entry" in line
+        assert "fallback_reason=referenced_input_absent" in line
+        assert "would_route=f" in line
+        assert plan.kind.value == "agent"
+
+
+async def test_plain_qa_turn_still_reaches_the_recall_lane(
+    monkeypatch, caplog, _no_fast_paths
+):
+    """The veto guard must stay narrow: no web/memory cue -> the shadow runs
+    the real cascade (registry read -> here: UNAVAILABLE view is enough to
+    prove the cascade, not the entry branch)."""
+    async def none_view(**kw):
+        return None
+
+    monkeypatch.setattr(
+        "core.application.chat.intent_funnel.registry.active_view", none_view
+    )
+    _plan, _ctx, line = await _shadow_line_for(
+        monkeypatch, caplog, "什么是思维导图?简单说说")
+    assert "deepest_stage=registry" in line
+    assert "fallback_reason=REGISTRY_UNAVAILABLE" in line
+
+
+async def test_shadow_yields_when_production_cascade_owns_the_turn(
+    monkeypatch, caplog
+):
+    """A/B hygiene fix: with the real gates LIVE the cascade already traces
+    the turn — no shadow task, no AB pair, one funnel decision per turn."""
+    monkeypatch.setattr(settings, "chat_funnel_shadow_live", True)
+    monkeypatch.setattr(settings, "chat_fast_paths_enabled", True)
+    monkeypatch.setattr(settings, "chat_funnel_enabled", True)
+    monkeypatch.setattr(settings, "chat_action_fast_path_enabled", True)
+    ctx = _ctx("新建文件夹")
+    plan = await _orch().resolve_plan(ctx)
+    assert plan.kind.value in ("agent", "action")
+    assert ctx.funnel_shadow_task is None and ctx.funnel_turn_key == ""
+
+
 # ── the funnel_ab_turn line: Agent-side outcome derivation ──────────────────────
 
 async def test_ab_turn_line_counts_this_turns_calls_only(monkeypatch, caplog):
@@ -204,6 +302,29 @@ async def test_ab_turn_line_counts_this_turns_calls_only(monkeypatch, caplog):
     assert "llm_calls=2" in line          # history assistant rows are NOT counted
     assert "agent_tools=create_folder" in line
     assert "total_tokens=900" in line
+
+
+async def test_ab_turn_line_reads_the_kernel_tool_call_shape(caplog):
+    """The real loop records {id, name, arguments} at the TOP level (not the
+    OpenAI {function:{name}} nesting) — the classifier's true_hit evidence
+    depends on agent_tools resolving names, never "?"."""
+    ctx = _ctx()
+    ctx.funnel_turn_key = "k2"
+    ctx.history = []
+    messages = [
+        {"role": "user", "content": "帮我总结一下这份文档"},
+        {"role": "assistant", "content": None,
+         "tool_calls": [{"id": "t", "name": "read_document",
+                         "arguments": "{}"}]},
+        {"role": "tool", "content": "ok", "tool_call_id": "t"},
+    ]
+    plan = types.SimpleNamespace(kind=types.SimpleNamespace(value="agent"))
+    with caplog.at_level(logging.INFO, logger="core.application.chat.turn_orchestrator"):
+        tor._ab_turn_line(ctx, plan, agent_ms=1.0, status="ok",
+                          messages=messages, usage=None)
+    line = next(r.getMessage() for r in caplog.records
+                if "funnel_ab_turn" in r.getMessage())
+    assert "agent_tools=read_document" in line
 
 
 async def test_ab_turn_line_silent_without_turn_key(caplog):
