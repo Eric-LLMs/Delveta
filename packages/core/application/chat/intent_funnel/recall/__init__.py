@@ -61,7 +61,7 @@ _LOAD_ROWS_SQL = sql_text(
     "  FROM capability_standard_queries s"
     "  JOIN capabilities c ON c.capability_id = s.capability_id"
     " WHERE s.enabled AND c.enabled AND c.status = 'active' AND s.embedding IS NOT NULL"
-    " UNION ALL"
+    " UNION ALL "
     "SELECT 'similar', q.id, s.capability_id, q.query, q.language,"
     "       q.standard_query_id, q.embedding"
     "  FROM capability_similar_queries q"

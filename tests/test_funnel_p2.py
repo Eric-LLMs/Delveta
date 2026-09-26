@@ -266,6 +266,22 @@ async def test_recall_gate_is_inclusive_near_ties_survive():
     assert [c.capability_id for c in res.candidates] == ["cap-a"]  # exact 1.0 kept
 
 
+def test_load_rows_sql_union_all_spacing():
+    """Anti-regression pin (2026-09-27 shadow-live sim): the in-process
+    degraded lane's loader is assembled from adjacent string literals — a
+    missing space after "UNION ALL" rendered as ``ALLSELECT`` and blew up
+    against real Postgres (every MISS lane => RECALL_UNAVAILABLE). Every
+    funnel test monkeypatches ``load_index``, so only a string-level pin
+    catches it. The same check covers the ANN statements' joins."""
+    from core.application.chat.intent_funnel import recall as recall_node
+
+    sql = " ".join(str(recall_node._LOAD_ROWS_SQL).split())
+    assert " UNION ALL SELECT " in sql
+    for stmt in (recall_node._STANDARD_SQL, recall_node._SIMILAR_SQL):
+        s = " ".join(str(stmt).split())
+        assert " ORDER BY " in s and " LIMIT :pool" in s
+
+
 # ═══════════════════════════════ tool_intent: stub + ladder ═══════════════════════════
 
 
