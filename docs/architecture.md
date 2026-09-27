@@ -706,8 +706,18 @@ host granted it or a human approver confirms. `ASK` with no approver degrades to
 (safe-by-default). It composes with `ToolRuntime`'s existing `approval` hook for human gates.
 
 **`fs_tools.py`** — the resident filesystem/shell tools: `read_file` (READ), `edit_file` (WRITE),
-`bash` (WRITE + NETWORK). All file access is rooted at `settings.workspace_dir` and path escape is
-rejected (`_resolve`). The desktop workbench's "generate media" flow (`/media/generate` → worker
+`bash` (WRITE + NETWORK). Workspace file access is rooted at `settings.workspace_dir` and path
+escape is rejected (`_resolve`). `read_file` / `edit_file` address a file by **path and dispatch on
+its plane** (drive-edit ruling 2026-09-28): a path matching `_DRIVE_PATH_RE` (`My Drive/<rel>` or
+`我的云盘/<rel>`) resolves through the injected `DriveService` to the real asset
+(`resolve_personal_path` → `read_text` / copy-on-write `edit_text`, §14.2) and never materializes a
+Drive copy; an unresolvable Drive path raises honestly (no user / no READY asset) instead of
+silently falling back to a same-named workspace file. Composition-time hiding:
+`register_fs_tools(runtime, workspace, drive=…, exclude=…)` skips `runtime.register` for excluded
+names — the tool then leaves **every** model surface at once (prompt catalog, `tool_search`,
+mount, the `tools` array all derive from the runtime roster) while its implementation and
+permission/destructive semantics stay untouched; the Chat API sets `AGENT_HIDDEN_TOOLS` (§16.8),
+Worker / Research omit `exclude` and keep full behavior. The desktop workbench's "generate media" flow (`/media/generate` → worker
 `generate_media`) stays a separate HTTP+job pipeline, not an agent tool: from a **local video** it
 produces a PPT/PDF "book" — parse the subtitle track (SRT/VTT/LRC) → `ffmpeg` keyframe extraction at
 subtitle timestamps → one slide per (frame, subtitle text) via `build_pptx` / `build_pdf` (CJK text
@@ -2022,7 +2032,7 @@ Source: canonical schema `migrations/0001_init.sql`;
 | `workspaces` | User-owned group (`owner_id`, `name`). Ownership is **not** a member row. |
 | `workspace_members` | `(workspace_id, user_id)` PK + `role` (`admin` / `editor` / `viewer`). Membership is the sharing mechanism. |
 | `folders` | One row per folder path inside a scope; `workspace_id` NULL = My Drive. `path` is the full `/`-separated relative path (`"English/Vocab"`), so ancestors are implicit — no parent FK. Uniqueness per scope via `folders_unique_ws` (partial) and `folders_unique_personal`. |
-| `assets` | Logical file: `user_id` (owner), nullable `workspace_id`, `object_sha256` → `global_objects`, `name`, `folder_path`, `file_status` (`uploading/processing/ready/deleted`), `rag_status` (`pending/parsing/chunking/embedding/indexed/failed`), `domain_id` (nullable → `domains`, drives the RAG domain filter), `meta` JSONB, `deleted_at`. |
+| `assets` | Logical file: `user_id` (owner), nullable `workspace_id`, `object_sha256` → `global_objects`, `name`, `folder_path`, `file_status` (`uploading/processing/ready/deleted`), `rag_status` (`pending/parsing/chunking/embedding/indexed/failed`), `domain_id` (nullable → `domains`, drives the RAG domain filter), `meta` JSONB (carries COW lineage keys `cow_of` / `cow_retired_by`, §14.2), `deleted_at`. |
 | `asset_acl` | Asset-level sharing: `(asset_id, grantee_user_id)` PK; `grantee_user_id` NULL = public link (`asset_acl_public_uniq` unique partial index). `permission` = `read` / `write`. |
 | `upload_sessions` | Chunked-upload state: expected `sha256`, `size`, `chunk_size`, `num_chunks`, `received_chunks` (boolean array) → resumable uploads. |
 | `chunks` | RAG chunks rebuilt with denormalized `asset_id` / `user_id` / `workspace_id` for filtered recall; `embedding vector(1024)` with an HNSW index; the schema carries `parent_chunk_id` + `chunk_kind` (parent/child indexing, recall searches `leaf` only) and `content_search` (jieba-segmented CJK keywords, GIN-indexed). |
@@ -2062,6 +2072,26 @@ Source: canonical schema `migrations/0001_init.sql`;
   other files share is never freed prematurely. The asset is marked `READY` / `RAG_PENDING` and
   the router re-enqueues `ASSET_INGEST`, which deletes and rebuilds the RAG chunks for the new
   text. A content-identical PUT is a no-op (same digest → log + return).
+- **Copy-on-write text editing (`edit_text`)** — snippet-level edit of an existing text asset
+  (`edit_file`'s Drive plane, §5; service-level ruling 2026-09-28). Guards first:
+  `ensure_asset_writable` (403/404), `READY` with bytes present (else 409), text-type (else 415);
+  `old_text` must occur in the current content (exactly-one replace, else 400 "nothing replaced");
+  `old_text=None` overwrites the whole note. **Sharedness predicate** `_referenced_by_others`:
+  the asset is shared when a *different* user owns the row, it is workspace-scoped, or any ACL
+  grant is public (grantee NULL) or names another user. **Exclusive → in place**: delegate to
+  `update_content` — same asset id, same path, mode `in_place`. **Shared → copy-on-write**: the
+  original row and bytes are NEVER touched; the new content is digested / stored /
+  `upsert_and_increment`ed, and a **successor asset** owned by the editor is created (`READY`,
+  `meta.cow_of = original`). If the editor *owns* the original, the successor keeps the same name
+  + folder (so the editor's listing/path transparently switches) and the original gets
+  `meta.cow_retired_by = successor` — the repos' `_not_cow_retired_for(editor)` predicate hides
+  retired rows from the owner's `list_visible` / `get_by_path` while grantees keep resolving the
+  original. A non-owner editor gets the copy under `_unique_name` at their own My Drive root.
+  Returns `{asset, mode: in_place|cow, original_asset_id, content_changed}`; the audit line is
+  `file.update` on the successor. The only in-process caller is `edit_file`'s Drive plane —
+  exposed to the Worker / Research runtimes and hidden from Chat (§16.8, §24); page/PC editing
+  keeps using the HTTP `update_content` path, and agent results reach Drive via new-asset /
+  explicit-save actions rather than `edit_text` on an existing user file.
 - **Collision-safe naming** — files and folders share **one namespace per directory** (the tree
   merges them), so a folder `docs` and a file `docs` in the same parent are ambiguous. Every
   mutating op — `init_upload`, `create_folder`, `rename_file`, `rename_folder`, `move_file`,
@@ -2551,6 +2581,13 @@ returns `parameters` from `gateway.schema_of(name)`. Execution is unaffected: `_
 the tool by name from the runtime, so calling a stub runs the real tool, still behind the `Sandbox`
 permission guard (a READ-only session cannot gain write tools by mounting them).
 
+**Composition-time hiding sits *upstream* of this whole view.** The gateway, catalog, prompt index
+and mount all derive from `ToolRuntime.all()`; a tool never `register`ed (§5
+`register_fs_tools(exclude=…)`) is therefore absent from every one of them simultaneously — not
+stubbed, not deny-listed, simply not in the roster the views are built from. `policy.deny()`
+cannot achieve this: it only prunes the `tools` array, while the prompt catalog and `tool_search`
+ignore the policy. The Chat lanes use this to hide `edit_file` (`AGENT_HIDDEN_TOOLS`, §16.8).
+
 ### 16.7 Per-step process
 
 1. **Session start** — `kernel.run` begins the memory session; `ReactLoopAgent.run` then calls
@@ -2575,6 +2612,7 @@ permission guard (a READ-only session cannot gain write tools by mounting them).
 | `compaction_summary_max_chars` | `2_500` | cap on the folded 5-section session summary (§22.4) |
 | `project_context_files` | `["DELVETA.md"]` | convention files tried in order |
 | `project_context_max_chars` | `8_000` | cap on the project-context zone, with truncation marker |
+| `agent_hidden_tools` | `""` | comma-separated tool names skipped at `register_fs_tools` composition (§5); empty = no hiding. Set on the Chat API processes only — Worker / Research leave it empty |
 
 [↑ Back to top](#table-of-contents)
 
@@ -4602,6 +4640,24 @@ clarify). Per-length bounds live in the tool schemas themselves (e.g.
 `create_folder.name maxLength 120`): with the roster as the single truth, a
 bound the executable does not state does not exist.
 
+**Plane-scoped exposure — hiding ≠ disabling (ruling 2026-09-28).** Removing a capability from
+the Chat plane takes **two gates**, and neither touches the Registry row or any execution
+semantics: ① the roster gate above (`AGENT_HIDDEN_TOOLS` → `register_fs_tools(exclude=…)`, §5/§16.6)
+closes every model surface AND the execution path — the action executor's stage-0.6 roster check
+and the TOCTOU re-validation already treat "not in roster" as the C2 terminal, so nothing wired to
+the hidden tool can run; but registration hiding alone does NOT stop the funnel from *routing* a
+turn to the capability, because routing reads only the Registry DB rows and would dead-end in that
+C2 terminal. ② the routing-view gate therefore hides the capability id
+(`CHAT_FUNNEL_HIDDEN_CAPABILITIES`) from the Chat funnel via `chat_plane_candidate` (§25.5), so
+Matcher / entries_by_id / shadow / preview all drop it, no Candidate Card is built, certification
+fails, and the turn **fails open to the Agent** — an honest ordinary Agent turn, never a broken
+promise. Both settings are per-process env (same kernel factory serves chat API and worker; only
+the Chat API lanes set them, defaults empty = inert). Page/PC editing (HTTP `DriveService`) and
+Worker/Research behavior are structurally untouched; the Registry row stays
+`enabled=true, status=active`. Boundary: the hidden channel was the Chat agent's only way to
+mutate an EXISTING persistent file/Drive asset — file CREATION in the scratch/workspace via the
+still-registered `bash` is unchanged (§14.2).
+
 **Commit Point.** The first user-visible content delta locks the channel. `EscalateToAgent` is
 legal only before it; after it an error can only terminate the stream with a standardized event —
 an executor is never swapped mid-flight. Escalation is **zero-pollution** except for the two
@@ -4661,7 +4717,9 @@ layers, stage-2 classification C1 → Agent vs C2 → marked terminal) moved wit
 the funnel suites of §25.14.
 Contract suites: `test_chat_control_plane.py` (dark launch, per-kind gating, registry degradation),
 `test_chat_action_executor.py` / `test_chat_source_policy.py` (side-effect-boundary trichotomy,
-fencing semantics), `test_chat_direct_e2e / viewer / retrieval / composite` per branch.
+fencing semantics), `test_chat_direct_e2e / viewer / retrieval / composite` per branch,
+`test_chat_exposure_edit_file` (chat-plane hiding: unseen/unsearchable/unmountable/un-routable,
+worker posture unchanged, default-empty regression).
 
 [↑ Back to top](#table-of-contents)
 
@@ -5173,6 +5231,28 @@ diverges from its Standard parent, a duplicate Standard for one (capability, lan
 a negative that deterministically collides with the corpus. A kind flip (`enabled`,
 `status`, per-kind switch) is the only emergency stop — routing abstains, an ordinary
 Agent turn, no deploy.
+
+**Chat-plane candidate predicate (`registry/entry.py::chat_plane_candidate`, ruling
+2026-09-28).** Chat/files routing membership is ONE predicate with FOUR consumers —
+the Matcher index build, the Recall corpus filter, the funnel's `entries_by_id`, and the
+shadow/preview lanes that share them:
+
+```
+chat_plane_candidate(e) = e.enabled
+                        ∧ e.status == "active"
+                        ∧ e.intent_kind != "research"     # research-lane ownership (pre-existing)
+                        ∧ e.capability_id ∉ CHAT_FUNNEL_HIDDEN_CAPABILITIES
+```
+
+The hidden set is parsed per process from `settings.chat_funnel_hidden_capabilities`
+(comma list, EMPTY = the historical predicate, zero behavior change). **Hidden ≠
+disabled**: the live row stays `enabled=true, status=active` — page/PC, admin, worker
+and research lanes never consult this predicate (worker/research never read the
+capabilities table; page editing is the HTTP `DriveService`) — while every chat funnel
+consumer drops the capability: no Matcher exact hit, no Recall candidate, no Candidate
+Card, no certification, so the turn fails open to an ordinary Agent turn (§24). Hiding
+`edit_file` also requires the roster gate (§5/§16.6): routing-view absence alone would
+still let a stale/other-layer route reach a tool missing from the runtime — C2 terminal.
 
 #### 25.5.1 Live-table schema reference (migration 0014)
 
@@ -5698,6 +5778,8 @@ adjudicated and written back into the text above:
 chat_funnel_enabled=False          chat_funnel_timeout_seconds=5.0
 chat_funnel_min_score=0.82         chat_funnel_margin=0.06
 chat_funnel_private_enabled=False  chat_funnel_web_enabled=False
+chat_funnel_hidden_capabilities="" (chat-plane routing-view hiding, §24/§25.5; pairs with
+                                    `agent_hidden_tools` §16.8 — both set on Chat API only)
 chat_matcher_mode="off"            (shadow tri-state, 8.15)
 chat_tool_intent_backend="stub"    chat_tool_intent_min_confidence=0.75
 chat_tool_intent_local_url=""      chat_tool_intent_local_model="qwen3:0.6b-q4_K_M"
