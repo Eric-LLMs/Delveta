@@ -12,7 +12,7 @@ from typing import Callable
 from uuid import UUID
 
 from sqlalchemy import Text, cast, delete, func, or_, select, update
-from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.postgresql import JSONB, insert as pg_insert
 from sqlalchemy.orm import aliased
 from sqlalchemy.exc import IntegrityError
 
@@ -120,6 +120,7 @@ class SqlAssetRepository:
         source_asset_id: UUID | None = None,
         file_status: str = "uploading",
         rag_status: str = "pending",
+        meta: dict | None = None,
     ) -> AssetModel:
         async with self.session_factory() as session:
             obj = AssetModel(
@@ -133,6 +134,7 @@ class SqlAssetRepository:
                 source_asset_id=source_asset_id,
                 file_status=file_status,
                 rag_status=rag_status,
+                meta=meta or {},
             )
             session.add(obj)
             await session.commit()
@@ -153,6 +155,20 @@ class SqlAssetRepository:
                 )
             ).scalar_one_or_none()
 
+    @staticmethod
+    def _not_cow_retired_for(user_id: UUID):
+        """Exclude rows the OWNER retired via copy-on-write editing.
+
+        When an owner edits a shared asset, the original row is left intact for its
+        other readers (grantees still resolve it) but disappears from the owner's own
+        path/listing resolution — their live reference is the COW successor row.
+        Non-owners are unaffected by the marker. See ``DriveService.edit_text``.
+        """
+        return or_(
+            AssetModel.meta["cow_retired_by"].astext.is_(None),
+            AssetModel.user_id != user_id,
+        )
+
     async def get_by_path(
         self, user_id: UUID, workspace_id: UUID | None, folder_path: str | None, name: str
     ) -> AssetModel | None:
@@ -171,6 +187,7 @@ class SqlAssetRepository:
                 else AssetModel.folder_path == folder_path,
                 AssetModel.name == name,
                 AssetModel.deleted_at.is_(None),
+                self._not_cow_retired_for(user_id),
             ]
             if workspace_id is None:  # personal (My Drive) rows belong to one user
                 conditions.append(AssetModel.user_id == user_id)
@@ -185,7 +202,9 @@ class SqlAssetRepository:
             rows = (
                 await session.execute(
                     select(AssetModel)
-                    .where(AssetModel.deleted_at.is_(None), asset_visible_expr(user_id))
+                    .where(AssetModel.deleted_at.is_(None),
+                           asset_visible_expr(user_id),
+                           self._not_cow_retired_for(user_id))
                     .order_by(AssetModel.created_at.desc())
                 )
             ).scalars().all()
@@ -313,6 +332,19 @@ class SqlAssetRepository:
                 obj.mime_type = mime_type
             await session.commit()
             return obj
+
+    async def merge_meta(
+        self, asset_id: UUID, patch: dict
+    ) -> AssetModel | None:
+        """Atomically merge ``patch`` into the row's jsonb ``meta`` (single UPDATE)."""
+        async with self.session_factory() as session:
+            await session.execute(
+                update(AssetModel)
+                .where(AssetModel.id == asset_id)
+                .values(meta=AssetModel.meta.op("||")(cast(patch, JSONB)))
+            )
+            await session.commit()
+            return await session.get(AssetModel, asset_id)
 
     async def update(
         self,

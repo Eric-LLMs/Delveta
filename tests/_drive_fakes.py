@@ -55,12 +55,13 @@ class FakeAssets:
 
     async def create(self, user_id, name, *, workspace_id=None, folder_path=None,
                      mime_type=None, size=None, object_sha256=None, source_asset_id=None,
-                     file_status="uploading", rag_status="pending"):
+                     file_status="uploading", rag_status="pending", meta=None):
         obj = AssetModel(
             id=uuid4(), user_id=user_id, name=name, workspace_id=workspace_id,
             folder_path=folder_path, mime_type=mime_type, size=size,
             object_sha256=object_sha256, source_asset_id=source_asset_id,
             file_status=file_status, rag_status=rag_status,
+            meta=meta if meta is not None else {},
         )
         self.rows[obj.id] = obj
         return obj
@@ -87,6 +88,12 @@ class FakeAssets:
         obj = self.rows.get(asset_id)
         return obj if obj is not None and obj.deleted_at is None else None
 
+    @staticmethod
+    def _cow_retired_for(o, user_id) -> bool:
+        """Mirror SqlAssetRepository._not_cow_retired_for: a copy-on-write retired row
+        leaves the OWNER's listing/path resolution, grantees still see it."""
+        return bool((o.meta or {}).get("cow_retired_by")) and o.user_id == user_id
+
     async def list_visible(self, user_id):
         # Mirror asset_visible_expr: ownership, plus workspaces the user owns or is a
         # member of (the owner is not a workspace_members row).
@@ -97,7 +104,8 @@ class FakeAssets:
             visible_ws |= {wid for (wid, uid) in self.workspaces.members if uid == user_id}
         return [
             o for o in self.rows.values()
-            if o.deleted_at is None and (o.user_id == user_id or o.workspace_id in visible_ws)
+            if o.deleted_at is None and not self._cow_retired_for(o, user_id)
+            and (o.user_id == user_id or o.workspace_id in visible_ws)
         ]
 
     async def list_by_workspace(self, workspace_id):
@@ -117,10 +125,14 @@ class FakeAssets:
                 continue
             if o.deleted_at is not None:
                 continue
+            if o.user_id == user_id and (o.meta or {}).get("cow_retired_by"):
+                continue  # mirror _not_cow_retired_for (personal scope: owner rows only)
             if folder_path in (None, ""):
                 if o.folder_path is not None:
                     continue
             elif o.folder_path != folder_path:
+                continue
+            if self._cow_retired_for(o, user_id):
                 continue
             if o.name != name:
                 continue
@@ -161,6 +173,14 @@ class FakeAssets:
         obj.size = size
         if mime_type is not None:
             obj.mime_type = mime_type
+        return obj
+
+    async def merge_meta(self, asset_id, patch):
+        """Mirror SqlAssetRepository.merge_meta: jsonb ``||`` merge."""
+        obj = self.rows.get(asset_id)
+        if obj is None:
+            return None
+        obj.meta = {**(obj.meta or {}), **patch}
         return obj
 
     async def update(self, asset_id, *, name=None, folder_path=None):

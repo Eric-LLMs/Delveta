@@ -146,6 +146,19 @@ class Settings(BaseSettings):
     # trace_json (rebuilt candidate-card summary + query + verdict — never the
     # full prompt). Dark launch: OFF keeps the write path byte-identical.
     chat_funnel_trace_capture: bool = False
+    # Chat-plane tool hiding (exposure ruling 2026-09-28). Comma-separated tool
+    # names the CHAT-process kernel must not register (e.g. "edit_file"): the tool
+    # then disappears from the prompt catalog / tool_search / mount / LLM tool
+    # array at once, without touching its implementation, the destructive marker,
+    # the Sandbox, or the approval funnel. Worker / Research composition omits it.
+    # EMPTY = unchanged behavior everywhere.
+    agent_hidden_tools: str = ""
+    # Chat-plane capability hiding: comma-separated capability_ids dropped from the
+    # Funnel routing VIEW only (never the Registry row's enabled/status — the live
+    # table is left intact for page/PC/worker/admin). A hidden capability can no
+    # longer be matched/recalled-as-routable/certified, so its turns fail open to
+    # the Agent. EMPTY = every enabled+active capability stays routable.
+    chat_funnel_hidden_capabilities: str = ""
     # ToolIntentModel backend ladder (8.17 + 2026-09-24 chain ruling):
     # "stub" | "local" | "online" | "auto" (local→online→stub). ToolIntentModel is a
     # swappable PROVIDER: the funnel only speaks the OpenAI-compatible card

@@ -570,6 +570,92 @@ class DriveService:
         )
         return {"asset": self._asset_dict(updated), "content_changed": True}
 
+    # ── Text editing (cap-edit-file drive plane, ruling 2026-09-28) ──────────────
+
+    async def _referenced_by_others(self, asset, editor_id: UUID) -> bool:
+        """True when someone besides the editor can still resolve this asset row.
+
+        Channels (mirrors :mod:`core.infrastructure.visibility`): a workspace-scoped
+        asset is shared by definition; the row's owner always references it; an ACL
+        grant to another user — or a public grant (grantee NULL) — counts too.
+        """
+        if asset.user_id != editor_id:
+            return True  # someone else owns the row and still resolves it
+        if asset.workspace_id is not None:
+            return True  # workspace-scoped: every member references it
+        for g in await self.acl.list_for_asset(asset.id):
+            if g.grantee_user_id is None or g.grantee_user_id != editor_id:
+                return True
+        return False
+
+    async def edit_text(
+        self, user_id: UUID, asset_id: UUID,
+        *, old_text: str | None, new_text: str,
+    ) -> dict:
+        """Edit an existing Drive text file with copy-on-write semantics.
+
+        Exclusive asset (only the editor references it) → in-place via
+        :meth:`update_content`. Asset referenced by other users → the original row
+        and its bytes are NEVER touched: a successor asset (edited content, editor
+        owned) is created and the editor's reference switches to it, while the other
+        readers keep resolving the original. When the editor owns the original, the
+        row is marked ``meta.cow_retired_by`` so it leaves the owner's listing/path
+        resolution but stays readable by its grantees.
+
+        Returns ``{"asset", "mode": "in_place"|"cow", "original_asset_id",
+        "content_changed"}``. ``old_text=None`` overwrites the whole note.
+        """
+        asset = await self.ensure_asset_writable(user_id, asset_id)
+        if asset.file_status != READY or not asset.object_sha256:
+            raise DriveError("asset not ready", 409)
+        if not self._is_text_asset(asset):
+            raise DriveError("asset is not a text file", 415)
+        current = await self.read_text(user_id, asset_id)
+        if old_text is not None:
+            if old_text not in current:
+                raise DriveError("old_text not found in the file — nothing replaced", 400)
+            content = current.replace(old_text, new_text, 1)
+        else:
+            content = new_text
+
+        if not await self._referenced_by_others(asset, user_id):
+            result = await self.update_content(user_id, asset_id, content)
+            result["mode"] = "in_place"
+            result["original_asset_id"] = str(asset_id)
+            return result
+
+        # Copy-on-write: put the new object, then create the editor's successor row.
+        data = content.encode("utf-8")
+        digest = hashlib.sha256(data).hexdigest()
+        await self.storage.put(object_key(digest), data)
+        await self.objects.upsert_and_increment(
+            digest, len(data), object_key(digest), asset.mime_type or "text/plain"
+        )
+        if asset.user_id == user_id:
+            # Owner keeps the same logical location; get_by_path/list_visible hide the
+            # retired row for the owner only (grantees still resolve the original).
+            name, folder = asset.name, asset.folder_path
+            workspace_id = None
+        else:
+            name = await self._unique_name(user_id, None, None, asset.name)
+            folder, workspace_id = None, None
+        successor = await self.assets.create(
+            user_id, name,
+            workspace_id=workspace_id, folder_path=folder,
+            mime_type=asset.mime_type or "text/plain",
+            size=len(data), object_sha256=digest,
+            file_status=READY, rag_status=RAG_NOT_STARTED,
+            meta={"cow_of": str(asset.id)},
+        )
+        if asset.user_id == user_id:
+            await self.assets.merge_meta(asset.id, {"cow_retired_by": str(successor.id)})
+        await self._log(
+            user_id, asset.workspace_id, "file.update", "file", successor.id, successor.name,
+            f"copy-on-write edit (original {asset.id} left intact for its other readers)",
+        )
+        return {"asset": self._asset_dict(successor), "content_changed": True,
+                "mode": "cow", "original_asset_id": str(asset.id)}
+
     # ── Workspaces ──────────────────────────────────────────────────────────────
 
     async def create_workspace(self, user_id: UUID, name: str) -> dict:

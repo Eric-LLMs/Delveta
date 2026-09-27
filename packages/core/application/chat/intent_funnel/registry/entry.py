@@ -48,10 +48,24 @@ VALID_KINDS = frozenset({KIND_ACTION, KIND_PRIVATE, KIND_WEB, KIND_RESEARCH})
 def chat_plane_candidate(e: "CapabilityEntry") -> bool:
     """One predicate, four consumers (Matcher index, Recall corpus, funnel
     entries_by_id, and the shadow/preview lanes that share them): an entry is
-    a chat/files candidate iff it is routable AND not owned by another lane.
+    a chat/files candidate iff it is routable AND not owned by another lane
+    AND not hidden from the chat plane by ``chat_funnel_hidden_capabilities``
+    (exposure ruling 2026-09-28: a HIDDEN capability stays fully active in the
+    live table — enabled/status untouched, page/PC/worker/admin unaffected —
+    but is invisible to every chat funnel consumer: no Matcher exact hit, no
+    card, no certification; turns fail open to the Agent).
     Ruling 4 still applies: disabled is not a candidate for ANY node."""
     return (e.enabled and e.status == STATUS_ACTIVE
-            and e.intent_kind != KIND_RESEARCH)
+            and e.intent_kind != KIND_RESEARCH
+            and e.capability_id not in _hidden_capability_ids())
+
+
+def _hidden_capability_ids() -> frozenset[str]:
+    """Parsed per call (tiny comma list, read once per entry per view build);
+    EMPTY setting = the historical predicate with zero behavior change."""
+    from core.config import settings
+    raw = str(getattr(settings, "chat_funnel_hidden_capabilities", "") or "")
+    return frozenset(t.strip() for t in raw.split(",") if t.strip())
 
 # Frozen language derivation rule (ruling 2026-09-26): a sentence containing a
 # Han char (U+4E00..U+9FFF) is 'zh', everything else is 'en'. No languages
