@@ -59,7 +59,7 @@ def route(message, *, gates=FULL, **ctxf):
     "tell me a joke",
     "你好呀",
     "你是谁",
-    "帮我润色这句话：今天天气不错",  # no reserved action/web verb, pure, short
+    "帮我润色这句话：合同已经签署",  # no reserved action/web verb, pure, short
     "rephrase: the cat sat",
     "is the earth flat",
     "give me a haiku about rain",
@@ -93,18 +93,18 @@ def test_web_demand_stays_on_agent(msg):
     assert reqs.needs_web.value == "high"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "VALIDATED FINDING (Phase-2 _WEB_PAT, not 5A): the CJK time words (今天/最新/版本/"
-        "股价…) are wrapped in a single \\b(...|\\u4eca\\u5929|...)\\b group, but CJK chars are "
-        "\\w so \\b never fires mid-phrase — Chinese temporal queries silently miss "
-        "needs_web and can be answered tool-less/stale via DIRECT. EN words work; \"今天 天气\" "
-        "(space-separated) works. Fix = split EN \\b group from the un-\\b'd CJK alternation; "
-        "left for report/user sign-off due to Phase-2 routing-shift risk."
-    ),
-)
-@pytest.mark.parametrize("msg", ["今天天气怎么样", "python 最新版本是什么", "现在几点了"])
+# The CJK \\b bug (VALIDATED FINDING, Phase-2) was fixed in 673bb3d: the CJK
+# alternatives now ride WITHOUT the \\b wrapper, so mid-sentence cues fire too —
+# this test used to sit behind xfail(strict) and now passes as a plain pin.
+@pytest.mark.parametrize("msg", [
+    "今天天气怎么样",
+    "python 最新版本是什么",
+    "现在几点了",
+    # 673bb3d side effect, kept as a positive pin: a web cue quoted INSIDE a
+    # polish request fires mid-sentence too. A false "needs_web" only costs the
+    # fast path (design comment understanding.py:88-90) — never a stale answer.
+    "帮我润色这句话：今天天气不错",
+])
 def test_cjk_web_demand_should_stay_on_agent(msg):
     _, _, reqs = route(msg)
     assert reqs.needs_web.value == "high"
@@ -267,10 +267,20 @@ def test_action_fences_nothing_even_if_private_phrase_present():
 # 6. COMPOSITE (5B) — static independent {viewer text + private recall}, no sequencing
 # ════════════════════════════════════════════════════════════════════════════════
 def test_composite_independent_pair():
-    msg = "connect the selection above with what my notes say on it"
+    msg = "connect the selected text with what my notes say on it"
     kind, plan, _ = route(msg, viewer=_viewer(), gates=FULL)
     assert kind == "composite"
     assert plan.requires_viewer and plan.requires_retrieval
+
+
+def test_memory_deictic_above_never_composites():
+    # Caliber update 673bb3d (chat-deixis class): "above" names the
+    # CONVERSATION itself — the object of a memory recall, never a workable
+    # composite input. needs_memory vetoes before any aggregation.
+    msg = "connect the selection above with what my notes say on it"
+    kind, _, reqs = route(msg, viewer=_viewer(), gates=FULL)
+    assert kind == "agent"
+    assert reqs.needs_memory
 
 
 @pytest.mark.parametrize("seq", [

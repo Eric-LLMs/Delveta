@@ -416,7 +416,7 @@ async def _run_nodes(ctx, deps, requirements, trace, *,
     object. Raises only for faults, which the caller maps by trace['stage']."""
     from . import binder, guardrails, matcher, recall
     from .registry import active_view as registry_active_view
-    from .registry.entry import STATUS_ACTIVE
+    from .registry.entry import chat_plane_candidate
     from .tool_intent import select_and_extract as tool_intent
 
     message = ctx.body.message or ""
@@ -429,8 +429,7 @@ async def _run_nodes(ctx, deps, requirements, trace, *,
         return None
     trace["registry"] = view.fingerprint
     entries_by_id = {
-        e.capability_id: e for e in view.entries
-        if e.enabled and e.status == STATUS_ACTIVE
+        e.capability_id: e for e in view.entries if chat_plane_candidate(e)
     }
 
     # ── Node 1: Matcher (table-only; the negation guard applies BEFORE it ───────

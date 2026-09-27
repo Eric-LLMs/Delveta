@@ -20,6 +20,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from .entry import (
+    KIND_RESEARCH,
     RE_PREFIX,
     STATUS_ACTIVE,
     STATUS_DEPRECATED,
@@ -57,10 +58,14 @@ def validate_entries(
     entries: Sequence[CapabilityEntry],
     *,
     tool_schemas: dict[str, dict[str, int]] | None = None,
+    plugin_names: set[str] | frozenset[str] | None = None,
 ) -> list[str]:
     """Every rule as a pure function; empty list == consistent. ``tool_schemas``
     maps runtime tool name -> {arg: max_len} (from ToolRuntime.schemas()); when
-    None the tool-existence cross-check is skipped (unit tests)."""
+    None the tool-existence cross-check is skipped (unit tests). ``plugin_names``
+    is the live set of Plugin mount-unit names: research-kind rows bind a
+    PLUGIN (the research lane executes via plugin mount + handoff), never a
+    chat ToolRuntime tool — they are cross-checked against this set instead."""
     issues: list[str] = []
     if not entries:
         return ["refusing an empty Registry: no capability is registered"]
@@ -76,6 +81,16 @@ def validate_entries(
         seen.add(cid)
         if not e.tool_binding.strip():
             issues.append(f"{cid}: tool_binding is required")
+        elif e.intent_kind == KIND_RESEARCH:
+            # The research row names its Plugin, not a chat tool: the roster
+            # cross-check below would (correctly) reject it, so gate it
+            # against the mount-unit roster instead.
+            if (plugin_names is not None
+                    and e.tool_binding not in plugin_names):
+                issues.append(
+                    f"{cid}: tool_binding {e.tool_binding!r} is not a mounted "
+                    "Plugin (research kind binds a mount unit, not a chat tool)"
+                )
         elif tool_schemas is not None and e.tool_binding not in tool_schemas:
             issues.append(
                 f"{cid}: tool_binding {e.tool_binding!r} is not a tool in the "

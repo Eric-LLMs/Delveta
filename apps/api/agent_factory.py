@@ -153,6 +153,24 @@ def _read_soul() -> str:
         return "You are Delveta, a focused learning-workbench assistant."
 
 
+_plugin_names: frozenset[str] = frozenset()
+
+
+def _set_plugin_names(manager: PluginManager) -> None:
+    """Record the registered Plugin mount-unit names (ACTIVE + PENDING; a
+    FAILED plugin is not a legal binding target). Read by the Registry write
+    gate to cross-check research-kind tool_bindings against mount units
+    instead of the chat ToolRuntime roster."""
+    global _plugin_names
+    _plugin_names = frozenset(manager.names()) | frozenset(manager.pending_names())
+
+
+def get_plugin_names() -> frozenset[str]:
+    """The live mount-unit roster (builds the kernel once if needed)."""
+    get_agent_kernel()
+    return _plugin_names
+
+
 @lru_cache
 def get_agent_kernel() -> AgentKernel:
     """Build (once per process) the hardened :class:`AgentKernel` composition.
@@ -246,6 +264,7 @@ def get_agent_kernel() -> AgentKernel:
     register_research_plugins(manager, ctx)
     register_artifact_plugins(manager, ctx)
     manager.discover(settings.plugins_dir)
+    _set_plugin_names(manager)
 
     # Now that every plugin/skill is discovered and registered, refuse to start when the full
     # tool + skill index overflows the hard capacity ceiling (a tool/skill can never silently

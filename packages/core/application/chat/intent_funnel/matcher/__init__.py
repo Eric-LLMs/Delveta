@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import logging
 
-from core.application.chat.intent_funnel.registry.entry import STATUS_ACTIVE
+from core.application.chat.intent_funnel.registry.entry import chat_plane_candidate
 
 from ..contract import MATCH_AMBIGUOUS, MATCH_HIT, MATCH_MISS, MatchResult, TurnFacts
 
@@ -40,16 +40,16 @@ def _norm(s: str) -> str:
 def build_index(view) -> dict:
     """normalized sentence -> {capability_id}, built from ``intent_corpus`` ONLY.
 
-    Only routable entries (enabled AND status active) are indexed — ruling 4:
-    a disabled capability is not a candidate for ANY node, deterministic
-    included."""
+    Only chat-plane candidates are indexed (enabled AND active AND not owned
+    by another lane's kind) — ruling 4: a disabled capability is not a
+    candidate for ANY node, deterministic included."""
     key = view.fingerprint
     cached = _INDEX_CACHE.get(key)
     if cached is not None:
         return cached
     exact: dict[str, set[str]] = {}
     for e in view.entries:
-        if not (e.enabled and e.status == STATUS_ACTIVE):
+        if not chat_plane_candidate(e):
             continue
         for lit in e.intent_corpus:
             exact.setdefault(_norm(lit), set()).add(e.capability_id)

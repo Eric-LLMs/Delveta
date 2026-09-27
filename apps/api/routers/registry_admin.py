@@ -89,9 +89,18 @@ def _roster() -> dict[str, dict[str, int]]:
     return out
 
 
+def _plugin_names() -> frozenset[str]:
+    """Mounted Plugin names — the binding target of research-kind rows (a
+    research row names a mount unit, never a chat ToolRuntime tool)."""
+    from api.agent_factory import get_plugin_names
+
+    return get_plugin_names()
+
+
 async def _gated(entries: list[CapabilityEntry]) -> None:
     """The validation gate in front of every write: issues == [] or 422."""
-    issues = validate_entries(entries, tool_schemas=_roster())
+    issues = validate_entries(entries, tool_schemas=_roster(),
+                              plugin_names=_plugin_names())
     if issues:
         raise HTTPException(status_code=422, detail={"issues": issues})
 
@@ -604,7 +613,8 @@ async def get_validate(_: AuthAdmin = Depends(require_admin)) -> dict:
     """The check button: validate the LIVE set against the roster, zero writes."""
     caps = await list_capabilities(session_factory=SessionLocal)
     return {"capabilities": len(caps),
-            "issues": validate_entries(caps, tool_schemas=_roster())}
+            "issues": validate_entries(caps, tool_schemas=_roster(),
+                                       plugin_names=_plugin_names())}
 
 
 @router.get("/admin/registry/live-view")
@@ -775,7 +785,8 @@ async def post_rollback(
         raise HTTPException(status_code=503,
                             detail=f"partial restore at v{version}: {exc}") from exc
     final = await list_capabilities(session_factory=SessionLocal)
-    issues = validate_entries(final, tool_schemas=_roster())
+    issues = validate_entries(final, tool_schemas=_roster(),
+                              plugin_names=_plugin_names())
     await audit("rollback", actor_username=admin.username, target=f"v{version}",
                 detail={"restored": restored, "issues": issues},
                 session_factory=SessionLocal)

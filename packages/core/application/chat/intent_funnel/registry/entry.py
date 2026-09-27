@@ -35,7 +35,23 @@ RE_PREFIX = "re:"
 KIND_ACTION = "action"
 KIND_PRIVATE = "private"
 KIND_WEB = "web"
-VALID_KINDS = frozenset({KIND_ACTION, KIND_PRIVATE, KIND_WEB})
+# The research lane owns this kind: the row is a catalog/corpus record whose
+# tool_binding names the research PLUGIN mount unit — never a chat ToolRuntime
+# tool. It must stay active for the research lane while being invisible and
+# unsearchable in every chat/files funnel plane (Matcher/Recall/entries/
+# certification); the research execution path itself runs on plugin mount +
+# handoff (guardrails veto research turns), never on this row.
+KIND_RESEARCH = "research"
+VALID_KINDS = frozenset({KIND_ACTION, KIND_PRIVATE, KIND_WEB, KIND_RESEARCH})
+
+
+def chat_plane_candidate(e: "CapabilityEntry") -> bool:
+    """One predicate, four consumers (Matcher index, Recall corpus, funnel
+    entries_by_id, and the shadow/preview lanes that share them): an entry is
+    a chat/files candidate iff it is routable AND not owned by another lane.
+    Ruling 4 still applies: disabled is not a candidate for ANY node."""
+    return (e.enabled and e.status == STATUS_ACTIVE
+            and e.intent_kind != KIND_RESEARCH)
 
 # Frozen language derivation rule (ruling 2026-09-26): a sentence containing a
 # Han char (U+4E00..U+9FFF) is 'zh', everything else is 'en'. No languages

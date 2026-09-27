@@ -646,7 +646,7 @@ class RegistryCapabilityCreateRequest(BaseModel):
     arg_slots: dict = {}
     permissions: str = ""
     execution_policy: str = "auto"
-    intent_kind: str = "action"  # action | private | web (gate per kind)
+    intent_kind: str = "action"  # action | private | web | research (lane/kind gate)
     enabled: bool = False  # a fresh row is not routable until curated + enabled
     status: str = "disabled"
     replacement_capability_id: str | None = None

@@ -115,6 +115,12 @@ cases:
     group: private_web_constraints
     settings: {mode: "on"}
     query: '查一下这个词的词源'
+    # Caliber update 673bb3d: a bare deictic ("这个词") with nothing on screen
+    # is vetoed to the Agent BEFORE the cascade (referenced_input_absent), so
+    # the kind-gate verdict must be observed with the object grounded. With the
+    # viewer present the turn reaches cap-web and the closed web gate gives the
+    # same verdict as if the row were absent.
+    ctx: {viewer_page: 3}
     expect: {route: agent, fallback: FUNNEL_KIND_DISABLED}
 
   - id: agent_fallback_plain_chat
