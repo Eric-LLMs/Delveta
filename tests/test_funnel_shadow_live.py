@@ -20,6 +20,7 @@ import types
 import pytest
 from core.application.chat import turn_orchestrator as tor
 from core.application.chat.intent_funnel import funnel
+from core.application.chat.intent_funnel import observability as obs_mod
 from core.application.chat.intent_funnel.contract import (
     REASON_NO_CANDIDATE,
     REASON_REGISTRY_UNAVAILABLE,
@@ -341,7 +342,7 @@ async def test_ab_turn_line_silent_without_turn_key(caplog):
 async def test_cascade_shadow_default_still_writes_no_event_row(monkeypatch):
     """Existing offline replays (synthetic_workload) must stay log-only."""
     calls = []
-    monkeypatch.setattr(funnel, "_persist_event",
+    monkeypatch.setattr(obs_mod, "persist_event",
                         lambda *a, **k: calls.append(1))
     ctx = _ctx("hello")
 
@@ -366,7 +367,7 @@ async def test_cascade_shadow_persists_with_turn_key_inside_the_pin(monkeypatch)
         seen["trace_json"] = trace_json
         seen["fallback"] = trace["fallback"]
 
-    monkeypatch.setattr(funnel, "_persist_event", spy_persist)
+    monkeypatch.setattr(obs_mod, "persist_event", spy_persist)
 
     async def none_view(**kw):
         return None

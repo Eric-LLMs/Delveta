@@ -161,7 +161,7 @@ def test_blank_query_misses_and_bad_legacy_regex_is_skipped_not_fatal():
 
 def test_index_is_cached_per_content_fingerprint():
     v = _view([_entry("cap-a", standard="x")])
-    matcher._INDEX_CACHE.clear()
+    matcher.index._INDEX_CACHE.clear()
     first = matcher.build_index(v)
     assert matcher.build_index(v) is first  # same fingerprint -> same object
     v2 = _view([_entry("cap-a", standard="x", synonyms=("y",))])

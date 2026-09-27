@@ -25,7 +25,8 @@ import re
 
 import httpx
 
-from .base import SYSTEM, ToolIntentUnavailable, build_prompt
+from ..base import ToolIntentUnavailable
+from ..prompt import SYSTEM, build_prompt
 
 MODES = ("prompt_json", "tools")
 

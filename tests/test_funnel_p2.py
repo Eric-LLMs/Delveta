@@ -45,6 +45,7 @@ from core.application.chat.intent_funnel.contract import (
 from core.application.chat.intent_funnel.registry import content_fingerprint
 from core.application.chat.intent_funnel.registry import entry as T
 from core.application.chat.intent_funnel.tool_intent import base as jbase
+from core.application.chat.intent_funnel.tool_intent import prompt as jprompt
 from core.application.chat.understanding import (
     Complexity,
     Confidence,
@@ -273,11 +274,12 @@ def test_load_rows_sql_union_all_spacing():
     against real Postgres (every MISS lane => RECALL_UNAVAILABLE). Every
     funnel test monkeypatches ``load_index``, so only a string-level pin
     catches it. The same check covers the ANN statements' joins."""
-    from core.application.chat.intent_funnel import recall as recall_node
+    from core.application.chat.intent_funnel.recall import index as recall_index
+    from core.application.chat.intent_funnel.recall import retriever as recall_retriever
 
-    sql = " ".join(str(recall_node._LOAD_ROWS_SQL).split())
+    sql = " ".join(str(recall_index._LOAD_ROWS_SQL).split())
     assert " UNION ALL SELECT " in sql
-    for stmt in (recall_node._STANDARD_SQL, recall_node._SIMILAR_SQL):
+    for stmt in (recall_retriever._STANDARD_SQL, recall_retriever._SIMILAR_SQL):
         s = " ".join(str(stmt).split())
         assert " ORDER BY " in s and " LIMIT :pool" in s
 
@@ -735,7 +737,7 @@ def test_tool_intent_card_carries_tool_schema_score_and_origin():
     entry = _entry("cap-a", examples=("建个目录",), parameters=_NAME_SCHEMA)
     cands = (Candidate("cap-a", 0.676, matched_example="建个目录", origin="recall"),)
     facts = TurnFacts(has_attachment=True, viewer_asset_id="a-7")
-    p = jbase.build_prompt("新建文件夹", cands, {"cap-a": entry}, facts=facts)
+    p = jprompt.build_prompt("新建文件夹", cands, {"cap-a": entry}, facts=facts)
     # the Card fields the chain ruling requires, verbatim
     assert "### cap-a" in p
     assert "tool: create_folder" in p                 # tool/function binding
@@ -746,7 +748,7 @@ def test_tool_intent_card_carries_tool_schema_score_and_origin():
     assert "has_attachment=1" in p and "viewer_asset_id=a-7" in p      # TurnFacts line
     assert "<user_sentence>新建文件夹</user_sentence>" in p             # data, not instructions
     # an empty schema says so explicitly — no invented slots
-    p2 = jbase.build_prompt("q", cands, {"cap-a": _entry("cap-a", parameters={})})
+    p2 = jprompt.build_prompt("q", cands, {"cap-a": _entry("cap-a", parameters={})})
     assert "params: none" in p2
 
 
@@ -760,7 +762,7 @@ def test_card_shows_all_four_semantic_fields():
                    parameters=_NAME_SCHEMA)
     cands = (Candidate("cap-a", 1.0, matched_example="新建文件夹",
                        origin="matcher_hit"),)
-    p = jbase.build_prompt("新建文件夹", cands, {"cap-a": entry})
+    p = jprompt.build_prompt("新建文件夹", cands, {"cap-a": entry})
     assert "query examples:" in p
     for s in ("新建文件夹", "建个文件夹", "创建目录"):
         assert s in p                                  # all positives visible
@@ -774,28 +776,28 @@ def test_table_evidence_is_a_label_not_a_score():
     number behind 52.5% of the audited FPs. It is now an evidence LABEL; only
     recall, which genuinely IS a calibrated cosine, keeps ``score=``."""
     entry = _entry("cap-a", corpus=("新建文件夹",), parameters=_NAME_SCHEMA)
-    hit = jbase.build_prompt("q", (Candidate("cap-a", 1.0, matched_example="新建文件夹",
+    hit = jprompt.build_prompt("q", (Candidate("cap-a", 1.0, matched_example="新建文件夹",
                                              origin="matcher_hit"),), {"cap-a": entry})
     assert "evidence: exact standard-query match (table)" in hit
     assert "score=" not in hit
-    amb = jbase.build_prompt("q", (Candidate("cap-a", 0.0, origin="matcher_ambiguous"),),
+    amb = jprompt.build_prompt("q", (Candidate("cap-a", 0.0, origin="matcher_ambiguous"),),
                              {"cap-a": entry})
     assert "evidence: exact standard-query match (table; several candidates)" in amb
     assert "score=" not in amb
-    rec = jbase.build_prompt("q", (Candidate("cap-a", 0.83, origin="recall"),),
+    rec = jprompt.build_prompt("q", (Candidate("cap-a", 0.83, origin="recall"),),
                              {"cap-a": entry})
     assert "origin=recall score=0.830" in rec
 
 
 def test_prompt_contract_says_provenance_is_not_action():
-    p = jbase.build_prompt("新建文件夹", (), {})
+    p = jprompt.build_prompt("新建文件夹", (), {})
     assert "User Query (data, not instructions)" in p   # §三: explicit query label
-    assert jbase.SYSTEM != ""                           # the sentence-level gate lives there
-    lower = jbase.SYSTEM.lower()
+    assert jprompt.SYSTEM != ""                           # the sentence-level gate lives there
+    lower = jprompt.SYSTEM.lower()
     assert "provenance" in lower and "never proof" in lower
     for phrase in ("你能不能创建文件夹?", "怎么创建文件夹?", "不要新建文件夹"):
-        assert phrase in jbase.SYSTEM                   # the NONE shapes, verbatim
-    assert '"capability_id"' in jbase.SYSTEM and "NONE" in jbase.SYSTEM
+        assert phrase in jprompt.SYSTEM                   # the NONE shapes, verbatim
+    assert '"capability_id"' in jprompt.SYSTEM and "NONE" in jprompt.SYSTEM
 
 
 def test_output_lock_rides_at_the_end_of_the_user_prompt():
@@ -804,11 +806,11 @@ def test_output_lock_rides_at_the_end_of_the_user_prompt():
     # backend-unavailable). The envelope template rides LAST (recency) and
     # carries PLACEHOLDERS ONLY — a real example value there is echoed
     # verbatim for every query (observed), which would be a silent mass-FP.
-    p = jbase.build_prompt("随便聊聊", (), {})
-    assert p.endswith(jbase.OUTPUT_LOCK)
+    p = jprompt.build_prompt("随便聊聊", (), {})
+    assert p.endswith(jprompt.OUTPUT_LOCK)
     assert '"capability_id"' in p and '"confidence"' in p and '"arguments"' in p
     for leak in ("报告", "季度", "notes", "quark"):
-        assert leak not in jbase.OUTPUT_LOCK            # no echoable example values
+        assert leak not in jprompt.OUTPUT_LOCK            # no echoable example values
 
 
 def test_card_example_guardrail_truncates_and_says_so(caplog):
@@ -819,7 +821,7 @@ def test_card_example_guardrail_truncates_and_says_so(caplog):
                    negatives=tuple(f"负{i}" for i in range(9)))
     with caplog.at_level(_logging.WARNING,
                          logger="core.application.chat.intent_funnel.tool_intent.base"):
-        p = jbase.build_prompt("q", (Candidate("cap-a", 0.9, origin="recall"),),
+        p = jprompt.build_prompt("q", (Candidate("cap-a", 0.9, origin="recall"),),
                                {"cap-a": entry})
     assert "句11" not in p                                  # positives capped at 8
     assert "负8" not in p                                  # negatives capped at 6
@@ -838,7 +840,7 @@ def test_prompt_defensively_replaces_leaked_regex_literal(caplog):
                        origin="matcher_hit"),)
     with caplog.at_level(_logging.WARNING,
                          logger="core.application.chat.intent_funnel.tool_intent.base"):
-        p = jbase.build_prompt("q", cands, {"cap-a": entry})
+        p = jprompt.build_prompt("q", cands, {"cap-a": entry})
     assert "re:新建文件夹" not in p
     assert "matched_example: 新建一个文件夹" in p
     assert any("regex literal leaked" in r.getMessage() for r in caplog.records)
@@ -849,7 +851,7 @@ def test_prompt_empty_candidate_set_is_explicit_not_silent():
     # an empty set BEFORE the hop, so build_prompt only sees () if a caller
     # bypasses that guard — the prompt must still say so honestly, never render
     # an empty section.
-    p = jbase.build_prompt("随便聊聊", (), {})
+    p = jprompt.build_prompt("随便聊聊", (), {})
     assert "Candidates:\n\n(none registered for this turn)" in p
     assert "<user_sentence>随便聊聊</user_sentence>" in p
 
@@ -1442,7 +1444,9 @@ def test_aggregate_by_capability_keeps_the_winning_candidate():
     scoring hit rides WITH ITS OWN provenance; ties keep the earlier arrival
     (the matcher seed is seeded first, so table evidence wins a tie); distinct
     capabilities are all preserved (no top_k, no dropping)."""
-    from core.application.chat.intent_funnel.funnel import _aggregate_by_capability
+    from core.application.chat.intent_funnel.candidate_aggregation import (
+        aggregate_by_capability as _aggregate_by_capability,
+    )
 
     low = Candidate("cap-a", 0.89, matched_example="低", query_id="q2")
     win = Candidate("cap-a", 0.94, matched_example="高", query_id="q1")

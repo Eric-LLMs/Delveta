@@ -18,7 +18,8 @@ behavior.
 """
 from __future__ import annotations
 
-from .base import SYSTEM, ToolIntentUnavailable, build_prompt
+from ..base import ToolIntentUnavailable
+from ..prompt import SYSTEM, build_prompt
 
 
 def _channel_kwargs() -> dict:

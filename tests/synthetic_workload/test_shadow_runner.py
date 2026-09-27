@@ -25,6 +25,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import shadow_runner as R
 from core.application.chat.intent_funnel import funnel
+from core.application.chat.intent_funnel import observability as obs_mod
 from core.application.chat.intent_funnel import recall as recall_mod
 from core.application.chat.intent_funnel import registry as reg_mod
 from core.application.chat.intent_funnel.registry import entry as entry_mod
@@ -123,7 +124,7 @@ def wired(monkeypatch, request):
     async def no_persist(*a, **k):
         raise AssertionError("shadow must never persist an event row")
 
-    monkeypatch.setattr(funnel, "_persist_event", no_persist)
+    monkeypatch.setattr(obs_mod, "persist_event", no_persist)
     return fp
 
 

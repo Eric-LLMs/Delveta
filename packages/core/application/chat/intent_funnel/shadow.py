@@ -1,16 +1,24 @@
-"""Shadow Mode — the 8.15 measurement infrastructure, formalizing step 3's hook.
+"""Shadow lanes — observation with zero execution authority.
 
-Tri-state switch: ``settings.chat_matcher_mode`` (validated in ``core.config``
-docs + :func:`funnel.route`):
+Two shadows share this module, both Observer-only:
 
-* ``off``    — the node never runs (dark-launch default);
-* ``shadow`` — the Registry-backed Matcher runs on every turn and its verdict is
-  logged as ``would_*`` telemetry next to the L0 outcome; routing is untouched
-  and the Agent keeps the turn byte-identically;
-* ``on``     — deterministic certification INSIDE the new cascade (only with
-  ``chat_funnel_enabled``; see funnel._run_nodes). Without the funnel gate it
-  keeps running SHADOW semantics with a one-time warning: a mis-set switch must
-  never silently hand routing to a node measured only in the dark.
+1. :func:`observe` — the 8.15 Matcher dark-launch hook, formalizing step 3's
+   hook. Tri-state switch: ``settings.chat_matcher_mode`` (validated in
+   ``core.config`` docs + :func:`orchestrator`-side call in ``funnel.route``):
+
+   * ``off``    — the node never runs (dark-launch default);
+   * ``shadow`` — the Registry-backed Matcher runs on every turn and its
+     verdict is logged as ``would_*`` telemetry next to the L0 outcome;
+     routing is untouched and the Agent keeps the turn byte-identically;
+   * ``on``     — deterministic certification INSIDE the new cascade (only
+     with ``chat_funnel_enabled``; see orchestrator.run_nodes). Without the
+     funnel gate it keeps running SHADOW semantics with a one-time warning: a
+     mis-set switch must never silently hand routing to a node measured only
+     in the dark.
+
+2. :func:`cascade_shadow` — the Phase-E full-cascade shadow: one dry-run turn
+   through the SAME orchestrator body as production (zero cascade
+   duplication, so the shadow can never drift from shipped semantics).
 
 Two invariants this module owns:
 
@@ -25,12 +33,20 @@ from __future__ import annotations
 
 import logging
 
+from core.application.chat.understanding import (
+    Complexity,
+    Confidence,
+    Signal,
+    TurnRequirements,
+)
 from core.infrastructure.request_context import (
     reset_request_execution_mode,
     set_request_execution_mode,
 )
 
+from . import observability
 from .contract import MATCH_AMBIGUOUS, MATCH_HIT, MatchResult, TurnFacts
+from .orchestrator import run_cascade
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +79,7 @@ async def observe(ctx, deps, requirements, mode: str) -> None:
     routes; pins execution_mode=shadow for its duration only."""
     global _warned_on
     if mode == "on" and not _warned_on:
-        from .funnel import funnel_live  # late import: funnel owns the shadow hook
+        from .policy import funnel_live  # policy owns the gate; no funnel back-edge
 
         if not funnel_live(requirements, deps, ctx):
             _warned_on = True  # once per process — a mis-set switch, not a per-turn event
@@ -131,3 +147,78 @@ def _confidence(res: MatchResult) -> str:
     """The deterministic Matcher is always sure of a table hit; a real
     calibrated confidence arrives with the ToolIntentModel (P2, 8.13's data-first plan)."""
     return "1.0" if res.state == MATCH_HIT else "0.0"
+
+
+# ── Phase-E full-cascade shadow (SAME orchestrator body, raw-score seam open) ────
+
+async def cascade_shadow(ctx, *, deps, requirements=None,
+                         recall_min_score: float = 0.0,
+                         model_candidate_floor: float = 0.58,
+                         persist_event: bool = False,
+                         turn_key: str = "") -> dict:
+    """Phase-E Cascade Shadow: one dry-run turn through the SAME node body as
+    production (:func:`orchestrator.run_nodes` — zero orchestration
+    duplication, so the shadow can never drift from shipped semantics), with
+    the raw-score seam opened: Recall keeps every candidate it scored
+    (min_score=0; the live-table ruling already keeps EVERY hit >= threshold as
+    its own candidate) and the model-facing set re-applies a floor, so ALL
+    threshold buckets are recomputable OFFLINE from the captured raw scores —
+    recall is never re-run per threshold. The chain stops at Binder: routing
+    metadata only (8.8), no dispatch, no Runtime, no event row; usage is pinned
+    ``execution_mode=shadow`` (8.14) and observability is log-only.
+    ``would_execute`` is the certified turn's metadata, NOT a permission —
+    by construction the cascade cannot execute anything from here.
+    Never raises: faults surface as 8.10 fallback reasons, exactly as in
+    production.
+
+    Shadow-live A/B seam (2026-09-27, both defaults = byte-identical replay):
+    ``persist_event=True`` also writes the 8.12 event row (still pinned
+    ``execution_mode=shadow``) so live observation accumulates in the same
+    table the observability admin reads; ``turn_key`` rides the row's
+    trace_json (plus the stage captures — never the query) as the join key
+    against the orchestrator's ``funnel_ab_turn`` line."""
+    if requirements is None:
+        requirements = TurnRequirements(
+            complexity=Complexity.LOW, confidence=Confidence.LOW,
+            needs_web=Signal.LOW, needs_memory=False,
+        )
+    trace = observability.new_trace()
+    capture: dict = {}
+    token = set_request_execution_mode("shadow")
+    try:
+        out = await run_cascade(ctx, deps, requirements, trace,
+                                recall_min_score=recall_min_score,
+                                model_candidate_floor=model_candidate_floor,
+                                capture=capture)
+        if persist_event:
+            # Inside the pin: the row says execution_mode=shadow (8.14). The
+            # trace_json carries the turn_key join anchor + stage captures,
+            # never the raw query (same no-query rule as production rows).
+            _act = (out.requested_action or {}) if out is not None else {}
+            await observability.persist_event(deps, ctx, trace, {
+                "turn_key": turn_key or None,
+                "matcher": capture.get("matcher"),
+                "candidates": capture.get("candidates", []),
+                "model_verdict": capture.get("tool_intent"),
+                "would_execute": {
+                    k: _act.get(k) for k in
+                    ("capability_id", "args", "funnel_stage", "funnel_kind")
+                } if _act else None,
+            })
+    finally:
+        reset_request_execution_mode(token)
+    observability.log_trace(trace)
+    result = {
+        "deepest_stage": trace["stage"], "matcher": trace["matcher"],
+        "recall_count": trace["recall_count"], "recall_top": trace["recall_top"],
+        "tool_intent": trace["tool_intent"],
+        "final_route": trace["final_route"], "fallback_reason": trace["fallback"],
+        "registry_version": trace["registry"], "index_version": trace["index"],
+        "total_ms": trace["total_ms"], "execution_mode": "shadow",
+        "capture": capture,
+    }
+    act = (out.requested_action or {}) if out is not None else {}
+    result["would_execute"] = ({k: act.get(k) for k in (
+        "capability_id", "args", "funnel_stage", "funnel_kind",
+    )} if out is not None else None)
+    return result

@@ -19,7 +19,7 @@ pinning the ladder at the deterministic end.
 """
 from __future__ import annotations
 
-from ..contract import (
+from ...contract import (
     TOOL_INTENT_CONFIDENT,
     TOOL_INTENT_REJECT,
     TOOL_INTENT_UNCERTAIN,
