@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import base64
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID
@@ -96,10 +97,52 @@ class ChatTurnContext:
     # The kernel run(context=…) payload, assembled per route (see build_turn_context)
     agent_context: dict | None = None
     disable_thinking: bool = False
+    # Turn facts for the Funnel (E2E-matrix ruling 2026-09-27): the asset a
+    # "My Drive/…" path in the SENTENCE resolves to, settled once here at
+    # context-build (the only place with drive I/O in the fact chain). "" =
+    # the sentence names no resolvable asset; the Binder reads it via
+    # TurnFacts.path_asset_id and never guesses.
+    path_asset_id: str = ""
     # Shadow-live A/B (2026-09-27): the funnel observation task + its join key.
     # Observation only — the Agent path never reads these back.
     funnel_shadow_task: Any = None
     funnel_turn_key: str = ""
+
+
+def _attach_asset_id(body: Any) -> str:
+    """The asset id an attach carries, if any (dict or object shape)."""
+    attach = getattr(body, "attach", None)
+    if isinstance(attach, dict):
+        return str(attach.get("asset_id") or "")
+    if attach is not None:
+        return str(getattr(attach, "asset_id", "") or "")
+    return ""
+
+
+# A drive path named in the sentence: "My Drive/a/b/x.pdf" / "我的云盘/…".
+# Explicit root prefix only — a bare "报告.pdf" is NOT a path fact (too many
+# false-positive shapes), it stays the Agent's to clarify.
+_PATH_TOKEN = re.compile(
+    r"(?:My Drive|我的云盘)\s*[／/]\s*([^\s\"'，。；！？<>|／/][^\s\"'，。；！？<>|]*)")
+
+
+async def _resolve_path_asset(message: str | None, drive: DriveService,
+                              user_id: Any) -> str:
+    """Settle the Funnel turn fact ``path_asset_id``: exactly one READY personal
+    asset at the named path, else "". Resolution is the drive service's
+    (existing repository lookup) — this only finds the token and asks."""
+    if not message:
+        return ""
+    m = _PATH_TOKEN.search(message)
+    if m is None:
+        return ""
+    try:
+        found = await drive.resolve_personal_path(user_id, "My Drive/" + m.group(1).strip())
+    except Exception:
+        logger.warning("path turn-fact lookup failed — no fact, turn unaffected",
+                       exc_info=True)
+        return ""
+    return str((found or {}).get("asset_id") or "")
 
 
 async def attach_note(
@@ -461,6 +504,13 @@ async def build_turn_context(
         business_name=business_name, credential_id=credential_id,
         user_text=user_text, owned_asset_id=owned_asset_id, inline_image=inline_image,
     )
+    # Turn facts for the Funnel (2026-09-27): settle a "My Drive/…" path named IN
+    # THE SENTENCE to its real asset id, once, here — the fact chain's only I/O
+    # point (TurnFacts.of itself stays pure). Skipped when an attach already
+    # carries the turn's asset (attach wins in the Binder's precedence). Any
+    # lookup problem degrades to "" (no fact), never a failed turn.
+    if user_id is not None and not (owned_asset_id or _attach_asset_id(body)):
+        ctx.path_asset_id = await _resolve_path_asset(body.message, drive, user_id)
 
     viewer_assembly = await build_viewer_assembly(body, drive, user_id, deps.viewer)
     ctx.viewer_assembly = viewer_assembly

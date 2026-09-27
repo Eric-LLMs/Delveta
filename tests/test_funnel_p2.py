@@ -178,8 +178,32 @@ def test_turn_facts_reads_structured_viewer_and_attach_only():
     f = TurnFacts.of(ctx)
     assert f == TurnFacts(
         has_viewer=True, viewer_asset_id="a-7", viewer_current_page=12,
-        has_viewer_selection=True, has_attachment=True, has_turn_context=True,
+        has_viewer_selection=True, has_attachment=True,
+        attachment_asset_id="b-1",  # 2026-09-27: the attach's id is a settled fact
+        has_turn_context=True,
     )
+
+
+def test_turn_facts_asset_id_sources_and_precedence():
+    # owned upload wins over the attach dict (legacy _asset_id precedence kept)
+    ctx = _ctx("x", body=types.SimpleNamespace(
+        message="x", attach={"asset_id": "b-1"}, viewer=None),
+        owned_asset_id="o-9")
+    f = TurnFacts.of(ctx)
+    assert f.attachment_asset_id == "o-9"
+    # object-shaped attach (not dict) still yields its id
+    ctx = _ctx("x", body=types.SimpleNamespace(
+        message="x", attach=types.SimpleNamespace(asset_id="o-2"), viewer=None))
+    assert TurnFacts.of(ctx).attachment_asset_id == "o-2"
+    # path_asset_id rides through from the upstream-resolved ctx field — no I/O here
+    ctx = _ctx("x", body=types.SimpleNamespace(
+        message="x", attach=None, viewer=None), path_asset_id="p-3")
+    f = TurnFacts.of(ctx)
+    assert f.path_asset_id == "p-3" and f.has_attachment is False \
+        and f.attachment_asset_id == ""
+    # plain turn: both asset facts empty, nothing guessed
+    plain = TurnFacts.of(_ctx("hello", session_id=None))
+    assert plain.attachment_asset_id == "" and plain.path_asset_id == ""
 
 
 def test_turn_facts_plain_turn_is_all_empty():
@@ -204,8 +228,11 @@ def test_turn_veto_reasons_and_pass_through():
     ctx = _ctx("新建文件夹")
     assert guardrails.turn_veto("新建文件夹", req, ctx) is None
     assert guardrails.turn_veto('{"tool": "x"}', req, ctx) == "input_not_pure_text"
-    assert guardrails.turn_veto("查一下", _req(needs_web=Signal.HIGH), ctx) \
-        == "turn_demands_web_or_memory"
+    # E2E-matrix ruling 2026-09-27: web demand is NO LONGER an entry veto — a
+    # certified web_search action must reach the executor on the Funnel lane.
+    # The composite guard moved to execution_plan._is_action_eligible (web-family
+    # tool only), tested in test_chat_control_plane.
+    assert guardrails.turn_veto("查一下", _req(needs_web=Signal.HIGH), ctx) is None
     assert guardrails.turn_veto("查一下", _req(needs_memory=True), ctx) \
         == "turn_demands_web_or_memory"
     assert guardrails.turn_veto("继续", req, _ctx("继续", research_turn=True)) \
@@ -920,6 +947,55 @@ def test_binder_validate_normalizes_against_registry_schema():
     assert binder.validate(opt, {}).state == BIND_MISSING
 
 
+# ── context-sourced slots: the FACTS, never the draft, answer asset identity ──
+# (E2E-matrix ruling 2026-09-27 — asset_id "from turn facts, not the sentence")
+
+_ASSET_SCHEMA = {"asset_id": {"type": "string", "max_len": 64, "required": True}}
+
+
+def test_binder_asset_slot_overwrites_hallucinated_draft_with_the_fact():
+    from core.application.chat.intent_funnel import binder
+
+    entry = _entry("cap-a", parameters=_ASSET_SCHEMA)
+    facts = TurnFacts(has_attachment=True, attachment_asset_id="real-uuid")
+    bound = binder.validate(entry, {"asset_id": "hallucinated-uuid"}, facts)
+    assert bound.state == BIND_COMPLETE and bound.args == {"asset_id": "real-uuid"}
+    # model omitted it — the fact fills it, the draft is not needed
+    assert binder.validate(entry, None, facts).args == {"asset_id": "real-uuid"}
+
+
+def test_binder_asset_slot_stripped_when_facts_absent_never_guess():
+    from core.application.chat.intent_funnel import binder
+
+    entry = _entry("cap-a", parameters=_ASSET_SCHEMA)
+    # A model-supplied asset id without any turn fact is REFUSED (missing →
+    # Agent owns the clarification): facts are the only possible truth source.
+    assert binder.validate(entry, {"asset_id": "made-up"}, TurnFacts()).state == BIND_MISSING
+    assert binder.validate(entry, {"asset_id": "made-up"}, None).state == BIND_MISSING
+
+
+def test_binder_asset_slot_fact_precedence_attach_path_viewer():
+    from core.application.chat.intent_funnel import binder
+
+    entry = _entry("cap-a", parameters=_ASSET_SCHEMA)
+    f = TurnFacts(attachment_asset_id="A", path_asset_id="P", viewer_asset_id="V")
+    assert binder.validate(entry, {}, f).args == {"asset_id": "A"}
+    assert binder.validate(entry, {}, TurnFacts(path_asset_id="P",
+                                                viewer_asset_id="V")).args == {"asset_id": "P"}
+    assert binder.validate(entry, {}, TurnFacts(viewer_asset_id="V")).args == {"asset_id": "V"}
+
+
+def test_binder_context_slots_touched_only_by_name_not_by_tool():
+    from core.application.chat.intent_funnel import binder
+
+    # a schema WITHOUT an asset_id slot is byte-identical behavior under facts
+    entry = _entry("cap-a", parameters=_NAME_SCHEMA)
+    facts = TurnFacts(attachment_asset_id="A")
+    assert binder.validate(entry, {"name": "报告"}, facts).args == {"name": "报告"}
+    # unknown extra draft keys still hit the whitelist gate, not the injector
+    assert binder.validate(entry, {"name": "x", "asset_id": "A"}, facts).state == BIND_INVALID
+
+
 # ═══════════════════════════════ cascade via route() ═══════════════════════════
 
 
@@ -988,7 +1064,9 @@ async def test_vetoed_turn_skips_cascade(monkeypatch):
         "core.application.chat.intent_funnel.registry.active_view",
         lambda **kw: pytest.fail("veto before any cascade read"),
     )
-    req = _req(needs_web=Signal.HIGH)
+    # memory demand still vetoes at entry (web demand was lifted 2026-09-27 —
+    # see test_turn_veto_reasons_and_pass_through)
+    req = _req(needs_memory=True)
     out = await funnel.route(_ctx(MSG), deps=object(), requirements=req)
     assert out is req
 

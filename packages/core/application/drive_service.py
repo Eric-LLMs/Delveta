@@ -400,6 +400,34 @@ class DriveService:
         asset = await self.ensure_asset_readable(user_id, asset_id)
         return self._asset_dict(asset)
 
+    async def resolve_personal_path(self, user_id: UUID, path: str) -> dict | None:
+        """Resolve a personal-drive path to the one READY asset it names, or None.
+
+        ``path`` is the user's own wording — "My Drive/a/b/x.pdf" or the bare
+        stored form "a/b/x.pdf" (folders store paths relative to the My Drive
+        root). Personal scope only (workspace_id None), exact folder_path +
+        name via the existing repository lookup — no fuzzy matching, no
+        guessing: ambiguous/missing/not-ready resolves to None so callers keep
+        the honest "cannot determine" exit instead of a hallucinated asset id.
+        Added for the Funnel turn-facts chain (E2E-matrix ruling 2026-09-27);
+        general-purpose, not chat-specific.
+        """
+        p = (path or "").strip().rstrip("/")
+        for root in ("My Drive/", "我的云盘/"):
+            if p.startswith(root):
+                p = p[len(root):]
+                break
+        p = p.lstrip("/")
+        if not p:
+            return None
+        folder_path, _, name = p.rpartition("/")
+        asset = await self.assets.get_by_path(
+            user_id, None, folder_path or None, name)
+        if asset is None or asset.file_status != READY:
+            return None
+        return {"asset_id": str(asset.id), "name": asset.name,
+                "folder_path": asset.folder_path or ""}
+
     async def rename_file(
         self, user_id: UUID, asset_id: UUID, name: str | None = None, folder_path: str | None = None
     ) -> dict:

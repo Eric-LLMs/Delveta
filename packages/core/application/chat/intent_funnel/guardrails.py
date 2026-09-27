@@ -13,7 +13,6 @@ import re
 
 from core.application.chat.actions import is_negated_request
 from core.application.chat.sanitization import is_pure_user_text
-from core.application.chat.understanding import Signal
 
 # Entry veto "referenced_input_absent" (shadow-A/B follow-up 2026-09-27, suspects
 # a403c4b341e1 / d795e47fe617): a turn whose input OBJECT is named only by a
@@ -45,12 +44,22 @@ def turn_veto(message: str, requirements, ctx) -> str | None:
     """Prefixed reason when the funnel must not own this turn; None = proceed.
 
     Mirrors the frozen gate semantics (design §4.3 zero-pollution + ruling a):
-    web/memory demand belongs to the Agent's planning loop, research/handoff
-    turns are inherently multi-step chains, and non-pure text (attachment
-    markers, control payloads) must never be pattern-matched as user intent."""
+    memory demand belongs to the Agent's planning loop, research/handoff turns
+    are inherently multi-step chains, and non-pure text (attachment markers,
+    control payloads) must never be pattern-matched as user intent.
+
+    Web demand is NO LONGER an entry veto (E2E-matrix ruling 2026-09-27): a
+    certified ``web_search``/``search_social`` action must be able to run on the
+    Funnel lane, exactly like on the Agent lane. The composite protection the
+    old blanket veto provided moved downstream, where the certified tool is
+    known: ``certified()`` carries the turn's ``needs_web`` through and
+    :func:`execution_plan._is_action_eligible` admits a web-demanding turn only
+    when the certified tool is itself web-family — "新建文件夹并查新闻" still
+    exits to the Agent, never a half-execution. (The reason string keeps its
+    historical spelling so shadow/telemetry denominators stay comparable.)"""
     if not is_pure_user_text(message or ""):
         return "input_not_pure_text"
-    if requirements.needs_web is not Signal.LOW or requirements.needs_memory:
+    if requirements.needs_memory:
         return "turn_demands_web_or_memory"
     if getattr(ctx, "research_turn", False) or getattr(ctx, "effective_handoff", None):
         return "context_research_or_handoff"

@@ -34,22 +34,44 @@ class TurnFacts:
     viewer_current_page: int | None = None
     has_viewer_selection: bool = False
     has_attachment: bool = False
+    # Asset identity rides the SAME fact channel as everything else settled
+    # upstream (E2E-matrix ruling 2026-09-27): the attach's server-verified
+    # asset id and the asset a drive path in the sentence resolves to are TURN
+    # FACTS, never model output — the Binder sources asset-id slots from here,
+    # so the model can neither omit nor hallucinate them. "" = no asset.
+    attachment_asset_id: str = ""
+    path_asset_id: str = ""
     has_turn_context: bool = False  # a session-bound turn: prior context exists
 
     @classmethod
     def of(cls, ctx) -> TurnFacts:
         """Build once from the resolved turn context. ``body.viewer`` is the
         request's ViewerPayload (schemas.py); ``attach`` a dict; both may be
-        absent on guest/plain turns."""
+        absent on guest/plain turns. The attachment id keeps the legacy
+        accessor's precedence (owned upload first, then the attach dict —
+        :func:`registry.plugins._asset_id` was the reference); ``path_asset_id``
+        was resolved upstream at context-build time — no I/O happens here."""
         body = ctx.body
         viewer = getattr(body, "viewer", None)
         selections = getattr(viewer, "selections", None) or []
+        attach = getattr(body, "attach", None)
+        owned = getattr(ctx, "owned_asset_id", None)
+        if owned:
+            attachment_asset_id = str(owned)
+        elif isinstance(attach, dict):
+            attachment_asset_id = str(attach.get("asset_id") or "")
+        elif attach is not None:
+            attachment_asset_id = str(getattr(attach, "asset_id", "") or "")
+        else:
+            attachment_asset_id = ""
         return cls(
             has_viewer=viewer is not None,
             viewer_asset_id=str(getattr(viewer, "asset_id", "") or ""),
             viewer_current_page=getattr(viewer, "page", None),
             has_viewer_selection=bool(selections),
-            has_attachment=bool(getattr(body, "attach", None)),
+            has_attachment=bool(attach),
+            attachment_asset_id=attachment_asset_id,
+            path_asset_id=str(getattr(ctx, "path_asset_id", "") or ""),
             has_turn_context=bool(getattr(ctx, "session_id", None)),
         )
 

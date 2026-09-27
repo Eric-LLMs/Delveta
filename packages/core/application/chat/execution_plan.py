@@ -17,6 +17,10 @@ from enum import Enum
 
 from core.application.chat.understanding import Confidence, Signal, TurnRequirements
 
+# Tools whose whole job IS the web: a web-demanding turn may only certify these
+# (see _is_action_eligible). Names match the Registry's tool_binding values.
+_WEB_FAMILY_TOOLS = frozenset({"web_search", "search_social"})
+
 
 class PlanKind(str, Enum):
     DIRECT = "direct"
@@ -219,12 +223,24 @@ def _is_retrieval_eligible(requirements: TurnRequirements) -> bool:
 
 def _is_action_eligible(requirements: TurnRequirements) -> bool:
     """The ACTION guard: L0 certified a registered-tool direct request. ``requested_action``
-    is ONLY ever set by the DIRECT_TOOLS extractor, so presence is the full contract;
-    no second registry check here (the executor's schema gate owns that)."""
+    is ONLY ever set by the DIRECT_TOOLS extractor or the funnel's ``certified()``, so
+    presence is the full contract; no second registry check here (the executor's schema
+    gate owns that).
+
+    Web demand (E2E-matrix ruling 2026-09-27): the blanket web veto moved off the
+    funnel ENTRY and lands HERE, where the certified tool is known — a
+    web-demanding turn may take the ACTION lane only when the certified tool is
+    itself web-family (``web_search``/``search_social``). A composite like
+    "新建文件夹并查新闻" certifies a NON-web tool while ``needs_web`` stays HIGH,
+    so it still exits to the Agent — the single-capability contract is preserved
+    exactly where it was before, just evaluated with more information."""
+    action = requirements.requested_action
+    web_admissible = (requirements.needs_web is Signal.LOW
+                      or (action or {}).get("tool") in _WEB_FAMILY_TOOLS)
     return (
         requirements.needs_action is Signal.HIGH
-        and requirements.requested_action is not None
-        and requirements.needs_web is Signal.LOW
+        and action is not None
+        and web_admissible
         and not requirements.needs_memory
     )
 

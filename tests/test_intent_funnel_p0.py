@@ -86,8 +86,11 @@ def test_gate_requires_every_switch(monkeypatch):
 
 def test_gate_defers_demanding_turns_to_guardrails(monkeypatch):
     _all_switches_on(monkeypatch)
+    # E2E-matrix ruling 2026-09-27: web demand no longer vetoes at entry (the
+    # certified web_search action must be able to run on the Funnel lane);
+    # memory demand still defers to the Agent.
     webby = TurnRequirements(needs_web=Signal.HIGH)
-    assert funnel_live(webby, deps=object(), ctx=_live_ctx()) is False
+    assert funnel_live(webby, deps=object(), ctx=_live_ctx()) is True
     memory = TurnRequirements(needs_memory=True)
     assert funnel_live(memory, deps=object(), ctx=_live_ctx()) is False
     research = TurnRequirements()

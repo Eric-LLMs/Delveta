@@ -29,6 +29,13 @@ def _facts_line(facts) -> str:
         f"viewer_current_page={facts.viewer_current_page if facts.viewer_current_page is not None else '-'}",
         f"has_viewer_selection={int(bool(facts.has_viewer_selection))}",
         f"has_attachment={int(bool(facts.has_attachment))}",
+        # Which asset the turn ACTUALLY points at (2026-09-27): shown so the
+        # model can select asset-demanding capabilities with full information.
+        # Asset-id ARGUMENTS are still filled by the Binder from these facts —
+        # whatever the model writes there is overwritten or stripped, never
+        # executed (the facts, not the draft, are the truth).
+        f"attachment_asset_id={getattr(facts, 'attachment_asset_id', '') or '-'}",
+        f"path_asset_id={getattr(facts, 'path_asset_id', '') or '-'}",
         f"has_turn_context={int(bool(facts.has_turn_context))}",
     ]
     return "Turn facts (settled context for this sentence): " + " ".join(flags) + "\n\n"

@@ -250,7 +250,7 @@ async def run_nodes(ctx, deps, requirements, trace, *,
         capture["entry"] = {"intent_kind": entry.intent_kind,
                             "tool_binding": entry.tool_binding}
     trace["stage"] = "binder"
-    bound = binder.validate(entry, jv.arguments)
+    bound = binder.validate(entry, jv.arguments, facts)
     if capture is not None:
         capture["binder"] = bound.state
     if not bound.is_complete:
@@ -284,6 +284,11 @@ def certified(requirements, entry, args, registry_fp, *,
     return TurnRequirements(
         needs_action=Signal.HIGH, requested_action=action,
         complexity=Complexity.LOW, confidence=Confidence.HIGH,
+        # Web demand RIDES THROUGH (E2E-matrix ruling 2026-09-27): the entry veto
+        # no longer blanket-refuses web turns, so the composite guard lives in
+        # execution_plan._is_action_eligible, which needs the turn's true
+        # needs_web to refuse "新建文件夹并查新闻"-style half-certifications.
+        needs_web=requirements.needs_web,
         private_only=requirements.private_only,
         external_ok=requirements.external_ok,
     )

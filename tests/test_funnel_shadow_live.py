@@ -195,18 +195,19 @@ async def _shadow_line_for(monkeypatch, caplog, msg):
     return plan, ctx, line
 
 
-async def test_mid_sentence_cjk_web_turn_is_entry_vetoed_in_shadow(
+async def test_mid_sentence_cjk_web_turn_reaches_the_cascade(
     monkeypatch, caplog, _no_fast_paths
 ):
-    """Item 4 (sim #14): "重要新闻" sits mid-sentence — the old "\\b(…|新闻)\\b"
-    never matched CJK, and the neutral shadow requirements hid the veto twice
-    over. Both legs fixed: the sentence classifies needs_web=HIGH and the
-    shadow line reports the DESIGN exit, not a fake NO_CANDIDATE."""
+    """Item 4 (sim #14) + E2E-matrix ruling 2026-09-27: "重要新闻" sits
+    mid-sentence — the old "\\b(…|新闻)\\b" never matched CJK. The LEXICON fix
+    stands (the sentence still classifies needs_web=HIGH); the ENTRY VETO for
+    web demand is what changed on 2026-09-27: a web turn now proceeds into the
+    cascade instead of exiting at entry, so the shadow line must show a stage
+    DEEPER than entry. The Agent leg stays byte-identical (8.10 fail-open)."""
     plan, ctx, line = await _shadow_line_for(
         monkeypatch, caplog, "2026年9月AI行业有什么重要新闻?")
-    assert "deepest_stage=entry" in line
-    assert "fallback_reason=turn_demands_web_or_memory" in line
-    # ⑦ the Agent is completely unaffected: its own turn stays byte-identical
+    assert "deepest_stage=entry" not in line  # no more blanket web entry veto
+    assert "fallback_reason=turn_demands_web_or_memory" not in line
     assert plan.kind.value == "agent" and ctx.body.message == "2026年9月AI行业有什么重要新闻?"
 
 

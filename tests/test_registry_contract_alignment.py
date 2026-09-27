@@ -31,6 +31,7 @@ import pytest
 from sqlalchemy import exc as sa_exc
 
 from core.application.chat.intent_funnel import binder, recall
+from core.application.chat.intent_funnel.binder.binder import _CONTEXT_SLOT_SOURCES
 from core.application.chat.intent_funnel.matcher import build_index
 from core.application.chat.intent_funnel.registry import active_view, list_capabilities
 from core.application.chat.intent_funnel.registry import entry as entry_mod
@@ -289,18 +290,53 @@ async def test_healthy_three_keep_frozen_parameters():
 
 # ── Plane 3: Binder + executor schema gates ───────────────────────────────────────
 
+# 2026-09-27 (E2E-matrix ruling): asset_id is a CONTEXT slot — the Binder
+# sources it from TurnFacts, never from the model draft. The contract tests
+# therefore supply the settled fact; the draft's copy is inert either way.
+_FACTS_ASSET_ID = "0ea50a94-f4f7-45eb-bbaa-43966d6af575"
+
+
+def _facts_for(cid: str):
+    """TurnFacts carrying the asset the turn points at — harmless for caps
+    without an asset slot (the injector only touches slots in the schema)."""
+    from core.application.chat.intent_funnel.contract import TurnFacts
+    return TurnFacts(attachment_asset_id=_FACTS_ASSET_ID)
+
+
+# caps whose minimal draft carries asset_id = context-sourced slots
+_ASSET_SOURCED = {cid for cid, args in MINIMAL_ARGS.items() if "asset_id" in args}
+
+
 async def test_binder_requires_the_real_slots_and_accepts_a_complete_draft():
+    from core.application.chat.intent_funnel.contract import TurnFacts
     entries = await _entries_by_id()
     for cid in {**P1_CAPS, **HEALTHY_CAPS}:
         e = entries[cid]
-        # empty draft must NOT certify (the old parameters={} short-circuit)
-        assert not binder.validate(e, {}).is_complete, \
-            f"{cid}: empty draft still COMPLETE — F-1 regression"
+        draft_slots = {k for k, v in e.parameters.items()
+                       if v.get("required") and k not in _CONTEXT_SLOT_SOURCES}
+        if draft_slots:
+            # F-1 regression: a cap with sentence-owned slots must NOT certify
+            # on an empty draft (the old parameters={} short-circuit)
+            assert not binder.validate(e, {}, _facts_for(cid)).is_complete, \
+                f"{cid}: empty draft still COMPLETE — F-1 regression"
+        else:
+            # 2026-09-27 contract: an asset-only cap is FULLY determined by the
+            # turn fact — empty draft + real attachment certifies,
+            # empty draft + no fact stays MISSING (facts, not the model, decide)
+            assert binder.validate(e, {}, _facts_for(cid)).args == \
+                {"asset_id": _FACTS_ASSET_ID}, f"{cid}: fact did not fill asset slot"
+            assert not binder.validate(e, {}, TurnFacts()).is_complete, \
+                f"{cid}: asset certified with no turn fact"
         # a complete minimal draft normalizes to COMPLETE
-        bound = binder.validate(e, dict(MINIMAL_ARGS[cid]))
+        bound = binder.validate(e, dict(MINIMAL_ARGS[cid]), _facts_for(cid))
         assert bound.is_complete, f"{cid}: minimal draft rejected: {bound.state}"
         assert set(bound.args) == {
             k for k, v in e.parameters.items() if v.get("required")}
+        # the context-slot contract (2026-09-27): an asset_id ONLY from the
+        # draft, with no turn fact, is never certified (no hallucinated bind)
+        if cid in _ASSET_SOURCED:
+            naked = binder.validate(e, dict(MINIMAL_ARGS[cid]), TurnFacts())
+            assert not naked.is_complete, f"{cid}: draft-only asset_id certified"
 
 
 async def test_executor_schema_gate_passes_the_certified_args():
@@ -310,7 +346,7 @@ async def test_executor_schema_gate_passes_the_certified_args():
     entries = await _entries_by_id()
     for cid, tool in {**P1_CAPS, **HEALTHY_CAPS}.items():
         e = entries[cid]
-        bound = binder.validate(e, dict(MINIMAL_ARGS[cid]))
+        bound = binder.validate(e, dict(MINIMAL_ARGS[cid]), _facts_for(cid))
         out = binder.validate_action(tool, bound.args, tool_schemas=ROSTER)
         assert out["tool"] == tool
         for k in {s for s, v in ROSTER[tool].items() if v["required"]}:
