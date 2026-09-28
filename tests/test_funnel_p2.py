@@ -748,6 +748,73 @@ def test_local_tools_markdown_fallback_normalizes_to_same_internal_shape(monkeyp
     monkeypatch.setattr(settings, "chat_tool_intent_local_mode", "prompt_json")
 
 
+def test_local_tools_json_content_fallback_normalizes_to_same_internal_shape():
+    """Q5 ruling (2026-09-28): under the tools wire the checkpoint emits a
+    JSON-object content reply more often than a native call (OUTPUT_LOCK
+    recency). The reader's FIXED priority is native tool_calls -> JSON content
+    -> Markdown -> NONE; the JSON branch normalizes into the SAME internal
+    reply shape and never bypasses the shared gate. A prompt_json CONTRACT
+    difference is deliberate: a malformed/absent object here is NOT a
+    selection -> it falls through to Markdown and then NONE (a refusal, not an
+    UNAVAILABLE), because in tools mode the contract is the tool-call."""
+    from core.application.chat.intent_funnel import tool_intent as ti_pkg
+    from core.application.chat.intent_funnel.tool_intent import local as local_mod
+
+    entry = _entry("cap-a", parameters=_NAME_SCHEMA)
+    cands = (Candidate("cap-a", 1.0, origin="matcher_hit"),)
+    ebi = {"cap-a": entry}
+
+    def read(content, tool_calls=None):
+        msg = {"role": "assistant", "content": content, "tool_calls": tool_calls or []}
+        data = local_mod._reply_from_tool_call(msg, cands, ebi)
+        return data, ti_pkg._verdict_from_reply(data, cands)
+
+    # 1) on-card JSON selection -> same shape, gate CONFIDENT (model-reported
+    #    confidence rides through, floor-gated like the prompt_json contract)
+    data, v = read('{"capability_id": "cap-a", "confidence": 0.93, '
+                   '"arguments": {"name": "季度报告"}}')
+    assert data == {"capability_id": "cap-a", "confidence": 0.93,
+                    "arguments": {"name": "季度报告"}}
+    assert v.decision == TOOL_INTENT_CONFIDENT and v.arguments == {"name": "季度报告"}
+
+    # 2) NATIVE PRIORITY: a message carrying BOTH a tool_call and JSON content
+    #    is read from the tool_call — the fixed order is never inverted.
+    msg = {"role": "assistant",
+           "content": '{"capability_id": "cap-invented", "confidence": 1.0, "arguments": {}}',
+           "tool_calls": [{"id": "c1", "type": "function",
+                           "function": {"name": "cap-a", "arguments": '{"name":"x"}'}}]}
+    data = local_mod._reply_from_tool_call(msg, cands, ebi)
+    assert data == {"capability_id": "cap-a", "confidence": 1.0, "arguments": {"name": "x"}}
+
+    # 3) off-card JSON id -> UNCERTAIN at the gate, never an auto-pass
+    data, v = read('{"capability_id": "cap-invented", "confidence": 1.0, "arguments": {}}')
+    assert data["capability_id"] == "cap-invented"
+    assert v.decision == TOOL_INTENT_UNCERTAIN
+
+    # 4) explicit NONE JSON -> refusal -> REJECT
+    data, v = read('{"capability_id": "NONE", "confidence": 0.0, "arguments": null}')
+    assert v.decision == TOOL_INTENT_REJECT
+
+    # 5) NOT selections -> fall through (no capability_id key / object echo /
+    #    truncated repeat loop): stay refusals, never UNAVAILABLE, never a
+    #    fabricated verdict. A bare {"name": "x"} (args fragment or markdown
+    #    body residue) must NOT count as a JSON selection.
+    for bad in ('{"name": "x"}',
+                'some prose {"foo": 1}',
+                '{"capability_id": "cap-a", "arguments": {"type": "run", "properties": '
+                '{"type": "run", "required": "run", "prop',          # truncated loop
+                '{"capability_id": 123, "confidence": 1.0, "arguments": {}}'):
+        data, v = read(bad)
+        assert data["capability_id"] == "NONE", bad
+        assert v.decision == TOOL_INTENT_REJECT, bad
+
+    # 6) Markdown blocks still work AND still take their place AFTER the JSON
+    #    branch: a full markdown reply carries no object with capability_id,
+    #    so the JSON branch declines it and the markdown parser normalizes it.
+    data, v = read('### cap-a\ntool: create_folder\narguments: {"name": "临时"}\nconfidence: 0.9')
+    assert v.decision == TOOL_INTENT_CONFIDENT and v.arguments == {"name": "临时"}
+
+
 def test_local_mode_default_is_prompt_json_and_unchanged():
     """The Phase-1 addition must not move today's behavior: with no explicit mode
     the adapter speaks the original card JSON contract."""

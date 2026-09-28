@@ -95,6 +95,21 @@
 - [23. Viewer Context Provider — The Open Document as Reference Context](#23-viewer-context-provider--the-open-document-as-reference-context)
 - [24. Chat Control Plane — Plan Resolution, Fast Paths & Intent Routing](#24-chat-control-plane--plan-resolution-fast-paths--intent-routing)
 - [25. Chat Intent Funnel — Nodeized Routing, ToolIntentModel & Shared Tool Runtime](#25-chat-intent-funnel--nodeized-routing-toolintentmodel--shared-tool-runtime)
+  - [25.1 Intent Recognition Iteration](#251-intent-recognition-iteration)
+  - [25.2 Iterative Recall Optimization](#252-iterative-recall-optimization)
+  - [25.3 ToolIntentModel — Backends, Wire Discipline & Output Adapters](#253-toolintentmodel--backends-wire-discipline--output-adapters)
+  - [25.4 Intent Model Optimization Iteration 1 — Capability Description Enhancement](#254-intent-model-optimization-iteration-1--capability-description-enhancement)
+  - [25.5 Goals & Principles](#255-goals--principles)
+  - [25.6 The Active Chain](#256-the-active-chain)
+  - [25.7 Node Contracts & the Registry (single source of truth)](#257-node-contracts--the-registry-single-source-of-truth)
+  - [25.8 Failures, Fallback & Stale Dispatch (§8.9–§8.11)](#258-failures-fallback--stale-dispatch-89811)
+  - [25.9 Observability, Execution Modes & Shadow (§8.12, §8.14, §8.15)](#259-observability-execution-modes--shadow-812-814-815)
+  - [25.10 Repository Structure (implemented)](#2510-repository-structure-implemented)
+  - [25.11 Write-Gate & Safety Digest (8.4 / 8.6 / 8.8)](#2511-write-gate--safety-digest-84--86--88)
+  - [25.12 Full Intent Space & Rollout (§6 / §8.19–§8.20)](#2512-full-intent-space--rollout-6--819820)
+  - [25.13 The Five Adjudications](#2513-the-five-adjudications)
+  - [25.14 Configuration (`core/config.py`, post single-path ruling)](#2514-configuration-coreconfigpy-post-single-path-ruling)
+  - [25.15 Test Doctrine](#2515-test-doctrine)
 
 [↑ Back to top](#table-of-contents)
 
@@ -119,7 +134,7 @@
 | Async enrichment | gateway + arq worker split; `jobs` table is the source of truth; frontend polls `GET /jobs/{id}`; daily `session_events` retention cron in `WorkerSettings.cron_jobs`; `run_agent_turn` job reuses the shared `AgentKernel` composition (`apps/api/agent_factory.py`) for scheduled background turns; `toolkit_generate` runs the 5-stage toolkit pipeline (file mode → workspace output; session / cloud-file modes → caller's Cloud Drive, with a custom `prompt` + `name`) |
 | Session memory | PG-backed `sessions` / `messages` / `session_events`; **client Live State (summary + tail) is the normal-turn context source — zero SQL reads on hot turns**; threshold compaction folds raw rows into one 5-section structured summary behind a dual persistence barrier (`sessions.compaction` JSONB = durable checkpoint, revision CAS); per-session async write queue (one batch INSERT/turn); deferred finalize = incremental embed + first-time-only sidebar summary/title; trigger-gated proactive recall (Lane-1 brief always on) + RRF recency weighting + importance-weighted file recall + supersede-in-place user directives + 30-day audit-event retention — see [§22](#22-chat-session-memory-v2--client-live-state-authority--zero-read-turns) |
 | Migrations | single canonical init script `migrations/0001_init.sql` (final schema + reference seeds) applied once by the asyncpg runner (replaces Alembic); dev-time incremental migrations deliberately squashed |
-| Chat | agent loop with tool use, SSE streaming; over a pure control plane — `TurnOrchestrator` resolves every turn to one `ExecutionPlan` (DIRECT / VIEWER / LOCAL_RAG / ACTION / COMPOSITE / AGENT): the L0 lexical pass, then the nodeized **Intent Funnel** single-hop chain (Matcher → Recall → ToolIntentModel → Binder, §25) over the LIVE capability Registry, then policy mapping. Single formal path (ruling 2026-09-28): the funnel chain is always-live and a certified ACTION turn dispatches on certification alone; the four experimental L0 lanes each ride their own lane switch (all default-off, dark); every fallback is byte-identical to the Agent — [§24](#24-chat-control-plane--plan-resolution-fast-paths--intent-routing), [§25](#25-chat-intent-funnel--nodeized-routing-toolintentmodel--shared-tool-runtime) |
+| Chat | agent loop with tool use, SSE streaming; over a pure control plane — `TurnOrchestrator` resolves every turn to one `ExecutionPlan` (DIRECT / VIEWER / LOCAL_RAG / ACTION / COMPOSITE / AGENT): the L0 lexical pass, then the nodeized **Intent Funnel** single-hop chain (Matcher → Recall → ToolIntentModel → Binder, §25) over the LIVE capability Registry, then policy mapping. Single formal path (ruling): the funnel chain is always-live and a certified ACTION turn dispatches on certification alone; the four experimental L0 lanes each ride their own lane switch (all default-off, dark); every fallback is byte-identical to the Agent — [§24](#24-chat-control-plane--plan-resolution-fast-paths--intent-routing), [§25](#25-chat-intent-funnel--nodeized-routing-toolintentmodel--shared-tool-runtime) |
 | Viewer context | chat answers about the **open viewer**: focus chip (file · page / playhead), ±20 s media-time subtitle window with video-only FOCUS / FULL / NONE classification and honest `too_large` / `unavailable` short-circuit, pinned selections / ROI / frames as explicit P0 context (image blocks carry the captured asset's id and ship a REQUIRED `vision` directive), clickable `[Vn]` citations; **documents are never intent-matched server-side** — every followed document reaches the model as a trusted **Viewer Access Context** stub (geometry-resolved current page) routing it to `read_document` page-scoped reads (`pages` spec, ACL-before-storage, ≤16 pages) with a post-turn `viewer.reads` trace incl. failed calls — zero changes to RAG / agent runtime / memory ([§23](#23-viewer-context-provider--the-open-document-as-reference-context), features.md *Desktop Workbench*) |
 | Research OS | tasks created atomically from the desktop chat (**＋ Research**): a cloud task folder under a picked My Drive parent — `materials/` / `outputs/` / `temp/` all guaranteed at creation — with live `task_spec.json` / `session_history.json` mirrors over authoritative scratch state; session isolation (research sessions bound 1:1 to a task, DB-marked `sessions.type=1`, hidden from the Sessions sidebar); 409-guarded cascade delete (RUNNING / RAG-INDEXED blocked, cloud folder → Trash, scratch hard-removed, bound type-1 sessions deleted); **server-owned runs** (`begin_run`/`end_run` mutex with stale-window crash recovery — a client disconnect no longer cancels a research turn) with `is_running` surfaced in every task view; `POST /research/tasks` + `GET/DELETE /research/tasks/{id}` + artifact read/promote API; **deterministic execution engine** — Python owns control flow through a 10-stage contract pipeline (`DISCOVER → FRAME → EVIDENCE → DESIGN → EXECUTE → EXPLAIN → WRITE → REVIEW → REPRODUCE → PUBLISH`) with repair-once bounded attempts, per-stage declared LLM call budgets + run-level turn/cost/no-progress caps, and guard gates at the transition fence: **strict** mode (default) parks a failed gate on a PENDING human override with zero rework on resume, lenient mode records it and continues; structural violations halt terminally (`BLOCKED`); lease-based crash recovery makes interrupted runs resumable; publication finality is the `PROMOTED` record (report + compiled PDF, optional slides via toolkit); desktop Research tab + two-layer chat header; web console read-only mirror — see [§17](#17-research-os-module), [§20](#20-research-execution-from-agent-driven-control-flow-to-a-deterministic-pipeline) |
 | Workflow core (`packages/workflow`) | domain-free run engine behind Research OS: declarative `workflow_spec` (transitions / activities / cap dimensions / hooks) + state machine with lease contest, crash recovery, retry, loop-cap grading and definition-drift detection; adapter pattern (ports + ledger/lease persistence supplied by the plugin) — [§19](#19-workflow-core-packagesworkflow) |
@@ -708,7 +723,7 @@ host granted it or a human approver confirms. `ASK` with no approver degrades to
 **`fs_tools.py`** — the resident filesystem/shell tools: `read_file` (READ), `edit_file` (WRITE),
 `bash` (WRITE + NETWORK). Workspace file access is rooted at `settings.workspace_dir` and path
 escape is rejected (`_resolve`). `read_file` / `edit_file` address a file by **path and dispatch on
-its plane** (drive-edit ruling 2026-09-28): a path matching `_DRIVE_PATH_RE` (`My Drive/<rel>` or
+its plane** (drive-edit ruling): a path matching `_DRIVE_PATH_RE` (`My Drive/<rel>` or
 `我的云盘/<rel>`) resolves through the injected `DriveService` to the real asset
 (`resolve_personal_path` → `read_text` / copy-on-write `edit_text`, §14.2) and never materializes a
 Drive copy; an unresolvable Drive path raises honestly (no user / no READY asset) instead of
@@ -731,7 +746,7 @@ extraction; the FULL raw text always goes downstream — never a digest) → **g
 **render** (JSON → Mermaid `.mmd` / summary Markdown; `slides` → the deck engine below, never raw
 model-written markup) → **persist** (atomic, collision-proof names).
 
-The generate stage applies the 2026-09-15 input doctrine: `toolkit_max_input_tokens`
+The generate stage applies the input doctrine: `toolkit_max_input_tokens`
 (100K) is a pure **capacity check** of the complete input, never a compression trigger.
 At or below it the generator receives the complete raw text in **one call**. Above it the
 pipeline enters the **explicit big-document multi-call flow** (`sources.plan_big_document`):
@@ -2073,7 +2088,7 @@ Source: canonical schema `migrations/0001_init.sql`;
   the router re-enqueues `ASSET_INGEST`, which deletes and rebuilds the RAG chunks for the new
   text. A content-identical PUT is a no-op (same digest → log + return).
 - **Copy-on-write text editing (`edit_text`)** — snippet-level edit of an existing text asset
-  (`edit_file`'s Drive plane, §5; service-level ruling 2026-09-28). Guards first:
+  (`edit_file`'s Drive plane, §5; service-level ruling). Guards first:
   `ensure_asset_writable` (403/404), `READY` with bytes present (else 409), text-type (else 415);
   `old_text` must occur in the current content (exactly-one replace, else 400 "nothing replaced");
   `old_text=None` overwrites the whole note. **Sharedness predicate** `_referenced_by_others`:
@@ -4578,8 +4593,7 @@ executor. The ReAct loop remains the default branch — it is the right shape on
 cannot be known in advance — while turns the control plane can certify run deterministically,
 without the LLM planning flow it does not need. The plane owns no inference of its own beyond
 routing, and it is *additive by construction*: anything it cannot certify lands on the Agent with
-the user's text **byte-identical** and zero trace. The product path is **single** (ruling
-2026-09-28): the Intent Funnel is the only formal routing lane — every turn is attempted by the
+the user's text **byte-identical** and zero trace. The product path is **single** (ruling): the Intent Funnel is the only formal routing lane — every turn is attempted by the
 chain and a certified ACTION dispatches on certification alone, with the Agent as fail-open
 fallback; there is no Funnel-vs-Agent master switch any more. The four experimental L0
 fast-path kinds (`DIRECT` / `VIEWER` / `LOCAL_RAG` / `COMPOSITE`) each ride their own lane
@@ -4593,7 +4607,7 @@ viewer / research / handoff) and narrow phrase patterns into `TurnRequirements` 
 matcher**, in-process, zero model calls. The stages then run in a fixed order:
 
 1. **(1) Intent routing — the funnel** (`core.application.chat.intent_funnel`, §25). Runs on
-   every turn the funnel lives to attempt (deps wired + no guardrail veto, §25.4) once L0 has
+   every turn the funnel lives to attempt (deps wired + no guardrail veto, §25.6) once L0 has
    abstained from an action certification. Cascade: read the
    LIVE Registry tables → **Matcher** (exact-only over the curated query corpus) → **Recall**
    (two independent vector searches, quality-gated) → **ToolIntentModel** (ONE `complete_json`
@@ -4629,7 +4643,7 @@ outcome and its location; in particular the Agent is never a recovery channel fo
 COMPOSITE dispatch traverses the *same* `ToolRuntime.execute` the Agent would — pre-execute ASK →
 approval bridge → monotonic sandbox / source-policy guards → the real tool body — through the
 `_run_tool` seam injected into `ChatDeps`. **Tool existence/schema truth is the
-live `ToolRuntime.schemas()` roster** (ruling 2026-09-26): the Registry write
+live `ToolRuntime.schemas()` roster** (ruling): the Registry write
 gate, the executor's final schema gate, and the pre-dispatch TOCTOU re-check all
 consult it — a capability whose `tool_binding` is not in the roster is
 **rejected at the validation gate** (the funnel cannot invent executables), and
@@ -4644,7 +4658,7 @@ clarify). Per-length bounds live in the tool schemas themselves (e.g.
 `create_folder.name maxLength 120`): with the roster as the single truth, a
 bound the executable does not state does not exist.
 
-**Plane-scoped exposure — hiding ≠ disabling (ruling 2026-09-28).** Removing a capability from
+**Plane-scoped exposure — hiding ≠ disabling (ruling).** Removing a capability from
 the Chat plane takes **two gates**, and neither touches the Registry row or any execution
 semantics: ① the roster gate above (`AGENT_HIDDEN_TOOLS` → `register_fs_tools(exclude=…)`, §5/§16.6)
 closes every model surface AND the execution path — the action executor's stage-0.6 roster check
@@ -4652,7 +4666,7 @@ and the TOCTOU re-validation already treat "not in roster" as the C2 terminal, s
 the hidden tool can run; but registration hiding alone does NOT stop the funnel from *routing* a
 turn to the capability, because routing reads only the Registry DB rows and would dead-end in that
 C2 terminal. ② the routing-view gate therefore hides the capability id
-(`CHAT_FUNNEL_HIDDEN_CAPABILITIES`) from the Chat funnel via `chat_plane_candidate` (§25.5), so
+(`CHAT_FUNNEL_HIDDEN_CAPABILITIES`) from the Chat funnel via `chat_plane_candidate` (§25.7), so
 Matcher / entries_by_id / shadow / preview all drop it, no Candidate Card is built, certification
 fails, and the turn **fails open to the Agent** — an honest ordinary Agent turn, never a broken
 promise. Both settings are per-process env (same kernel factory serves chat API and worker; only
@@ -4678,7 +4692,7 @@ existing turn-context funnel — RAG failure escalates to the Agent, it does **n
 web; an explicit "if nothing, search the web" leaves no fence and the normal approval funnel
 governs.
 
-**Live-table write discipline (migration 0014, final ruling 2026-09-26).** The capability
+**Live-table write discipline (migration 0014, final ruling).** The capability
 registry is no longer a *published projection* — the LIVE tables ARE the runtime truth:
 `capabilities` plus `capability_standard_queries` / `capability_similar_queries` /
 `capability_negatives`. An admin write goes live directly — no Draft, no Publish, no
@@ -4705,8 +4719,8 @@ unconditionally. The four experimental lanes each keep one dark gate, default `F
 `chat_direct_fast_path_enabled` · `chat_viewer_fast_path_enabled` ·
 `chat_retrieval_fast_path_enabled` · `chat_composite_fast_path_enabled` (plus lane sizing:
 `chat_direct_max_chars` / `chat_retrieval_top_k`). The chat-plane routing-view hide
-`chat_funnel_hidden_capabilities` ships `cap-edit-file` (consumed only by the Chat plane, §24/§25.5).
-The intent-routing stage brings its own quality/timeout knobs — see §25.13. Corpus maintenance is
+`chat_funnel_hidden_capabilities` ships `cap-edit-file` (consumed only by the Chat plane, §24/§25.7).
+The intent-routing stage brings its own quality/timeout knobs — see §25.14. Corpus maintenance is
 an ops entry point: `scripts/embed_corpus.py` re-embeds the live query tables against the pinned
 embedding profile (`app_settings.embedding_profile`).
 
@@ -4723,7 +4737,7 @@ parity — the legacy leg is a SIMULATED pre-funnel Agent (transparent funnel + 
 since the master gate no longer exists). The frozen routing boundaries (cascade fail-open, certified-turn vocabulary,
 write atomicity + allowlist gate, route/execute double validation, the negation guard at both
 layers, stage-2 classification C1 → Agent vs C2 → marked terminal) moved with the QIR lane into
-the funnel suites of §25.14.
+the funnel suites of §25.15.
 Contract suites: `test_chat_control_plane.py` (dark launch, per-kind gating, registry degradation),
 `test_chat_action_executor.py` / `test_chat_source_policy.py` (side-effect-boundary trichotomy,
 fencing semantics), `test_chat_direct_e2e / viewer / retrieval / composite` per branch,
@@ -5005,7 +5019,362 @@ threshold:
 6. Re-run the same 144-query evaluation and the same 0.01 threshold sweep.
 7. Compare the new results against this baseline.
 
-### 25.3 Goals & Principles
+### 25.3 ToolIntentModel — Backends, Wire Discipline & Output Adapters
+
+Payload discipline (`tool_intent/base.py`, 8.17): input = query + `TurnFacts` +
+one **Card per candidate**, assembled from the Registry row by capability_id —
+tool binding, description, the canonical parameter schema with per-slot
+descriptions, recall score and origin, matched example. No tools list beyond
+the candidate cards, no skills, no conversation history. Reply =
+`{capability_id, confidence, arguments}`. The same card contract is served by
+every backend, so providers are interchangeable above this module.
+
+**Backends** (`tool_intent/__init__.py`, `chat_tool_intent_backend`):
+
+- `stub` — deterministic margin rules over the candidate set (leader-vs-runner-up
+  margin `chat_funnel_margin`; a single candidate is confirmed only with a
+  trustworthy provenance: calibrated cosine or a `matcher_hit`;
+  `matcher_ambiguous` races it never resolves). **No extraction power**:
+  arguments stay `None` → `BIND_MISSING` exit — honest and documented, the
+  transition rung of the ladder.
+- `local` — the deployed small model service (first choice, ms-level when
+  warm). OpenAI-compatible wire: `chat_tool_intent_local_url` is a BASE url
+  (e.g. the Docker `tool-intent` service, Ollama today, vLLM/llama.cpp
+  drop-ins); the model name rides `chat_tool_intent_local_model` — provider
+  swap lives in config only, never in chain logic. `""` URL = not deployed →
+  `ToolIntentUnavailable` → fall through the ladder (a transport fault is never
+  a verdict).
+- `online` — the platform LLM seam as fallback, riding a **dedicated
+  small-model channel**: `chat_tool_intent_online_model` forwarded per call
+  when set; `_base_url`/`_api_key` are honored only as a pair (else only the
+  model name rides the pinned turn channel); temperature 0, per-call
+  `chat_tool_intent_timeout_seconds` idle guardrail inside the cascade budget.
+- `auto` — local → online → stub (the deployed order).
+
+**Local output disciplines** (`chat_tool_intent_local_mode`) — the Adapter
+normalizes whatever the model emits into the ONE internal reply shape
+`{capability_id, confidence, arguments}`; the verdict gate (§25.6 step 6) and
+the Binder stay the sole correctness owners either way — an off-card id is
+still `UNCERTAIN`, never an auto-pass:
+
+- `prompt_json` (default) — SYSTEM asks for a JSON reply; the adapter
+  brace-parses it. What a base instruct model emits well.
+- `tools` — native function-calling for tool-tuned checkpoints: one OpenAI tool
+  per candidate, `name` = Registry capability_id (the model's function choice
+  *is* the capability choice — no tool-name/cap-id confusion), `parameters` =
+  that capability's Registry schema, `tool_choice: "auto"` (a no-tool turn is a
+  legitimate abstention routed to the Agent, not a forced mis-selection). The
+  reply is read in a FIXED priority — native `message.tool_calls` first, then
+  a JSON-object content (only when it carries a string `capability_id`), then
+  the structured-Markdown block below, and only then a refusal (`NONE`). Which
+  of the three shapes a correct verdict arrives in is a serving-geometry
+  detail (see below), so the Adapter accepts all of them into the SAME
+  internal reply shape — none of them bypasses the gate.
+
+**Structured-Markdown fallback (tools mode).** A small tool-tuned model's
+first-token argmax between the native tool-call token and its fine-tune
+Markdown token is a near-tie, and what breaks the tie is the serving backend's
+KV-cache geometry (cold prefill vs cache reuse vs partial recompute) — pinned
+decoding (`temperature 0, top_p 1.0, seed 42, max_tokens 128,
+reasoning_effort none`) pins *content*, not *format*. The same correct verdict
+therefore arrives on the wire either as a native tool call or as a Markdown
+block:
+
+```
+### <capability_id>
+tool: <tool_name>              ← optional (the model sometimes omits it)
+arguments: <single-line JSON object>
+confidence: <number>
+```
+
+The Adapter treats this as a wire-format compatibility concern — the semantic
+result is already correct, so it is parsed, never re-asked and never handed to
+the Agent. Parsing is deliberately strict (`_MD_TOOL_REPLY`, whole-reply
+`fullmatch` on the stripped content):
+
+1. the reply must be ONLY the block — any leading or trailing prose
+   disqualifies it (ordinary reasoning text can never be mistaken for a call);
+2. `arguments` must parse as a JSON object; `confidence` must be numeric;
+3. when a `tool:` line is present and the Registry is loaded, the capability
+   must exist AND its `tool_binding` must match — an inconsistent pair
+   disqualifies (refusal → `REJECT`);
+4. the normalized reply then passes the SAME downstream gate: candidate-set
+   membership (a well-formed block naming an off-card capability is still
+   `UNCERTAIN`), the confidence floor, and the Binder's schema validation.
+
+A malformed, half-finished or runaway block, prose that merely *mentions* a
+capability, and `NONE …` refusals all stay refusals — the fix widened the
+Adapter's format coverage, not its willingness to believe.
+
+**Never fabricate**: every backend failure mode (unreachable, non-2xx,
+unparseable) raises `ToolIntentUnavailable` and falls through the ladder; the
+ToolIntentModel never invents a verdict out of its own outage.
+
+**Selected local model.** The local arm's designated model is `iromu/Qwen3-0.6B-tools` — a Qwen3-0.6B LoRA fine-tune for structured tool/function calling — shipped as a GGUF Q5_K_M quant and served through Ollama in native tool-calling mode (`mode="tools"`). It is not an Ollama-library pull: the GGUF file is imported with a minimal Modelfile (`FROM /tmp/<file>.gguf`) and registered as `qwen3-tools:q5_k_m`. This local tag is the exact model name deployments must reference.
+
+**Selection logic.** The final model selection was based on a controlled A/B evaluation using the same production payload-building path. The benchmark initially exposed a protocol/adapter mismatch: under the original `prompt_json` contract, the fine-tuned tools model produced native tool-calling output that the existing brace parser could not reliably consume. This was subsequently identified as an adapter/wire-format issue rather than evidence that the model's tool-intent capability was inferior. After introducing the native tool-calling adapter and rerunning the controlled comparison at the same Q5_K_M quantization, the fine-tuned model was selected for its superior tool-selection and argument-extraction quality and retained as the final local ToolIntentModel.
+
+The final ruling is therefore to keep the fine-tuned Q5_K_M model. The two base-model variants used only for benchmarking were subsequently removed from the Ollama store. Historical intermediate benchmark results must not be treated as the final model-selection ruling.
+
+**Deployment note.** The shipped default configuration keys still point to the former base-model tag and `prompt_json`. Until `chat_tool_intent_local_model` / `chat_tool_intent_local_mode` are explicitly switched to `qwen3-tools:q5_k_m` / `tools`, the local arm does not resolve the designated model and falls through the configured ladder (online → stub). This is a pending configuration change and requires its own approval; the architecture decision itself is already final.
+
+### 25.4 Intent Model Optimization Iteration 1 — Capability Description Enhancement
+
+**Status:** completed & verified · **Plane:** Intent Model
+(ToolIntentModel) only · **Code impact:** none.
+
+#### Purpose
+
+Answer one question with a controlled A/B: **does changing only the Capability
+description stored in the Intent-plane database improve ToolIntentModel capability
+selection?** The Agent-plane tool definitions are explicitly out of scope — this
+iteration touches no Python, no tool definition, no schema, no prompt, no scorer.
+
+#### Baseline (Arm A)
+
+| | |
+|---|---|
+| Run id | `IB-v1-baseline-20260928-7ab204` |
+| `capabilities.description` | the original short English one-liners seeded by migration 0011 and copied to `capabilities` by 0014 (e.g. `Add a term to a named vocabulary domain.`) |
+| Selection accuracy | **50.59% (86/170)** |
+| EN / ZH | 49.41% (42/85) / 51.76% (44/85) |
+| False refusal | 59 |
+| Mis-selection | 25 |
+| Report / results | `logs/_ibv1_report_IB-v1-baseline-20260928-7ab204.json`, `logs/_ibv1_results_IB-v1-baseline-20260928-7ab204.jsonl` |
+
+#### Experiment design
+
+Both arms ride the **same frozen chain and the same frozen dataset**; the arm label is
+only a label. The runner loads capability text from the live database
+(`load_entries` → a direct `SELECT` over `capabilities`), so the arm is selected by
+*the state of `capabilities.description` at run time*, never by a code branch.
+
+1. Freeze the dataset and run Arm A (already recorded).
+2. Write the reviewed canonical v2 text into the live database.
+3. Re-run the identical chain over the identical dataset as Arm B.
+4. Compare.
+
+#### The single variable
+
+`capabilities.description` — and nothing else. Arm A → Arm B changed **two things at
+once**, both inside that one column:
+
+| | Arm A | Arm B |
+|---|---|---|
+| English | original short noun-phrase label | **English v2** — a three-sentence rewrite (what it does / *Use it when…* / *It does not apply to…*) |
+| Chinese | *(absent)* | **Chinese v2** — newly added |
+
+Because English and Chinese changed together, **the +24.12 pp below cannot be
+attributed to Chinese alone.** See *Caveats*.
+
+#### Dataset
+
+| | |
+|---|---|
+| File | `logs/_ibv1_datasetA.jsonl` (frozen, IB-v1 Dataset A) |
+| Manifest | `logs/_ibv1_datasetA.manifest.json` |
+| Cases | 170 (17 capabilities × 5 EN + 5 ZH) |
+| `dataset_hash` | `724b5309f7bea1939a114a4dd781b79ab7e83cd5330b1471743ad3687a71d745` |
+| `dataset_sha256` | `83bac0a85fd7d0c5106837ed63539c51ea5975341f5209d78b5e92487ac9c4b0` |
+| Sampling seed | `desca-testA-2026-09-28` |
+| case_id scheme | `IB-v1-<capability>-<lang>-<NNN>` |
+| Invariants held | query verbatim, gold untouched, candidate ids and **candidate order untouched**; no re-sampling, no re-numbering |
+
+#### Model & decode
+
+| | |
+|---|---|
+| Model | `qwen3-tools:q5_k_m` (identical in both arms) |
+| Endpoint | `http://localhost:18091/v1` |
+| Mode | `tools` |
+| temperature | `0.0` |
+| top_p | `1.0` |
+| seed | `42` |
+| max_tokens | `128` |
+| reasoning_effort | `none` |
+
+#### Candidate setting
+
+Per case, the **frozen 3-candidate card set** from the dataset — the gold plus its two
+confusables, in the source log's original order. Card evidence is reconstructed by
+identity (the source run never persisted scores): gold `1.0`/`matcher_hit`, first
+confusable `0.62`/`recall`, second `0.55`/`recall`. Matcher, Recall and live candidate
+generation are **not** involved (`recall_used=false`, `matcher_used=false`,
+`live_candidates_used=false`).
+
+#### Prompt / execution chain
+
+```
+query + the case's 3 frozen candidate cards
+  → build_payload(mode="tools")
+  → Ollama qwen3-tools:q5_k_m
+  → _reply_from_tool_call
+  → _verdict_from_reply
+```
+
+The card body carries `capabilities.description` verbatim; that string is the only
+input that differs between the arms.
+
+#### A/B definition
+
+| | Arm A (baseline) | Arm B (bilingual) |
+|---|---|---|
+| `capabilities.description` | original short English | canonical v2 = `canonical_english_v2` + `"\n\n中文："` + `canonical_chinese` |
+| `action_catalog.description` | original short English | same canonical v2 |
+| Everything else | — | identical |
+
+Text source: `logs/capability_descriptions_review.json`, the frozen Phase-3 artifact
+(17 entries, fields `canonical_english_v2` / `canonical_chinese`). The strings were read
+from that file programmatically — never retyped, never re-worded.
+
+Rows updated: 17 in `capabilities` and 17 in `action_catalog` (the out-of-scope
+`research` row untouched). `updated_at` was bumped so the Registry view cache
+invalidates cross-process. No migration was created and no historical migration
+(0011 / 0014) was edited; the change was applied directly to the live database and is
+**not** registered in `schema_migrations`.
+
+#### Metrics
+
+`selection_correct` per case (the predicted capability equals the gold and is on-card),
+aggregated to selection accuracy; plus false refusal, mis-selection, off-card, parse
+failure, unavailable, structured output, schema validity, latency and TTFT.
+
+#### Results
+
+| Metric | Arm A | Arm B | Δ |
+|---|---:|---:|---:|
+| **Selection accuracy (overall)** | **50.59%** | **74.71%** | **+24.12 pp** |
+| correct | 86/170 | 127/170 | +41 |
+| EN accuracy | 49.41% | 81.18% | +31.76 pp |
+| ZH accuracy | 51.76% | 68.24% | +16.47 pp |
+| False refusal | 59 | 28 | −31 |
+| Mis-selection | 25 | 15 | −10 |
+| Off-card | 0 | 0 | 0 |
+| Parse failure | 3 | 2 | −1 |
+| Unavailable | 0 | 1 | +1 |
+| Structured output | 100.00% | 99.41% | −0.59 pp |
+| Schema valid | 77.65% | 90.00% | +12.35 pp |
+| Schema valid (unwrapped) | 71.76% | 74.12% | +2.35 pp |
+
+Arm B run id `IB-v1-bilingual-20260928-c6c674`
+(`logs/_ibv1_report_IB-v1-bilingual-20260928-c6c674.json`,
+`logs/_ibv1_results_IB-v1-bilingual-20260928-c6c674.jsonl`).
+
+#### Flip cases
+
+```
+win  (A wrong → B correct) = 52
+loss (A correct → B wrong) = 11
+both correct = 75      both wrong = 32      net = +41
+```
+
+The 11 losses: `pdf-extract-text` (en-004, zh-003, zh-005), `read-document` (zh-003,
+zh-005), `read-file` (en-005, zh-001), `vision` (en-003), `web-search` (en-002, en-004,
+zh-003).
+
+#### Per-capability results
+
+| capability | A | B | Δ | A en/zh | B en/zh |
+|---|---:|---:|---:|:--:|:--:|
+| cap-pdf-table-to-text | 10% | 80% | +70 | 1/0 | 5/3 |
+| cap-add-term | 30% | 90% | +60 | 1/2 | 5/4 |
+| cap-translate | 0% | 60% | +60 | 0/0 | 3/3 |
+| cap-rag-search | 10% | 50% | +40 | 0/1 | 4/1 |
+| cap-summary | 60% | 100% | +40 | 2/4 | 5/5 |
+| cap-artifact | 70% | 100% | +30 | 4/3 | 5/5 |
+| cap-mindmap | 70% | 100% | +30 | 4/3 | 5/5 |
+| cap-bash | 50% | 70% | +20 | 3/2 | 5/2 |
+| cap-edit-file | 60% | 80% | +20 | 2/4 | 3/5 |
+| cap-slides | 60% | 80% | +20 | 2/4 | 4/4 |
+| cap-social-search | 10% | 30% | +20 | 1/0 | 2/1 |
+| cap-pdf-extract-text | 50% | 60% | +10 | 3/2 | 4/2 |
+| cap-vision | 70% | 80% | +10 | 4/3 | 4/4 |
+| cap-create-folder | 100% | 100% | 0 | 5/5 | 5/5 |
+| cap-read-file | 70% | 70% | 0 | 4/3 | 4/3 |
+| cap-read-document | 90% | 80% | −10 | 4/5 | 5/3 |
+| cap-web-search | 50% | 40% | −10 | 2/3 | 1/3 |
+
+#### Latency / TTFT cost
+
+| Metric | Arm A | Arm B | Δ |
+|---|---:|---:|---:|
+| Latency median | 2035.0 ms | 2165.3 ms | +130.3 ms |
+| Latency p95 | 8403.7 ms | 13252.3 ms | +4848.6 ms |
+| TTFT median | 1168.8 ms | 1915.6 ms | +746.8 ms |
+| TTFT p95 | 7706.5 ms | 13216.6 ms | +5510.1 ms |
+
+The descriptions written in Arm B are roughly four times longer, so the prompt grows and
+both median and tail latency rise — the accuracy gained in this iteration is paid for in
+inference cost. (The runners' own JSON reports a narrowly different median under its own
+median definition: latency median 2033.0 ms → 2155.9 ms, TTFT median 1160.2 ms →
+1915.6 ms; the p95 values agree.)
+
+#### Caveats
+
+1. **The arm is confounded.** Arm B changed English *and* added Chinese in the same
+   column. It is therefore not evidence that Chinese descriptions help Chinese queries.
+2. **The aggregate does not show a Chinese-specific effect.** English gained
+   +31.76 pp while Chinese gained +16.47 pp — Chinese queries improved *less* than
+   English ones, which is not what a "Chinese description helps Chinese queries"
+   hypothesis predicts.
+3. **One case was unavailable.** `IB-v1-rag-search-zh-002` hit an Ollama transport
+   `500 Internal Server Error` on `POST /v1/chat/completions` and is counted as
+   incorrect. Excluding it, Arm B would be 128/170 = 75.29%.
+4. **No significance testing was performed**; n = 170 with 5 EN + 5 ZH cases per
+   capability.
+
+#### Conclusion
+
+Changing only `capabilities.description` from the original short English labels to the
+frozen canonical v2 (English v2 + Chinese v2) raised selection accuracy from
+**50.59% (86/170)** to **74.71% (127/170)**, **Δ = +24.12 pp**, with false refusal
+falling 59 → 28 and mis-selection 25 → 15. Because English and Chinese changed
+together, **the +24.12 pp cannot be attributed to the Chinese text alone.** This
+iteration answers the question it posed at the level of "the description column
+matters, and materially" — it does not isolate which part of the change carried the
+gain.
+
+#### Next — isolation experiment
+
+Three arms over the identical dataset, chain and decode, varying only the description
+text:
+
+| Arm | `capabilities.description` |
+|---|---|
+| A | Original English (as recorded above) |
+| C | **English v2 only** — no Chinese |
+| B | English v2 + Chinese v2 (as recorded above) |
+
+`A → C` measures the contribution of the English v2 rewrite; `C → B` measures the
+incremental contribution of adding the Chinese v2 text. Neither is yet run.
+
+#### Reproducibility artifacts
+
+| Artifact | Path |
+|---|---|
+| Dataset A (frozen) | `logs/_ibv1_datasetA.jsonl` |
+| Dataset manifest | `logs/_ibv1_datasetA.manifest.json` |
+| Canonical v2 text (frozen) | `logs/capability_descriptions_review.json` |
+| Runner (both arms) | `logs/_ibv1_phase2_run.py` → `logs/_desca_run.py` |
+| Arm A results / report | `logs/_ibv1_results_IB-v1-baseline-20260928-7ab204.jsonl`, `logs/_ibv1_report_IB-v1-baseline-20260928-7ab204.json` |
+| Arm B results / report | `logs/_ibv1_results_IB-v1-bilingual-20260928-c6c674.jsonl`, `logs/_ibv1_report_IB-v1-bilingual-20260928-c6c674.json` |
+| DB rollback anchor (Arm A values) | `logs/_ibv1_dbarmA_desc_backup.json` |
+| DB apply / rollback SQL | `logs/_ibv1_db_capdesc_v2.sql` |
+| Arm B run log | `logs/_ibv1_bilingual_run.log` |
+
+Fingerprints of the 17-row `capabilities.description` set (order-independent SHA-256,
+first 16 hex):
+
+| Arm | Fingerprint |
+|---|---|
+| A (original short English) | `80da421f0236f9e7` |
+| B (canonical v2, EN + ZH) | `9709be8b4efd01b1` |
+
+At the time of recording the live database holds the **Arm B** values; Arm A is
+restorable from the backup above. No Python file, no dataset case, and no migration was
+modified during this iteration, and nothing was committed.
+
+### 25.5 Goals & Principles
 
 Turn the "guess the intent" path from scattered parts into **one decoupled,
 nodeized funnel**, and the "how to execute" path into **a single Runtime choke
@@ -5028,7 +5397,7 @@ point**. Four principles:
    example corpus) lives in the Registry row alone; the intent nodes emit only
    the *capability symbol*, never execution authority.
 
-### 25.4 The Active Chain
+### 25.6 The Active Chain
 
 ```
                          User Original Query
@@ -5063,14 +5432,14 @@ point**. Four principles:
 ```
 
 Both lanes converge on the SAME ToolIntentModel hop: an exact HIT is not an
-execution permit (chain ruling 2026-09-24) — it still rides the one model call
+execution permit (chain ruling) — it still rides the one model call
 because the hop owns **argument extraction**. What an exact HIT wins is
 independence from Recall: it never calls `recall.load_index()` and cannot be
-vetoed by an unembedded or faulting corpus (final-semantics ruling 2026-09-26).
+vetoed by an unembedded or faulting corpus (final-semantics ruling).
 
 The funnel's one orchestrator entry is `funnel.route(ctx, deps, requirements)`,
 called by the turn orchestrator inside plan resolution (§25) — on **every** turn
-(single-path ruling 2026-09-28; the dark-launch master gate was deleted). It is
+(single-path ruling; the dark-launch master gate was deleted). It is
 **additive by construction**: on any abstain or fault,
 it returns the *same* `TurnRequirements` object untouched — the Agent receives
 the user's text **byte-identical, zero pollution**. Routing metadata is all the
@@ -5080,21 +5449,20 @@ same waterfall the Agent traverses.
 Gate composition (`funnel_live`): deps wired + the common-layer
 `guardrails.turn_veto` (non-pure-text / memory / research / handoff /
 deictic-input vetoes — code, deliberately, not table data, ruling 8.1-a; web
-demand is NOT an entry veto, ruling 2026-09-27). A turn L0 already certified
+demand is NOT an entry veto, ruling). A turn L0 already certified
 is never touched during the coexistence period (migration-boundary ruling, not
 a statement that L0 is the baseline). P3 widened intent kinds pass the extra
-per-kind gate in §25.11.
+per-kind gate in §25.12.
 
 Cascade body (`_run_nodes`, one wall-clock budget `chat_funnel_timeout_seconds`):
 
-1. **Registry first** (live tables ARE the runtime truth, §25.5): read the
+1. **Registry first** (live tables ARE the runtime truth, §25.7): read the
    fingerprint-cached live view; no capability rows → `REGISTRY_UNAVAILABLE`
    exit. The Recall index is NOT loaded here — it is a MISS/AMBIGUOUS-lane
    dependency only (step 3).
 2. **Matcher** (Node 1): **exact-only** normalized lookup over the enabled
    Standard + Similar query rows (`intent_corpus`); the legacy `patterns`/`aliases`
-   columns are INERT storage — the Matcher never reads them (Action-Contract ruling
-   2026-09-25). Lookup index cached keyed by the content fingerprint alone — a
+   columns are INERT storage — the Matcher never reads them (Action-Contract ruling). Lookup index cached keyed by the content fingerprint alone — a
    swapped view is a different cache key by construction. The negation
    guard applies *before* a HIT can certify (a negated HIT is forced to MISS and
    flows into the Recall lane). States: `HIT` (one capability),
@@ -5105,15 +5473,15 @@ Cascade body (`_run_nodes`, one wall-clock budget `chat_funnel_timeout_seconds`)
    now; index `None` (corpus not embedded) or any Recall system fault (embedder
    error, embedder/corpus dim mismatch, a pgvector failure the in-process lane
    cannot survive either) → `RECALL_UNAVAILABLE` exit — faults and business
-   results never share a reason code (ruling 2026-09-26). Recall itself is
+   results never share a reason code (ruling). Recall itself is
    **two independent vector searches** (Standard rows + Similar rows) against
    ONE query embedding. Its contract is the RAW stage: no per-capability merge,
    no dedup, every hit ≥ `chat_funnel_min_score` is KEPT with per-row
    provenance (quality gate, not a selector; ANN pool is an internal retrieval
    width, not a final model-candidate/top-k limit — `chat_funnel_top_k`
-   is deleted, ruling 2026-09-26). `User Original Query → query-level raw hits`.
+   is deleted, ruling). `User Original Query → query-level raw hits`.
 4. **Capability Candidate Aggregation** (between Raw Recall and the model,
-   final semantics 2026-09-26): the query-level hits are grouped by
+   final semantics ): the query-level hits are grouped by
    `capability_id` and collapsed to **ONE capability-level Candidate per
    capability** — score = the highest similarity among that capability's raw
    hits, and the winning hit's own provenance (matched_example, query_id, kind,
@@ -5130,7 +5498,7 @@ Cascade body (`_run_nodes`, one wall-clock budget `chat_funnel_timeout_seconds`)
    table evidence shown as a label, not a calibrated cosine), AMBIGUOUS
    escalates all claimants (`origin="matcher_ambiguous", score 0.0`). An EMPTY
    model-facing candidate set short-circuits to the Agent as `NO_CANDIDATE`
-   BEFORE any model hop (ruling 2026-09-26, superseding 2026-09-25): with no
+   BEFORE any model hop (ruling): with no
    Matcher card and no Recall hit at/above the gate there is nothing to select
    from and the hop is not spent; `TOOL_INTENT_REJECT` now always means the
    model WAS called and answered `NONE`. The legacy direct-certification
@@ -5156,14 +5524,14 @@ Cascade body (`_run_nodes`, one wall-clock budget `chat_funnel_timeout_seconds`)
    confidence below `chat_tool_intent_min_confidence` → `UNCERTAIN`; else
    `CONFIDENT` with the argument draft. Anything but CONFIDENT exits to the
    Agent (`TOOL_INTENT_REJECT` / `TOOL_INTENT_UNCERTAIN` / `TOOL_INTENT_TIMEOUT`).
-   Backend ladder and wire disciplines: §25.6.
+   Backend ladder and wire disciplines: §25.3.
 7. **Binder** (Node 4, `binder/`): `validate(entry, arguments)` against the
    Registry's **canonical parameter schema** — pure validation, the Binder
    extracts nothing on the active path. Non-COMPLETE states exit straight to the
    Agent with the `BIND_*` reason (§8.7 as amended by the chain ruling); a
    capability the active table no longer honors → `REGISTRY_VERSION_MISMATCH`;
    a kind outside the action family → `FUNNEL_KIND_DISABLED` (permanent: the
-   per-kind switches were deleted by the single-path ruling, §25.11).
+   per-kind switches were deleted by the single-path ruling, §25.12).
 8. **Certified turn**: a *new* `TurnRequirements` carrying
    `requested_action = {tool, args, capability_id, funnel_registry_version (= view
    fingerprint, the executor's TOCTOU stamp), funnel_stage, funnel_kind}` —
@@ -5178,7 +5546,7 @@ explicitly open in the main-window viewer (say "summarize this page" and it
 means that) or the session context (default). There is no "web page" object
 class; ambiguous candidates can only come from Registry-registered capabilities.
 
-### 25.5 Node Contracts & the Registry (single source of truth)
+### 25.7 Node Contracts & the Registry (single source of truth)
 
 Node I/O lives in `contract.py` (frozen dataclasses; nodes speak nothing else):
 
@@ -5202,7 +5570,7 @@ CapabilityEntry:                          # hydrated from the LIVE rows (0014)
     tool_binding: str               # registered tool name; absent at write -> rejected
     description: str
     patterns / aliases: tuple[str]  # INERT legacy storage — the exact-only Matcher
-                                    # never reads them (ruling 2026-09-25)
+                                    # never reads them (ruling)
     standard_queries: tuple[QueryRecord]   # THE corpus: one row per sentence,
     similar_queries: tuple[QueryRecord]    # UNIQUE(capability_id, language) on the
                                     # Standard side; Similar rows FK to a Standard and
@@ -5218,7 +5586,7 @@ CapabilityEntry:                          # hydrated from the LIVE rows (0014)
     arg_slots: dict                 # slot -> source declaration, incl. "plugin:<name>" (8.1-b)
     permissions: str
     execution_policy: str           # auto / approval / sandbox rule reference
-    intent_kind: str                # "action" | "private" | "web" (P3, §25.11)
+    intent_kind: str                # "action" | "private" | "web" (P3, §25.12)
     enabled / status / replacement_capability_id    # lifecycle (§8.6, no hard delete)
     row_version: int                # optimistic concurrency — silent overwrite impossible
 ```
@@ -5244,8 +5612,7 @@ a negative that deterministically collides with the corpus. A kind flip (`enable
 `status`, per-kind switch) is the only emergency stop — routing abstains, an ordinary
 Agent turn, no deploy.
 
-**Chat-plane candidate predicate (`registry/entry.py::chat_plane_candidate`, ruling
-2026-09-28).** Chat/files routing membership is ONE predicate with FOUR consumers —
+**Chat-plane candidate predicate (`registry/entry.py::chat_plane_candidate`, ruling).** Chat/files routing membership is ONE predicate with FOUR consumers —
 the Matcher index build, the Recall corpus filter, the funnel's `entries_by_id`, and the
 shadow/preview lanes that share them:
 
@@ -5266,12 +5633,12 @@ Card, no certification, so the turn fails open to an ordinary Agent turn (§24).
 `edit_file` also requires the roster gate (§5/§16.6): routing-view absence alone would
 still let a stale/other-layer route reach a tool missing from the runtime — C2 terminal.
 
-#### 25.5.1 Live-table schema reference (migration 0014)
+#### 25.7.1 Live-table schema reference (migration 0014)
 
 Six tables carry the whole Registry. The first four ARE the runtime truth; the
 last two are history the runtime never reads. Two companion tables complete the
-intent-management plane — `action_catalog` (inventory, §25.5.5) and
-`chat_funnel_events` (telemetry, §25.8.1). Three invariants bind the plane
+intent-management plane — `action_catalog` (inventory, §25.7.5) and
+`chat_funnel_events` (telemetry, §25.9.1). Three invariants bind the plane
 together: the corpus is ONE table-set shared by the exact Matcher and the
 vector Recall; tool existence/schema truth is the live `ToolRuntime.schemas()`
 roster at every checkpoint (write gate, executor schema gate, TOCTOU — the
@@ -5292,7 +5659,7 @@ open.
 | `parameters` | jsonb | canonical schema `{name: {type, description, required, max_len?}}`; validated against the LIVE ToolRuntime schemas on the admin write path (no double truth) |
 | `arg_slots` | jsonb | slot → source declaration, incl. `plugin:<name>` |
 | `permissions` / `execution_policy` | text | policy reference (`auto` default) |
-| `intent_kind` | text, server_default `action` | `action` \| `private` \| `web` (P3, §25.11) |
+| `intent_kind` | text, server_default `action` | `action` \| `private` \| `web` (P3, §25.12) |
 | `enabled` | bool | disabled ⇒ excluded from routing at EVERY node (predicates + re-validation) |
 | `status` | text | `active` \| `disabled` \| `deprecated` (+ `replacement_capability_id`) |
 | `row_version` | int | optimistic-concurrency token |
@@ -5364,7 +5731,7 @@ A NULL `embedding` is honestly invisible to recall (every predicate filters
 `IS NOT NULL`) — the chain reports `RECALL_UNAVAILABLE` rather than pretend an
 un-embedded corpus is an empty result set.
 
-#### 25.5.2 Coherence markers (why a stale corpus cannot serve)
+#### 25.7.2 Coherence markers (why a stale corpus cannot serve)
 
 Three layers, each keyed so that staleness is impossible **by construction**:
 
@@ -5386,7 +5753,7 @@ downstream caches  Matcher compiles its exact dict keyed by the VIEW fingerprint
 payload)[:12]`, row ids and row_versions excluded) — it says WHAT the corpus
 is, never WHICH rows.
 
-#### 25.5.3 Recall predicates (the enabled chain, in SQL)
+#### 25.7.3 Recall predicates (the enabled chain, in SQL)
 
 Both lanes (pgvector ANN and the in-process cosine fallback) share identical
 predicates. The **Standard** path checks one hop up:
@@ -5408,12 +5775,12 @@ FROM capability_similar_queries q
 
 i.e. a Similar is recallable **only while its Standard is enabled AND that
 Standard's capability is enabled+active**. Enabled flags are INDEPENDENT
-(ruling 2026-09-26): disabling a Standard neither auto-disables its Similar
+(ruling): disabling a Standard neither auto-disables its Similar
 children nor is refused by them — the children simply stop being recallable
 while the parent is off, and still-enabled children resume as soon as the
 Standard is re-enabled.
 
-#### 25.5.4 Write-plane operations (admin API surface)
+#### 25.7.4 Write-plane operations (admin API surface)
 
 Capability rows (`store.py`) — corpus NOT patchable here:
 
@@ -5432,7 +5799,7 @@ Query rows (`queries.py`, embed-then-write is the ONLY path into the corpus):
 | `add_standard_query` | derive language → capability must exist → the (capability, language) slot must be FREE (else "edit it instead") → **embed FIRST** → short INSERT of row+vector |
 | `add_similar_query` | derive language → parent Standard exists → derived language **must equal** the Standard's (refused, never auto-fixed) → embed FIRST → INSERT |
 | `update_query_text` | re-derive language → Standard: no sibling holds the new language / Similar: parent still matches → embed FIRST → UPDATE text+vector as ONE unit |
-| `set_query_enabled` | enabling REFUSED while `embedding IS NULL` (no active query without a vector — run backfill); otherwise a pure flag flip — Standard and Similar enabled states are INDEPENDENT (ruling 2026-09-26): disabling a Standard is never refused or cascaded by its Similar children, the Recall chain (§25.5.3) does the rest |
+| `set_query_enabled` | enabling REFUSED while `embedding IS NULL` (no active query without a vector — run backfill); otherwise a pure flag flip — Standard and Similar enabled states are INDEPENDENT (ruling): disabling a Standard is never refused or cascaded by its Similar children, the Recall chain (§25.7.3) does the rest |
 | `delete_query` | hard delete (sentences are editable assets, not history); Standard with children refused unless `cascade_similar` deletes them in the same transaction |
 | `pending_embeddings` / `store_embedding` | the backfill work list + per-row vector write (`scripts/embed_corpus.py` against the pinned `app_settings.embedding_profile`); filling a vector never changes routing content, so per-row atomicity suffices |
 
@@ -5458,7 +5825,7 @@ read and edited by humans, and logic that cannot be honestly tabulated is not
 stuffed into it; what a node cannot decide escalates, and the model layers
 bottom out.
 
-#### 25.5.5 Action Catalog — inventory, never routing (`action_catalog`, migration 0011)
+#### 25.7.5 Action Catalog — inventory, never routing (`action_catalog`, migration 0011)
 
 The Action Universe: every USER-FACING action that exists in the system.
 Deliberately separate from `capabilities` — catalog membership is INVENTORY;
@@ -5478,108 +5845,9 @@ join on `capabilities.tool_binding`, so no second truth can drift.
 
 Creating a capability from a Catalog entry copies `tool_binding`/description
 into the new `capabilities` row; the entry's corpus is then edited exclusively
-through the live query plane (§25.5.4).
+through the live query plane (§25.7.4).
 
-### 25.6 ToolIntentModel — Backends, Wire Discipline & Output Adapters
-
-Payload discipline (`tool_intent/base.py`, 8.17): input = query + `TurnFacts` +
-one **Card per candidate**, assembled from the Registry row by capability_id —
-tool binding, description, the canonical parameter schema with per-slot
-descriptions, recall score and origin, matched example. No tools list beyond
-the candidate cards, no skills, no conversation history. Reply =
-`{capability_id, confidence, arguments}`. The same card contract is served by
-every backend, so providers are interchangeable above this module.
-
-**Backends** (`tool_intent/__init__.py`, `chat_tool_intent_backend`):
-
-- `stub` — deterministic margin rules over the candidate set (leader-vs-runner-up
-  margin `chat_funnel_margin`; a single candidate is confirmed only with a
-  trustworthy provenance: calibrated cosine or a `matcher_hit`;
-  `matcher_ambiguous` races it never resolves). **No extraction power**:
-  arguments stay `None` → `BIND_MISSING` exit — honest and documented, the
-  transition rung of the ladder.
-- `local` — the deployed small model service (first choice, ms-level when
-  warm). OpenAI-compatible wire: `chat_tool_intent_local_url` is a BASE url
-  (e.g. the Docker `tool-intent` service, Ollama today, vLLM/llama.cpp
-  drop-ins); the model name rides `chat_tool_intent_local_model` — provider
-  swap lives in config only, never in chain logic. `""` URL = not deployed →
-  `ToolIntentUnavailable` → fall through the ladder (a transport fault is never
-  a verdict).
-- `online` — the platform LLM seam as fallback, riding a **dedicated
-  small-model channel**: `chat_tool_intent_online_model` forwarded per call
-  when set; `_base_url`/`_api_key` are honored only as a pair (else only the
-  model name rides the pinned turn channel); temperature 0, per-call
-  `chat_tool_intent_timeout_seconds` idle guardrail inside the cascade budget.
-- `auto` — local → online → stub (the deployed order).
-
-**Local output disciplines** (`chat_tool_intent_local_mode`) — the Adapter
-normalizes whatever the model emits into the ONE internal reply shape
-`{capability_id, confidence, arguments}`; the verdict gate (§25.4 step 6) and
-the Binder stay the sole correctness owners either way — an off-card id is
-still `UNCERTAIN`, never an auto-pass:
-
-- `prompt_json` (default) — SYSTEM asks for a JSON reply; the adapter
-  brace-parses it. What a base instruct model emits well.
-- `tools` — native function-calling for tool-tuned checkpoints: one OpenAI tool
-  per candidate, `name` = Registry capability_id (the model's function choice
-  *is* the capability choice — no tool-name/cap-id confusion), `parameters` =
-  that capability's Registry schema, `tool_choice: "auto"` (a no-tool turn is a
-  legitimate abstention routed to the Agent, not a forced mis-selection). The
-  reply is read in a FIXED priority — native `message.tool_calls` first, then
-  a JSON-object content (only when it carries a string `capability_id`), then
-  the structured-Markdown block below, and only then a refusal (`NONE`). Which
-  of the three shapes a correct verdict arrives in is a serving-geometry
-  detail (see below), so the Adapter accepts all of them into the SAME
-  internal reply shape — none of them bypasses the gate.
-
-**Structured-Markdown fallback (tools mode).** A small tool-tuned model's
-first-token argmax between the native tool-call token and its fine-tune
-Markdown token is a near-tie, and what breaks the tie is the serving backend's
-KV-cache geometry (cold prefill vs cache reuse vs partial recompute) — pinned
-decoding (`temperature 0, top_p 1.0, seed 42, max_tokens 128,
-reasoning_effort none`) pins *content*, not *format*. The same correct verdict
-therefore arrives on the wire either as a native tool call or as a Markdown
-block:
-
-```
-### <capability_id>
-tool: <tool_name>              ← optional (the model sometimes omits it)
-arguments: <single-line JSON object>
-confidence: <number>
-```
-
-The Adapter treats this as a wire-format compatibility concern — the semantic
-result is already correct, so it is parsed, never re-asked and never handed to
-the Agent. Parsing is deliberately strict (`_MD_TOOL_REPLY`, whole-reply
-`fullmatch` on the stripped content):
-
-1. the reply must be ONLY the block — any leading or trailing prose
-   disqualifies it (ordinary reasoning text can never be mistaken for a call);
-2. `arguments` must parse as a JSON object; `confidence` must be numeric;
-3. when a `tool:` line is present and the Registry is loaded, the capability
-   must exist AND its `tool_binding` must match — an inconsistent pair
-   disqualifies (refusal → `REJECT`);
-4. the normalized reply then passes the SAME downstream gate: candidate-set
-   membership (a well-formed block naming an off-card capability is still
-   `UNCERTAIN`), the confidence floor, and the Binder's schema validation.
-
-A malformed, half-finished or runaway block, prose that merely *mentions* a
-capability, and `NONE …` refusals all stay refusals — the fix widened the
-Adapter's format coverage, not its willingness to believe.
-
-**Never fabricate**: every backend failure mode (unreachable, non-2xx,
-unparseable) raises `ToolIntentUnavailable` and falls through the ladder; the
-ToolIntentModel never invents a verdict out of its own outage.
-
-**Selected local model.** The local arm's designated model is `iromu/Qwen3-0.6B-tools` — a Qwen3-0.6B LoRA fine-tune for structured tool/function calling — shipped as a GGUF Q5_K_M quant and served through Ollama in native tool-calling mode (`mode="tools"`). It is not an Ollama-library pull: the GGUF file is imported with a minimal Modelfile (`FROM /tmp/<file>.gguf`) and registered as `qwen3-tools:q5_k_m`. This local tag is the exact model name deployments must reference.
-
-**Selection logic.** The final model selection was based on a controlled A/B evaluation using the same production payload-building path. The benchmark initially exposed a protocol/adapter mismatch: under the original `prompt_json` contract, the fine-tuned tools model produced native tool-calling output that the existing brace parser could not reliably consume. This was subsequently identified as an adapter/wire-format issue rather than evidence that the model's tool-intent capability was inferior. After introducing the native tool-calling adapter and rerunning the controlled comparison at the same Q5_K_M quantization, the fine-tuned model was selected for its superior tool-selection and argument-extraction quality and retained as the final local ToolIntentModel.
-
-The final ruling is therefore to keep the fine-tuned Q5_K_M model. The two base-model variants used only for benchmarking were subsequently removed from the Ollama store. Historical intermediate benchmark results must not be treated as the final model-selection ruling.
-
-**Deployment note.** The shipped default configuration keys still point to the former base-model tag and `prompt_json`. Until `chat_tool_intent_local_model` / `chat_tool_intent_local_mode` are explicitly switched to `qwen3-tools:q5_k_m` / `tools`, the local arm does not resolve the designated model and falls through the configured ladder (online → stub). This is a pending configuration change and requires its own approval; the architecture decision itself is already final.
-
-### 25.7 Failures, Fallback & Stale Dispatch (§8.9–§8.11)
+### 25.8 Failures, Fallback & Stale Dispatch (§8.9–§8.11)
 
 Reason codes carry their stage prefix (8.10; bare `AMBIGUOUS` is banned — it
 collides with `Confidence.AMBIGUOUS`):
@@ -5591,8 +5859,7 @@ REGISTRY_VERSION_MISMATCH · FUNNEL_KIND_DISABLED
 BIND_MISSING · BIND_AMBIGUOUS · BIND_INVALID · CASCADE_TIMEOUT · CASCADE_ERROR
 ```
 
-(`NO_CANDIDATE` is in service again per the ruling of 2026-09-26, superseding
-2026-09-25: an EMPTY model-facing candidate set short-circuits to the Agent at
+(`NO_CANDIDATE` is in service again per the ruling: an EMPTY model-facing candidate set short-circuits to the Agent at
 `deepest_stage=recall` with NO model hop — it is the honest business result of
 "nothing on the table". The fault/empty split is strict: an empty set that
 Recall executed normally → `NO_CANDIDATE`; ANY recall system fault — no
@@ -5607,7 +5874,7 @@ The Agent is the funnel's final **consumer**, not a funnel node: it may
 multi-turn clarify, plan freely and call the same Runtime; the worst cost of a
 funnel mis-judgement is one extra judgement spent, never a wrong action taken.
 Binder failures exit straight to the Agent with `BIND_*` reasons — the
-2026-09-23 "escalate for recheck" hop was deleted by the chain ruling after
+ "escalate for recheck" hop was deleted by the chain ruling after
 profiling showed the second call repeats the first verdict verbatim while
 costing a full second TTFB; the Agent's clarification loop is the recovery
 channel. **Stale dispatch is never ordinary Agent fallback**: the executor's
@@ -5616,7 +5883,7 @@ terminates honestly (C3, §24 table) — a routed turn never executes on blind
 trust, and a stale route is never replayed through the Agent (that is how
 duplicate folders get made).
 
-### 25.8 Observability, Execution Modes & Shadow (§8.12, §8.14, §8.15)
+### 25.9 Observability, Execution Modes & Shadow (§8.12, §8.14, §8.15)
 
 Every cascade run produces a `funnel_trace` — deepest stage, matcher state,
 recall count/top score, tool-intent verdict, final route, fallback reason,
@@ -5635,7 +5902,7 @@ ruling (8.13)** — the per-node latency data is what future tuning reads; the
 
 **Shadow / dry-run telemetry** (`shadow.py`): the 8.15 Matcher dark-launch hook
 (`chat_matcher_mode` tri-state + `observe`) was deleted by the single-path
-ruling (2026-09-28) — the Matcher inside the live cascade IS the formal
+ruling — the Matcher inside the live cascade IS the formal
 consumer, so an observation-only copy of it has no product role. What remains
 is `cascade_shadow`: one dry-run turn through the **same** orchestrator body
 production runs (zero cascade duplication, so the shadow can never drift from
@@ -5651,7 +5918,7 @@ trace as a verdict. Executing nothing is structural: the chain only produces
 routing metadata, `run_tool` is not on the preview object graph at all, and
 usage lands `execution_mode=preview`.
 
-#### 25.8.1 `chat_funnel_events` — the persisted trace (telemetry, not history)
+#### 25.9.1 `chat_funnel_events` — the persisted trace (telemetry, not history)
 
 One row per route decision, mirroring the `funnel_trace` log line 1:1:
 
@@ -5665,7 +5932,7 @@ One row per route decision, mirroring the `funnel_trace` log line 1:1:
 | `recall_count` / `recall_top` | int / text | candidate volume + best score (threshold tuning panel) |
 | `tool_intent` | text NULL | verdict; `-` when the NO_CANDIDATE short-circuit skipped the hop entirely |
 | `final_route` | text default `agent` | where the turn actually went |
-| `fallback_reason` | text NULL | the reason code (§25.7) — faults and business results never share one |
+| `fallback_reason` | text NULL | the reason code (§25.8) — faults and business results never share one |
 | `registry_version` | text NULL | content fingerprint of the certified corpus |
 | `index_version` | text NULL | ANN corpus digest (`corpus1-<sha12>`) |
 | `capability_id` | text NULL | certified winner, if any |
@@ -5677,7 +5944,7 @@ Nothing in the request path reads this table back and the write is
 **best-effort** — a DB fault must never sink a turn. The raw query text is
 deliberately NOT stored (8.12 privacy line).
 
-### 25.9 Repository Structure (implemented)
+### 25.10 Repository Structure (implemented)
 
 ```
 packages/core/application/chat/
@@ -5714,7 +5981,7 @@ packages/core/application/chat/
     ├── binder/__init__.py          # Node 4 (validate on the active path; bind for the L0 lane)
     └── shadow.py                   # cascade_shadow — dry-run telemetry for preview +
                                     #   offline tooling (the 8.15 matcher hook was deleted
-                                    #   by the single-path ruling 2026-09-28)
+                                    #   by the single-path ruling)
 ```
 
 Tests follow the repo convention of a flat root `tests/` (node-independent unit
@@ -5740,7 +6007,7 @@ structures; (2) replacing any node's implementation (local model ↔ online,
 exact ↔ automaton, cosine ↔ vector DB) touches no other node; (3) the funnel
 never executes tools —
 execution stays on the existing Shared Tool Runtime path. A fourth, added as
-the master constraint (2026-09-24): intent understanding must remain a
+the master constraint: intent understanding must remain a
 **pluggable pipeline, never a merged black box** — structured contracts between
 nodes with no shared internal state; each node carries its own switches and
 backend selection; each node is unit-testable against fake contracts; tuning
@@ -5750,14 +6017,14 @@ architecture violation to be split, not a detail to argue about. (The retired
 QIR semantic layer — one function entangling cosine scoring with adjudication —
 is the named counter-example this unbundles.)
 
-### 25.10 Write-Gate & Safety Digest (8.4 / 8.6 / 8.8)
+### 25.11 Write-Gate & Safety Digest (8.4 / 8.6 / 8.8)
 
 - **Lifecycle** — no hard deletes: `ACTIVE / DISABLED / DEPRECATED` +
   optional `replacement_capability_id`; history, write-time snapshots and audits
   survive a disable. A disabled/deprecated capability is never an executable
   candidate; admin/audit views still see it (ruling 4, pinned in
   `test_intent_registry`).
-- **Write validation** — the §25.5 gate; any single failure refuses the
+- **Write validation** — the §25.7 gate; any single failure refuses the
   write before anything is committed.
 - **Safety boundary** — intent nodes never hold execution permission. The
   unified chain is
@@ -5768,11 +6035,11 @@ is the named counter-example this unbundles.)
   confidence · routing metadata`
   — never an executor, a tool instance, or an authorization bypass.
 
-### 25.11 Full Intent Space & Rollout (§6 / §8.19–§8.20)
+### 25.12 Full Intent Space & Rollout (§6 / §8.19–§8.20)
 
 `intent_kind` widens the candidate space beyond plain ACTION: `action` /
 `private` / `web`. **Being IN the table was never the same as being ON** —
-since the single-path ruling (2026-09-28) the ON set is structural, not a
+since the single-path ruling the ON set is structural, not a
 switch: `kind_enabled` admits the action family (`action` plus the historical
 empty kind) and nothing else; the per-kind rollout switches
 (`chat_funnel_private_enabled`, `chat_funnel_web_enabled`) were deleted with
@@ -5794,7 +6061,7 @@ Draft/Publish pipeline was later retired by the live-table ruling — migration
 the four-node cascade behind its then-dark-launch gate, the uncertain-escalates
 correction, node-independent unit tests; **P3** full intent space (kind in the
 table, per-kind gates present and OFF); **P4** preview endpoint, golden gate,
-rollback/audit, observability; **P5 / 2026-09-28 single-path ruling** — the
+rollback/audit, observability; **P5 / single-path ruling** — the
 gray-release era closed: the master/action/kind rollout gates and the matcher
 shadow hook were deleted, the cascade runs on every turn as the product's one
 formal lane, and the remaining shipped default is a *safety* composition
@@ -5802,7 +6069,7 @@ formal lane, and the remaining shipped default is a *safety* composition
 stays the shipped backend default until a local/online model is separately
 adjudicated.
 
-### 25.12 The Five Adjudications (2026-09-23)
+### 25.13 The Five Adjudications
 
 The §8 constraints were drafted with five claims that fought the code; each was
 adjudicated and written back into the text above:
@@ -5811,13 +6078,13 @@ adjudicated and written back into the text above:
 |---|---|---|---|
 | **a** | "no hardcoded rules in a node" would also ban the safety guards | guards stay code in the funnel common layer, not table data; the config table is human-readable query corpus; what cannot be decided escalates and the model layers bottom out | 8.1 |
 | **b** | argument extractors' "look at context, abstain if wrong" judgement cannot be tabulated | the table registers `plugin:<name>` (which extractor); bodies stay code with roster/enable/version discipline owned by the Registry (the write gate validates membership); an extractor abstention escalates, it never jumps straight to the Agent | 8.1 |
-| **c** | parameter-failure: terminal refusal vs Agent clarification, drafted both ways | neither as drafted — non-COMPLETE exits toward the clarification channel, never an in-place "reject"; after the chain ruling the exit is the Agent itself (`BIND_*`), and anomalies after any commit stay C4 | 8.7 / 25.5 |
+| **c** | parameter-failure: terminal refusal vs Agent clarification, drafted both ways | neither as drafted — non-COMPLETE exits toward the clarification channel, never an in-place "reject"; after the chain ruling the exit is the Agent itself (`BIND_*`), and anomalies after any commit stay C4 | 8.7 / 25.7 |
 | **d** | "three layers under 50 ms" was never measured | clause voided — no time limit for now; every node keeps recording latency; a future threshold ships as configuration from Shadow measurements, never as prose in this document | 8.13 |
 | **e** | who receives a multi-capability match was left unstated | upward with ALL candidates (Matcher → model); session objects are only the open viewer file or the session context — there is no "web page" candidate class | 8.1 / 25.2 |
 
-### 25.13 Configuration (`core/config.py`, post single-path ruling)
+### 25.14 Configuration (`core/config.py`, post single-path ruling)
 
-After the 2026-09-28 ruling the formal lane carries **no rollout knobs** — the
+After the ruling the formal lane carries **no rollout knobs** — the
 master switch, the per-kind gates and the matcher shadow hook were deleted from
 the model itself. What ships is the quality/safety surface plus one exposure
 default:
@@ -5825,7 +6092,7 @@ default:
 ```
 chat_funnel_timeout_seconds=5.0    chat_funnel_min_score=0.82   chat_funnel_margin=0.06
 chat_funnel_trace_capture=False    (Phase-6 observability: per-event trace_json on demand)
-chat_funnel_hidden_capabilities="cap-edit-file"  (chat-plane routing-view hiding, §24/§25.5;
+chat_funnel_hidden_capabilities="cap-edit-file"  (chat-plane routing-view hiding, §24/§25.7;
                                     pairs with `agent_hidden_tools` §16.8 — the tools-side
                                     default stays "" because the factory is shared with the
                                     worker; the API startup scripts inject it on chat lanes)
@@ -5836,13 +6103,13 @@ chat_tool_intent_online_model/_base_url/_api_key=""   chat_tool_intent_timeout_s
 ```
 
 `chat_funnel_min_score` is the Recall **quality gate** — every hit ≥ it reaches
-the model (no width cap; `chat_funnel_top_k` is deleted, ruling 2026-09-26) — and
+the model (no width cap; `chat_funnel_top_k` is deleted, ruling) — and
 an EMPTY model-facing set short-circuits to `NO_CANDIDATE` before any hop. The
 retired QIR lane's `chat_qir_*` set no longer exists
 (migration 0014) — this table is the whole routing knob surface, tuned on its own
 merits.
 
-### 25.14 Test Doctrine
+### 25.15 Test Doctrine
 
 Node-independent suites (fake contracts only — swapping a node's algorithm
 never touches another node's tests): `test_funnel_p2.py` (cascade lanes, gate

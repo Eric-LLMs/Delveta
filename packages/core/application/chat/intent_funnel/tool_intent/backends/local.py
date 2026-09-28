@@ -127,8 +127,10 @@ async def model_reply(query: str, candidates, entries_by_id: dict, *,
       tools       — native function-calling for tool-tuned checkpoints; the
                     candidate set is sent as OpenAI tools and the reply is read
                     back from ``message.tool_calls``; a reply with no native
-                    call gets a strict structured-Markdown fallback first
-                    (:func:`_reply_from_markdown_tool`). Both yield the SAME
+                    call gets a JSON-object content fallback, then the strict
+                    structured-Markdown fallback (both in
+                    :func:`_reply_from_tool_call`'s fixed priority order).
+                    All yield the SAME
                     reply shape, so ``_verdict_from_reply`` (candidate-set
                     membership + the confidence floor) stays the correctness
                     gate unchanged — a function name outside the candidate set
@@ -231,21 +233,65 @@ def _reply_from_markdown_tool(content, entries_by_id: dict | None) -> dict | Non
     return {"capability_id": cap, "confidence": confidence, "arguments": args}
 
 
-def _reply_from_tool_call(message: dict, candidates, entries_by_id: dict | None = None) -> dict:
-    """Translate a native tool-call into the shared reply shape.
+def _reply_from_json_selection(content) -> dict | None:
+    """Normalize a JSON-object content reply (the shape OUTPUT_LOCK asks for and
+    the Q5 checkpoint emits most often under the tools wire) into the SAME
+    internal reply shape the native path yields. STRICTLY conditional: the
+    reply must yield a JSON object that carries a non-empty ``capability_id``
+    — an object without one is NOT a selection (it is whatever remains of a
+    malformed block or an echoed arguments fragment), so it falls through to
+    the Markdown fallback and then to NONE. Malformed/truncated JSON falls
+    through the same way: no selection, no fabrication, no UNAVAILABLE
+    (unlike the prompt_json CONTRACT, where a broken object means the served
+    reply was unusable — here the contract is the tool-call, and this is only
+    a content-level fallback)."""
+    text = str(content or "").strip()
+    if not text:
+        return None
+    try:
+        data = json.loads(text[text.index("{"): text.rindex("}") + 1])
+    except (ValueError, KeyError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    raw_cap = data.get("capability_id")
+    if not isinstance(raw_cap, str):
+        return None                     # numeric/null id is not a selection
+    cap = raw_cap.strip()
+    if not cap:
+        return None
+    try:
+        confidence = float(data.get("confidence") or 0.0)
+    except (TypeError, ValueError):
+        confidence = 0.0
+    args = data.get("arguments")
+    return {"capability_id": cap, "confidence": confidence,
+            "arguments": args if isinstance(args, dict) else None}
 
-    ``confidence`` here is the PROVIDER's "a structured selection was made"
-    signal, NOT a calibrated model probability (a discrete tool-call is binary).
-    It does not bypass correctness: ``_verdict_from_reply`` checks the name
-    against the candidate set FIRST (off-card -> UNCERTAIN), and the Binder still
-    validates the arguments. A reply with no tool-call first gets the strict
-    structured-Markdown fallback (same internal shape, same gate downstream);
-    only if that too misses is it a refusal (NONE) -> REJECT -> Agent;
-    tool-arguments that will not parse are an UNAVAILABLE (the provider served
-    nothing usable), never a fabricated verdict.
+
+def _reply_from_tool_call(message: dict, candidates, entries_by_id: dict | None = None) -> dict:
+    """Translate a tools-mode reply into the shared reply shape, trying the
+    formats in FIXED priority: native ``tool_calls`` -> JSON-object content ->
+    structured-Markdown block -> refusal (NONE). All three accepted shapes
+    normalize to {capability_id, confidence, arguments} and face the SAME
+    downstream gate; nothing here bypasses it (an off-card id is still an
+    UNCERTAIN, and the Binder still validates the arguments).
+
+    ``confidence`` from the native path is the PROVIDER's "a structured
+    selection was made" signal, NOT a calibrated model probability (a discrete
+    tool-call is binary); from the JSON/Markdown paths it is the model's own
+    reported value, floor-gated downstream like the prompt_json contract.
+    A reply with no native call first gets the JSON content fallback, then the
+    strict structured-Markdown fallback (same internal shape, same gate
+    downstream); only if both miss is it a refusal (NONE) -> REJECT -> Agent;
+    tool-arguments on a NATIVE call that will not parse are an UNAVAILABLE
+    (the provider served a malformed call), never a fabricated verdict.
     """
     calls = message.get("tool_calls") or []
     if not calls:
+        js = _reply_from_json_selection(message.get("content"))
+        if js is not None:
+            return js
         md = _reply_from_markdown_tool(message.get("content"), entries_by_id)
         if md is not None:
             return md
