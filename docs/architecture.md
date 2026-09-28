@@ -5217,11 +5217,14 @@ input that differs between the arms.
 
 #### A/B definition
 
+The runtime variable under test is `capabilities.description` — and nothing else:
+
 | | Arm A (baseline) | Arm B (bilingual) |
 |---|---|---|
 | `capabilities.description` | original short English | canonical v2 = `canonical_english_v2` + `"\n\n中文："` + `canonical_chinese` |
-| `action_catalog.description` | original short English | same canonical v2 |
 | Everything else | — | identical |
+
+`action_catalog.description` was synchronized to the same canonical text for registry consistency; the Intent Model runtime variable under test was `capabilities.description`.
 
 Text source: `logs/capability_descriptions_review.json`, the frozen Phase-3 artifact
 (17 entries, fields `canonical_english_v2` / `canonical_chinese`). The strings were read
@@ -5294,6 +5297,14 @@ zh-003).
 | cap-read-document | 90% | 80% | −10 | 4/5 | 5/3 |
 | cap-web-search | 50% | 40% | −10 | 2/3 | 1/3 |
 
+#### Environment / Measurement Scope
+
+| | |
+|---|---|
+| Inference runtime | Ollama in Docker |
+| Container resources | 16 CPUs / ~11.7 GiB RAM |
+| Endpoint | `http://localhost:18091/v1` |
+
 #### Latency / TTFT cost
 
 | Metric | Arm A | Arm B | Δ |
@@ -5303,11 +5314,24 @@ zh-003).
 | TTFT median | 1168.8 ms | 1915.6 ms | +746.8 ms |
 | TTFT p95 | 7706.5 ms | 13216.6 ms | +5510.1 ms |
 
-The descriptions written in Arm B are roughly four times longer, so the prompt grows and
-both median and tail latency rise — the accuracy gained in this iteration is paid for in
-inference cost. (The runners' own JSON reports a narrowly different median under its own
-median definition: latency median 2033.0 ms → 2155.9 ms, TTFT median 1160.2 ms →
-1915.6 ms; the p95 values agree.)
+The descriptions in Arm B are substantially longer than Arm A, increasing prompt
+length. Both median and tail latency also rose in this iteration, so the observed
+accuracy gain came with higher inference cost.
+
+The runner JSON reports slightly different medians under its own median
+calculation: latency 2033.0 ms → 2155.9 ms and TTFT 1160.2 ms → 1915.6 ms.
+The p95 values agree with the table above.
+
+The reported latency / TTFT depends on the Docker resource allocation available to
+the Ollama container and the system load during measurement. Arm A and Arm B used
+the same Docker / Ollama resource configuration, so their latency / TTFT differences
+(Δ) remain directly comparable within this experiment.
+
+Explicitly: Arm B's 170 requests measured a **TTFT p95 of 13.22 s**.
+
+These latency / TTFT figures are measured under the stated Docker / Ollama
+environment. They do not represent the model's intrinsic performance and must not
+be used directly as a cross-hardware or cross-inference-backend performance baseline.
 
 #### Caveats
 
