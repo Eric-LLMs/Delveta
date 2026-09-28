@@ -5525,7 +5525,12 @@ still `UNCERTAIN`, never an auto-pass:
   *is* the capability choice — no tool-name/cap-id confusion), `parameters` =
   that capability's Registry schema, `tool_choice: "auto"` (a no-tool turn is a
   legitimate abstention routed to the Agent, not a forced mis-selection). The
-  reply is read back from `message.tool_calls`.
+  reply is read in a FIXED priority — native `message.tool_calls` first, then
+  a JSON-object content (only when it carries a string `capability_id`), then
+  the structured-Markdown block below, and only then a refusal (`NONE`). Which
+  of the three shapes a correct verdict arrives in is a serving-geometry
+  detail (see below), so the Adapter accepts all of them into the SAME
+  internal reply shape — none of them bypasses the gate.
 
 **Structured-Markdown fallback (tools mode).** A small tool-tuned model's
 first-token argmax between the native tool-call token and its fine-tune
@@ -5565,6 +5570,14 @@ Adapter's format coverage, not its willingness to believe.
 **Never fabricate**: every backend failure mode (unreachable, non-2xx,
 unparseable) raises `ToolIntentUnavailable` and falls through the ladder; the
 ToolIntentModel never invents a verdict out of its own outage.
+
+**Selected local model.** The local arm's designated model is `iromu/Qwen3-0.6B-tools` — a Qwen3-0.6B LoRA fine-tune for structured tool/function calling — shipped as a GGUF Q5_K_M quant and served through Ollama in native tool-calling mode (`mode="tools"`). It is not an Ollama-library pull: the GGUF file is imported with a minimal Modelfile (`FROM /tmp/<file>.gguf`) and registered as `qwen3-tools:q5_k_m`. This local tag is the exact model name deployments must reference.
+
+**Selection logic.** The final model selection was based on a controlled A/B evaluation using the same production payload-building path. The benchmark initially exposed a protocol/adapter mismatch: under the original `prompt_json` contract, the fine-tuned tools model produced native tool-calling output that the existing brace parser could not reliably consume. This was subsequently identified as an adapter/wire-format issue rather than evidence that the model's tool-intent capability was inferior. After introducing the native tool-calling adapter and rerunning the controlled comparison at the same Q5_K_M quantization, the fine-tuned model was selected for its superior tool-selection and argument-extraction quality and retained as the final local ToolIntentModel.
+
+The final ruling is therefore to keep the fine-tuned Q5_K_M model. The two base-model variants used only for benchmarking were subsequently removed from the Ollama store. Historical intermediate benchmark results must not be treated as the final model-selection ruling.
+
+**Deployment note.** The shipped default configuration keys still point to the former base-model tag and `prompt_json`. Until `chat_tool_intent_local_model` / `chat_tool_intent_local_mode` are explicitly switched to `qwen3-tools:q5_k_m` / `tools`, the local arm does not resolve the designated model and falls through the configured ladder (online → stub). This is a pending configuration change and requires its own approval; the architecture decision itself is already final.
 
 ### 25.7 Failures, Fallback & Stale Dispatch (§8.9–§8.11)
 
