@@ -255,9 +255,6 @@ def _wire(monkeypatch, embedder: _Embedder):
         "core.application.chat.intent_funnel.registry.active_view", fake_active)
     monkeypatch.setattr(
         "core.application.chat.intent_funnel.recall.load_index", fake_load)
-    monkeypatch.setattr(settings, "chat_funnel_enabled", True)
-    monkeypatch.setattr(settings, "chat_fast_paths_enabled", True)
-    monkeypatch.setattr(settings, "chat_action_fast_path_enabled", True)
     # ToolIntentModel rides the online seam with the scripted double; every channel/
     # floor config is pinned so a dev .env can never flap a golden.
     monkeypatch.setattr(settings, "chat_tool_intent_backend", "online")
@@ -283,14 +280,8 @@ def _trace_line(caplog) -> str:
 
 @pytest.mark.parametrize("case", CASES, ids=[c["id"] for c in CASES])
 async def test_golden_case(monkeypatch, caplog, case):
-    from core.config import settings
-
-    settings_kw = case.get("settings", {})
-    monkeypatch.setattr(settings, "chat_matcher_mode", settings_kw.get("mode", "off"))
-    monkeypatch.setattr(settings, "chat_funnel_private_enabled",
-                        bool(settings_kw.get("private", False)))
-    monkeypatch.setattr(settings, "chat_funnel_web_enabled",
-                        bool(settings_kw.get("web", False)))
+    # Single-path ruling 2026-09-28: the removed rollout/matcher settings had
+    # no golden case depending on them (every case ran with the shipped gates).
 
     embedder = _Embedder()
     _view_obj, deps = _wire(monkeypatch, embedder)

@@ -151,8 +151,8 @@ def _harness(monkeypatch, port, seam):
     return app, agent
 
 
-def _gates(monkeypatch, *, fast, retrieval, direct=False, viewer=False):
-    monkeypatch.setattr(settings, "chat_fast_paths_enabled", fast, raising=False)
+def _gates(monkeypatch, *, fast=True, retrieval, direct=False, viewer=False):
+    # `fast` is inert since the 2026-09-28 single-path ruling (master gate deleted).
     monkeypatch.setattr(settings, "chat_retrieval_fast_path_enabled", retrieval, raising=False)
     monkeypatch.setattr(settings, "chat_direct_fast_path_enabled", direct, raising=False)
     monkeypatch.setattr(settings, "chat_viewer_fast_path_enabled", viewer, raising=False)
@@ -205,17 +205,7 @@ async def test_fail_closed_escalates_to_agent_before_any_event(monkeypatch, hits
     assert port.judged == (0 if not hits else 1)  # empty recall never pays the judge
 
 
-async def test_dark_launch_never_touches_the_retrieval_seam(monkeypatch):
-    _gates(monkeypatch, fast=False, retrieval=True)  # master OFF gates everything
-    port, seam = FakePort(), FakeSeam(HIT)
-    app, agent = _harness(monkeypatch, port, seam)
-    events, done = await _stream(app)
-    assert events == ["done"]
-    assert done["answer"] == "agent" and agent.agent_stream_calls == 1
-    assert seam.calls == [] and port.judged == 0
-
-
-async def test_retrieval_gate_off_stays_agent_even_when_recall_would_pass(monkeypatch):
+async def test_retrieval_lane_off_stays_agent_even_when_recall_would_pass(monkeypatch):
     _gates(monkeypatch, fast=True, retrieval=False)
     port, seam = FakePort(), FakeSeam(HIT)
     app, agent = _harness(monkeypatch, port, seam)

@@ -122,11 +122,9 @@ async def _stream(app, message):
     return events, done
 
 
-@pytest.mark.parametrize("gates", [(True, True), (False, False)],
-                         ids=["direct-on", "dark"])
-async def test_short_turn_routes_direct_when_gate_on(monkeypatch, gates):
-    fast, direct = gates
-    monkeypatch.setattr(settings, "chat_fast_paths_enabled", fast, raising=False)
+@pytest.mark.parametrize("direct", [True, False],
+                         ids=["direct-on", "lane-off"])
+async def test_short_turn_routes_direct_when_lane_open(monkeypatch, direct):
     monkeypatch.setattr(settings, "chat_direct_fast_path_enabled", direct, raising=False)
     port = FakePort(["Hel", "lo"])
     app, agent = _harness(monkeypatch, port)
@@ -135,21 +133,21 @@ async def test_short_turn_routes_direct_when_gate_on(monkeypatch, gates):
     # The terminal SSE frame is always last; the branch is distinguished below.
     assert events[-1] == "done"
 
-    if fast and direct:
+    if direct:
         assert done["answer"] == "Hello"
         # content deltas then the terminal done — legacy frame shape preserved.
         assert events == ["content", "content", "done"]
         # DIRECT taken: the single-shot port ran and the agent's run_stream never did.
         assert port.calls == 1 and agent.agent_stream_calls == 0
     else:
-        # Dark launch: the AGENT path answered it, the direct port was never touched.
+        # Lane off (single path): the funnel abstains on a chit-chat turn and
+        # the AGENT keeps it — the direct port was never touched.
         assert done["answer"] == "agent"
         assert port.calls == 0 and agent.agent_stream_calls == 1
 
 
-async def test_capability_turn_stays_on_agent_even_with_gate_on(monkeypatch):
+async def test_capability_turn_stays_on_agent_even_with_lane_open(monkeypatch):
     # "summarize my document" trips the private-retrieval signal → must NOT be direct.
-    monkeypatch.setattr(settings, "chat_fast_paths_enabled", True, raising=False)
     monkeypatch.setattr(settings, "chat_direct_fast_path_enabled", True, raising=False)
     port = FakePort(["nope"])
     app, agent = _harness(monkeypatch, port)

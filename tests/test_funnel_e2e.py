@@ -192,8 +192,9 @@ class ToolIntentDouble:
 
 
 def _funnel_gates(monkeypatch, *, mode="on", timeout=5.0, tool_intent_backend="stub"):
-    monkeypatch.setattr(settings, "chat_funnel_enabled", True)
-    monkeypatch.setattr(settings, "chat_matcher_mode", mode)
+    # Single-path ruling 2026-09-28: chat_funnel_enabled / chat_matcher_mode /
+    # private+web kind switches were deleted — the cascade is always live and
+    # only ACTION kind routes. The kwargs stay for call-site compatibility.
     monkeypatch.setattr(settings, "chat_tool_intent_backend", tool_intent_backend)
     monkeypatch.setattr(settings, "chat_tool_intent_local_url", "")  # not deployed (8.17 ruling)
     # deterministic dedicated-channel state: unconfigured means "ride the pinned
@@ -205,8 +206,6 @@ def _funnel_gates(monkeypatch, *, mode="on", timeout=5.0, tool_intent_backend="s
     monkeypatch.setattr(settings, "chat_funnel_timeout_seconds", timeout)
     monkeypatch.setattr(settings, "chat_funnel_min_score", 0.82)
     monkeypatch.setattr(settings, "chat_funnel_margin", 0.06)
-    monkeypatch.setattr(settings, "chat_funnel_private_enabled", False)
-    monkeypatch.setattr(settings, "chat_funnel_web_enabled", False)
 
 
 def _wire_world(monkeypatch, *, embedder, view=None, index=True, boom=False):
@@ -549,9 +548,11 @@ async def test_negated_demand_is_missed_before_certification(monkeypatch, caplog
     assert res.answer == "Agent took over."
 
 
-# ── shadow tri-state at the router: mode off emits zero observation records ───────
+# ── shadow observation at the router: a live turn emits zero shadow records ────────
 
-async def test_matcher_mode_off_records_no_shadow_telemetry(monkeypatch, caplog):
+async def test_live_turn_records_no_shadow_telemetry(monkeypatch, caplog):
+    # The matcher-shadow hook was deleted (single-path ruling 2026-09-28): a live
+    # routed turn must never write ``matcher_shadow`` lines.
     app, _port, _spy, _db, _emb, _ = _setup(monkeypatch, mode="off")
     caplog.set_level(logging.INFO, logger=SHADOW_LOGGER)
     await sse(app, MSG_FOLDER)

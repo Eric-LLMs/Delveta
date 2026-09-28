@@ -1,15 +1,14 @@
-"""Control-plane contracts: the dark-launch guarantee + Phase 2 DIRECT gating.
+"""Control-plane contracts under the single-path ruling + Phase 2 DIRECT gating.
 
 The router-level SSE compatibility is already covered end-to-end by
 test_viewer_chat (TestClient + fake kernel asserts frame shapes). What is pinned
 here is the pure policy + understanding surface:
 
 * ``TurnRequirements`` defaults to an abstain;
-* the master switch (not the signals) keeps routing on AGENT when off — the whole
-  control plane is behavior-identical to the agent while ``fast_paths_enabled`` is
-  False, regardless of confidence;
-* Phase 2: a short, pure, zero-demand turn maps to DIRECT ONLY under both gates;
-  any capability demand, memory flag, or a closed gate routes to AGENT;
+* the default policy (all experimental lanes off) keeps routing on AGENT — the
+  formal path certifies ACTION only, everything else rides its own lane gate;
+* Phase 2: a short, pure, zero-demand turn maps to DIRECT ONLY under the DIRECT
+  gate; any capability demand, memory flag, or a closed gate routes to AGENT;
 * L0: the in-process signal engine sets confidence correctly from cheap facts;
 * the orchestrator's registry resolves the right branch and degrades unmapped kinds
   to the agent branch, never hard-failing.
@@ -39,9 +38,10 @@ def test_default_requirements_abstain():
     assert req.needs_memory is False
 
 
-def test_master_switch_keeps_everything_on_agent():
-    # Neutral (abstain) and fully-determined HIGH inputs BOTH map to AGENT while the
-    # master switch is off — the dark launch must be behavior-identical to the agent.
+def test_default_policy_keeps_undemanded_turns_on_agent():
+    # Neutral (abstain) input maps to AGENT; a HIGH-confidence input with no
+    # certified action and no lane gate open ALSO lands on AGENT — the experimental
+    # lanes stay dark by default (Option A, single-path ruling 2026-09-28).
     neutral = build_execution_plan(TurnRequirements(), PolicyContext())
     assert neutral.kind is PlanKind.AGENT
 
@@ -50,15 +50,15 @@ def test_master_switch_keeps_everything_on_agent():
         needs_viewer=Signal.LOW, needs_action=Signal.LOW,
         confidence=Confidence.HIGH,
     )
-    # fast paths enabled but the DIRECT gate closed → still AGENT (per-kind gating).
-    assert build_execution_plan(strong, PolicyContext(fast_paths_enabled=True)).kind is PlanKind.AGENT
+    # Default policy (DIRECT gate closed) → still AGENT (per-kind gating).
+    assert build_execution_plan(strong, PolicyContext()).kind is PlanKind.AGENT
 
 
-def test_direct_kind_maps_only_under_both_gates():
+def test_direct_kind_maps_only_under_direct_gate():
     clean = TurnRequirements(confidence=Confidence.HIGH)  # all needs default LOW
-    both_on = PolicyContext(fast_paths_enabled=True, direct_fast_path_enabled=True)
+    both_on = PolicyContext(direct_fast_path_enabled=True)
     assert build_execution_plan(clean, both_on).kind is PlanKind.DIRECT
-    # A demand present disqualifies DIRECT even with both gates on.
+    # A demand present disqualifies DIRECT even with the gate on.
     demanding = TurnRequirements(
         confidence=Confidence.HIGH, needs_web=Signal.HIGH,
     )
@@ -75,19 +75,19 @@ def _viewer_req(**over):
 
 def test_viewer_kind_maps_under_viewer_gate_only():
     all_on = PolicyContext(
-        fast_paths_enabled=True, direct_fast_path_enabled=True, viewer_fast_path_enabled=True,
+        direct_fast_path_enabled=True, viewer_fast_path_enabled=True,
     )
     plan = build_execution_plan(_viewer_req(), all_on)
     assert plan.kind is PlanKind.VIEWER and plan.requires_viewer is True
     # Viewer gate OFF → a viewer-demand turn (needs_viewer HIGH) is not DIRECT either,
     # so it falls through to AGENT.
-    only_direct = PolicyContext(fast_paths_enabled=True, direct_fast_path_enabled=True)
+    only_direct = PolicyContext(direct_fast_path_enabled=True)
     assert build_execution_plan(_viewer_req(), only_direct).kind is PlanKind.AGENT
 
 
 def test_viewer_demand_with_other_capability_stays_agent():
     all_on = PolicyContext(
-        fast_paths_enabled=True, direct_fast_path_enabled=True, viewer_fast_path_enabled=True,
+        direct_fast_path_enabled=True, viewer_fast_path_enabled=True,
     )
     # The viewer must be the SOLE demand — a co-occurring private/web/memory need keeps
     # the turn on the Agent (which owns read_document / rag / web / recall).
@@ -110,7 +110,7 @@ def _rag_req(**over):
 
 def _all_on():
     return PolicyContext(
-        fast_paths_enabled=True, direct_fast_path_enabled=True,
+        direct_fast_path_enabled=True,
         viewer_fast_path_enabled=True, retrieval_fast_path_enabled=True,
     )
 
@@ -120,7 +120,7 @@ def test_retrieval_kind_maps_under_retrieval_gate_only():
     assert plan.kind is PlanKind.LOCAL_RAG and plan.requires_retrieval is True
     # Everything else ON but the retrieval gate closed → still AGENT (per-kind gating).
     no_rag = PolicyContext(
-        fast_paths_enabled=True, direct_fast_path_enabled=True, viewer_fast_path_enabled=True,
+        direct_fast_path_enabled=True, viewer_fast_path_enabled=True,
     )
     assert build_execution_plan(_rag_req(), no_rag).kind is PlanKind.AGENT
 
@@ -205,7 +205,7 @@ def test_l0_capability_and_memory_demands_are_not_high():
     assert req.needs_private is Signal.HIGH and req.confidence is Confidence.HIGH
     assert not _is_direct_eligible(req)
     # …and with the retrieval gate closed it still lands on the Agent.
-    direct_only = PolicyContext(fast_paths_enabled=True, direct_fast_path_enabled=True)
+    direct_only = PolicyContext(direct_fast_path_enabled=True)
     assert build_execution_plan(req, direct_only).kind is PlanKind.AGENT
 
 
@@ -253,9 +253,9 @@ def test_orchestrator_resolves_agent_plan_and_executor():
     from core.application.chat.turn_orchestrator import TurnOrchestrator
 
     ctx = _ctx(message="hi")
-    orch = TurnOrchestrator(deps=None)  # dark path: resolution touches no deps
+    orch = TurnOrchestrator(deps=None)  # no deps: funnel fails open, resolution touches no deps
     import asyncio
-    plan = asyncio.run(orch.resolve_plan(ctx))  # master gate off → AGENT (async since QIR stage 1)
+    plan = asyncio.run(orch.resolve_plan(ctx))  # default lanes dark → AGENT (async since QIR stage 1)
     assert plan.kind is PlanKind.AGENT
     assert isinstance(orch.executor_for(plan), AgentExecutor)
     # DIRECT / VIEWER / LOCAL_RAG are now registered branches...

@@ -20,10 +20,14 @@ from core.config import settings
 from tests.p5_validation._p5_harness import FakeBody, RoutingCtx, plan_for
 
 # ── gate bundles ────────────────────────────────────────────────────────────────
+# ``fast``/``action`` are inert kwargs (master + ACTION gates deleted by the
+# 2026-09-28 single-path ruling; ACTION rides certification alone). The DARK
+# bundle is gone — the product default IS the dark bundle for the four
+# experimental lanes (NO_LANES below).
 FULL = {"fast": True, "direct": True, "viewer": True, "retrieval": True,
         "action": True, "composite": True}
 P5A = {**FULL, "composite": False}
-DARK = {**FULL, "fast": False}
+NO_LANES = {"direct": False, "viewer": False, "retrieval": False, "composite": False}
 ONLY_ACTION = {"fast": True, "direct": False, "viewer": False, "retrieval": False,
                "action": True, "composite": False}
 
@@ -246,8 +250,11 @@ def test_action_recognition_failures_fall_back(msg):
     assert route(msg, gates=ONLY_ACTION)[0] == "agent"
 
 
-def test_action_gate_off_is_agent():
-    assert route('create a folder named "z"', gates=dict(ONLY_ACTION, action=False))[0] == "agent"
+def test_default_lanes_off_still_certifies_action():
+    # The action-gate-off premise is gone (single-path ruling): ACTION rides
+    # certification alone. The pinned product behavior: every-lane-off default
+    # policy still certifies a create-folder turn as ACTION.
+    assert route('create a folder named "z"', gates=dict(NO_LANES))[0] == "action"
 
 
 def test_action_with_web_demand_falls_back():
@@ -362,28 +369,25 @@ def test_private_only_co_occurring_web_is_not_a_fence():
 
 
 # ════════════════════════════════════════════════════════════════════════════════
-# 9. Regression / dark launch — master gate OFF is indistinguishable from legacy
+# 9. Regression / default policy — all experimental lanes off is indistinguishable
+#    from legacy (ACTION still certifies; everything else stays on the Agent)
 # ════════════════════════════════════════════════════════════════════════════════
 @pytest.mark.parametrize("msg,ctxf", [
-    ('create a folder named "a"', {}),
     ("what does my knowledge base say about x", {}),
     ("hello", {}),
     ("summarize the selection", {"viewer": _viewer()}),
     ("weather today", {}),
 ])
-def test_master_gate_off_everything_is_agent(msg, ctxf):
-    assert route(msg, gates=DARK, **ctxf)[0] == "agent"
+def test_lanes_off_everything_is_agent(msg, ctxf):
+    assert route(msg, gates=NO_LANES, **ctxf)[0] == "agent"
 
 
-@pytest.mark.parametrize("gate", ["direct", "viewer", "retrieval", "action", "composite"])
+@pytest.mark.parametrize("gate", ["direct", "viewer", "retrieval", "composite"])
 def test_each_gate_is_independently_sufficient_to_disable(gate):
-    # Turning one path off never misroutes the others' certifying turns to IT;
-    # a create-folder still reaches ACTION with all-but-its-own gate on.
-    if gate == "action":
-        assert route('create a folder named "a"', gates=dict(P5A, action=False))[0] == "agent"
-    else:
-        # action turn is unaffected by the other four gates
-        assert route('create a folder named "a"', gates=dict(P5A, **{gate: False}))[0] == "action"
+    # Turning one lane off never misroutes the others' certifying turns to IT.
+    # ACTION is not in the list: with its gate deleted it stays certifying under
+    # every lane combination (pinned by test_default_lanes_off_still_certifies_action).
+    assert route('create a folder named "a"', gates=dict(P5A, **{gate: False}))[0] == "action"
 
 
 def test_full_vs_p5a_action_parity():
@@ -508,8 +512,8 @@ EDGE = [
     ("ed03", "z" * (_N - 1),          FULL, {},                      "direct"),
     ("ed04", "what is the weather",   FULL, {},                      "agent"),
     ("ed05", "好的，明白了，谢谢",      FULL, {},                      "direct"),
-    ("ed06", "hello there",           DARK, {},                      "agent"),
-    ("ed07", 'create a folder named "x"', DARK, {},                  "agent"),
+    ("ed06", "hello there",           NO_LANES, {},                      "agent"),
+    ("ed07", 'create a folder named "x"', NO_LANES, {},                  "action"),
     ("ed08", "hello there",           FULL, {"attach": {"asset_id": "a"}}, "agent"),
     ("ed09", 'create a folder named "x"', FULL, {"research": True},   "agent"),
     ("ed10", "what do my notes say about x", FULL, {"handoff": {"task": "t"}}, "agent"),

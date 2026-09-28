@@ -85,22 +85,15 @@ def test_validation_gate_rejects_unknown_kind():
 
 
 def test_kind_enabled_matrix():
-    from core.config import settings
-
-    assert funnel.kind_enabled(KIND_ACTION)          # rides the master gate
+    # Single-path ruling 2026-09-28: kind_enabled is settings-free — only the
+    # action family rides the live funnel; private/web kinds are fail-closed
+    # forever (the dev switches guarded zero live Registry rows), unknown kinds
+    # route nothing.
+    assert funnel.kind_enabled(KIND_ACTION)
     assert funnel.kind_enabled("")                   # historical rows: action
     assert not funnel.kind_enabled("quantum")        # unknown kind routes nothing
-    saved_p, saved_w = settings.chat_funnel_private_enabled, settings.chat_funnel_web_enabled
-    try:
-        settings.chat_funnel_private_enabled = False
-        settings.chat_funnel_web_enabled = False
-        assert not funnel.kind_enabled(KIND_PRIVATE)
-        assert not funnel.kind_enabled(KIND_WEB)
-        settings.chat_funnel_private_enabled = True
-        assert funnel.kind_enabled(KIND_PRIVATE)
-    finally:
-        settings.chat_funnel_private_enabled = saved_p
-        settings.chat_funnel_web_enabled = saved_w
+    assert not funnel.kind_enabled(KIND_PRIVATE)
+    assert not funnel.kind_enabled(KIND_WEB)
 
 
 # ════════════════════════ cascade: in the table != ON (8.10 exit) ═══════════════
@@ -133,17 +126,14 @@ class _Embedder:
 def _open(monkeypatch, *, mode="on", private=False, backend="online"):
     from core.config import settings
 
-    monkeypatch.setattr(settings, "chat_funnel_enabled", True)
-    monkeypatch.setattr(settings, "chat_fast_paths_enabled", True)
-    monkeypatch.setattr(settings, "chat_action_fast_path_enabled", True)
-    monkeypatch.setattr(settings, "chat_matcher_mode", mode)
+    # Single-path ruling 2026-09-28: the rollout gates + matcher shadow mode were
+    # deleted; ACTION is the shipped kind, every other kind fail-closes unconditionally.
     monkeypatch.setattr(settings, "chat_tool_intent_backend", backend)
     monkeypatch.setattr(settings, "chat_tool_intent_local_url", "")
     monkeypatch.setattr(settings, "chat_tool_intent_min_confidence", 0.75)
     monkeypatch.setattr(settings, "chat_tool_intent_online_model", "")
     monkeypatch.setattr(settings, "chat_tool_intent_timeout_seconds", 5.0)
     monkeypatch.setattr(settings, "chat_funnel_timeout_seconds", 5.0)
-    monkeypatch.setattr(settings, "chat_funnel_private_enabled", private)
 
 
 class _ScriptedToolIntent:
@@ -193,17 +183,18 @@ async def test_closed_private_kind_exits_with_reason_byte_identical(monkeypatch,
     assert f"fallback_reason={REASON_KIND_DISABLED}" in line
 
 
-async def test_opened_private_kind_certifies_with_kind_metadata(monkeypatch, caplog):
+async def test_private_kind_fail_closed_without_any_switch(monkeypatch, caplog):
+    """Single-path ruling 2026-09-28: the private rollout switch was deleted —
+    non-ACTION kinds fail closed unconditionally until the lane re-ships."""
     _open(monkeypatch, private=True)
     view = _view([_entry("cap-p", kind=KIND_PRIVATE, corpus=(MSG,))])
     deps = _wire(monkeypatch, view=view)
+    req = _req()
     with caplog.at_level(logging.INFO, logger="core.application.chat.intent_funnel"):
-        out = await funnel.route(_ctx(MSG), deps=deps, requirements=_req())
-    act = out.requested_action
-    assert act["funnel_kind"] == KIND_PRIVATE
-    assert act["capability_id"] == "cap-p" and act["args"] == {"name": "季度报告"}
+        out = await funnel.route(_ctx(MSG), deps=deps, requirements=req)
+    assert out is req                      # Agent keeps the turn (8.10)
     line = next(r.getMessage() for r in caplog.records if "funnel_trace" in r.getMessage())
-    assert "final_route=action" in line
+    assert f"fallback_reason={REASON_KIND_DISABLED}" in line
 
 
 async def test_action_kind_needs_no_extra_switch(monkeypatch):

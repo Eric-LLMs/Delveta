@@ -103,10 +103,6 @@ class ChatTurnContext:
     # the sentence names no resolvable asset; the Binder reads it via
     # TurnFacts.path_asset_id and never guesses.
     path_asset_id: str = ""
-    # Shadow-live A/B (2026-09-27): the funnel observation task + its join key.
-    # Observation only — the Agent path never reads these back.
-    funnel_shadow_task: Any = None
-    funnel_turn_key: str = ""
 
 
 def _attach_asset_id(body: Any) -> str:

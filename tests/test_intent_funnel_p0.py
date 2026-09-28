@@ -1,8 +1,10 @@
 """P0 intent_funnel package tests: contracts + the orchestration's seams.
 
-The 2026-09-26 live-table ruling deleted the legacy QIR lane: these tests pin
-the DARK behavior (route returns the SAME object), the gate rules that keep the
-funnel from overriding L0, and the node contracts the single-hop chain runs on.
+The 2026-09-26 live-table ruling deleted the legacy QIR lane; the 2026-09-28
+single-path ruling deleted the dark-launch rollout gates: these tests pin the
+fail-open shapes (absent deps -> route returns the SAME object), the gate rules
+that keep the funnel from overriding L0, and the node contracts the single-hop
+chain runs on.
 """
 import types
 
@@ -13,15 +15,15 @@ from core.application.chat.intent_funnel.funnel import funnel_live, route
 from core.application.chat.understanding import Signal, TurnRequirements
 from core.config import settings
 
-# ── route(): dark launch stays byte-identical ────────────────────────────────────
+# ── route(): fail-open stays byte-identical ──────────────────────────────────────
 
 
-async def test_route_dark_returns_same_requirements_object(monkeypatch):
-    # Default config: the funnel master gate is off -> route must be identity.
-    monkeypatch.setattr(settings, "chat_funnel_enabled", False)
+async def test_route_without_deps_returns_same_requirements_object(monkeypatch):
+    # Single-path ruling: the only route-level fail-open door left is missing
+    # deps (control plane not wired) -> route must be identity.
     req = TurnRequirements()
     ctx = types.SimpleNamespace(body=types.SimpleNamespace(message="create a folder x"))
-    out = await route(ctx, deps=object(), requirements=req)
+    out = await route(ctx, deps=None, requirements=req)
     assert out is req
 
 
@@ -38,11 +40,11 @@ async def test_route_delegates_when_gate_live(monkeypatch):
     assert out is sentinel
 
 
-async def test_route_skips_cascade_when_gate_dark(monkeypatch):
+async def test_route_skips_cascade_when_fail_open(monkeypatch):
     monkeypatch.setattr(intent_funnel.funnel, "funnel_live", lambda r, d, c: False)
 
     async def boom_cascade(ctx, deps, requirements):  # must never run
-        raise AssertionError("gate closed but cascade executed")
+        raise AssertionError("fail-open exit but cascade executed")
 
     monkeypatch.setattr(intent_funnel.funnel, "_cascade", boom_cascade)
     req = TurnRequirements()
@@ -65,27 +67,14 @@ def _live_ctx(message="create a folder"):
     return types.SimpleNamespace(body=types.SimpleNamespace(message=message))
 
 
-def _all_switches_on(monkeypatch):
-    monkeypatch.setattr(settings, "chat_funnel_enabled", True)
-    monkeypatch.setattr(settings, "chat_fast_paths_enabled", True)
-    monkeypatch.setattr(settings, "chat_action_fast_path_enabled", True)
-
-
-def test_gate_requires_every_switch(monkeypatch):
-    _all_switches_on(monkeypatch)
+def test_gate_is_live_by_default_dark_only_without_deps(monkeypatch):
+    # Single-path ruling 2026-09-28: no rollout switch can close the gate any
+    # more — it is open on every turn; absent deps is the only switchless door.
     assert funnel_live(TurnRequirements(), deps=object(), ctx=_live_ctx()) is True
-    # every single switch turning off kills it
-    for flag in ("chat_funnel_enabled", "chat_fast_paths_enabled",
-                 "chat_action_fast_path_enabled"):
-        monkeypatch.setattr(settings, flag, False)
-        assert funnel_live(TurnRequirements(), deps=object(), ctx=_live_ctx()) is False
-        monkeypatch.setattr(settings, flag, True)
-    # deps=None (control plane not wired) is dark
     assert funnel_live(TurnRequirements(), deps=None, ctx=_live_ctx()) is False
 
 
 def test_gate_defers_demanding_turns_to_guardrails(monkeypatch):
-    _all_switches_on(monkeypatch)
     # E2E-matrix ruling 2026-09-27: web demand no longer vetoes at entry (the
     # certified web_search action must be able to run on the Funnel lane);
     # memory demand still defers to the Agent.
@@ -104,7 +93,6 @@ def test_gate_defers_demanding_turns_to_guardrails(monkeypatch):
 
 
 def test_gate_refuses_non_pure_user_text(monkeypatch):
-    _all_switches_on(monkeypatch)
     assert funnel_live(
         TurnRequirements(), deps=object(), ctx=_live_ctx("[Attached: report.pdf] summarize"),
     ) is False
@@ -172,7 +160,7 @@ async def test_orchestrator_calls_funnel_once_with_requirements(monkeypatch):
         body=types.SimpleNamespace(message="hello"),
         agent_context=None,
     )
-    monkeypatch.setattr(settings, "chat_fast_paths_enabled", True)
+    # Single-path ruling: resolve_plan always resolves + routes — no gate to open.
     await orch.resolve_plan(ctx, deps=None)
     assert len(calls) == 1
     assert isinstance(calls[0], TurnRequirements)

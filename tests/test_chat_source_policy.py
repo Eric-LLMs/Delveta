@@ -48,7 +48,7 @@ from tests.test_chat_retrieval_e2e import (
 )
 
 ALL_ON = PolicyContext(
-    fast_paths_enabled=True, direct_fast_path_enabled=True,
+    direct_fast_path_enabled=True,
     viewer_fast_path_enabled=True, retrieval_fast_path_enabled=True,
 )
 
@@ -119,15 +119,14 @@ def test_source_policy_states():
     assert plan.kind is PlanKind.AGENT and plan.source_policy is None
 
 
-def test_dark_launch_carries_no_source_policy(monkeypatch):
-    # Master gate OFF -> the neutral requirement set fences nothing (behavior
-    # byte-identical to the legacy agent).
+def test_neutral_requirements_carry_no_source_policy():
+    # Single-path ruling 2026-09-28 replaced the dark-launch pair: resolved
+    # facts always ride the plan ("facts ride"), and only a NEUTRAL
+    # requirement set (never produced on a live turn) fences nothing.
     req = _facts(ONLY_Q)
-    dark = PolicyContext(fast_paths_enabled=False)
-    assert build_execution_plan(req, dark).source_policy == "private_only"  # facts ride
-    # ...but the orchestrator only SINKS under the live control plane — see the sink
-    # test below; the dark plan resolves from NEUTRAL requirements (private_only False).
-    assert build_execution_plan(type(req)(), dark).source_policy is None
+    plain = PolicyContext()
+    assert build_execution_plan(req, plain).source_policy == "private_only"
+    assert build_execution_plan(type(req)(), plain).source_policy is None
 
 
 # ── orchestrator sink ────────────────────────────────────────────────────────────────
@@ -144,23 +143,18 @@ def _resolve(ctx):
     return asyncio.run(_orchestrator().resolve_plan(ctx))
 
 
-def test_sink_only_when_control_plane_live(monkeypatch):
+def test_sink_always_on_single_path(monkeypatch):
+    # Single-path ruling 2026-09-28: with no master gate the orchestrator sinks
+    # the SOURCE POLICY on every turn whose original request carries the fact.
     import core.config as cfg
-    monkeypatch.setattr(cfg.settings, "chat_fast_paths_enabled", True, raising=False)
     monkeypatch.setattr(cfg.settings, "chat_retrieval_fast_path_enabled", True, raising=False)
     ctx = _ctx(PRIVATE_Q)
     _resolve(ctx)
     assert (ctx.agent_context or {}).get("source_policy") == "private_first"
 
-    monkeypatch.setattr(cfg.settings, "chat_fast_paths_enabled", False, raising=False)
-    ctx2 = _ctx(PRIVATE_Q)
-    _resolve(ctx2)
-    assert not (ctx2.agent_context or {}).get("source_policy")
-
 
 def test_explicit_permission_sink_nothing(monkeypatch):
     import core.config as cfg
-    monkeypatch.setattr(cfg.settings, "chat_fast_paths_enabled", True, raising=False)
     monkeypatch.setattr(cfg.settings, "chat_retrieval_fast_path_enabled", True, raising=False)
     ctx = _ctx(EXT_OK_Q)
     _resolve(ctx)

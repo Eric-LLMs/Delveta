@@ -158,10 +158,13 @@ def test_hidden_capability_cannot_be_certified(monkeypatch):
     assert entries_by_id.get("cap-edit-file") is None      # cannot certify
 
 
-def test_settings_keys_default_empty(monkeypatch):
-    """Empty default = unchanged behavior for every process that omits the env."""
+def test_settings_keys_default_posture(monkeypatch):
+    """Shipped defaults (single-path ruling 2026-09-28): the chat-plane funnel
+    hides cap-edit-file out of the box; agent_hidden_tools stays empty because the
+    agent factory is shared with the worker — the API process injects edit_file
+    hiding via AGENT_HIDDEN_TOOLS at startup (start_server.sh / start_desktop.sh)."""
     assert settings.agent_hidden_tools == ""
-    assert settings.chat_funnel_hidden_capabilities == ""
+    assert settings.chat_funnel_hidden_capabilities == "cap-edit-file"
 
 
 # ── 3. registration gate parsing (chat composition posture) ──────────────────

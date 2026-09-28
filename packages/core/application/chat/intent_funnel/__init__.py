@@ -8,8 +8,10 @@ exits to the Agent, byte-identical. ToolIntentModel is a swappable provider
 (local primary, online fallback, stub) behind the tool_intent/ ladder.
 
 Scope status: P0 moved the orchestration out of ``TurnOrchestrator``; P1 added
-the Registry/Matcher with its shadow hook; the funnel chain runs behind its OWN
-gate (``chat_funnel_enabled``). The legacy QIR lane was deleted with migration
+the Registry/Matcher. Single path (ruling 2026-09-28): the funnel IS the formal
+routing lane — the dark-launch gate (``chat_funnel_enabled``) and the shadow
+hook were deleted; ``funnel_live`` only keeps the fail-open safety semantics
+(missing deps / guardrail veto). The legacy QIR lane was deleted with migration
 0014 (live-table ruling 2026-09-26) — ``funnel_live`` + ``route`` are the whole
 public surface.
 """

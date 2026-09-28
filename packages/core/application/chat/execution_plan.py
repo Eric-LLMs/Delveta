@@ -5,10 +5,11 @@ This module OWNS ``ExecutionPlan`` and the pure mapping function
 I/O, no capability probing, no authorization (those live in Pre-flight and the
 executors). ``turn_orchestrator`` is a pure consumer of the result.
 
-Phase 1 policy: fast paths are switched off globally, so every turn resolves to
-``AGENT`` and the refactor is behavior-neutral. Later phases extend the mapping
-below the ``fast_paths_enabled`` gate, one kind at a time (DIRECT -> VIEWER ->
-LOCAL_RAG -> ACTION/COMPOSITE), each behind its own feature switch.
+Single path (ruling 2026-09-28): ACTION is the shipped formal lane — a certified
+``requested_action`` (funnel or its L0 compat boundary) maps to ACTION, anything
+else maps to AGENT (fail-open). The unshipped experimental lanes (DIRECT ->
+VIEWER -> LOCAL_RAG -> COMPOSITE) stay behind their own per-lane feature switch,
+default OFF, and never opened in production.
 """
 from __future__ import annotations
 
@@ -36,16 +37,14 @@ class PlanKind(str, Enum):
 class PolicyContext:
     """Tenant/global switches consumed by the pure policy. Values only — no handles.
 
-    Phase 1: every fast-path gate is False → all traffic maps to AGENT.
+    Single path: ACTION needs no switch (certification owns it); the fields below
+    are the unshipped experimental lanes, default False.
     """
 
-    fast_paths_enabled: bool = False       # global master switch
     direct_fast_path_enabled: bool = False  # Phase 2
     viewer_fast_path_enabled: bool = False  # Phase 3
     retrieval_fast_path_enabled: bool = False  # Phase 4
-    action_enabled: bool = False           # Phase 5A
     composite_enabled: bool = False        # Phase 5B
-    web_enabled: bool = False              # later
 
 
 @dataclass(frozen=True)
@@ -119,9 +118,6 @@ def build_execution_plan(
     """
     if requirements.confidence is not Confidence.HIGH:
         return _agent(requirements, f"confidence={requirements.confidence.value} -> agent")
-    if not policy.fast_paths_enabled:
-        # Control plane ships dark: the legacy full-agent path stays authoritative.
-        return _agent(requirements, "fast paths disabled -> agent")
 
     # ── Phase 2: DIRECT ───────────────────────────────────────────────────────────
     # A HIGH-confidence, zero-demand, short+pure turn is the direct case. Any
@@ -157,12 +153,12 @@ def build_execution_plan(
         )
 
     # ── Phase 5A: ACTION (typed direct dispatch over the registered tool registry) ──
-    # L0's extractor already certified ONE allowlisted registered tool with fully-
-    # determined args. An unregistered/ambiguous/under-parameterized turn never gets
-    # ``requested_action`` set, so it maps to AGENT exactly as before this phase —
-    # the policy mapper validates NOTHING (schema gate + authz live in the executor
+    # A certified single registered tool with fully-determined args (funnel cascade
+    # or the L0 compat boundary). An unregistered/ambiguous/under-parameterized turn
+    # never gets ``requested_action`` set, so it maps to AGENT (fail-open) — the
+    # policy mapper validates NOTHING (schema gate + authz live in the executor
     # and the host seam).
-    if policy.action_enabled and _is_action_eligible(requirements):
+    if _is_action_eligible(requirements):
         return _plan(
             requirements, PlanKind.ACTION, action=dict(requirements.requested_action),
             requires_memory=False,

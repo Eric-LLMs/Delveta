@@ -27,8 +27,8 @@ from core.application.chat.understanding import (
 )
 
 ALL_ON = PolicyContext(
-    fast_paths_enabled=True, direct_fast_path_enabled=True, viewer_fast_path_enabled=True,
-    retrieval_fast_path_enabled=True, action_enabled=True, composite_enabled=True,
+    direct_fast_path_enabled=True, viewer_fast_path_enabled=True,
+    retrieval_fast_path_enabled=True, composite_enabled=True,
 )
 
 
@@ -63,20 +63,6 @@ def test_asset_tool_action_certifies_with_attach_context():
     req = _facts("提取这篇文档的全文", attach={"asset_id": "a-1"})
     assert req.requested_action == {"tool": "pdf_extract_text", "args": {"asset_id": "a-1"}}
     assert build_execution_plan(req, ALL_ON).kind is PlanKind.ACTION
-
-
-def test_action_gate_off_maps_to_agent():
-    req = _facts('create a folder named "x"')
-    dark = PolicyContext(
-        fast_paths_enabled=True, action_enabled=False,
-    )
-    assert build_execution_plan(req, dark).kind is PlanKind.AGENT
-
-
-def test_master_gate_off_keeps_action_turn_dark():
-    req = _facts('新建文件夹"x"')
-    dark = PolicyContext(fast_paths_enabled=False, action_enabled=True)
-    assert build_execution_plan(req, dark).kind is PlanKind.AGENT
 
 
 @pytest.mark.parametrize("msg", [
@@ -126,7 +112,7 @@ def test_composite_inherits_private_source_policy():
 def test_composite_gate_off_maps_to_agent():
     req = _facts(COMPOSITE_MSG, viewer=_viewer())
     no_comp = PolicyContext(
-        fast_paths_enabled=True, viewer_fast_path_enabled=True,
+        viewer_fast_path_enabled=True,
         retrieval_fast_path_enabled=True, composite_enabled=False,
     )
     assert build_execution_plan(req, no_comp).kind is PlanKind.AGENT

@@ -1,19 +1,24 @@
 """Layer C — Legacy-Agent vs Fast-Path BEHAVIORAL PARITY.
 
 For every fast path, the same request is run twice through the real ``/chat/stream``:
-once with the fast path OFF (pure legacy Agent authority) and once ON. The charter asks
-for semantic/behavioral parity, NOT verbatim text — so we compare a behavioral
-fingerprint: side-effect counts, tool executions, the set of permission/approval
-decisions surfaced, tenant filtering, and the SSE terminal shape. If the fast path can
-only match the legacy outcome, that IS the safety argument for shipping it; where it
-diverges, the divergence is recorded as a finding.
+once with the funnel made TRANSPARENT (the pre-funnel Agent authority — the master
+gate was deleted by the 2026-09-28 single-path ruling, so the legacy leg is simulated
+by a pass-through funnel rather than a switch) and once on the live fast path. The
+charter asks for semantic/behavioral parity, NOT verbatim text — so we compare a
+behavioral fingerprint: side-effect counts, tool executions, the set of
+permission/approval decisions surfaced, tenant filtering, and the SSE terminal shape.
+If the fast path can only match the legacy outcome, that IS the safety argument for
+shipping it; where it diverges, the divergence is recorded as a finding.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
+from contextlib import contextmanager
 
 import pytest
-from core.config import settings
+from core.application.chat import turn_orchestrator
+from core.application.chat.execution_plan import ExecutionPlan, PlanKind
+from core.application.chat.understanding import TurnRequirements
 
 from tests.p5_validation._p5_harness import (
     FakeSeam,
@@ -25,6 +30,37 @@ from tests.p5_validation._p5_harness import (
     sse,
 )
 from tests.p5_validation.test_p5_smoke import _gate
+
+_EMPTY = TurnRequirements()
+
+
+@contextmanager
+def _force_legacy_agent(monkeypatch):
+    """Simulate the deleted master gate: the pre-control-plane Agent owned EVERY
+    turn. Temporarily pin the orchestrator's funnel call to a transparent pass and
+    its mapper to AGENT; BOTH legs of a parity test run inside one pytest
+    ``monkeypatch``, so this restores the live wiring for the fast leg."""
+
+    async def _transparent(ctx, *, deps, requirements):
+        return requirements
+
+    real_route = turn_orchestrator.intent_funnel.route
+    real_plan = turn_orchestrator.build_execution_plan
+    real_l0 = turn_orchestrator.resolve_requirements
+
+    def _legacy_agent(reqs, policy):
+        return ExecutionPlan(kind=PlanKind.AGENT, reason="legacy-agent-pin")
+
+    try:
+        monkeypatch.setattr(turn_orchestrator.intent_funnel, "route", _transparent)
+        monkeypatch.setattr(turn_orchestrator, "build_execution_plan", _legacy_agent)
+        monkeypatch.setattr(turn_orchestrator, "resolve_requirements",
+                            lambda ctx, msg: _EMPTY)
+        yield
+    finally:
+        turn_orchestrator.intent_funnel.route = real_route
+        turn_orchestrator.build_execution_plan = real_plan
+        turn_orchestrator.resolve_requirements = real_l0
 
 
 @dataclass
@@ -67,9 +103,9 @@ async def _create_legacy(monkeypatch):
     spy = Spy()
     kernel, _, _, broker = build_kernel(monkeypatch, port, spy, broker_mode="allow")
     _gate(monkeypatch, action=True)
-    monkeypatch.setattr(settings, "chat_fast_paths_enabled", False, raising=False)
-    app = build_app(monkeypatch, port, FakeSeam([]), kernel, broker)
-    res = await sse(app, CREATE_MSG)
+    with _force_legacy_agent(monkeypatch):
+        app = build_app(monkeypatch, port, FakeSeam([]), kernel, broker)
+        res = await sse(app, CREATE_MSG)
     return _fp(res, spy, port)
 
 
@@ -113,9 +149,9 @@ async def _add_legacy(monkeypatch):
         monkeypatch, port, spy, broker_mode="allow", domains=domains_named("Physics"),
     )
     _gate(monkeypatch, action=True)
-    monkeypatch.setattr(settings, "chat_fast_paths_enabled", False, raising=False)
-    app = build_app(monkeypatch, port, FakeSeam([]), kernel, broker)
-    res = await sse(app, ADD_MSG)
+    with _force_legacy_agent(monkeypatch):
+        app = build_app(monkeypatch, port, FakeSeam([]), kernel, broker)
+        res = await sse(app, ADD_MSG)
     return _fp(res, spy, port)
 
 
@@ -151,9 +187,9 @@ async def _rag_legacy(monkeypatch):
     spy = Spy()
     kernel, _, _, broker = build_kernel(monkeypatch, port, spy)
     _gate(monkeypatch, retrieval=True)
-    monkeypatch.setattr(settings, "chat_fast_paths_enabled", False, raising=False)
-    app = build_app(monkeypatch, port, FakeSeam([]), kernel, broker)
-    res = await sse(app, RAG_MSG)
+    with _force_legacy_agent(monkeypatch):
+        app = build_app(monkeypatch, port, FakeSeam([]), kernel, broker)
+        res = await sse(app, RAG_MSG)
     return _fp(res, spy, port)
 
 
@@ -189,8 +225,8 @@ async def test_direct_parity_shape(monkeypatch, msg):
     so = Spy()
     ko, _, _, bo = build_kernel(monkeypatch, po, so)
     _gate(monkeypatch, direct=True)
-    monkeypatch.setattr(settings, "chat_fast_paths_enabled", False, raising=False)
-    fo = _fp(await sse(build_app(monkeypatch, po, FakeSeam([]), ko, bo), msg), so, po)
+    with _force_legacy_agent(monkeypatch):
+        fo = _fp(await sse(build_app(monkeypatch, po, FakeSeam([]), ko, bo), msg), so, po)
     # ON
     pn = ScriptedPort(deltas=["Direct", " hi."])
     sn = Spy()

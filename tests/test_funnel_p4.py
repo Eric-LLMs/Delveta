@@ -5,9 +5,9 @@ Pinning the P4 rulings:
 * 8.5: the console can dry-run ONE query through the WHOLE chain
   (Registry → Matcher → Recall → ToolIntentModel → Binder → Final Route)
   with zero side effects — run_tool is not even on the preview object graph;
-* the preview is not gated by ``chat_funnel_enabled`` (the production gate
-  gates PRODUCTION traffic; an admin console must be able to inspect the dark
-  lane), but it IS gated per-kind exactly like routing (入表≠开闸 holds);
+* the preview bypasses per-turn gating entirely (it drives the cascade body
+  directly — single-path ruling 2026-09-28 left no production rollout gate at
+  all), but it IS gated per-kind exactly like routing (入表≠开闸 holds);
 * 8.14: every embedding/LLM call a preview makes is billed
   ``execution_mode=preview``; the pin resets exception-included;
 * 8.12: one event row per route (production and preview), best-effort — a
@@ -99,10 +99,8 @@ class _Embedder:
 def _open(monkeypatch, *, mode="off", private=False, funnel_on=True):
     from core.config import settings
 
-    monkeypatch.setattr(settings, "chat_funnel_enabled", funnel_on)
-    monkeypatch.setattr(settings, "chat_fast_paths_enabled", True)
-    monkeypatch.setattr(settings, "chat_action_fast_path_enabled", True)
-    monkeypatch.setattr(settings, "chat_matcher_mode", mode)
+    # Single-path ruling 2026-09-28: the rollout gates + matcher shadow mode +
+    # private kind switch were deleted (kwargs kept for call-site compatibility).
     # certification lanes need real argument drafts: ride the online seam with
     # the scripted ToolIntentModel double (the stub's zero extraction power is pinned
     # in test_funnel_p2; here the ops plane is the subject)
@@ -111,7 +109,6 @@ def _open(monkeypatch, *, mode="off", private=False, funnel_on=True):
     monkeypatch.setattr(settings, "chat_tool_intent_online_model", "")
     monkeypatch.setattr(settings, "chat_tool_intent_timeout_seconds", 4.0)
     monkeypatch.setattr(settings, "chat_funnel_timeout_seconds", 5.0)
-    monkeypatch.setattr(settings, "chat_funnel_private_enabled", private)
 
 
 class _ScriptedToolIntent:
@@ -199,10 +196,11 @@ async def test_preview_abstains_with_the_reason_and_no_route(monkeypatch):
     assert "route" not in res
 
 
-async def test_preview_ignores_the_production_gate(monkeypatch):
-    # an admin must be able to dry-run the DARK lane: the funnel gate scopes
-    # production traffic, not the console.
-    _open(monkeypatch, mode="on", funnel_on=False)
+async def test_preview_ignores_production_gating(monkeypatch):
+    # Single-path ruling 2026-09-28: with the rollout gates deleted there is no
+    # production switch left to bypass — the console drives the SAME cascade
+    # body directly, so it stays available unconditionally.
+    _open(monkeypatch, mode="on")
     view = _view([_entry("cap-a", corpus=(MSG,))])
     deps = _wire(monkeypatch, view=view)
     res = await funnel.preview(MSG, deps=deps)
@@ -216,11 +214,8 @@ async def test_preview_honors_the_kind_gate(monkeypatch):
     res = await funnel.preview(MSG, deps=deps)
     assert res["final_route"] == "agent"
     assert res["fallback_reason"] == REASON_KIND_DISABLED
-    # opening the gate flips ONLY the kind verdict — same query, same table
-    _open(monkeypatch, mode="on", private=True)
-    res2 = await funnel.preview(MSG, deps=deps)
-    assert res2["final_route"] == "action"
-    assert res2["route"]["funnel_kind"] == KIND_PRIVATE
+    # The private rollout switch was deleted (single-path ruling): non-ACTION
+    # kinds stay fail-closed — the verdict above is now the permanent one.
 
 
 async def test_preview_pins_execution_mode_and_always_resets(monkeypatch):
@@ -491,8 +486,12 @@ async def test_roster_tool_absent_from_direct_tools_still_dispatches(monkeypatch
     assert calls == ["list_documents"]
 
 
-async def test_private_gate_flipped_off_kills_dispatch(monkeypatch):
-    _open(monkeypatch, mode="on", private=True)
+async def test_non_action_kind_never_dispatches(monkeypatch):
+    # Single-path ruling 2026-09-28: with the private switch deleted, kind_enabled
+    # fail-closes non-ACTION kinds unconditionally — even a hand-built funnel
+    # stamp for a private-kind entry must reach the stale-route terminal, and
+    # the ToolRuntime must never be called.
+    _open(monkeypatch, mode="on")
     view = _view([_entry("cap-a", corpus=(MSG,), kind=KIND_PRIVATE)])
     await _patch_view(monkeypatch, view)
     calls = []
@@ -502,13 +501,9 @@ async def test_private_gate_flipped_off_kills_dispatch(monkeypatch):
         return {"ok": True, "output": "done"}
 
     ex, req = _exec_req(_action(view, kind=KIND_PRIVATE), run_tool, session_factory=None)
-    assert await ex._dispatch(req) == "done"     # gate still open: executes
-
-    _open(monkeypatch, mode="on", private=False)  # the console flips it OFF mid-air
-    ex2, req2 = _exec_req(_action(view, kind=KIND_PRIVATE), run_tool, session_factory=None)
     from core.application.chat.executors.action import _TERMINAL_STALE_ROUTE
-    assert await ex2._dispatch(req2) == _TERMINAL_STALE_ROUTE
-    assert calls == ["create_folder"]            # the flip prevented the SECOND call
+    assert await ex._dispatch(req) == _TERMINAL_STALE_ROUTE
+    assert calls == []
 
 
 async def test_action_without_funnel_stamp_skips_the_registry_check(monkeypatch):

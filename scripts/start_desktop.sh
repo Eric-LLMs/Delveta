@@ -175,7 +175,9 @@ verify_admin_login() {
 
 start_backend() {
   mkdir -p "$LOG_DIR"
-  "$PYTHON_BIN" -m uvicorn apps.api.main:app --port 8300 >>"$UVICORN_LOG" 2>&1 &
+  # Chat-plane edit_file hiding (see start_server.sh): API-process env only.
+  AGENT_HIDDEN_TOOLS="${AGENT_HIDDEN_TOOLS-edit_file}" \
+    "$PYTHON_BIN" -m uvicorn apps.api.main:app --port 8300 >>"$UVICORN_LOG" 2>&1 &
   echo $! > "$PID_FILE"
   printf '      Waiting for the backend to become healthy'
   for _ in $(seq 1 45); do

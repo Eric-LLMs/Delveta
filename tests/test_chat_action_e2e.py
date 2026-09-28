@@ -39,11 +39,11 @@ MSG = 'create a folder named "archive"'
 
 
 def _gates5(monkeypatch, *, fast=True, action=True, direct=False, retrieval=False):
-    monkeypatch.setattr(settings, "chat_fast_paths_enabled", fast, raising=False)
+    # fast/action are inert since the 2026-09-28 single-path ruling: ACTION
+    # rides certification alone, there is no master gate to open.
     monkeypatch.setattr(settings, "chat_direct_fast_path_enabled", direct, raising=False)
     monkeypatch.setattr(settings, "chat_viewer_fast_path_enabled", False, raising=False)
     monkeypatch.setattr(settings, "chat_retrieval_fast_path_enabled", retrieval, raising=False)
-    monkeypatch.setattr(settings, "chat_action_fast_path_enabled", action, raising=False)
     monkeypatch.setattr(settings, "chat_composite_fast_path_enabled", False, raising=False)
 
 
@@ -122,8 +122,11 @@ async def test_decided_denial_is_terminal_honest_answer(monkeypatch):
     assert "declined" in done["answer"]  # terminal answer, legacy done shape unchanged
 
 
-async def test_dark_launch_action_gate_off_never_touches_the_seam(monkeypatch):
-    _gates5(monkeypatch, action=False)
+async def test_uncertified_turn_never_touches_the_seam(monkeypatch):
+    """Fail-open with no switch: a turn nothing certifies (no L0 match, empty
+    registry) reaches neither the ACTION seam nor any LLM fast path — the
+    Agent keeps the original text byte-identical."""
+    _gates5(monkeypatch)
     hits = []
 
     async def fake_run_tool(tool, args, ctx):
@@ -133,26 +136,10 @@ async def test_dark_launch_action_gate_off_never_touches_the_seam(monkeypatch):
     monkeypatch.setattr("api.routers.chat._run_tool", fake_run_tool)
     port, seam = FakePort(), FakeSeam(HIT)
     app, agent = _harness(monkeypatch, port, seam)
-    _, done = await _stream(app, message=MSG)
+    _, done = await _stream(app, message="tell me a joke about the weather")
     assert hits == [] and agent.agent_stream_calls == 1
-    assert agent.user_texts[0] == MSG  # identical behavior to the pre-Phase-5 link
+    assert agent.user_texts[0] == "tell me a joke about the weather"
     assert done["answer"] == "agent"
-
-
-async def test_master_gate_off_is_indistinguishable_from_legacy(monkeypatch):
-    _gates5(monkeypatch, fast=False)
-    hits = []
-
-    async def fake_run_tool(tool, args, ctx):
-        hits.append(tool)
-        return {"ok": True}
-
-    monkeypatch.setattr("api.routers.chat._run_tool", fake_run_tool)
-    port, seam = FakePort(), FakeSeam(HIT)
-    app, agent = _harness(monkeypatch, port, seam)
-    await _stream(app, message=MSG)
-    assert hits == [] and port.judged == 0 and port.generated == 0
-    assert agent.agent_stream_calls == 1 and agent.user_texts[0] == MSG
 
 
 async def test_run_tool_binds_agent_so_the_sandbox_funnel_still_sees_the_tool(monkeypatch):

@@ -383,7 +383,6 @@ def write_run(turns: list[dict], session_rows: list[dict], report: dict, *,
         "shadow_params": dict(SHADOW_RECALL, buckets=list(BUCKETS)),
         "backend_pins": {
             "chat_tool_intent_backend": settings.chat_tool_intent_backend,
-            "chat_matcher_mode": getattr(settings, "chat_matcher_mode", None),
         },
         "production_settings_untouched": {
             "chat_funnel_min_score": settings.chat_funnel_min_score,

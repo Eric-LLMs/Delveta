@@ -106,16 +106,19 @@ class Settings(BaseSettings):
     deck_worker_concurrency: int = 8      # LLM calls one worker job may keep in flight
     deck_slide_timeout_s: float = 180.0   # per-attempt deadline; a timed-out page retries alone
 
-    # ── Chat control plane (Phase 2: DIRECT fast path) ──────────────────────────
-    # All OFF by default = dark launch: every turn keeps the legacy AgentExecutor
-    # path byte-for-byte. Flip the master gate only after the understanding signals
-    # and DIRECT TTFT are validated on a golden set; per-kind gates stay closed until
-    # their phase lands. ``chat_direct_*`` are the Phase 2 knobs.
-    chat_fast_paths_enabled: bool = False       # master switch for all fast paths
+    # ── Chat control plane (single path, ruling 2026-09-28) ──────────────────────
+    # The product has ONE formal routing lane: User -> Intent Funnel -> ACTION,
+    # with fail-open to the Agent whenever the funnel abstains. The old
+    # dark-launch rollout gates (chat_funnel_enabled / chat_fast_paths_enabled /
+    # chat_action_fast_path_enabled) were REMOVED — Funnel-vs-Agent is no longer
+    # a switchable mode; it is decided per turn by certification + guardrails.
+    # Safety knobs stay below (timeouts, thresholds, exposure, veto guardrails).
+    #
+    # Unshipped experimental L0 lanes (kept dark by design — Option A of the
+    # 2026-09-28 single-path ruling; never opened in production):
     chat_direct_fast_path_enabled: bool = False  # Phase 2: tool-less direct answers
     chat_viewer_fast_path_enabled: bool = False  # Phase 3: grounded over injected blocks
     chat_retrieval_fast_path_enabled: bool = False  # Phase 4: staged RAG (shared pipeline, fail-closed)
-    chat_action_fast_path_enabled: bool = False     # Phase 5A: registered typed actions (allowlist)
     chat_composite_fast_path_enabled: bool = False  # Phase 5B: static independent composite (viewer+private)
     # Confidence gate: the L0 signal engine only routes DIRECT when every capability
     # demand is LOW, needs_memory is False, and the message is short/plain. Longer
@@ -123,20 +126,10 @@ class Settings(BaseSettings):
     chat_direct_max_chars: int = 400            # a pure user message must be <= this
     # LOCAL_RAG recall depth — same default as the agent's rag_search tool (top_k=5).
     chat_retrieval_top_k: int = 5
-    # ── Shadow Mode (8.15, P1 step 5): the Registry Matcher's tri-state switch ──
-    # off     — the node never runs (dark-launch default);
-    # shadow  — runs every turn, logs the would_* verdict next to L0's outcome,
-    #           never touches routing, usage tagged execution_mode=shadow (8.14);
-    # on      — the P2 promotion (Matcher as authoritative ACTION router). In P1 it
-    #           behaves as shadow with a warning: a mis-set switch must never
-    #           silently hand routing to a node that only ever measured in the dark.
-    chat_matcher_mode: str = "off"
-    # ── Intent Funnel (docs/temp.md §3/§8): the single-hop ──
-    # chain Matcher→Recall→ToolIntentModel(select+extract)→Binder(verify-only) with
-    # fail-open Agent fallback. chat_funnel_enabled=False keeps plain Agent
-    # handling; the QIR legacy cascade was deleted with migration 0014 — this is
-    # the only table-driven routing lane.
-    chat_funnel_enabled: bool = False            # master gate for the new cascade
+    # ── Intent Funnel (docs/temp.md §3/§8): the single-hop, always-live chain ──
+    # Matcher→Recall→ToolIntentModel(select+extract)→Binder(verify-only) with
+    # fail-open Agent fallback. The QIR legacy cascade was deleted with migration
+    # 0014 — this is the only table-driven routing lane.
     chat_funnel_timeout_seconds: float = 5.0     # whole-cascade wall clock, then Agent
     chat_funnel_min_score: float = 0.82          # Recall quality gate — EVERY hit >= it reaches the
                                                  # model; no width cap (ruling 2026-09-26), and an
@@ -157,8 +150,10 @@ class Settings(BaseSettings):
     # Funnel routing VIEW only (never the Registry row's enabled/status — the live
     # table is left intact for page/PC/worker/admin). A hidden capability can no
     # longer be matched/recalled-as-routable/certified, so its turns fail open to
-    # the Agent. EMPTY = every enabled+active capability stays routable.
-    chat_funnel_hidden_capabilities: str = ""
+    # the Agent. DEFAULT hides cap-edit-file from Chat (exposure ruling 2026-09-28):
+    # persistent file edits are user-initiated from page/PC; this consumer is
+    # chat-plane-only, so Worker/Research keep full edit_file capability.
+    chat_funnel_hidden_capabilities: str = "cap-edit-file"
     # ToolIntentModel backend ladder (8.17 + 2026-09-24 chain ruling):
     # "stub" | "local" | "online" | "auto" (local→online→stub). ToolIntentModel is a
     # swappable PROVIDER: the funnel only speaks the OpenAI-compatible card
@@ -196,18 +191,6 @@ class Settings(BaseSettings):
     chat_tool_intent_online_base_url: str = ""
     chat_tool_intent_online_api_key: str = ""
     chat_tool_intent_timeout_seconds: float = 4.0      # per-call guardrail inside the 5s cascade
-    # P3 per-kind rollout gates (docs/temp.md §6-P3, 逐开关灰度): ACTION rides the
-    # master funnel gate + chat_action_fast_path_enabled; widened kinds each need
-    # their own switch, default OFF — registering a capability never routes it.
-    chat_funnel_private_enabled: bool = False    # private-knowledge capabilities
-    chat_funnel_web_enabled: bool = False        # web-search capabilities
-    # Shadow-live (A/B validation, 2026-09-27): run the FULL cascade as a
-    # background observation on every real (non-research) chat turn while the
-    # production gates stay closed. Deliberately independent of
-    # chat_fast_paths_enabled/chat_funnel_enabled — opening those would change
-    # real execution semantics; this flag only measures. Fail-safe by
-    # construction: the observation task can never touch the Agent's turn.
-    chat_funnel_shadow_live: bool = False
 
     # ── Web search (agent web_search tool) ──
     # provider is free text: aggregate/keyless (no key) | duckduckgo (no key) | tavily |

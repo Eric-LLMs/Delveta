@@ -1002,10 +1002,8 @@ def test_binder_context_slots_touched_only_by_name_not_by_tool():
 def _open(monkeypatch, *, mode="off", timeout=5.0, backend="online"):
     from core.config import settings
 
-    monkeypatch.setattr(settings, "chat_funnel_enabled", True)
-    monkeypatch.setattr(settings, "chat_fast_paths_enabled", True)
-    monkeypatch.setattr(settings, "chat_action_fast_path_enabled", True)
-    monkeypatch.setattr(settings, "chat_matcher_mode", mode)
+    # Single-path ruling 2026-09-28: the rollout gates + matcher shadow mode
+    # were deleted; the cascade is always live (mode kept for call sites).
     monkeypatch.setattr(settings, "chat_tool_intent_backend", backend)
     monkeypatch.setattr(settings, "chat_tool_intent_timeout_seconds", timeout + 1)
     monkeypatch.setattr(settings, "chat_funnel_timeout_seconds", timeout)
@@ -1034,16 +1032,16 @@ MSG = '新建文件夹"季度报告"'
 CAP = [_entry("cap-a", corpus=(MSG,), examples=("建个目录",), parameters=_NAME_SCHEMA)]
 
 
-async def test_gate_closed_cascade_is_physically_dark(monkeypatch):
-    from core.config import settings
-
-    monkeypatch.setattr(settings, "chat_matcher_mode", "off")
+async def test_missing_deps_fails_open_to_agent(monkeypatch):
+    """Single-path ruling 2026-09-28 supersedes the old dark-gate test: the
+    cascade is always live; the remaining fail-open door is absent deps — the
+    registry must never be read, the Agent keeps the turn byte-identical."""
     monkeypatch.setattr(
         "core.application.chat.intent_funnel.registry.active_view",
         lambda **kw: pytest.fail("registry must not be read"),
     )
     req = _req()
-    out = await funnel.route(_ctx(MSG), deps=object(), requirements=req)
+    out = await funnel.route(_ctx(MSG), deps=None, requirements=req)
     assert out is req
 
 
@@ -1176,10 +1174,10 @@ async def test_matcher_hit_single_hop_certifies(monkeypatch, caplog):
     assert "tool_intent=CONFIDENT:cap-a" in line
 
 
-async def test_matcher_mode_on_still_spends_the_one_model_call(monkeypatch):
+async def test_matcher_hit_still_spends_the_one_model_call(monkeypatch):
     """The direct-certification special path is DELETED: a HIT is not an
     execution permit — ToolIntentModel still adjudicates and extracts."""
-    _open(monkeypatch, mode="on")
+    _open(monkeypatch)
     llm = _LLM([{"capability_id": "cap-a", "confidence": 0.95,
                  "arguments": {"name": "季度报告"}}])
     _, deps = _wire(monkeypatch, view=_view(CAP), index=_index([]),
@@ -1478,7 +1476,7 @@ async def _view_ok():
 
 
 async def test_negated_matcher_hit_is_forced_to_miss(monkeypatch, caplog):
-    _open(monkeypatch, mode="on")
+    _open(monkeypatch)
     # the corpus itself contains the negated sentence: an exact HIT WOULD fire —
     # only the 8.1-a guard can veto it. With the HIT vetoed and recall empty,
     # the model-facing set is empty -> NO_CANDIDATE short-circuit (ruling

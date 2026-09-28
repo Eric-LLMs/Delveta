@@ -42,11 +42,11 @@ COMPOSITE_ONLY_MSG = "只用我的知识库回答，这一页提到的概念还�
 
 
 def _gates(monkeypatch, *, fast=True, composite=True):
-    monkeypatch.setattr(settings, "chat_fast_paths_enabled", fast, raising=False)
+    # fast/action are inert since the 2026-09-28 single-path ruling (master +
+    # action gates deleted; ACTION rides certification alone).
     monkeypatch.setattr(settings, "chat_direct_fast_path_enabled", False, raising=False)
     monkeypatch.setattr(settings, "chat_viewer_fast_path_enabled", True, raising=False)
     monkeypatch.setattr(settings, "chat_retrieval_fast_path_enabled", True, raising=False)
-    monkeypatch.setattr(settings, "chat_action_fast_path_enabled", False, raising=False)
     monkeypatch.setattr(settings, "chat_composite_fast_path_enabled", composite, raising=False)
 
 
@@ -152,19 +152,12 @@ async def test_nonrelevant_verdict_escalates_with_honest_note(monkeypatch):
     assert (agent.contexts[0] or {}).get("source_policy") == "private_first"
 
 
-async def test_composite_gate_off_routes_viewer_or_agent_not_composite(monkeypatch):
-    """Dark per-kind gate: viewer alone would answer — but this turn demands the corpus
-    too, so it lands on the Agent untouched (Phase 5B must not disturb Phase 3/4)."""
+async def test_composite_lane_off_routes_viewer_or_agent_not_composite(monkeypatch):
+    """Lane off (the master gate is gone — single-path ruling 2026-09-28):
+    viewer alone would answer — but this turn demands the corpus too, so it
+    lands on the Agent untouched (Phase 5B must not disturb Phase 3/4)."""
     _gates(monkeypatch, composite=False)
     port, seam = FakePort(), FakeSeam(HIT)
     app, agent = _harness(monkeypatch, port, seam)
     await _stream_viewer(app)
     assert agent.agent_stream_calls == 1 and seam.calls == []
-
-
-async def test_master_gate_off_dark_launch_untouched(monkeypatch):
-    _gates(monkeypatch, fast=False)
-    port, seam = FakePort(), FakeSeam(HIT)
-    app, agent = _harness(monkeypatch, port, seam)
-    await _stream_viewer(app)
-    assert agent.agent_stream_calls == 1 and seam.calls == [] and port.judged == 0

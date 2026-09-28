@@ -96,7 +96,6 @@ async def test_escalated_private_only_turn_runs_web_search_by_ruling(monkeypatch
     spy = Spy()
     kernel, _, _, broker = build_kernel(monkeypatch, port, spy)
     _gate(monkeypatch, retrieval=True)
-    monkeypatch.setattr(settings, "chat_fast_paths_enabled", True, raising=False)
     app = build_app(monkeypatch, port, FakeSeam([]), kernel, broker)
     msg = "answer only from my knowledge base, no web: what is gradient descent"
     res = await sse(app, msg)
@@ -117,7 +116,6 @@ async def test_non_private_turn_web_search_is_not_fenced(monkeypatch):
     kernel, _, _, broker = build_kernel(
         monkeypatch, port, spy, grant=[ToolPermission.NETWORK],
     )
-    monkeypatch.setattr(settings, "chat_fast_paths_enabled", True, raising=False)
     app = build_app(monkeypatch, port, FakeSeam([]), kernel, broker)
     await sse(app, "search the web for quantum error correction")
     assert spy.web_queries == ["quantum error correction"]   # unfenced ⇒ provider ran

@@ -132,9 +132,8 @@ async def _stream(app, message):
     return events, done
 
 
-# (master, direct, viewer) gate triples.
-async def test_viewer_turn_routes_viewer_when_gate_on(monkeypatch):
-    monkeypatch.setattr(settings, "chat_fast_paths_enabled", True, raising=False)
+# (direct, viewer) lane pairs — the master gate is gone (single path 2026-09-28).
+async def test_viewer_turn_routes_viewer_when_lane_open(monkeypatch):
     monkeypatch.setattr(settings, "chat_direct_fast_path_enabled", False, raising=False)
     monkeypatch.setattr(settings, "chat_viewer_fast_path_enabled", True, raising=False)
     port = FakePort(["Powerhouse", " of the cell."])
@@ -150,12 +149,11 @@ async def test_viewer_turn_routes_viewer_when_gate_on(monkeypatch):
 
 
 @pytest.mark.parametrize("gates", [
-    (False, False, False),  # dark launch → Agent
-    (True, True, False),    # DIRECT-only gate on, VIEWER off → viewer demand stays Agent
-], ids=["dark", "direct-only-viewer-off"])
-async def test_viewer_turn_stays_on_agent_without_viewer_gate(monkeypatch, gates):
-    fast, direct, viewer = gates
-    monkeypatch.setattr(settings, "chat_fast_paths_enabled", fast, raising=False)
+    (False, False),  # VIEWER lane off -> Agent
+    (True, False),   # DIRECT-only lane on, VIEWER off -> viewer demand stays Agent
+], ids=["lane-off", "direct-only-viewer-off"])
+async def test_viewer_turn_stays_on_agent_without_viewer_lane(monkeypatch, gates):
+    direct, viewer = gates
     monkeypatch.setattr(settings, "chat_direct_fast_path_enabled", direct, raising=False)
     monkeypatch.setattr(settings, "chat_viewer_fast_path_enabled", viewer, raising=False)
     port = FakePort(["nope"])
