@@ -5021,6 +5021,8 @@ threshold:
 
 ### 25.3 ToolIntentModel — Backends, Wire Discipline & Output Adapters
 
+The current ToolIntentModel is based on `iromu/Qwen3-0.6B-tools`, a Qwen3-0.6B model fine-tuned with QLoRA for tool-calling / tool-selection tasks, and is served locally as the `qwen3-tools:q5_k_m` quantized model. It is used here as a lightweight semantic capability-selection layer.
+
 Payload discipline (`tool_intent/base.py`, 8.17): input = query + `TurnFacts` +
 one **Card per candidate**, assembled from the Registry row by capability_id —
 tool binding, description, the canonical parameter schema with per-slot
