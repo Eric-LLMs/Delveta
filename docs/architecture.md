@@ -4909,7 +4909,7 @@ is measured against.
 **Corpus under evaluation**
 
 - 18 user-facing Actions
-- 550 total queries (Standard Queries + Similar Queries)
+- 908 total queries (Standard Queries + Similar Queries)
 - Query expansion applied across all 18 Actions
 
 **Evaluation dataset (fresh, never in the corpus)**
@@ -4918,7 +4918,7 @@ is measured against.
 - 72 Non-Action queries sampled (seeded) from the existing AGENT / ABSTAIN
   pool of the synthetic-workload dataset
 - 144 evaluation queries in total
-- Zero normalized exact overlap with the 550-query Recall corpus
+- Zero normalized exact overlap with the 908-query Recall corpus
 
 **Method — Recall-only offline sweep**
 
@@ -4932,63 +4932,63 @@ is measured against.
 
 | Threshold | Action Recall Coverage | Non-Action False Admission |
 |---:|---:|---:|
-| 0.50 | 100.0% | 94.4% |
-| 0.51 | 100.0% | 91.7% |
-| 0.52 | 100.0% | 87.5% |
-| 0.53 | 100.0% | 84.7% |
-| 0.54 | 100.0% | 83.3% |
-| 0.55 | 100.0% | 80.6% |
-| 0.56 | 100.0% | 76.4% |
-| 0.57 | 100.0% | 73.6% |
-| 0.58 | 100.0% | 70.8% |
-| 0.59 | 100.0% | 68.1% |
-| 0.60 | 100.0% | 68.1% |
-| 0.61 | 100.0% | 66.7% |
-| 0.62 | 100.0% | 62.5% |
-| 0.63 | 100.0% | 61.1% |
-| 0.64 | 100.0% | 56.9% |
-| 0.65 | 100.0% | 51.4% |
-| 0.66 | 98.6% | 48.6% |
-| 0.67 | 97.2% | 47.2% |
-| 0.68 | 95.8% | 44.4% |
-| 0.69 | 94.4% | 41.7% |
-| 0.70 | 94.4% | 37.5% |
-| 0.71 | 94.4% | 34.7% |
-| 0.72 | 94.4% | 33.3% |
-| 0.73 | 94.4% | 27.8% |
-| 0.74 | 93.1% | 25.0% |
-| 0.75 | 90.3% | 25.0% |
-| 0.76 | 88.9% | 20.8% |
-| 0.77 | 84.7% | 16.7% |
-| 0.78 | 80.6% | 13.9% |
-| 0.79 | 77.8% | 11.1% |
-| 0.80 | 73.6% | 11.1% |
-| 0.81 | 69.4% | 6.9% |
-| **0.82** | **61.1%** | **5.6%** |
-| 0.83 | 55.6% | 5.6% |
-| 0.84 | 47.2% | 5.6% |
-| 0.85 | 41.7% | 5.6% |
-| 0.86 | 36.1% | 5.6% |
-| 0.87 | 26.4% | 4.2% |
+| 0.50 | 94.4% | 94.4% |
+| 0.51 | 94.4% | 91.7% |
+| 0.52 | 94.4% | 88.9% |
+| 0.53 | 94.4% | 87.5% |
+| 0.54 | 94.4% | 86.1% |
+| 0.55 | 94.4% | 83.3% |
+| 0.56 | 94.4% | 77.8% |
+| 0.57 | 94.4% | 75.0% |
+| 0.58 | 94.4% | 72.2% |
+| 0.59 | 94.4% | 70.8% |
+| 0.60 | 94.4% | 68.1% |
+| 0.61 | 94.4% | 68.1% |
+| 0.62 | 94.4% | 65.3% |
+| 0.63 | 94.4% | 63.9% |
+| 0.64 | 94.4% | 59.7% |
+| 0.65 | 94.4% | 55.6% |
+| 0.66 | 93.1% | 54.2% |
+| 0.67 | 91.7% | 52.8% |
+| 0.68 | 91.7% | 50.0% |
+| 0.69 | 90.3% | 47.2% |
+| 0.70 | 90.3% | 40.3% |
+| 0.71 | 90.3% | 37.5% |
+| 0.72 | 90.3% | 36.1% |
+| 0.73 | 90.3% | 30.6% |
+| 0.74 | 88.9% | 26.4% |
+| 0.75 | 87.5% | 25.0% |
+| 0.76 | 87.5% | 20.8% |
+| 0.77 | 83.3% | 16.7% |
+| **0.78** | **80.6%** | **13.9%** |
+| 0.79 | 76.4% | 12.5% |
+| 0.80 | 70.8% | 12.5% |
+| 0.81 | 63.9% | 9.7% |
+| 0.82 | 59.7% | 8.3% |
+| 0.83 | 55.6% | 8.3% |
+| 0.84 | 52.8% | 6.9% |
+| 0.85 | 43.1% | 6.9% |
+| 0.86 | 37.5% | 6.9% |
+| 0.87 | 26.4% | 5.6% |
 | 0.88 | 19.4% | 4.2% |
-| 0.89 | 13.9% | 4.2% |
-| 0.90 | 13.9% | 1.4% |
+| 0.89 | 16.7% | 4.2% |
+| 0.90 | 15.3% | 1.4% |
 
 **Current production threshold**
 
-The production setting remains `chat_funnel_min_score =` **`0.82`**; it was
-not changed as part of the evaluation. **0.82** is described here only as the
+The production setting remains `chat_funnel_min_score =` **`0.78`**; it was
+not changed as part of the evaluation. **0.78** is described here only as the
 current production threshold and the current evaluation reference point —
 not as a mathematically optimal value.
 
-At threshold = **0.82**:
+At threshold = **0.78**:
 
-- Action Recall Coverage: 44 / 72 = 61.1%
-- Non-Action False Admission: 4 / 72 = 5.6%
+- Action Recall Coverage: 58 / 72 = 80.6%
+- Non-Action False Admission: 10 / 72 = 13.9%
 
 **Interpretation**
 
-The expanded 550-query corpus substantially improves Action-side Recall
+The expanded 908-query corpus substantially improves Action-side Recall
 coverage compared with the earlier small-corpus baseline. However,
 similarity-based Recall alone cannot cleanly separate genuine Tool Actions
 from Agent / Non-Action requests. Increasing the threshold reduces candidate
