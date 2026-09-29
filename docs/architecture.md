@@ -4208,16 +4208,16 @@ marshalling — the same layering doctrine as the research plugins.
 
 ```mermaid
 flowchart LR
-    M[finalized manuscript\nreport.md @ current edition] --> P[project_manuscript_to_ast\nzero-LLM, verbatim blocks]
-    G[graph.json\nevidence nodes] --> MP[mapping.py\nidentity: ev id == node id]
+    M["finalized manuscript<br/>report.md @ current edition"] --> P["project_manuscript_to_ast<br/>zero-LLM, verbatim blocks"]
+    G["graph.json<br/>evidence nodes"] --> MP["mapping.py<br/>identity: ev id == node id"]
     MP --> P
-    P --> V[AST_CONTRACT_QA\nvalidators: section tree\nplan references]
-    V --> T[Typst emit + typst CLI\npublication template]
-    T --> D[(drive asset\n&lt;cloud task&gt;/outputs/\n&lt;name&gt;_v{N}.pdf)]
-    T --> O[(scratch mirror\noutputs/&lt;name&gt;_v{N}.pdf)]
-    D --> R[ArtifactRef\nCOMPLETED]
+    P --> V["AST_CONTRACT_QA<br/>validators: section tree<br/>plan references"]
+    V --> T["Typst emit + typst CLI<br/>publication template"]
+    T --> D[("drive asset<br/>&lt;cloud task&gt;/outputs/<br/>&lt;name&gt;_v{N}.pdf")]
+    T --> O[("scratch mirror<br/>outputs/&lt;name&gt;_v{N}.pdf")]
+    D --> R["ArtifactRef<br/>COMPLETED"]
     O --> R
-    V -. hard fault .-> X[FAILED_BLOCKED\nnothing touches drive]
+    V -. hard fault .-> X["FAILED_BLOCKED<br/>nothing touches drive"]
     T -. hard fault .-> X
 ```
 
