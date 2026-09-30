@@ -75,6 +75,7 @@ def summarise(rows: list[dict], *, arm: str, split: str, temperature, card_view:
     report = {
         "arm": arm, "split": split, "rows": n,
         "card_view": card_view, "option_max_tokens": F.OPTION_MAX_TOKENS,
+        "head_max_len": F.HEAD_MAX_LEN, "max_len": F.MAX_LEN,
         "temperature": list(temperature) if isinstance(temperature, (list, tuple))
         else float(temperature),
         "top1": top1,

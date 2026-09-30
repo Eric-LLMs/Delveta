@@ -31,6 +31,7 @@ import shutil
 import sys
 import time
 from pathlib import Path
+from typing import Dict, List, Optional, Union
 
 import numpy as np
 import torch
@@ -41,13 +42,27 @@ HERE = Path(__file__).resolve().parent
 DATA = HERE / "data"
 DEFAULT_OUT = HERE / "out"
 
-# ── frozen recipe constants ──────────────────────────────────────────────────
-# Per-option token cap. The library default is 48, which truncates every one of the
-# 5718 frozen options to a fragment and always drops the `negative examples:` block;
-# the dataset was audited under a 256 cap (logs/_laya_ds/coverage_audit.json -> tokens
-# says 0/2568 B_noprov options exceed 256). Ruling 2026-09-30: use 256 for the
-# baseline, the fine-tune and the benchmark, so all three see the same cards.
+# ── input-token budget (train and eval read these two; they must not diverge) ─
+# OPTION_MAX_TOKENS - the per-option hard cap. `laya.common.build_sequence` hard-codes
+# 48, which cuts *every* frozen option: all 2568 B_noprov options (856 rows x 3) are
+# 136-230 tokens and none is below 136. 256 is the cap the dataset was audited under
+# (logs/_laya_ds/coverage_audit.json -> tokens: over_library_cap_48=2568,
+# over_patched_cap_256=0), so nothing is truncated at 256.
+#
+# HEAD_MAX_LEN - a BUDGET the question head and every option SHARE, not a length:
+# `opt_budget = head_max_len - sum(options)`; below 16 the even-share fallback shrinks
+# the options and `head_ids[:max(8, opt_budget)]` cuts the head. At the 256 cap
+# sum(3 options) + 3 markers peaks at 599, so 768 leaves ~169 tokens of slack and both
+# the options and the 13-token head survive whole. The base checkpoint's own value is
+# 256, which cannot cover 599 - at 256 the even-share fallback cuts every option to 80
+# tokens. Raising HEAD_MAX_LEN adds no tokens to the sequence: once nothing is being
+# cut, the ids are identical for 640 and for 896.
+#
+# MAX_LEN - the whole-sequence ceiling. The longest complete sequence measures 640
+# tokens (13 head + 599 options + up to 24 state + 4 cls/sep), so 1024 never binds.
 OPTION_MAX_TOKENS = 256
+HEAD_MAX_LEN = 768
+MAX_LEN = 1024
 EPOCHS = 4
 MICRO_BATCH = 8
 GRAD_ACCUM = 4
@@ -75,27 +90,59 @@ QID = "capability"
 DECISION_CHUNK = 16
 
 
-# ── the 256-token option builder (drop-in patch for laya.agent) ──────────────
-# Same shape and return contract as laya.common.build_sequence, including the
-# `state_ids` / `truncate_left` / `return_stats` arguments the Agent passes, so
-# `install()` can point laya.agent's call site at it.
-def build_sequence(tok, state, q, max_len=512, head_max_len=192, option_order=None,
-                   truncate_left=False, state_ids=None, return_stats=False):
+# ── the option builder (drop-in patch for laya.agent) ────────────────────────
+# A verbatim copy of `laya.common.build_sequence` with ONE change: the per-option
+# hard cap `max_length=48` becomes `max_length=OPTION_MAX_TOKENS`. Everything else
+# is byte-for-byte the stock body - the `opt_budget < 16` even-share fallback, the
+# `head_ids[: max(8, opt_budget)]` floor, the `#538` note and the `return_stats`
+# dict. Keeping the fallback is the point: it is what stops a budget too tight for
+# the options from silently cutting the instruction head down to 8 tokens.
+def build_sequence(
+    tok,
+    state: Union[str, dict, list],
+    q: Dict,
+    max_len: int = 512,
+    head_max_len: int = 192,
+    option_order: Optional[List[int]] = None,
+    truncate_left: bool = False,
+    state_ids: Optional[List[int]] = None,
+    return_stats: bool = False,
+):
+    """Format: [CLS] <type> instructions [SEP] [MASK] opt0 [MASK] opt1 ... [SEP] state [SEP].
+
+    `state_ids` lets a caller tokenize the shared state once and reuse it across every question,
+    instead of re-serializing and re-tokenizing the same document per question.
+
+    `return_stats` adds a third return value describing what the head budget did to the options:
+    `options` (how many the question defines), `options_distinct` (how many still have a token
+    span of their own) and `tokens_per_option` (the cap applied to each, or None when none was).
+    """
     mask_tok = tok.mask_token
     opts = C.render_options(q)
     order = option_order if option_order is not None else list(range(len(opts)))
     ins = str(q["ins"]).replace(mask_tok, " ")
-    head_ids = C._encode_question_text(tok, "%s question: %s" % (q["t"], ins),
-                                       add_special_tokens=False)
+    head_ids = C._encode_question_text(tok, "%s question: %s" % (q["t"], ins), add_special_tokens=False)
     opt_ids = []
     for i in order:
+        # Cap at the tokenizer, not after the fact: `[:48]` still makes the tokenizer process the
+        # whole (possibly long) description. truncation=True, max_length=48 keeps the first 48
+        # tokens, which is exactly what the previous slice produced.
         opt_tokens = C._encode_question_text(
-            tok, " " + opts[i].replace(mask_tok, " "), add_special_tokens=False,
-            truncation=True, max_length=OPTION_MAX_TOKENS)
+            tok,
+            " " + opts[i].replace(mask_tok, " "),
+            add_special_tokens=False,
+            truncation=True,
+            max_length=OPTION_MAX_TOKENS,
+        )
         opt_ids.append([tok.mask_token_id] + opt_tokens)
-    # No even-share trim: each option keeps its own OPTION_MAX_TOKENS tokens.
     opt_budget = head_max_len - sum(len(o) for o in opt_ids)
-    head_ids = head_ids[: max(8, opt_budget)] if opt_budget > 0 else head_ids[:8]
+    per_option = None
+    if opt_budget < 16:
+        per = max(4, (head_max_len - 16) // max(1, len(opt_ids)))
+        per_option = per
+        opt_ids = [o[:per] for o in opt_ids]
+        opt_budget = head_max_len - sum(len(o) for o in opt_ids)
+    head_ids = head_ids[: max(8, opt_budget)]
     ids = [tok.cls_token_id] + head_ids + [tok.sep_token_id]
     markers = []
     for o in opt_ids:
@@ -105,21 +152,28 @@ def build_sequence(tok, state, q, max_len=512, head_max_len=192, option_order=No
     room = max(0, max_len - len(ids) - 1)
     if state_ids is None:
         state_ids = C.encode_text(tok, C.serialize_state(state).replace(mask_tok, " "),
-                                  add_special_tokens=False)["input_ids"]
+                                add_special_tokens=False)["input_ids"]
+    # not state_ids[-room:]: with no room left, state_ids[-0:] is the whole state rather than none of it
     st = state_ids[max(0, len(state_ids) - room):] if truncate_left else state_ids[:room]
     ids = ids + st + [tok.sep_token_id]
     ids, markers = ids[:max_len], [m for m in markers if m < max_len]
     if not return_stats:
         return ids, markers
+    # Two options that share a prefix can come out of the cut as the same token span: the marker
+    # count still matches the option count, so the guard in `Agent._encode_state` passes and
+    # nothing downstream can tell that the question lost the ability to name them apart. Counted
+    # on the capped option ids, before assembly: re-slicing the finished sequence cannot close
+    # the last option's span -- it runs on into the serialized state, which differs per request,
+    # so the last option always looks distinguishable however it collided (#538).
     return ids, markers, {
         "options": len(opt_ids),
         "options_distinct": len({tuple(o) for o in opt_ids}),
-        "tokens_per_option": OPTION_MAX_TOKENS,
+        "tokens_per_option": per_option,
     }
 
 
 def install() -> None:
-    """Point laya.agent's build_sequence call site at the 256-token builder."""
+    """Point laya.agent's build_sequence call site at the 256-cap builder."""
     import laya.agent as A
     A.build_sequence = build_sequence
 
@@ -206,11 +260,14 @@ def base_model_dir(revision: str = BASE_REVISION, subfolder: str = BASE_SUBFOLDE
 def read_cfg(model_dir: Path, *, train: bool) -> dict:
     cfg = json.loads((model_dir / "rl_agent_config.json").read_text(encoding="utf-8"))
     if train:
-        # The official notebook sets these four before building the model.
+        # The official notebook sets these two before building the model.
         cfg["gradient_checkpointing"] = True
         cfg["max_tokens_per_batch"] = 4096
-        cfg["max_len"] = 1024
-        cfg["head_max_len"] = 256
+    # The token budget is NOT train-only: the base checkpoint ships max_len=1024 /
+    # head_max_len=256, and the eval and export paths read the same constants, so
+    # training and inference can never render the input differently.
+    cfg["max_len"] = MAX_LEN
+    cfg["head_max_len"] = HEAD_MAX_LEN
     return cfg
 
 
@@ -253,7 +310,7 @@ def question_of(row: dict, instructions: str) -> dict:
 def build_item(tok, row: dict, cfg: dict, instructions: str) -> dict:
     q = question_of(row, instructions)
     ids, markers = build_sequence(tok, row["state"], q,
-                                  cfg.get("max_len", 1024), cfg.get("head_max_len", 256))
+                                  cfg.get("max_len", MAX_LEN), cfg.get("head_max_len", HEAD_MAX_LEN))
     if len(markers) != len(C.render_options(q)):
         raise RuntimeError(f"{row['id']}: options exceed head_max_len={cfg.get('head_max_len')}")
     target = [0.0] * len(markers)
@@ -538,8 +595,12 @@ def mode_train(args) -> None:
                                 "subfolder": BASE_SUBFOLDER},
             "formal_card_view": manifest["formal_card_view"],
             "option_max_tokens": OPTION_MAX_TOKENS,
-            "option_cap_note": "library default is 48; 256 is the audited dataset cap "
-                               "(logs/_laya_ds/coverage_audit.json -> tokens)",
+            "head_max_len": HEAD_MAX_LEN,
+            "max_len": MAX_LEN,
+            "option_cap_note": "library default is 48; 256 is the cap the dataset was audited "
+                               "under (logs/_laya_ds/coverage_audit.json -> tokens: "
+                               "over_library_cap_48=2568, over_patched_cap_256=0). The stock "
+                               "even-share fallback is kept verbatim; only max_length changed.",
             "rows": {"source_train_rows": len(train_rows),
                      "calibration_rows": len(calib_rows),
                      "effective_train_rows": len(fit_rows),
@@ -655,6 +716,7 @@ def mode_export(args) -> None:
     exported.pop("temperature_by_options", None)
     exported["model_name"] = "layachoice-v1"
     exported["layachoice"] = {"checkpoint": str(ckpt), "option_max_tokens": OPTION_MAX_TOKENS,
+                              "head_max_len": HEAD_MAX_LEN, "max_len": MAX_LEN,
                               "calibration": str(temp_file) if temp_file.exists() else None,
                               "export_dtype": args.export_dtype}
     (out / "rl_agent_config.json").write_text(
@@ -674,8 +736,8 @@ def mode_export(args) -> None:
     questions = {QID: {"type": "choice", "instructions": instructions,
                        "criteria": dict(zip(r["order"], r["options"]))} for r in rows[:1]}
     answers = agent.predict_batch([r["state"] for r in rows], questions,
-                                  batch_size=5, max_len=cfg.get("max_len", 1024),
-                                  head_max_len=cfg.get("head_max_len", 256))
+                                  batch_size=5, max_len=cfg.get("max_len", MAX_LEN),
+                                  head_max_len=cfg.get("head_max_len", HEAD_MAX_LEN))
     smoke = {"export_dir": str(out), "export_dtype": args.export_dtype,
              "size_bytes": (out / "model.safetensors").stat().st_size,
              "agent_temperature": reloaded, "rows": []}

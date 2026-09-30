@@ -74,7 +74,7 @@ leak the label.
 
 ### Deviations from the official notebook
 
-All six are deliberate and were frozen before implementation:
+All seven are deliberate and were frozen before implementation:
 
 1. **Per-epoch checkpoints.** One full-state checkpoint per epoch (`epoch-1 … epoch-N`,
    never overwritten) instead of a single rolling one, so the selection is auditable.
@@ -85,22 +85,53 @@ All six are deliberate and were frozen before implementation:
 4. **Autocast dtype read from `amp_dtype`.** The notebook hardcodes fp16.
 5. **A CPU `--smoke` path.** The notebook has none.
 6. **A zero-shot baseline arm.** The notebook has none.
+7. **A larger input-token budget** (see below): the notebook uses the library's per-option
+   default of 48 and `head_max_len=256`; this task needs `OPTION_MAX_TOKENS=256` and
+   `HEAD_MAX_LEN=768`. `max_len=1024` is unchanged.
 
-### The option-token cap
+### The input-token budget
 
-`laya.common.build_sequence` caps each option at **48 tokens**. Every frozen option is
-136–230 tokens (median 171) under view B_noprov, and at 48 tokens *none* of the 5718 options
-keeps a complete `does:` line or any part of the `negative examples:` block — i.e. the
-discriminative material is always cut. The dataset was audited under a **256-token** cap
-(`logs/_laya_ds/coverage_audit.json` → `tokens`: 0/2568 B_noprov options exceed 256; head
-max 610, never reaching `max_len`), so `layachoice_finetune.py` carries its own
-`build_sequence` at 256 tokens with no even-share trim, and `install()` points
-`laya.agent`'s call site at it. The baseline, the fine-tune and the benchmark all run under
-this same cap, otherwise the comparison would not be like-for-like.
+Three constants, all in `layachoice_finetune.py`, all read by the training, evaluation and
+export paths, so the three can never render the input differently:
 
-**Deployment consequence:** a stock `laya` install truncates to 48 tokens. Either apply the
-same override (`layachoice_finetune.install()`) before constructing the Agent, or expect a
-lower score under stock rendering.
+| | |
+|---|---|
+| `OPTION_MAX_TOKENS` | **256** — the per-option hard cap |
+| `HEAD_MAX_LEN` | **768** — the budget the question head and all options **share** |
+| `MAX_LEN` | **1024** — the whole-sequence ceiling |
+
+**Why 256 and not the library's 48.** `laya.common.build_sequence` hard-codes
+`max_length=48` on each option. Every frozen option is 136–230 tokens (median 171) under view
+B_noprov, so at 48 tokens *none* of the 2568 options (856 rows × 3) keeps a complete `does:`
+line or any part of the `negative examples:` block — the discriminative material is always
+cut. The dataset was audited at 256 (`logs/_laya_ds/coverage_audit.json` → `tokens`:
+`over_library_cap_48=2568`, `over_patched_cap_256=0`), so nothing is truncated at 256.
+
+**Why `head_max_len` is 768 and not the checkpoint's 256.** Despite the name, `head_max_len`
+is not a length — it is a **combined budget**: `opt_budget = head_max_len − Σoptions`, and
+when that drops below 16 the even-share fallback shrinks the options *and*
+`head_ids[:max(8, opt_budget)]` cuts the instruction head. At the 256 cap `Σ(3 options) + 3
+markers` peaks at 599, so the checkpoint's own 256 drives `opt_budget` to ≈ −347: the
+fallback cuts every option to 80 tokens (below the shortest true option, 136) and the head to
+16. 768 leaves ~169 tokens of slack, so both the options and the 13-token head survive whole;
+raising it further adds no tokens to the sequence (once nothing is being cut, 640 and 896
+produce identical ids). The longest complete sequence measures 640 tokens, so `MAX_LEN=1024`
+never binds. Source evidence that `head_max_len > 256` is allowed: neither `laya/common.py`
+nor `laya/agent.py` clamps it, the CLI exposes `--head-max-len`, and the library documents
+raising it for many-option questions.
+
+**The builder is a verbatim copy, not a fork.** `build_sequence` here is
+`laya.common.build_sequence` copied byte-for-byte except for one line — `max_length=48`
+becomes `max_length=OPTION_MAX_TOKENS`. The `opt_budget < 16` even-share fallback, the
+`head_ids[: max(8, opt_budget)]` floor, the `#538` note and the `return_stats` dict are all
+stock. Keeping the fallback is the point: an earlier fork dropped it and, at a budget too
+tight for the options, silently cut the instruction head to 8 tokens. `install()` points
+`laya.agent`'s call site at this builder. The baseline, the fine-tune and the benchmark all
+run under the same budget, otherwise the comparison would not be like-for-like.
+
+**Deployment consequence:** a stock `laya` install renders at 48 tokens and `head_max_len`
+256. Either apply the same override (`layachoice_finetune.install()`) and pass the same
+budget before constructing the Agent, or expect a lower score under stock rendering.
 
 ## Pipeline
 

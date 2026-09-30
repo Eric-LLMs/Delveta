@@ -110,6 +110,7 @@
   - [25.13 The Five Adjudications](#2513-the-five-adjudications)
   - [25.14 Configuration (`core/config.py`, post single-path ruling)](#2514-configuration-coreconfigpy-post-single-path-ruling)
   - [25.15 Test Doctrine](#2515-test-doctrine)
+- [26. LayaChoice Capability Selection](#26-layachoice-capability-selection)
 
 [↑ Back to top](#table-of-contents)
 
@@ -6156,5 +6157,81 @@ ZERO model hops (`NO_CANDIDATE` short-circuit), a Recall fault always reports
 `RECALL_UNAVAILABLE` — never a fake-empty `NO_CANDIDATE` — and the executor's
 tool-existence truth is the live `ToolRuntime.schemas()` roster, and fail-open returns the
 *same object* (identity assertion).
+
+## 26. LayaChoice Capability Selection
+
+LayaChoice is Delveta's **capability-selection decision model**: given a user turn
+and the short list of candidate capabilities the Intent Funnel (§25) has already
+matched, it decides *which one* to dispatch. It is **not** a general chat model —
+it never converses, never authors tool arguments, and never sees the open-world
+request; it ranks a closed candidate set that the funnel handed it.
+
+### 26.1 Position in the funnel
+
+LayaChoice sits downstream of Recall and upstream of the executor. Recall produces
+the candidate set; LayaChoice picks the single winner; the executor binds arguments
+and runs the tool. The model is one node in the funnel chain — it does not redo
+matching and it does not adjudicate safety (the write-gate stays in the funnel).
+
+### 26.2 Candidate contract
+
+The production contract is defined over candidate count `K`. Normalization of the
+candidate list is a **business-layer** step and MUST happen **before** LayaChoice is
+invoked — the model only ever receives an already-normalized list:
+
+| `K` | Path |
+|---|---|
+| `K = 0` | the row never enters LayaChoice (no candidates — funnel short-circuits) |
+| `K = 1` | the business layer executes directly; LayaChoice is not consulted |
+| `K = 2` | LayaChoice |
+| `K = 3` | LayaChoice |
+| `K >= 4` | the business layer truncates to the top-3 first, then LayaChoice |
+
+The benchmark and training data are fixed at **K = 3** candidates. The `K >= 4`
+truncation is the business layer's job, not the model's — the model's decision head
+only ever sees at most three options.
+
+### 26.3 Model
+
+- **Base**: `convaiinnovations/laya` (multilingual checkpoint, upstream revision
+  pinned; consumed through the `laya` inference package, version pinned).
+- **Fine-tuned**: **Delveta LayaChoice v1** — full-parameter fine-tune of the base
+  decision model on Delveta's capability-selection task.
+
+### 26.4 Input configuration
+
+```
+OPTION_CAP    = 256     # token budget per candidate capability card
+head_max_len  = 768     # COMBINED head + options budget (not an option length, not a context limit)
+max_len       = 1024
+```
+
+`head_max_len` is the joint budget for the instruction head plus the concatenated
+option cards — it is **not** a per-option cap and **not** the encoder's context
+limit. These three values are the input configuration for Delveta's long `B_noprov`
+capability cards; they are an experiment-defined budget, and the underlying encoder
+context window is a separate, larger number.
+
+### 26.5 Training and selection
+
+- Full-parameter fine-tuning (no adapters).
+- The best checkpoint is selected **only** by Validation v3 top-1.
+- The Final Test set is never used for checkpoint selection or for any training
+  decision.
+
+### 26.6 Artifacts
+
+| Artifact | Home |
+|---|---|
+| Source code / experiment definition | GitHub |
+| Model weights | Hugging Face **Model** repository |
+| Frozen dataset | Hugging Face **Dataset** repository |
+
+The full experiment record — dataset definition, frozen SHA256s, token-budget
+investigation, baselines, epoch results, temperature calibration, final-test and
+error analysis, invalid runs and lessons learned — lives in
+[LayaChoice-v1 Fine-Tuning](experiments/LayaChoice-v1-Fine-Tuning.md). This section
+records only the stable architectural facts; the benchmark detail is deliberately
+not duplicated here.
 
 [↑ Back to top](#table-of-contents)
