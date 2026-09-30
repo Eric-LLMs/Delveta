@@ -125,6 +125,23 @@ Delveta 自研了高可控的 Agent 运行时，拒绝将核心编排委托给�
 
 ---
 
+## 🤗 模型与产物
+
+### Delveta LayaChoice
+
+Delveta 包含一个微调后的 LayaChoice 模型，用于本地的 capability selection 与
+tool-intent routing。
+
+* 模型：[Delveta-LayaChoice-v1](https://huggingface.co/eric-ml-nlp/Delveta-LayaChoice-v1)
+* 数据集：[`scripts/laya_finetune/data/`](scripts/laya_finetune/data/)
+* 训练代码：[`scripts/laya_finetune/`](scripts/laya_finetune/)
+* Checkpoints：[Delveta-LayaChoice-v1-checkpoints](https://huggingface.co/eric-ml-nlp/Delveta-LayaChoice-v1-checkpoints)
+
+该模型被本地 Intent Funnel 用作 capability-selection 模型。生产模型 artifact 与
+Delveta 源码仓库分开托管。
+
+---
+
 ## 🚀 快速开始
 
 ### 方案 A —— 一键启动（推荐）

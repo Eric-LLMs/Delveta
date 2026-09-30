@@ -123,6 +123,23 @@ See [docs/architecture.md §Implementation Status](docs/architecture.md#implemen
 
 ---
 
+## 🤗 Models & Artifacts
+
+### Delveta LayaChoice
+
+Delveta includes a fine-tuned LayaChoice model for local capability selection
+and tool-intent routing.
+
+- Model: [Delveta-LayaChoice-v1](https://huggingface.co/eric-ml-nlp/Delveta-LayaChoice-v1)
+- Dataset: [`scripts/laya_finetune/data/`](scripts/laya_finetune/data/)
+- Training code: [`scripts/laya_finetune/`](scripts/laya_finetune/)
+- Checkpoints: [Delveta-LayaChoice-v1-checkpoints](https://huggingface.co/eric-ml-nlp/Delveta-LayaChoice-v1-checkpoints)
+
+The model is used by the local Intent Funnel as a capability-selection model. The
+production model artifact is hosted separately from the Delveta source repository.
+
+---
+
 ## 🚀 Quick Start
 
 ### Option A — One-click launcher (recommended)

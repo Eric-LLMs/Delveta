@@ -111,6 +111,12 @@
   - [25.14 Configuration (`core/config.py`, post single-path ruling)](#2514-configuration-coreconfigpy-post-single-path-ruling)
   - [25.15 Test Doctrine](#2515-test-doctrine)
 - [26. LayaChoice Capability Selection](#26-layachoice-capability-selection)
+  - [26.1 Position in the funnel](#261-position-in-the-funnel)
+  - [26.2 Candidate contract](#262-candidate-contract)
+  - [26.3 Model](#263-model)
+  - [26.4 Input configuration](#264-input-configuration)
+  - [26.5 Training and selection](#265-training-and-selection)
+  - [26.6 Artifacts](#266-artifacts)
 
 [↑ Back to top](#table-of-contents)
 
@@ -6219,13 +6225,21 @@ context window is a separate, larger number.
 - The Final Test set is never used for checkpoint selection or for any training
   decision.
 
+On the frozen Final Test v3 (`K = 3`, curated 17-capability EN/ZH set) the
+shipped checkpoint scores **93.56 % top-1**, against **57.89 %** for the un-finetuned
+base model on the same frozen test set. That is benchmark accuracy on a frozen
+curated split — not production-traffic accuracy and not an open-world generalization
+claim. The per-language, per-capability and confusion breakdowns live in the
+experiment record.
+
 ### 26.6 Artifacts
 
 | Artifact | Home |
 |---|---|
-| Source code / experiment definition | GitHub |
-| Model weights | Hugging Face **Model** repository |
-| Frozen dataset | Hugging Face **Dataset** repository |
+| Source code / experiment definition | [`scripts/laya_finetune/`](https://github.com/Eric-LLMs/Delveta/tree/main/scripts/laya_finetune) |
+| Selected model (FP32 weights + eval reports) | [Delveta-LayaChoice-v1](https://huggingface.co/eric-ml-nlp/Delveta-LayaChoice-v1) |
+| Non-selected checkpoints (epochs 1 / 3 / 4) | [Delveta-LayaChoice-v1-checkpoints](https://huggingface.co/eric-ml-nlp/Delveta-LayaChoice-v1-checkpoints) |
+| Frozen dataset (bundles + raw + `SHA256SUMS`) | [`scripts/laya_finetune/data/`](https://github.com/Eric-LLMs/Delveta/tree/main/scripts/laya_finetune/data) |
 
 The full experiment record — dataset definition, frozen SHA256s, token-budget
 investigation, baselines, epoch results, temperature calibration, final-test and

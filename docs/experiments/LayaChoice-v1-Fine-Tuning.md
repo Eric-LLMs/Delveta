@@ -588,6 +588,21 @@ This run did **100** optimizer updates in **84.2 s**. The cause is mechanical: t
 misled. The authoritative training metadata is `train_manifest.json` and the four
 `epoch-*/train_meta.json`.
 
+### Published artifacts
+
+The selected model and evaluation output are published separately from this source
+repository.
+
+| Artifact | Location |
+|---|---|
+| Selected model (epoch 2), FP32 weights + eval reports | [Delveta-LayaChoice-v1](https://huggingface.co/eric-ml-nlp/Delveta-LayaChoice-v1) (public) |
+| Non-selected checkpoints (epoch 1 / 3 / 4) | [Delveta-LayaChoice-v1-checkpoints](https://huggingface.co/eric-ml-nlp/Delveta-LayaChoice-v1-checkpoints) (public) |
+| Frozen dataset (bundles + raw + `SHA256SUMS`) | [`scripts/laya_finetune/data/`](https://github.com/Eric-LLMs/Delveta/tree/main/scripts/laya_finetune/data) |
+| Training / evaluation code | [`scripts/laya_finetune/`](https://github.com/Eric-LLMs/Delveta/tree/main/scripts/laya_finetune) |
+
+The SHA256 values in the table above are the authority for every published copy; the
+uploaded weights were verified against them after upload.
+
 ## 25. Reproducibility
 
 Environment of the formal run (`release_manifest.json` → `environment`, `versions`):
