@@ -301,7 +301,7 @@ def test_negative_toggle_skips_gate_and_projection(client, audits, writes,
     assert audits[0]["action"] == "query_toggle"
 
 
-def test_delete_cascade_flag_passthrough(client, writes, monkeypatch):
+def test_delete_cascade_flag_passthrough(client, audits, writes, monkeypatch):
     async def fake_list(**kw):
         return [_entry()]
 
