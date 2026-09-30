@@ -1,0 +1,900 @@
+{"capability_id":"cap-add-term","lang":"zh","query":"我刚在技术分享里听到一个挺准的说法，顺手帮我加到团队术语表里。","confusable_with":"","why":"只是把说法收进词汇，不涉及建文件或改文件内容"}
+{"capability_id":"cap-add-term","lang":"zh","query":"这个词能帮我存进词汇库吗？我怕过两天就忘了。","confusable_with":"","why":"目标是保存词汇条目，不是创建目录"}
+{"capability_id":"cap-add-term","lang":"zh","query":"记个词：缓存雪崩","confusable_with":"","why":"省略句，要做的仍是收录术语"}
+{"capability_id":"cap-add-term","lang":"zh","query":"最近在攒一份机器学习术语表，把「注意力机制」也收进去。","confusable_with":"","why":"往既有术语表里补条目，不是新建文件"}
+{"capability_id":"cap-add-term","lang":"zh","query":"医学文献里这个词太专业了，帮我存到术语表。","confusable_with":"","why":"动作是收录术语"}
+{"capability_id":"cap-add-term","lang":"zh","query":"把「机会成本」加进我的经济学词汇，我总分不清它和沉没成本。","confusable_with":"","why":"向词汇表添加词条"}
+{"capability_id":"cap-add-term","lang":"zh","query":"我在用 Anki 背单词，把这个表达也加进牌组。","confusable_with":"","why":"收录表达进词汇集合"}
+{"capability_id":"cap-add-term","lang":"zh","query":"刚才跟客户开会，他们说了个行业黑话，麻烦记到术语库。","confusable_with":"","why":"记录术语，不设计文件改动"}
+{"capability_id":"cap-add-term","lang":"zh","query":"这个词组口语里很地道，收藏进我的表达库，写作时好翻。","confusable_with":"","why":"把表达收进词汇集合"}
+{"capability_id":"cap-add-term","lang":"zh","query":"语雀里那份词汇库加一条：「灰度发布」。","confusable_with":"","why":"往词汇库追加条目"}
+{"capability_id":"cap-add-term","lang":"zh","query":"这个缩写以后写文档要用，先存起来。","confusable_with":"","why":"把缩写存进词汇库"}
+{"capability_id":"cap-add-term","lang":"zh","query":"帮我记一下「冷启动」，等下要跟导师讨论。","confusable_with":"","why":"记录术语条目"}
+{"capability_id":"cap-add-term","lang":"zh","query":"我在给新同事做交接文档，顺手把「幂等」收进术语库。","confusable_with":"","why":"交接文档只是背景，实际动作是收录术语"}
+{"capability_id":"cap-add-term","lang":"zh","query":"只存这个词本身就行，不用给我解释。","confusable_with":"","why":"限定了结果范围，但仍是词汇收录"}
+{"capability_id":"cap-add-term","lang":"zh","query":"论文里反复出现的这个词，先记进词汇本，写综述要用。","confusable_with":"","why":"把词记进词汇本"}
+{"capability_id":"cap-add-term","lang":"zh","query":"把「显著性检验」记进我的统计词表。","confusable_with":"","why":"向词表添加词条"}
+{"capability_id":"cap-add-term","lang":"zh","query":"厨房里学到的说法挺有意思，帮我存进料理词汇里。","confusable_with":"","why":"收录表达进词汇域"}
+{"capability_id":"cap-add-term","lang":"zh","query":"客户邮件里这个法律术语，麻烦加进我的术语库。","confusable_with":"","why":"添加术语条目"}
+{"capability_id":"cap-add-term","lang":"zh","query":"我在整理音乐术语，把「切分音」也加进去。","confusable_with":"","why":"扩充术语集合"}
+{"capability_id":"cap-add-term","lang":"zh","query":"这两个新词一起加进我的项目词表，写方案时用得上。","confusable_with":"","why":"批量添加词条"}
+{"capability_id":"cap-add-term","lang":"zh","query":"这个词我打算长期用，收进我的术语集吧。","confusable_with":"","why":"收录术语"}
+{"capability_id":"cap-add-term","lang":"zh","query":"刚看到「知识蒸馏」这个词，觉得有用，帮我存一下。","confusable_with":"","why":"保存术语"}
+{"capability_id":"cap-add-term","lang":"zh","query":"飞书文档里冒出来的新说法，帮我存到共享术语表。","confusable_with":"","why":"收录说法进术语表"}
+{"capability_id":"cap-add-term","lang":"zh","query":"这段话里的关键词帮我挑出来，存进词汇本。","confusable_with":"","why":"提取并收录词条，不是编辑原文"}
+{"capability_id":"cap-add-term","lang":"zh","query":"面试可能会问到「缓存穿透」，帮我记进技术词汇。","confusable_with":"","why":"把术语收进词汇库"}
+{"capability_id":"cap-add-term","lang":"zh","query":"我在整理方言词汇，把「打摆子」也收录进去。","confusable_with":"","why":"扩充词汇集合"}
+{"capability_id":"cap-add-term","lang":"zh","query":"组会上听到的新简称，帮我记进部门词表。","confusable_with":"","why":"记录简称进词表"}
+{"capability_id":"cap-add-term","lang":"en","query":"Could you add this term to my glossary? I'll need it when the patent draft goes out.","confusable_with":"","why":"saving a vocabulary entry, not creating a file"}
+{"capability_id":"cap-add-term","lang":"en","query":"Save \"idempotent\" to my engineering vocabulary.","confusable_with":"","why":"term goes into a vocabulary store"}
+{"capability_id":"cap-add-term","lang":"en","query":"I keep a running terminology list in Obsidian — please add this one.","confusable_with":"","why":"appending to an existing vocabulary list"}
+{"capability_id":"cap-add-term","lang":"en","query":"This legal phrase came up in the contract; file it under my legal terms.","confusable_with":"","why":"filing a phrase into a vocabulary domain"}
+{"capability_id":"cap-add-term","lang":"en","query":"Add \"attention mechanism\" to my machine-learning glossary.","confusable_with":"","why":"adding a term to a glossary"}
+{"capability_id":"cap-add-term","lang":"en","query":"Quick one: put this word in my vocab bank.","confusable_with":"","why":"storing a word in a vocabulary store"}
+{"capability_id":"cap-add-term","lang":"en","query":"I'm onboarding a teammate, so let me save this term for the handover doc.","confusable_with":"","why":"the handover doc is background; the action is saving a term"}
+{"capability_id":"cap-add-term","lang":"en","query":"Can you stash this expression in my phrase collection?","confusable_with":"","why":"collecting an expression"}
+{"capability_id":"cap-add-term","lang":"en","query":"I want \"opportunity cost\" in my economics list; I always mix it up.","confusable_with":"","why":"adding a term to a list"}
+{"capability_id":"cap-add-term","lang":"en","query":"Please record this acronym — I'll come back to it when I write the docs.","confusable_with":"","why":"recording an acronym into the vocabulary"}
+{"capability_id":"cap-add-term","lang":"en","query":"Just the term itself, no explanation needed.","confusable_with":"","why":"constrains output only; the job is still term capture"}
+{"capability_id":"cap-add-term","lang":"en","query":"I'm building an Anki deck; add this expression to it.","confusable_with":"","why":"adding an expression to a vocabulary deck"}
+{"capability_id":"cap-add-term","lang":"en","query":"This word keeps showing up in papers — keep it in my reading vocabulary.","confusable_with":"","why":"storing a word in a vocabulary list"}
+{"capability_id":"cap-add-term","lang":"en","query":"Note down \"backpressure\" — the architecture doc will need it.","confusable_with":"","why":"noting a term into the vocabulary"}
+{"capability_id":"cap-add-term","lang":"en","query":"Put this industry jargon into my team glossary.","confusable_with":"","why":"adding jargon to a glossary"}
+{"capability_id":"cap-add-term","lang":"en","query":"I heard a neat phrase on a podcast today; add it to my word list.","confusable_with":"","why":"adding a phrase to a word list"}
+{"capability_id":"cap-add-term","lang":"en","query":"Add \"significance test\" to my statistics vocabulary.","confusable_with":"","why":"adding a term to a vocabulary domain"}
+{"capability_id":"cap-add-term","lang":"en","query":"File this cooking term under my recipe vocabulary.","confusable_with":"","why":"filing a term into a domain"}
+{"capability_id":"cap-add-term","lang":"en","query":"My notes app has a terminology section — save this there.","confusable_with":"","why":"saving into a vocabulary section"}
+{"capability_id":"cap-add-term","lang":"en","query":"Add both of these new terms to my project list.","confusable_with":"","why":"batch term capture"}
+{"capability_id":"cap-add-term","lang":"en","query":"\"Cache stampede\" should go into my backend glossary.","confusable_with":"","why":"adding a term to a glossary"}
+{"capability_id":"cap-add-term","lang":"en","query":"This expression is idiomatic — keep it in my writing phrasebook.","confusable_with":"","why":"storing an expression"}
+{"capability_id":"cap-add-term","lang":"en","query":"Save this definition under my research vocabulary.","confusable_with":"","why":"storing a vocabulary entry"}
+{"capability_id":"cap-add-term","lang":"en","query":"This client abbreviation needs saving — add it to my glossary.","confusable_with":"","why":"adding an abbreviation to a glossary"}
+{"capability_id":"cap-add-term","lang":"en","query":"I'm assembling a glossary for the new hires; include this one.","confusable_with":"","why":"appending a term to a glossary"}
+{"capability_id":"cap-add-term","lang":"en","query":"Somebody said a word in standup I want to remember — store it.","confusable_with":"","why":"storing a word in the vocabulary"}
+{"capability_id":"cap-artifact","lang":"zh","query":"投稿系统只收 PDF，把这版的正文和参考文献合成一份正式的。","confusable_with":"cap-slides","why":"产出是正式 PDF 文件，不是演示文稿"}
+{"capability_id":"cap-artifact","lang":"zh","query":"评审意见都改完了，麻烦出一份能直接上传的最终 PDF。","confusable_with":"cap-summary","why":"要的是编译好的正式 PDF，不是内容摘要"}
+{"capability_id":"cap-artifact","lang":"zh","query":"导师要看定稿，把这几章连图表一起排版成 PDF 发我。","confusable_with":"cap-slides","why":"排版成 PDF 交付物，不是做幻灯片"}
+{"capability_id":"cap-artifact","lang":"zh","query":"这份结题材料要交档案馆，按正式格式编译成 PDF，页眉页脚别丢。","confusable_with":"cap-summary","why":"目标是一份正式 PDF，不是提炼要点"}
+{"capability_id":"cap-artifact","lang":"zh","query":"项目结项了，把全部分析结果打包成一份正式 PDF 交付。","confusable_with":"","why":"打包编译成 PDF 交付物"}
+{"capability_id":"cap-artifact","lang":"zh","query":"我把论文改到第十稿了，帮我把当前版本编译成 PDF。","confusable_with":"","why":"编译当前版本为 PDF"}
+{"capability_id":"cap-artifact","lang":"zh","query":"客户要一份盖章前的正式文档，把我们这套研究整理成 PDF。","confusable_with":"cap-summary","why":"要的是正式文档成品，不是内容概括"}
+{"capability_id":"cap-artifact","lang":"zh","query":"这份技术白皮书需要出版级排版，正文图表都按正式格式生成 PDF。","confusable_with":"cap-slides","why":"出版级 PDF 排版，不是演示稿"}
+{"capability_id":"cap-artifact","lang":"zh","query":"附录有二十多页，全部并进同一份 PDF，别拆开。","confusable_with":"","why":"合并编译成一个 PDF 文件"}
+{"capability_id":"cap-artifact","lang":"zh","query":"会议论文集催稿了，把这篇的最终稿编译成 PDF。","confusable_with":"","why":"编译最终稿为 PDF"}
+{"capability_id":"cap-artifact","lang":"zh","query":"实验室年报要把各组的报告合一，帮我编译成一份正式 PDF。","confusable_with":"cap-summary","why":"合并编译为正式 PDF，不是汇总内容"}
+{"capability_id":"cap-artifact","lang":"zh","query":"图表都换成高清版了，重新出一版正式 PDF。","confusable_with":"","why":"重新编译正式 PDF"}
+{"capability_id":"cap-artifact","lang":"zh","query":"这份成果要报奖，按申报格式编译成 PDF，签名页留空。","confusable_with":"","why":"按格式编译 PDF 交付物"}
+{"capability_id":"cap-artifact","lang":"zh","query":"把已定稿的三份子报告合并成一份完整的研究 PDF。","confusable_with":"cap-summary","why":"合并为单一研究 PDF，不是做摘要"}
+{"capability_id":"cap-artifact","lang":"zh","query":"需要在封面上写编号和日期，其余按正式样式编译成 PDF。","confusable_with":"","why":"编译正式样式 PDF"}
+{"capability_id":"cap-artifact","lang":"zh","query":"客户验收要交付物，把这轮研究编译成可发布的 PDF。","confusable_with":"","why":"编译可发布 PDF 交付物"}
+{"capability_id":"cap-artifact","lang":"zh","query":"手稿定稿了，帮我排版成符合期刊要求的 PDF。","confusable_with":"cap-slides","why":"排版为 PDF，不是做演示"}
+{"capability_id":"cap-artifact","lang":"zh","query":"把参考文献格式统一后再编译成 PDF，编号要连续。","confusable_with":"","why":"统一格式后编译 PDF"}
+{"capability_id":"cap-artifact","lang":"zh","query":"组里要归档，把这份研究产出做成正式 PDF 存起来。","confusable_with":"","why":"产出正式 PDF 并归档"}
+{"capability_id":"cap-artifact","lang":"zh","query":"答辩材料需要一份完整 PDF，把正文、图表、附录都并进去。","confusable_with":"cap-slides","why":"合并成完整 PDF，不是准备演示文稿"}
+{"capability_id":"cap-artifact","lang":"zh","query":"论文接收了，出最终出版版 PDF。","confusable_with":"","why":"生成出版版 PDF"}
+{"capability_id":"cap-artifact","lang":"zh","query":"这份课题结题报告要印出来，编译成正式 PDF。","confusable_with":"","why":"编译正式 PDF 用于印刷"}
+{"capability_id":"cap-artifact","lang":"zh","query":"把中英文摘要都放进同一份正式 PDF 里。","confusable_with":"","why":"合并进单一正式 PDF"}
+{"capability_id":"cap-artifact","lang":"zh","query":"版本已经冻结，按当前内容编译成可发布的 PDF。","confusable_with":"","why":"按冻结内容编译 PDF"}
+{"capability_id":"cap-artifact","lang":"zh","query":"这份研究要报给基金委，按官方模板生成 PDF。","confusable_with":"","why":"按模板生成正式 PDF"}
+{"capability_id":"cap-artifact","lang":"zh","query":"把审阅批注和修改说明整理进 PDF 的附录。","confusable_with":"","why":"编译进 PDF 附录，不是改原文件"}
+{"capability_id":"cap-artifact","lang":"zh","query":"合著者催定稿了，把这份研究编译成正式 PDF 发过去。","confusable_with":"cap-summary","why":"编译正式 PDF 交付，而非概括内容"}
+{"capability_id":"cap-artifact","lang":"en","query":"The thesis office bounced my upload because it wasn't a single PDF; rebuild it from the current chapters.","confusable_with":"cap-slides","why":"output is one formal PDF, not a deck"}
+{"capability_id":"cap-artifact","lang":"en","query":"Bundle the survey results into the formal report PDF the board expects.","confusable_with":"cap-summary","why":"the deliverable is a formal PDF file, not a digest of findings"}
+{"capability_id":"cap-artifact","lang":"en","query":"Our ethics submission needs the protocol and the consent forms combined into one PDF.","confusable_with":"","why":"combining into a single compiled PDF"}
+{"capability_id":"cap-artifact","lang":"en","query":"Pull the accepted manuscript through the publisher's production step and give me the PDF.","confusable_with":"","why":"producing the compiled PDF artifact"}
+{"capability_id":"cap-artifact","lang":"en","query":"They reviewed the deck but asked for the full report as a PDF instead.","confusable_with":"cap-slides","why":"the requested output is a compiled PDF, not slides"}
+{"capability_id":"cap-artifact","lang":"en","query":"Version four is signed off; produce the formal PDF and set it as the record copy.","confusable_with":"","why":"compiling the formal PDF artifact"}
+{"capability_id":"cap-artifact","lang":"en","query":"The referee wants a preprint as one PDF with line numbers.","confusable_with":"","why":"a compiled PDF with a formatting constraint"}
+{"capability_id":"cap-artifact","lang":"en","query":"Generate the PDF from the frozen repository state so the figures match the text.","confusable_with":"","why":"compiling a PDF from the frozen source"}
+{"capability_id":"cap-artifact","lang":"en","query":"The committee wants the dissertation chapters as one file, not a folder of parts.","confusable_with":"cap-summary","why":"the deliverable is a compiled PDF, not a condensation"}
+{"capability_id":"cap-artifact","lang":"en","query":"Prepare the camera-ready PDF from the accepted version.","confusable_with":"cap-slides","why":"compiling a PDF, not building a presentation"}
+{"capability_id":"cap-artifact","lang":"en","query":"Assemble the appendix tables and the main text into a single PDF for the reviewers.","confusable_with":"","why":"assembling a compiled PDF"}
+{"capability_id":"cap-artifact","lang":"en","query":"Now that the abstract is settled, build the formal PDF with the new title page.","confusable_with":"","why":"compiling the formal PDF"}
+{"capability_id":"cap-artifact","lang":"en","query":"Turn this quarter's findings into the formal report PDF.","confusable_with":"cap-summary","why":"the output is a formal PDF, not a summary of the findings"}
+{"capability_id":"cap-artifact","lang":"en","query":"Make a formal PDF edition of the dataset documentation.","confusable_with":"","why":"compiling a formal PDF edition"}
+{"capability_id":"cap-artifact","lang":"en","query":"The funding report needs signatures on the last page, so compile it as a PDF.","confusable_with":"","why":"compiling a PDF with a layout constraint"}
+{"capability_id":"cap-artifact","lang":"en","query":"Archive the final study on the internal wiki as a formal PDF.","confusable_with":"","why":"producing a formal PDF for archiving"}
+{"capability_id":"cap-artifact","lang":"en","query":"Check the citations and then build the formal PDF.","confusable_with":"","why":"building the formal PDF artifact"}
+{"capability_id":"cap-artifact","lang":"en","query":"The client review pack must go out as one PDF, not loose files.","confusable_with":"","why":"delivering a compiled PDF"}
+{"capability_id":"cap-artifact","lang":"en","query":"We need the two-version comparison written up as a formal PDF.","confusable_with":"cap-summary","why":"the requested artifact is a PDF, not a written analysis"}
+{"capability_id":"cap-artifact","lang":"en","query":"Prepare the procurement documentation as a single formal PDF.","confusable_with":"","why":"compiling a formal PDF"}
+{"capability_id":"cap-artifact","lang":"en","query":"The audit trail has to be filed as a PDF alongside the raw data.","confusable_with":"","why":"compiling a PDF record"}
+{"capability_id":"cap-artifact","lang":"en","query":"Produce the formal PDF of the training manual for distribution.","confusable_with":"cap-slides","why":"a compiled PDF, not a slide deck"}
+{"capability_id":"cap-artifact","lang":"en","query":"The regulator only accepts bound submissions, so put ours into PDF form.","confusable_with":"","why":"compiling into PDF form"}
+{"capability_id":"cap-artifact","lang":"en","query":"Send the annual review through the typesetter and hand me the PDF.","confusable_with":"","why":"producing the typeset PDF"}
+{"capability_id":"cap-artifact","lang":"en","query":"I revised the paper again; give me a fresh PDF of what's there now.","confusable_with":"","why":"recompiling the PDF from current content"}
+{"capability_id":"cap-artifact","lang":"en","query":"Package the teaching materials into one PDF for next term.","confusable_with":"cap-slides","why":"a compiled PDF package, not slides"}
+{"capability_id":"cap-artifact","lang":"en","query":"Proof stage is over — pull the corrected article into its final PDF.","confusable_with":"","why":"producing the compiled final PDF"}
+{"capability_id":"cap-bash","lang":"zh","query":"部署前先在工作区跑一遍 lint，看看有没有问题","confusable_with":"","why":"执行命令，不改任何文件内容"}
+{"capability_id":"cap-bash","lang":"zh","query":"这个 migration 脚本先在沙盒里试跑一次","confusable_with":"","why":"运行脚本，不是编辑脚本"}
+{"capability_id":"cap-bash","lang":"zh","query":"帮我把 services 目录下的服务全启起来","confusable_with":"","why":"执行启动命令"}
+{"capability_id":"cap-bash","lang":"zh","query":"这条 curl 命令跑一下，看接口通不通","confusable_with":"","why":"执行命令并取回结果"}
+{"capability_id":"cap-bash","lang":"zh","query":"用 pytest 只跑 test_funnel 这组用例","confusable_with":"","why":"运行测试命令"}
+{"capability_id":"cap-bash","lang":"zh","query":"先跑一次 git status，我看看有哪些改动","confusable_with":"cap-read-file","why":"执行命令取回状态，不是读文件内容"}
+{"capability_id":"cap-bash","lang":"zh","query":"这个 make target 执行一下，编译产物在哪告诉我","confusable_with":"","why":"执行构建命令"}
+{"capability_id":"cap-bash","lang":"zh","query":"帮我在工作区跑 vulture，把没人用的函数列出来","confusable_with":"","why":"运行静态检查命令"}
+{"capability_id":"cap-bash","lang":"zh","query":"磁盘满了，跑个 du 看看哪个目录占地方","confusable_with":"","why":"执行命令查看占用"}
+{"capability_id":"cap-bash","lang":"zh","query":"跑一下 chmod +x 给这个脚本加执行权限","confusable_with":"cap-edit-file","why":"执行 chmod 命令，不是编辑文件内容"}
+{"capability_id":"cap-bash","lang":"zh","query":"在沙盒里跑个压测脚本，把 QPS 报给我","confusable_with":"","why":"运行压测命令"}
+{"capability_id":"cap-bash","lang":"zh","query":"帮我把这个 JSON 用 jq 格式化一下并打印","confusable_with":"","why":"执行命令做转换输出，不改文件"}
+{"capability_id":"cap-bash","lang":"zh","query":"先执行一次 docker compose config，确认配置能解析","confusable_with":"","why":"执行校验命令"}
+{"capability_id":"cap-bash","lang":"zh","query":"这个定时任务我想先手动触发一次，命令帮我执行","confusable_with":"","why":"手动执行任务命令"}
+{"capability_id":"cap-bash","lang":"zh","query":"在工作区跑一遍 mypy，把类型错误贴出来","confusable_with":"","why":"运行类型检查命令"}
+{"capability_id":"cap-bash","lang":"zh","query":"把那个后台进程杀掉，用 kill 命令","confusable_with":"","why":"执行进程管理命令"}
+{"capability_id":"cap-bash","lang":"zh","query":"跑一下 env，看看当前有哪些环境变量","confusable_with":"","why":"执行命令读取环境"}
+{"capability_id":"cap-bash","lang":"zh","query":"用 curl 下载这个文件到 temp 目录","confusable_with":"","why":"执行下载命令"}
+{"capability_id":"cap-bash","lang":"zh","query":"这个 Python 脚本传参跑一下，参数是 --dry-run","confusable_with":"","why":"带参数运行脚本"}
+{"capability_id":"cap-bash","lang":"zh","query":"在工作区里跑 bandit，扫一下安全问题","confusable_with":"","why":"运行扫描命令"}
+{"capability_id":"cap-bash","lang":"zh","query":"帮我执行一下这个 SQL 迁移，只跑不做 commit","confusable_with":"","why":"执行迁移命令，带结果约束"}
+{"capability_id":"cap-bash","lang":"zh","query":"跑个 rsync 把 outputs 同步到备份盘","confusable_with":"","why":"执行同步命令"}
+{"capability_id":"cap-bash","lang":"zh","query":"这个服务占着 8000 端口，跑个 lsof 看看是谁","confusable_with":"","why":"执行诊断命令"}
+{"capability_id":"cap-bash","lang":"zh","query":"在工作区里 grep 一下 TODO，把结果给我","confusable_with":"cap-read-file","why":"用命令检索，不是直接读某个文件"}
+{"capability_id":"cap-bash","lang":"zh","query":"在工作区跑 go test ./...，把失败的包列出来","confusable_with":"","why":"运行测试套件"}
+{"capability_id":"cap-bash","lang":"zh","query":"帮我把这个 .tar.gz 解压到 workspace 下","confusable_with":"","why":"执行解压命令"}
+{"capability_id":"cap-bash","lang":"zh","query":"让这个脚本以 verbose 模式重跑，日志留全","confusable_with":"","why":"重复执行命令并要求输出"}
+{"capability_id":"cap-bash","lang":"en","query":"Kick off the nightly benchmark in the workspace and report the numbers.","confusable_with":"","why":"runs a command; no file content is edited"}
+{"capability_id":"cap-bash","lang":"en","query":"Run the pre-commit hooks and show me what they complain about.","confusable_with":"","why":"executes hooks as a command"}
+{"capability_id":"cap-bash","lang":"en","query":"Drop into the workspace and run the linter across src/.","confusable_with":"","why":"runs a tool via the shell"}
+{"capability_id":"cap-bash","lang":"en","query":"Start the dev server and tell me which port it picked.","confusable_with":"","why":"starts a process and reports output"}
+{"capability_id":"cap-bash","lang":"en","query":"Re-run only the failing test from last time.","confusable_with":"","why":"executes a targeted test command"}
+{"capability_id":"cap-bash","lang":"en","query":"Compile the TypeScript and surface any type errors.","confusable_with":"","why":"runs the compiler"}
+{"capability_id":"cap-bash","lang":"en","query":"Spin up the containers with compose and check they come up healthy.","confusable_with":"","why":"runs a container command"}
+{"capability_id":"cap-bash","lang":"en","query":"Pull the latest image and restart the service.","confusable_with":"","why":"executes deploy commands"}
+{"capability_id":"cap-bash","lang":"en","query":"Check how much space the build cache is eating.","confusable_with":"","why":"runs a disk-usage command"}
+{"capability_id":"cap-bash","lang":"en","query":"Kill whatever is holding port 5432.","confusable_with":"","why":"executes a process-management command"}
+{"capability_id":"cap-bash","lang":"en","query":"Run the data migration against the staging database.","confusable_with":"","why":"executes a migration command"}
+{"capability_id":"cap-bash","lang":"en","query":"Format the whole tree with black and show the diff stat.","confusable_with":"cap-edit-file","why":"runs the formatter; the request is the command, not a hand edit"}
+{"capability_id":"cap-bash","lang":"en","query":"Time the script so I know how long the import takes.","confusable_with":"","why":"runs the script under a timer"}
+{"capability_id":"cap-bash","lang":"en","query":"Run the seed script to populate the local database.","confusable_with":"","why":"executes a script"}
+{"capability_id":"cap-bash","lang":"en","query":"List the environment variables the app sees in this shell.","confusable_with":"","why":"runs a command to dump the environment"}
+{"capability_id":"cap-bash","lang":"en","query":"Tail the container logs for the last hundred lines.","confusable_with":"cap-read-file","why":"streams logs via a command rather than reading a file"}
+{"capability_id":"cap-bash","lang":"en","query":"Decompress that archive into the workspace.","confusable_with":"","why":"runs an extraction command"}
+{"capability_id":"cap-bash","lang":"en","query":"Verify the checksum of the downloaded file.","confusable_with":"","why":"runs a checksum command"}
+{"capability_id":"cap-bash","lang":"en","query":"Run the profiler against the slow endpoint.","confusable_with":"","why":"executes the profiler"}
+{"capability_id":"cap-bash","lang":"en","query":"Execute the rollback script and capture the output.","confusable_with":"","why":"runs a script and takes its output"}
+{"capability_id":"cap-bash","lang":"en","query":"Curl the health endpoint a few times to see if it flaps.","confusable_with":"","why":"repeatedly runs a command"}
+{"capability_id":"cap-bash","lang":"en","query":"Rebuild the search index from scratch.","confusable_with":"","why":"runs the reindex command"}
+{"capability_id":"cap-bash","lang":"en","query":"Print the git log for the last twenty commits in one line each.","confusable_with":"","why":"executes a git command for output"}
+{"capability_id":"cap-bash","lang":"en","query":"Run bandit and list anything it flags.","confusable_with":"","why":"runs a security scanner"}
+{"capability_id":"cap-bash","lang":"en","query":"Sync the output folder to the backup drive.","confusable_with":"","why":"runs a sync command"}
+{"capability_id":"cap-bash","lang":"en","query":"Run the whole suite with coverage and give me the summary line.","confusable_with":"","why":"executes the test suite"}
+{"capability_id":"cap-create-folder","lang":"zh","query":"给每个实验单独开一个输出目录","confusable_with":"","why":"新建目录，不是往词汇表加词也不是跑命令"}
+{"capability_id":"cap-create-folder","lang":"zh","query":"在 workspace 里按月份建归档文件夹，先建这个月的","confusable_with":"","why":"创建目录结构"}
+{"capability_id":"cap-create-folder","lang":"zh","query":"建一个 uploads 目录用来存用户上传的文件","confusable_with":"","why":"新建目录"}
+{"capability_id":"cap-create-folder","lang":"zh","query":"项目里缺个 assets 目录，补一个","confusable_with":"","why":"补齐目录"}
+{"capability_id":"cap-create-folder","lang":"zh","query":"帮我在 models 下面建个 checkpoints 子目录","confusable_with":"","why":"创建嵌套子目录"}
+{"capability_id":"cap-create-folder","lang":"zh","query":"这个仓库要按 src/tests/docs 分，先建出来","confusable_with":"","why":"创建一组目录"}
+{"capability_id":"cap-create-folder","lang":"zh","query":"建个 temp 目录放临时文件，定期清","confusable_with":"","why":"新建目录并说明用途"}
+{"capability_id":"cap-create-folder","lang":"zh","query":"给这批数据建个 raw 子目录","confusable_with":"","why":"创建子目录"}
+{"capability_id":"cap-create-folder","lang":"zh","query":"在 data 下建 processed 和 interim 两个文件夹","confusable_with":"","why":"批量创建目录"}
+{"capability_id":"cap-create-folder","lang":"zh","query":"建一个 logs/2026-09 的目录结构","confusable_with":"","why":"创建带层级的目录"}
+{"capability_id":"cap-create-folder","lang":"zh","query":"帮我建个专门放截图的地方","confusable_with":"","why":"创建一个存放目录"}
+{"capability_id":"cap-create-folder","lang":"zh","query":"仓库里加个 scripts 目录，后面放运维脚本","confusable_with":"","why":"新增目录"}
+{"capability_id":"cap-create-folder","lang":"zh","query":"给这个客户单独开一个文件夹","confusable_with":"","why":"按客户创建目录"}
+{"capability_id":"cap-create-folder","lang":"zh","query":"建个 private 目录存不能公开的材料","confusable_with":"","why":"创建目录并限定用途"}
+{"capability_id":"cap-create-folder","lang":"zh","query":"按学科建目录，先建数学和物理","confusable_with":"","why":"创建多个学科目录"}
+{"capability_id":"cap-create-folder","lang":"zh","query":"在根目录建个 .cache 用来放中间产物","confusable_with":"","why":"创建缓存目录"}
+{"capability_id":"cap-create-folder","lang":"zh","query":"我需要一个目录把草稿和定稿分开存","confusable_with":"","why":"建目录做分类存放"}
+{"capability_id":"cap-create-folder","lang":"zh","query":"建个 review 目录放待审的文件","confusable_with":"","why":"创建待审目录"}
+{"capability_id":"cap-create-folder","lang":"zh","query":"给这个模块建个专属的测试夹具目录","confusable_with":"","why":"创建模块专属目录"}
+{"capability_id":"cap-create-folder","lang":"zh","query":"创建 backups 目录，把旧的压缩包挪进去","confusable_with":"","why":"建目录并规划存放"}
+{"capability_id":"cap-create-folder","lang":"zh","query":"在项目里加一个 docs/api 的嵌套目录","confusable_with":"","why":"创建嵌套目录"}
+{"capability_id":"cap-create-folder","lang":"zh","query":"我需要按版本号建文件夹，先建 v2","confusable_with":"","why":"按版本创建目录"}
+{"capability_id":"cap-create-folder","lang":"zh","query":"建个 inbox 目录，收到的文件先丢这里","confusable_with":"","why":"创建收件目录"}
+{"capability_id":"cap-create-folder","lang":"zh","query":"帮我在 workspace 下建一个空的 deliverables","confusable_with":"","why":"创建空目录"}
+{"capability_id":"cap-create-folder","lang":"zh","query":"给这次迭代建个 sprint-14 目录","confusable_with":"","why":"按迭代创建目录"}
+{"capability_id":"cap-create-folder","lang":"zh","query":"分出一个 scratch 目录，随便写的东西放这","confusable_with":"","why":"创建草稿目录"}
+{"capability_id":"cap-create-folder","lang":"zh","query":"建个 templates 目录，放各种模板文件","confusable_with":"","why":"创建模板目录"}
+{"capability_id":"cap-create-folder","lang":"zh","query":"在 assets 里按图片、音频、视频各建一个子目录","confusable_with":"","why":"按类型批量建子目录"}
+{"capability_id":"cap-create-folder","lang":"en","query":"Create a directory per language for the localisation work.","confusable_with":"","why":"creates a directory per group"}
+{"capability_id":"cap-create-folder","lang":"en","query":"I need a place for the raw exports; create a raw-imports folder.","confusable_with":"","why":"creates a folder"}
+{"capability_id":"cap-create-folder","lang":"en","query":"Set up a vendor folder for third-party code.","confusable_with":"","why":"creates a directory"}
+{"capability_id":"cap-create-folder","lang":"en","query":"Create a directory tree for the release: bin, lib and share.","confusable_with":"","why":"creates several directories at once"}
+{"capability_id":"cap-create-folder","lang":"en","query":"Carve out a docs folder for the API reference.","confusable_with":"","why":"creates a documentation directory"}
+{"capability_id":"cap-create-folder","lang":"en","query":"Make a folder for the integration test snapshots.","confusable_with":"","why":"creates a directory for test data"}
+{"capability_id":"cap-create-folder","lang":"en","query":"Create a folder to stage the release artefacts.","confusable_with":"","why":"creates a staging directory"}
+{"capability_id":"cap-create-folder","lang":"en","query":"Create a snapshots folder under data.","confusable_with":"","why":"creates a nested directory"}
+{"capability_id":"cap-create-folder","lang":"en","query":"Set up a folder per environment: dev, staging and prod.","confusable_with":"","why":"creates directories per environment"}
+{"capability_id":"cap-create-folder","lang":"en","query":"I want a quarantine folder for anything that fails validation.","confusable_with":"","why":"creates a directory with a stated purpose"}
+{"capability_id":"cap-create-folder","lang":"en","query":"Create a directory to keep the deprecated modules out of the main tree.","confusable_with":"","why":"creates a directory for separation"}
+{"capability_id":"cap-create-folder","lang":"en","query":"Create a folder for the training dataset exports.","confusable_with":"","why":"creates a storage directory"}
+{"capability_id":"cap-create-folder","lang":"en","query":"Add a benchmarks directory for the timing runs.","confusable_with":"","why":"creates a directory"}
+{"capability_id":"cap-create-folder","lang":"en","query":"Create a place to stash the intermediate parquet files.","confusable_with":"","why":"creates a storage directory"}
+{"capability_id":"cap-create-folder","lang":"en","query":"Create a folder for the conference materials.","confusable_with":"","why":"creates a directory"}
+{"capability_id":"cap-create-folder","lang":"en","query":"Create a folder for the security questionnaire responses.","confusable_with":"","why":"creates a directory"}
+{"capability_id":"cap-create-folder","lang":"en","query":"Create a folder for the annual tax documents.","confusable_with":"","why":"creates a directory"}
+{"capability_id":"cap-create-folder","lang":"en","query":"I need a folder for the onboarding material.","confusable_with":"","why":"creates a directory"}
+{"capability_id":"cap-create-folder","lang":"en","query":"Carve out a secrets directory that stays out of version control.","confusable_with":"","why":"creates a directory with a constraint"}
+{"capability_id":"cap-create-folder","lang":"en","query":"Make a directory for the poster drafts.","confusable_with":"","why":"creates a directory"}
+{"capability_id":"cap-create-folder","lang":"en","query":"Add a nested folder structure for the migration notes.","confusable_with":"","why":"creates nested folders"}
+{"capability_id":"cap-create-folder","lang":"en","query":"Create a folder for the vendor invoices.","confusable_with":"","why":"creates a directory"}
+{"capability_id":"cap-create-folder","lang":"en","query":"Set up a folder for each speaker's recordings.","confusable_with":"","why":"creates per-entity folders"}
+{"capability_id":"cap-create-folder","lang":"en","query":"Create a sandbox directory for trying risky commands.","confusable_with":"cap-bash","why":"the action is creating a directory; the commands run elsewhere"}
+{"capability_id":"cap-create-folder","lang":"en","query":"I want a subfolder for the translated pages.","confusable_with":"","why":"creates a subfolder"}
+{"capability_id":"cap-create-folder","lang":"en","query":"Make a directory to hold the contract scans.","confusable_with":"","why":"creates a directory"}
+{"capability_id":"cap-create-folder","lang":"en","query":"Create a per-feature folder under specs.","confusable_with":"","why":"creates nested folders"}
+{"capability_id":"cap-edit-file","lang":"zh","query":"把 CHANGELOG 里最新一版加上日期","confusable_with":"","why":"修改文件内容，不是执行命令也不是只读"}
+{"capability_id":"cap-edit-file","lang":"zh","query":"给这个 Python 文件补上模块级 docstring","confusable_with":"","why":"在文件里写入内容"}
+{"capability_id":"cap-edit-file","lang":"zh","query":"把 LICENSE 里的年份改成 2026","confusable_with":"","why":"修改既有文件内容"}
+{"capability_id":"cap-edit-file","lang":"zh","query":"版本号从 0.8 升到 0.9，改到 pyproject 里","confusable_with":"","why":"编辑配置文件内容"}
+{"capability_id":"cap-edit-file","lang":"zh","query":"文件头的版本注释还是上一版的，更新一下","confusable_with":"cap-read-file","why":"要改文件内容，不是仅查看"}
+{"capability_id":"cap-edit-file","lang":"zh","query":"把文档里过时的截图说明删掉","confusable_with":"","why":"删除文件中的内容"}
+{"capability_id":"cap-edit-file","lang":"zh","query":"把 .env.example 里缺的两个变量补上","confusable_with":"","why":"向文件补写内容"}
+{"capability_id":"cap-edit-file","lang":"zh","query":"这段 YAML 缩进不对，帮我修正","confusable_with":"","why":"修改文件中的格式"}
+{"capability_id":"cap-edit-file","lang":"zh","query":"把函数名和它上面的注释一起改成新的叫法","confusable_with":"","why":"改写文件内的文本"}
+{"capability_id":"cap-edit-file","lang":"zh","query":"这个表格里有一行数据录错了，帮我改过来","confusable_with":"","why":"修正文件里的内容"}
+{"capability_id":"cap-edit-file","lang":"zh","query":"把文件头的作者信息换成我","confusable_with":"","why":"修改文件头内容"}
+{"capability_id":"cap-edit-file","lang":"zh","query":"把这段示例代码里的旧写法更新成新 API","confusable_with":"","why":"更新文件中的代码文本"}
+{"capability_id":"cap-edit-file","lang":"zh","query":"在文件顶部加上版权声明","confusable_with":"","why":"向文件写入新内容"}
+{"capability_id":"cap-edit-file","lang":"zh","query":"把这份设计文档里的接口说明更新成最新版","confusable_with":"cap-read-file","why":"要改写文档内容而非阅读"}
+{"capability_id":"cap-edit-file","lang":"zh","query":"把结尾的 TODO 注释去掉","confusable_with":"","why":"删除文件内容"}
+{"capability_id":"cap-edit-file","lang":"zh","query":"这个配置项默认值改成 false","confusable_with":"","why":"修改配置文件取值"}
+{"capability_id":"cap-edit-file","lang":"zh","query":"把重复的那一段删掉，只留一处","confusable_with":"","why":"删除文件中的重复内容"}
+{"capability_id":"cap-edit-file","lang":"zh","query":"把文中的日期单位统一成 ISO 格式","confusable_with":"","why":"统一改写文件内容"}
+{"capability_id":"cap-edit-file","lang":"zh","query":"这段警告文字太啰嗦，精简一下","confusable_with":"cap-read-file","why":"要改写文案，不是只读出来"}
+{"capability_id":"cap-edit-file","lang":"zh","query":"把中英文标题调换顺序","confusable_with":"","why":"调整文件中的内容顺序"}
+{"capability_id":"cap-edit-file","lang":"zh","query":"把引用的旧链接换成新的仓库地址","confusable_with":"","why":"替换文件中的文本"}
+{"capability_id":"cap-edit-file","lang":"zh","query":"给这个函数补一段参数说明","confusable_with":"","why":"在文件中补充内容"}
+{"capability_id":"cap-edit-file","lang":"zh","query":"把文件里的制表符换成空格","confusable_with":"","why":"改写文件字符"}
+{"capability_id":"cap-edit-file","lang":"zh","query":"这段被注释掉的代码已经没用了，删掉","confusable_with":"","why":"删除文件内容"}
+{"capability_id":"cap-edit-file","lang":"zh","query":"把配置里的两个环境名从小到大排好","confusable_with":"","why":"重排文件内容"}
+{"capability_id":"cap-edit-file","lang":"zh","query":"把这一节的内容挪到文件前面","confusable_with":"","why":"移动文件中的段落"}
+{"capability_id":"cap-edit-file","lang":"zh","query":"把示例里的占位符换成真实的路径","confusable_with":"","why":"替换文件中的占位文本"}
+{"capability_id":"cap-edit-file","lang":"en","query":"Split the long paragraph in section three into two.","confusable_with":"","why":"rewrites file content rather than running a command or only reading"}
+{"capability_id":"cap-edit-file","lang":"en","query":"The sample config still points at localhost; make it read the env var instead.","confusable_with":"","why":"edits a config file's content"}
+{"capability_id":"cap-edit-file","lang":"en","query":"Our internal links broke after the rename; repair them.","confusable_with":"","why":"fixes text inside files"}
+{"capability_id":"cap-edit-file","lang":"en","query":"Rewrite the error message so it names the failing field.","confusable_with":"","why":"rewrites text in a file"}
+{"capability_id":"cap-edit-file","lang":"en","query":"The table of contents is missing the new chapter; add it.","confusable_with":"","why":"inserts content into a file"}
+{"capability_id":"cap-edit-file","lang":"en","query":"Fix the inconsistent capitalisation in the headings.","confusable_with":"","why":"corrects text in a file"}
+{"capability_id":"cap-edit-file","lang":"en","query":"The footnote numbering restarts midway; make it continuous.","confusable_with":"","why":"re-edits numbering in a file"}
+{"capability_id":"cap-edit-file","lang":"en","query":"Trim the trailing whitespace in this file.","confusable_with":"","why":"cleans whitespace in a file"}
+{"capability_id":"cap-edit-file","lang":"en","query":"The placeholder email in the template is wrong; correct it.","confusable_with":"","why":"corrects a value in a file"}
+{"capability_id":"cap-edit-file","lang":"en","query":"This line exceeds the linter's width; wrap it.","confusable_with":"","why":"reflows a line in a file"}
+{"capability_id":"cap-edit-file","lang":"en","query":"Update the acronym expansion the first time it appears.","confusable_with":"","why":"edits prose inside a file"}
+{"capability_id":"cap-edit-file","lang":"en","query":"The bullet list has a stray dash; clean it up.","confusable_with":"","why":"cleans formatting in a file"}
+{"capability_id":"cap-edit-file","lang":"en","query":"Add a note about the breaking change to the upgrade guide.","confusable_with":"","why":"adds content to a document"}
+{"capability_id":"cap-edit-file","lang":"en","query":"The units are mixed between metric and imperial; standardise them.","confusable_with":"","why":"rewrites values throughout a file"}
+{"capability_id":"cap-edit-file","lang":"en","query":"Merge the two adjacent duplicate headings.","confusable_with":"","why":"merges content in a file"}
+{"capability_id":"cap-edit-file","lang":"en","query":"The code fence is missing a language tag; add one.","confusable_with":"","why":"edits markup in a file"}
+{"capability_id":"cap-edit-file","lang":"en","query":"Our naming shifted from snake_case to kebab-case; reflect that here.","confusable_with":"cap-bash","why":"the change is made in the file text, not by running a command"}
+{"capability_id":"cap-edit-file","lang":"en","query":"The deprecation notice should point at the replacement function.","confusable_with":"","why":"edits a notice inside a file"}
+{"capability_id":"cap-edit-file","lang":"en","query":"Shorten the intro so it fits the abstract limit.","confusable_with":"","why":"rewrites a passage in a file"}
+{"capability_id":"cap-edit-file","lang":"en","query":"The abstract still says \"preliminary\"; drop that word.","confusable_with":"","why":"removes a word from a file"}
+{"capability_id":"cap-edit-file","lang":"en","query":"Reorder the arguments so the required one comes first.","confusable_with":"","why":"reorders text in a file"}
+{"capability_id":"cap-edit-file","lang":"en","query":"The example output no longer matches; regenerate it.","confusable_with":"cap-bash","why":"the fix is pasting new text into the file, not running the program"}
+{"capability_id":"cap-edit-file","lang":"en","query":"Remove the author's notes that were left in the draft.","confusable_with":"","why":"deletes content from a file"}
+{"capability_id":"cap-edit-file","lang":"en","query":"Turn the run-on sentence in the summary into two.","confusable_with":"","why":"rewrites a sentence in a file"}
+{"capability_id":"cap-edit-file","lang":"en","query":"The reference list has a missing year; fill it in.","confusable_with":"","why":"fills in a value in a file"}
+{"capability_id":"cap-edit-file","lang":"en","query":"Align the table columns in the markdown.","confusable_with":"","why":"reformats a table in a file"}
+{"capability_id":"cap-edit-file","lang":"en","query":"The glossary entry names the wrong team; fix it.","confusable_with":"","why":"corrects a line in a file"}
+{"capability_id":"cap-mindmap","lang":"zh","query":"会上大家讨论得很散，帮我把结论的层次理成一张脑图","confusable_with":"cap-summary","why":"产出一张层级脑图，不是写摘要"}
+{"capability_id":"cap-mindmap","lang":"zh","query":"我在学一门新语言，把语法点按层级画出来","confusable_with":"","why":"要求层级化的图示"}
+{"capability_id":"cap-mindmap","lang":"zh","query":"这次事故的排查路径帮我画成分支图，复盘用","confusable_with":"","why":"按分支画出结构"}
+{"capability_id":"cap-mindmap","lang":"zh","query":"项目目标拆解一下，做成树状图给组里看","confusable_with":"cap-slides","why":"要的是树状结构图，不是演示文稿"}
+{"capability_id":"cap-mindmap","lang":"zh","query":"产品功能太多，用脑图分出主线再分支","confusable_with":"","why":"按层级拆分支"}
+{"capability_id":"cap-mindmap","lang":"zh","query":"读书笔记太乱了，整理成层级结构","confusable_with":"cap-summary","why":"结构化层级而非内容概括"}
+{"capability_id":"cap-mindmap","lang":"zh","query":"把这门课的章节依赖关系画出来","confusable_with":"","why":"画出依赖层级"}
+{"capability_id":"cap-mindmap","lang":"zh","query":"生物分类那部分我想看图，帮我画成层级","confusable_with":"","why":"产出层级图"}
+{"capability_id":"cap-mindmap","lang":"zh","query":"会议纪要里的议题和子议题整理成脑图","confusable_with":"","why":"把议题层级画成脑图"}
+{"capability_id":"cap-mindmap","lang":"zh","query":"把这套决策依据按条件分支画出来","confusable_with":"","why":"按分支结构作图"}
+{"capability_id":"cap-mindmap","lang":"zh","query":"论文的论证结构帮我做成树形图","confusable_with":"cap-summary","why":"结构化图示，不是提炼论点"}
+{"capability_id":"cap-mindmap","lang":"zh","query":"法律条文的层级关系理成一张图","confusable_with":"","why":"层级关系可视化"}
+{"capability_id":"cap-mindmap","lang":"zh","query":"这套系统的模块归属画成层级图","confusable_with":"","why":"画出模块层级"}
+{"capability_id":"cap-mindmap","lang":"zh","query":"我想复习，把重点按主题分成层级","confusable_with":"","why":"按层级组织复习结构"}
+{"capability_id":"cap-mindmap","lang":"zh","query":"把菜谱的步骤依赖画成图，哪步先哪步后","confusable_with":"","why":"画出步骤依赖结构"}
+{"capability_id":"cap-mindmap","lang":"zh","query":"组织架构帮我画成树状图","confusable_with":"","why":"画出组织层级树"}
+{"capability_id":"cap-mindmap","lang":"zh","query":"把这份预算的科目层级整理成脑图","confusable_with":"","why":"整理科目层级为脑图"}
+{"capability_id":"cap-mindmap","lang":"zh","query":"音乐理论的知识点用层级图串起来","confusable_with":"","why":"用层级图组织知识点"}
+{"capability_id":"cap-mindmap","lang":"zh","query":"把这几个方案的取舍关系画成图","confusable_with":"","why":"画出方案分支关系"}
+{"capability_id":"cap-mindmap","lang":"zh","query":"训练计划的阶段和子阶段做成层级图","confusable_with":"","why":"阶段层级可视化"}
+{"capability_id":"cap-mindmap","lang":"zh","query":"把史料的时间脉络画成树状图","confusable_with":"","why":"脉络层级作图"}
+{"capability_id":"cap-mindmap","lang":"zh","query":"这三本书的引用关系帮我画成结构图","confusable_with":"","why":"关系结构图"}
+{"capability_id":"cap-mindmap","lang":"zh","query":"把客服问题分类整理成层级脑图","confusable_with":"","why":"分类层级脑图"}
+{"capability_id":"cap-mindmap","lang":"zh","query":"项目风险按类别分层次画出来","confusable_with":"","why":"按类别分层作图"}
+{"capability_id":"cap-mindmap","lang":"zh","query":"把这份提纲扩展成带分支的思维导图","confusable_with":"","why":"扩展为分支思维导图"}
+{"capability_id":"cap-mindmap","lang":"en","query":"My lecture slides are a wall of text; break them into a layered outline diagram.","confusable_with":"cap-slides","why":"the output is a hierarchy diagram, not a slide deck"}
+{"capability_id":"cap-mindmap","lang":"en","query":"I keep losing track of which service calls which; draw that dependency tree for me.","confusable_with":"","why":"asks for a branching tree diagram"}
+{"capability_id":"cap-mindmap","lang":"en","query":"Turn the incident timeline and its branch points into a diagram.","confusable_with":"","why":"structural branching diagram"}
+{"capability_id":"cap-mindmap","lang":"en","query":"Give me a hierarchical view of the standards so I can see what's nested under what.","confusable_with":"cap-summary","why":"a hierarchy view, not a condensation of the text"}
+{"capability_id":"cap-mindmap","lang":"en","query":"The taxonomy needs a branching diagram, not a flat list.","confusable_with":"","why":"explicitly wants a branching structure"}
+{"capability_id":"cap-mindmap","lang":"en","query":"Show me the precedence rules as a tree.","confusable_with":"","why":"asks for a tree layout"}
+{"capability_id":"cap-mindmap","lang":"en","query":"People report to a matrix here; draw the reporting lines as a hierarchy.","confusable_with":"","why":"draws a hierarchy"}
+{"capability_id":"cap-mindmap","lang":"en","query":"The recipe collection has categories and subcategories; visualize them.","confusable_with":"","why":"visualises nested categories"}
+{"capability_id":"cap-mindmap","lang":"en","query":"I want the symptom-to-cause chains laid out as a branching diagram.","confusable_with":"","why":"branching diagram request"}
+{"capability_id":"cap-mindmap","lang":"en","query":"Map the chapter dependencies for this course.","confusable_with":"","why":"maps dependency structure"}
+{"capability_id":"cap-mindmap","lang":"en","query":"The bill of materials has levels; show them as a tree.","confusable_with":"","why":"tree view of levels"}
+{"capability_id":"cap-mindmap","lang":"en","query":"Draw the decision tree the support team follows.","confusable_with":"","why":"decision tree diagram"}
+{"capability_id":"cap-mindmap","lang":"en","query":"Lay out the arguments in this essay as a hierarchical outline.","confusable_with":"cap-summary","why":"an outline structure, not a summary of the essay"}
+{"capability_id":"cap-mindmap","lang":"en","query":"Break the app's navigation into a hierarchy diagram.","confusable_with":"","why":"hierarchy diagram of navigation"}
+{"capability_id":"cap-mindmap","lang":"en","query":"Show the fallback logic as connected branches.","confusable_with":"","why":"connected-branch diagram"}
+{"capability_id":"cap-mindmap","lang":"en","query":"I need the folder taxonomy as a visual tree.","confusable_with":"","why":"requests a visual hierarchy of the taxonomy"}
+{"capability_id":"cap-mindmap","lang":"en","query":"Map the tournament brackets as a hierarchy.","confusable_with":"","why":"hierarchy diagram"}
+{"capability_id":"cap-mindmap","lang":"en","query":"The policy manual has sections within sections; visualize that nesting.","confusable_with":"","why":"visualise nesting"}
+{"capability_id":"cap-mindmap","lang":"en","query":"Lay out the citation graph between these papers.","confusable_with":"","why":"graph/structure diagram"}
+{"capability_id":"cap-mindmap","lang":"en","query":"Draw the role permissions as a branching diagram.","confusable_with":"","why":"branching diagram"}
+{"capability_id":"cap-mindmap","lang":"en","query":"Show the assembly steps and which ones depend on others, as a tree.","confusable_with":"","why":"dependency tree"}
+{"capability_id":"cap-mindmap","lang":"en","query":"Turn the course prerequisites into a dependency diagram.","confusable_with":"","why":"dependency diagram"}
+{"capability_id":"cap-mindmap","lang":"en","query":"Visualize how the quarterly goals roll up into the annual one.","confusable_with":"","why":"roll-up hierarchy"}
+{"capability_id":"cap-mindmap","lang":"en","query":"Map the family of algorithms and their variants.","confusable_with":"","why":"family/variant hierarchy"}
+{"capability_id":"cap-mindmap","lang":"en","query":"Draw the escalation levels as a hierarchy.","confusable_with":"","why":"hierarchy diagram"}
+{"capability_id":"cap-pdf-extract-text","lang":"zh","query":"我要引用里面的句子，把正文文字弄成能复制的","confusable_with":"","why":"要的是文档文字本身，不是读它并回答"}
+{"capability_id":"cap-pdf-extract-text","lang":"zh","query":"这份 PDF 用朗读软件读不了，先把文字取出来","confusable_with":"","why":"取文字，不是理解内容"}
+{"capability_id":"cap-pdf-extract-text","lang":"zh","query":"想在里面搜关键词，得先有文本","confusable_with":"cap-read-document","why":"目的是拿到文本以便检索，不是让模型读它"}
+{"capability_id":"cap-pdf-extract-text","lang":"zh","query":"前二十页的正文先给我，后面再说","confusable_with":"","why":"范围限定不改变提取全文文字的目标"}
+{"capability_id":"cap-pdf-extract-text","lang":"zh","query":"扫描件里那些字帮我识别成可编辑文本","confusable_with":"","why":"把文本取出来"}
+{"capability_id":"cap-pdf-extract-text","lang":"zh","query":"我要拿这份材料做语料，正文一字不漏地导出","confusable_with":"","why":"逐字导出文档文字"}
+{"capability_id":"cap-pdf-extract-text","lang":"zh","query":"附件打开全乱码，把能读的文字抽出来","confusable_with":"","why":"抽取可读文字"}
+{"capability_id":"cap-pdf-extract-text","lang":"zh","query":"这份讲义我要整理成笔记，先把文字弄出来","confusable_with":"","why":"先取文字，笔记自己做"}
+{"capability_id":"cap-pdf-extract-text","lang":"zh","query":"客户发来的表单，把上面的文字提取出来","confusable_with":"cap-pdf-table-to-text","why":"要的是表单上的文字，不要求保持行列结构"}
+{"capability_id":"cap-pdf-extract-text","lang":"zh","query":"附录部分也要，别只给我正文","confusable_with":"","why":"扩大提取范围，仍是提取文字"}
+{"capability_id":"cap-pdf-extract-text","lang":"zh","query":"我要把这份报告的文字复制到翻译软件里","confusable_with":"","why":"只要原文文字，翻译本身在别处做"}
+{"capability_id":"cap-pdf-extract-text","lang":"zh","query":"从中间那几页开始抽，前面的已有","confusable_with":"","why":"页范围限定，目标仍是提取文字"}
+{"capability_id":"cap-pdf-extract-text","lang":"zh","query":"这份说明书是图片版，帮我转成文字","confusable_with":"","why":"图片转文字即提取"}
+{"capability_id":"cap-pdf-extract-text","lang":"zh","query":"把页脚的页码去掉，其余文字原样导出","confusable_with":"","why":"清理后仍导出正文文字"}
+{"capability_id":"cap-pdf-extract-text","lang":"zh","query":"只要文字层，不要图片也不要版式","confusable_with":"cap-pdf-table-to-text","why":"要的是文字流，不要任何结构保留"}
+{"capability_id":"cap-pdf-extract-text","lang":"zh","query":"这份报告我要逐字核对，先给全文","confusable_with":"cap-read-document","why":"用户自己核对，只要原文全文"}
+{"capability_id":"cap-pdf-extract-text","lang":"zh","query":"导出成 txt，用 UTF-8 编码","confusable_with":"","why":"只指定输出格式，动作仍是提取文字"}
+{"capability_id":"cap-pdf-extract-text","lang":"zh","query":"这本书的正文我只要文字，排版不用管","confusable_with":"","why":"丢弃排版，只留文字"}
+{"capability_id":"cap-pdf-extract-text","lang":"zh","query":"把这份 PDF 里的可选中文字全部复制给我","confusable_with":"","why":"复制可选文字"}
+{"capability_id":"cap-pdf-extract-text","lang":"zh","query":"我要做词频统计，先把全部文字导出来","confusable_with":"","why":"导出全部文字供后续统计"}
+{"capability_id":"cap-pdf-extract-text","lang":"zh","query":"扫描的合同字迹不清，能认多少算多少","confusable_with":"","why":"OCR 取字，不要求理解条款"}
+{"capability_id":"cap-pdf-extract-text","lang":"zh","query":"帮我把它变成可以直接搜索的文本","confusable_with":"","why":"产出可搜索文本"}
+{"capability_id":"cap-pdf-extract-text","lang":"zh","query":"这份白皮书文字太密，先抽成纯文本再看","confusable_with":"","why":"抽成纯文本"}
+{"capability_id":"cap-pdf-extract-text","lang":"zh","query":"把 OCR 结果给我，保留原有换行","confusable_with":"","why":"输出提取结果并保留换行"}
+{"capability_id":"cap-pdf-extract-text","lang":"zh","query":"只要能复制粘贴的文字，格式随便","confusable_with":"","why":"只要文字内容"}
+{"capability_id":"cap-pdf-extract-text","lang":"en","query":"Pull all the captions and footnotes out of this report as plain text.","confusable_with":"","why":"text extraction from a document"}
+{"capability_id":"cap-pdf-extract-text","lang":"en","query":"Extract every heading from this manual so I can rebuild the table of contents.","confusable_with":"","why":"extraction of structural text elements"}
+{"capability_id":"cap-pdf-extract-text","lang":"en","query":"Dump the body text of this policy brief to a file; I'll reformat it myself.","confusable_with":"","why":"extraction of the wording only"}
+{"capability_id":"cap-pdf-extract-text","lang":"en","query":"This presentation PDF has speaker notes; give me just those notes as text.","confusable_with":"","why":"scoped text extraction"}
+{"capability_id":"cap-pdf-extract-text","lang":"en","query":"Get the text off this scanned invoice so I can file it digitally.","confusable_with":"","why":"extraction from a scanned document"}
+{"capability_id":"cap-pdf-extract-text","lang":"en","query":"Strip the text from this brochure so I can reuse the copy.","confusable_with":"","why":"extraction of the copy"}
+{"capability_id":"cap-pdf-extract-text","lang":"en","query":"Convert this contract PDF into machine-readable text.","confusable_with":"","why":"document to machine-readable text"}
+{"capability_id":"cap-pdf-extract-text","lang":"en","query":"Give me the reviewer comments as text from this annotated submission.","confusable_with":"","why":"extraction of comment text"}
+{"capability_id":"cap-pdf-extract-text","lang":"en","query":"Extract the reference list from this paper as text.","confusable_with":"","why":"scoped extraction of one section"}
+{"capability_id":"cap-pdf-extract-text","lang":"en","query":"Give me the text of every slide in this deck.","confusable_with":"","why":"extraction across a slide deck"}
+{"capability_id":"cap-pdf-extract-text","lang":"en","query":"I only need the abstract and the introduction as text for now.","confusable_with":"","why":"page scope on a text extraction"}
+{"capability_id":"cap-pdf-extract-text","lang":"en","query":"Extract the glossary entries as text, one per line.","confusable_with":"","why":"structured extraction of terms"}
+{"capability_id":"cap-pdf-extract-text","lang":"en","query":"Everything except the title page — export the rest as text.","confusable_with":"","why":"scope on a text extraction"}
+{"capability_id":"cap-pdf-extract-text","lang":"en","query":"Export the text of this bilingual product sheet.","confusable_with":"","why":"text extraction from a document"}
+{"capability_id":"cap-pdf-extract-text","lang":"en","query":"Turn this PDF into a text file I can diff against last year's version.","confusable_with":"","why":"extraction for comparison"}
+{"capability_id":"cap-pdf-extract-text","lang":"en","query":"Copy the body text of this newsletter for me.","confusable_with":"","why":"copies the document text"}
+{"capability_id":"cap-pdf-extract-text","lang":"en","query":"Extract the transcript text from this meeting-record PDF.","confusable_with":"","why":"extraction of transcript text"}
+{"capability_id":"cap-pdf-extract-text","lang":"en","query":"I need the text out before I run a readability check on it.","confusable_with":"","why":"extraction ahead of downstream analysis"}
+{"capability_id":"cap-pdf-extract-text","lang":"en","query":"Get me the text content of this flyer.","confusable_with":"","why":"text extraction"}
+{"capability_id":"cap-pdf-extract-text","lang":"en","query":"Pull the article text out of this issue of the magazine.","confusable_with":"","why":"extraction of article text"}
+{"capability_id":"cap-pdf-extract-text","lang":"en","query":"Extract the text from this old typewritten memo; I'll fix the typos myself.","confusable_with":"","why":"extraction; cleanup is the user's job"}
+{"capability_id":"cap-pdf-extract-text","lang":"en","query":"Get me the plain text of this two-column newsletter.","confusable_with":"","why":"extraction from a multi-column layout"}
+{"capability_id":"cap-pdf-extract-text","lang":"en","query":"Extract the acknowledgements and index as separate text blocks.","confusable_with":"","why":"extraction of back-matter sections"}
+{"capability_id":"cap-pdf-extract-text","lang":"en","query":"Extract the text from this scanned warranty card.","confusable_with":"","why":"extraction from a scanned document"}
+{"capability_id":"cap-pdf-table-to-text","lang":"zh","query":"采购清单是个表格，帮我把里的格子转成文本","confusable_with":"cap-pdf-extract-text","why":"只要表格部分，不是整份文档文字"}
+{"capability_id":"cap-pdf-table-to-text","lang":"zh","query":"这份报价单我要贴进表格软件，先给我纯文本版","confusable_with":"","why":"要把表格转出文本"}
+{"capability_id":"cap-pdf-table-to-text","lang":"zh","query":"论文里那几张数据表单独抽出来给我","confusable_with":"","why":"只抽表格"}
+{"capability_id":"cap-pdf-table-to-text","lang":"zh","query":"附表的内容转成可以编辑的文字，正文跳过","confusable_with":"cap-pdf-extract-text","why":"限定了表格范围，不是全文提取"}
+{"capability_id":"cap-pdf-table-to-text","lang":"zh","query":"我要比对不同版本的表格，先把表格内容提出来","confusable_with":"","why":"提取表格内容做比对"}
+{"capability_id":"cap-pdf-table-to-text","lang":"zh","query":"这页只有一张大表，把它整张转成文字","confusable_with":"","why":"把整张表转文本"}
+{"capability_id":"cap-pdf-table-to-text","lang":"zh","query":"统计年鉴里的表格帮我导出，别的都不要","confusable_with":"cap-pdf-extract-text","why":"只要表格，明确排除其余文字"}
+{"capability_id":"cap-pdf-table-to-text","lang":"zh","query":"把实验数据表从 PDF 里剥离出来","confusable_with":"","why":"剥离表格"}
+{"capability_id":"cap-pdf-table-to-text","lang":"zh","query":"帮我只抓表格，散文部分留着不动","confusable_with":"","why":"只要表格"}
+{"capability_id":"cap-pdf-table-to-text","lang":"zh","query":"这份审计表的数字全在表格里，转出来","confusable_with":"","why":"把表格数字转出"}
+{"capability_id":"cap-pdf-table-to-text","lang":"zh","query":"从这份 PDF 抽表格，输出成制表符分隔","confusable_with":"","why":"抽表格并指定分隔格式"}
+{"capability_id":"cap-pdf-table-to-text","lang":"zh","query":"表格里的文字我要拿去做汇总，先提取","confusable_with":"cap-summary","why":"目的是拿表格数据，不是让模型概括"}
+{"capability_id":"cap-pdf-table-to-text","lang":"zh","query":"我需要 PDF 里那两张对照表的文字","confusable_with":"","why":"要表格文字"}
+{"capability_id":"cap-pdf-table-to-text","lang":"zh","query":"把这个附表还原成可编辑的文本块","confusable_with":"","why":"把表还原成文本"}
+{"capability_id":"cap-pdf-table-to-text","lang":"zh","query":"只想拿表格数据，图片里的正文无所谓","confusable_with":"cap-pdf-extract-text","why":"限定表格数据，区别于全文提取"}
+{"capability_id":"cap-pdf-table-to-text","lang":"zh","query":"报告里的矩阵表格转成纯文本给我","confusable_with":"","why":"矩阵表格转文本"}
+{"capability_id":"cap-pdf-table-to-text","lang":"zh","query":"这张价格对照表单独拎出来转文字","confusable_with":"","why":"单表转文字"}
+{"capability_id":"cap-pdf-table-to-text","lang":"zh","query":"表格的每一行我想拆成一行文本","confusable_with":"","why":"按行转表格文本"}
+{"capability_id":"cap-pdf-table-to-text","lang":"zh","query":"把 PDF 中表格里的字抽干净，别的不要","confusable_with":"cap-pdf-extract-text","why":"只抽表格内文字"}
+{"capability_id":"cap-pdf-table-to-text","lang":"zh","query":"我要用表格里的数字做图表，先转文字","confusable_with":"","why":"先转表格文字"}
+{"capability_id":"cap-pdf-table-to-text","lang":"zh","query":"这份调查问卷的结果以表格形式给出，转出来","confusable_with":"","why":"把结果表格转文本"}
+{"capability_id":"cap-pdf-table-to-text","lang":"zh","query":"只提取表格单元格里的内容","confusable_with":"","why":"只取单元格内容"}
+{"capability_id":"cap-pdf-table-to-text","lang":"zh","query":"把这张交叉表的文字导出来","confusable_with":"","why":"导出交叉表文字"}
+{"capability_id":"cap-pdf-table-to-text","lang":"zh","query":"论文附表也要转，但只转表不转正文","confusable_with":"cap-pdf-extract-text","why":"明确只转表不转正文"}
+{"capability_id":"cap-pdf-table-to-text","lang":"zh","query":"把附件里的财务表按原来的行列关系导出成可复制文本，正文说明不要带出来。","confusable_with":"","why":"目标是只把 PDF 表格转换成保持行列关系的文本，不处理正文。"}
+{"capability_id":"cap-pdf-table-to-text","lang":"en","query":"The results are all in a two-column table; give me the columns as text.","confusable_with":"","why":"table to text"}
+{"capability_id":"cap-pdf-table-to-text","lang":"en","query":"I need the balance sheet as text so I can import it.","confusable_with":"","why":"table to text for import"}
+{"capability_id":"cap-pdf-table-to-text","lang":"en","query":"Convert the timetable table to text for me.","confusable_with":"","why":"table to text"}
+{"capability_id":"cap-pdf-table-to-text","lang":"en","query":"Only the roster table, please — skip everything around it.","confusable_with":"","why":"isolates one table"}
+{"capability_id":"cap-pdf-table-to-text","lang":"en","query":"Convert the multi-page appendix table to one continuous text block.","confusable_with":"","why":"table to text across pages"}
+{"capability_id":"cap-pdf-table-to-text","lang":"en","query":"Convert the glossary table at the back to text.","confusable_with":"","why":"table to text"}
+{"capability_id":"cap-pdf-table-to-text","lang":"en","query":"Extract the pin table from this datasheet.","confusable_with":"cap-pdf-extract-text","why":"scoped to tables, excludes prose"}
+{"capability_id":"cap-pdf-table-to-text","lang":"en","query":"Pull the pricing table out of this brochure as text.","confusable_with":"","why":"isolates one table"}
+{"capability_id":"cap-pdf-table-to-text","lang":"en","query":"Turn the parts list table into a text list.","confusable_with":"","why":"table to text list"}
+{"capability_id":"cap-pdf-table-to-text","lang":"en","query":"Turn the seating table for the event into text.","confusable_with":"","why":"table to text"}
+{"capability_id":"cap-pdf-table-to-text","lang":"en","query":"Extract the table as a text block with the totals included.","confusable_with":"","why":"table to text with totals"}
+{"capability_id":"cap-pdf-table-to-text","lang":"en","query":"I need the table flattened to text for a database import.","confusable_with":"","why":"table to text for import"}
+{"capability_id":"cap-pdf-table-to-text","lang":"en","query":"Turn the league standings table into text.","confusable_with":"","why":"table to text"}
+{"capability_id":"cap-pdf-table-to-text","lang":"en","query":"Convert the coverage table in this policy PDF to text.","confusable_with":"","why":"table to text"}
+{"capability_id":"cap-pdf-table-to-text","lang":"en","query":"Turn the course catalogue's credit table into text.","confusable_with":"","why":"table to text"}
+{"capability_id":"cap-pdf-table-to-text","lang":"en","query":"Convert the amortisation table to plain text.","confusable_with":"","why":"table to text"}
+{"capability_id":"cap-pdf-table-to-text","lang":"en","query":"Pull the currency table from this report as text.","confusable_with":"","why":"isolates one table"}
+{"capability_id":"cap-pdf-table-to-text","lang":"en","query":"Convert the table to text and keep the header row marked.","confusable_with":"","why":"table to text preserving the header"}
+{"capability_id":"cap-pdf-table-to-text","lang":"en","query":"Convert the pivot table on page four to text.","confusable_with":"","why":"table to text"}
+{"capability_id":"cap-pdf-table-to-text","lang":"en","query":"Convert the depreciation table to text with the years kept.","confusable_with":"","why":"table to text preserving labels"}
+{"capability_id":"cap-pdf-table-to-text","lang":"en","query":"Turn the budget table into text I can paste into an email.","confusable_with":"","why":"table to text for reuse"}
+{"capability_id":"cap-pdf-table-to-text","lang":"en","query":"Flatten the staffing table into text.","confusable_with":"","why":"table to text"}
+{"capability_id":"cap-pdf-table-to-text","lang":"en","query":"Convert the dosage table in this leaflet to text.","confusable_with":"","why":"table to text"}
+{"capability_id":"cap-pdf-table-to-text","lang":"en","query":"Convert the rainfall table in this climate report to text.","confusable_with":"","why":"table to text"}
+{"capability_id":"cap-pdf-table-to-text","lang":"en","query":"Turn the enrolment table into a text list of names and IDs.","confusable_with":"","why":"table to text listing"}
+{"capability_id":"cap-rag-search","lang":"zh","query":"我上传的产品手册里有没有讲保修范围的，找出来","confusable_with":"cap-web-search","why":"只在自有上传资料里找，不是上网搜"}
+{"capability_id":"cap-rag-search","lang":"zh","query":"在我存的访谈记录里搜索这个关键词","confusable_with":"","why":"检索自存资料"}
+{"capability_id":"cap-rag-search","lang":"zh","query":"翻一下我导入的合同，看哪份提到违约金","confusable_with":"","why":"在导入合同中找"}
+{"capability_id":"cap-rag-search","lang":"zh","query":"从我上传的论文里找出所有讲方法局限的段落","confusable_with":"cap-web-search","why":"限定自有论文库"}
+{"capability_id":"cap-rag-search","lang":"zh","query":"我的资料库里哪份文件提到过这个 API 的弃用","confusable_with":"","why":"在自有资料库定位"}
+{"capability_id":"cap-rag-search","lang":"zh","query":"在我收集的病例资料中检索这个症状","confusable_with":"","why":"检索私有病例库"}
+{"capability_id":"cap-rag-search","lang":"zh","query":"从我保存的幻灯片里搜一下这个术语","confusable_with":"","why":"在已存幻灯片中检索"}
+{"capability_id":"cap-rag-search","lang":"zh","query":"我上传的财报里，去年的营收那段在哪","confusable_with":"","why":"定位自传财报段落"}
+{"capability_id":"cap-rag-search","lang":"zh","query":"在我导入的教材里找这个概念的定义","confusable_with":"","why":"在导入教材中检索"}
+{"capability_id":"cap-rag-search","lang":"zh","query":"我的笔记库里有没有关于这个漏洞的记录","confusable_with":"cap-social-search","why":"查自有笔记，不是社交平台"}
+{"capability_id":"cap-rag-search","lang":"zh","query":"从我上传的法律条文里找和这条相关的规定","confusable_with":"","why":"在自有法条库检索"}
+{"capability_id":"cap-rag-search","lang":"zh","query":"在我存的会议转写里搜索这个决定","confusable_with":"","why":"检索自存转写"}
+{"capability_id":"cap-rag-search","lang":"zh","query":"我导入的专利文档里，哪份涉及这个技术","confusable_with":"","why":"在导入专利中查找"}
+{"capability_id":"cap-rag-search","lang":"zh","query":"从我的资料库检索这个问题相关的原始出处","confusable_with":"","why":"检索自有资料出处"}
+{"capability_id":"cap-rag-search","lang":"zh","query":"我上传的调研报告里有没有提到这个竞品","confusable_with":"cap-web-search","why":"只在上传报告内查"}
+{"capability_id":"cap-rag-search","lang":"zh","query":"在我保存的代码文档里搜这个函数的说明","confusable_with":"","why":"检索自存代码文档"}
+{"capability_id":"cap-rag-search","lang":"zh","query":"翻我导入的期刊，找引用过这篇的那几处","confusable_with":"","why":"在导入期刊中检索"}
+{"capability_id":"cap-rag-search","lang":"zh","query":"我的知识库里哪个文件解释过这个流程","confusable_with":"","why":"在自有知识库定位"}
+{"capability_id":"cap-rag-search","lang":"zh","query":"从我上传的培训材料中找相关的章节","confusable_with":"","why":"检索自传培训材料"}
+{"capability_id":"cap-rag-search","lang":"zh","query":"在我存的档案里查一下这个事件的记录","confusable_with":"","why":"检索自存档案"}
+{"capability_id":"cap-rag-search","lang":"zh","query":"我导入的说明书里，讲安全注意事项的在哪儿","confusable_with":"","why":"在导入说明书中定位"}
+{"capability_id":"cap-rag-search","lang":"zh","query":"从我的私有文档里检索这个指标的来源","confusable_with":"","why":"检索私有文档"}
+{"capability_id":"cap-rag-search","lang":"zh","query":"在我资料库中检索所有提到这个供应商的地方","confusable_with":"","why":"全库检索自有资料"}
+{"capability_id":"cap-rag-search","lang":"zh","query":"我上传的问卷结果里，有没有反映这个问题的","confusable_with":"","why":"在自传问卷中查找"}
+{"capability_id":"cap-rag-search","lang":"zh","query":"从我收藏的白皮书里找到这段话的出处","confusable_with":"","why":"在自藏白皮书中定位"}
+{"capability_id":"cap-rag-search","lang":"zh","query":"在我导入的内部规范里查这个审批流程","confusable_with":"","why":"检索导入规范"}
+{"capability_id":"cap-rag-search","lang":"zh","query":"我的素材里哪处讲过这个统计口径","confusable_with":"","why":"在自有素材中检索"}
+{"capability_id":"cap-rag-search","lang":"en","query":"Find the clause about data retention in the policies I uploaded.","confusable_with":"cap-web-search","why":"searches only my uploaded materials, not the web"}
+{"capability_id":"cap-rag-search","lang":"en","query":"Look through my saved meeting recordings for the budget figure.","confusable_with":"","why":"searches my own saved recordings"}
+{"capability_id":"cap-rag-search","lang":"en","query":"Which of my imported datasheets lists this part number?","confusable_with":"","why":"searches my imported files"}
+{"capability_id":"cap-rag-search","lang":"en","query":"Search the lecture notes I stored for this formula.","confusable_with":"","why":"scoped to my own notes"}
+{"capability_id":"cap-rag-search","lang":"en","query":"Find where my saved design docs mention this library.","confusable_with":"","why":"locates within my own docs"}
+{"capability_id":"cap-rag-search","lang":"en","query":"Look in my uploaded grant files for the reporting deadline.","confusable_with":"","why":"searches my private files"}
+{"capability_id":"cap-rag-search","lang":"en","query":"Search my saved research papers for this dataset name.","confusable_with":"","why":"searches my own papers"}
+{"capability_id":"cap-rag-search","lang":"en","query":"From the invoices I uploaded, find the one with this PO number.","confusable_with":"","why":"locates a file in my uploads"}
+{"capability_id":"cap-rag-search","lang":"en","query":"Search my imported recipe collection for this ingredient.","confusable_with":"","why":"searches my imported collection"}
+{"capability_id":"cap-rag-search","lang":"en","query":"Do my saved tickets contain a note about this outage?","confusable_with":"cap-social-search","why":"checks my own records, not a social platform"}
+{"capability_id":"cap-rag-search","lang":"en","query":"Search the regulations I stored for this requirement.","confusable_with":"","why":"searches my uploaded regulations"}
+{"capability_id":"cap-rag-search","lang":"en","query":"Look through my saved project briefs for this deliverable.","confusable_with":"","why":"searches my own briefs"}
+{"capability_id":"cap-rag-search","lang":"en","query":"Which of my imported standards covers this test method?","confusable_with":"","why":"finds within my imported standards"}
+{"capability_id":"cap-rag-search","lang":"en","query":"Retrieve the memo about this policy from my library.","confusable_with":"","why":"retrieves from my own library"}
+{"capability_id":"cap-rag-search","lang":"en","query":"Do the reports I uploaded discuss this region?","confusable_with":"cap-web-search","why":"only within my uploaded reports"}
+{"capability_id":"cap-rag-search","lang":"en","query":"Search the manuscripts I saved for this quotation.","confusable_with":"","why":"searches my saved manuscripts"}
+{"capability_id":"cap-rag-search","lang":"en","query":"Scan the proceedings I imported for this author.","confusable_with":"","why":"scans my imported proceedings"}
+{"capability_id":"cap-rag-search","lang":"en","query":"Find my saved comparison of these two vendors.","confusable_with":"","why":"locates within my own materials"}
+{"capability_id":"cap-rag-search","lang":"en","query":"Search my saved floor plans for the room numbering.","confusable_with":"","why":"searches my saved drawings"}
+{"capability_id":"cap-rag-search","lang":"en","query":"Check my saved logs for the record of this migration.","confusable_with":"","why":"checks my saved logs"}
+{"capability_id":"cap-rag-search","lang":"en","query":"In my uploaded handbooks, where are the wiring rules?","confusable_with":"","why":"locates within my imported handbooks"}
+{"capability_id":"cap-rag-search","lang":"en","query":"Retrieve the definition of this KPI from my own files.","confusable_with":"","why":"retrieves from my private documents"}
+{"capability_id":"cap-rag-search","lang":"en","query":"Search my library for anything mentioning this client.","confusable_with":"","why":"searches my own library"}
+{"capability_id":"cap-rag-search","lang":"en","query":"Do the results I uploaded point to this trend?","confusable_with":"","why":"checks my uploaded results"}
+{"capability_id":"cap-rag-search","lang":"en","query":"Find where this figure appears in the reports I collected.","confusable_with":"","why":"finds within my collected reports"}
+{"capability_id":"cap-rag-search","lang":"en","query":"Look through my own spreadsheets for this variance.","confusable_with":"","why":"looks up my own files"}
+{"capability_id":"cap-rag-search","lang":"en","query":"Where in my own material is this metric defined?","confusable_with":"","why":"searches my own materials"}
+{"capability_id":"cap-read-document","lang":"zh","query":"这份方案书读完之后告诉我它的验收标准是什么","confusable_with":"","why":"读懂文档并回答其内容"}
+{"capability_id":"cap-read-document","lang":"zh","query":"帮我读懂这份年报，重点看它的风险提示","confusable_with":"cap-pdf-extract-text","why":"要理解内容，不是把文字抠出来"}
+{"capability_id":"cap-read-document","lang":"zh","query":"通读这份判决书，然后说下争议焦点","confusable_with":"","why":"读文档并说明其要点"}
+{"capability_id":"cap-read-document","lang":"zh","query":"把这份白皮书看完，总结它的核心主张","confusable_with":"","why":"阅读后归纳文档主张"}
+{"capability_id":"cap-read-document","lang":"zh","query":"这份招生简章读了没，帮我摘出报考条件","confusable_with":"","why":"读懂文档并摘取信息"}
+{"capability_id":"cap-read-document","lang":"zh","query":"读一下这份事故报告，讲清原因链","confusable_with":"","why":"阅读文档并解释因果"}
+{"capability_id":"cap-read-document","lang":"zh","query":"这篇综述读一遍，说说它和前人工作的差异","confusable_with":"","why":"阅读并比较其内容"}
+{"capability_id":"cap-read-document","lang":"zh","query":"帮我看懂这份保险条款，解释免责范围","confusable_with":"","why":"理解条款内容"}
+{"capability_id":"cap-read-document","lang":"zh","query":"读完这份检验报告，告诉我主要结论","confusable_with":"","why":"阅读并报告结论"}
+{"capability_id":"cap-read-document","lang":"zh","query":"这份技术白皮书读一下，它的性能指标是什么","confusable_with":"","why":"读文档并提取其指标"}
+{"capability_id":"cap-read-document","lang":"zh","query":"帮我把这份研究计划读透，指出它的假设","confusable_with":"","why":"读懂并指出隐含假设"}
+{"capability_id":"cap-read-document","lang":"zh","query":"读这份并购协议，告诉我对价结构","confusable_with":"","why":"阅读协议并说明结构"}
+{"capability_id":"cap-read-document","lang":"zh","query":"看完这份诊断报告，说明主要的影像发现","confusable_with":"","why":"阅读并说明发现"}
+{"capability_id":"cap-read-document","lang":"zh","query":"这份标书读一遍，它的技术路线是什么","confusable_with":"","why":"阅读并概括技术路线"}
+{"capability_id":"cap-read-document","lang":"zh","query":"读一下这份需求文档，讲清验收口径","confusable_with":"","why":"读懂需求并说明口径"}
+{"capability_id":"cap-read-document","lang":"zh","query":"帮我读这份学术论文，说下它的贡献","confusable_with":"","why":"阅读并概括贡献"}
+{"capability_id":"cap-read-document","lang":"zh","query":"这份用户手册读完后，告诉我故障排除步骤","confusable_with":"","why":"阅读并复述步骤"}
+{"capability_id":"cap-read-document","lang":"zh","query":"读一下这份审计底稿，说下关键发现","confusable_with":"","why":"阅读并提炼发现"}
+{"capability_id":"cap-read-document","lang":"zh","query":"这份政策解读读一遍，主要变化在哪","confusable_with":"","why":"阅读并指出变化"}
+{"capability_id":"cap-read-document","lang":"zh","query":"帮我看完这份实验报告，结论是什么","confusable_with":"","why":"阅读并给出结论"}
+{"capability_id":"cap-read-document","lang":"zh","query":"读一读这份答辩记录，评委提了哪些问题","confusable_with":"","why":"阅读并提取问题"}
+{"capability_id":"cap-read-document","lang":"zh","query":"这份研判报告读一下，它的判断依据是啥","confusable_with":"","why":"阅读并说明依据"}
+{"capability_id":"cap-read-document","lang":"zh","query":"把我这份读书笔记读一遍，看我漏了什么","confusable_with":"cap-read-file","why":"针对整份文档阅读而非单文件检索"}
+{"capability_id":"cap-read-document","lang":"zh","query":"读这份会议纪要看懂分歧在哪","confusable_with":"","why":"阅读并指出分歧"}
+{"capability_id":"cap-read-document","lang":"zh","query":"帮我把这份标准解读完，重点条款讲一下","confusable_with":"","why":"阅读并讲解条款"}
+{"capability_id":"cap-read-document","lang":"zh","query":"这份可行性研究读完，说下它的主要风险","confusable_with":"","why":"阅读并指出风险"}
+{"capability_id":"cap-read-document","lang":"zh","query":"读一下这份判决理由，说明它是怎么推出结论的","confusable_with":"","why":"阅读并解释推理"}
+{"capability_id":"cap-read-document","lang":"zh","query":"这份调研报告看完后，给出行研的主要发现","confusable_with":"cap-pdf-extract-text","why":"阅读并归纳，不要求原文文字"}
+{"capability_id":"cap-read-document","lang":"en","query":"Read this policy brief and tell me who it's aimed at.","confusable_with":"","why":"read then describe its audience"}
+{"capability_id":"cap-read-document","lang":"en","query":"Go through this sustainability report and pull out its targets.","confusable_with":"","why":"read then extract its targets"}
+{"capability_id":"cap-read-document","lang":"en","query":"Read this FOIA response letter and tell me what was withheld.","confusable_with":"","why":"read then report its content"}
+{"capability_id":"cap-read-document","lang":"en","query":"Work through this pre-print and describe its method.","confusable_with":"","why":"read then explain the method"}
+{"capability_id":"cap-read-document","lang":"en","query":"Read this grant conditions letter and tell me what's disallowed.","confusable_with":"","why":"read then extract the constraints"}
+{"capability_id":"cap-read-document","lang":"en","query":"Read this near-miss report and explain what nearly went wrong.","confusable_with":"","why":"read then explain the causes"}
+{"capability_id":"cap-read-document","lang":"en","query":"Read this case study and say what generalises from it.","confusable_with":"","why":"read then assess its claims"}
+{"capability_id":"cap-read-document","lang":"en","query":"Dig into this rental agreement and explain the deposit rules.","confusable_with":"","why":"read then explain its terms"}
+{"capability_id":"cap-read-document","lang":"en","query":"Read this penetration-test report and state the worst finding.","confusable_with":"","why":"read then report the findings"}
+{"capability_id":"cap-read-document","lang":"en","query":"Read this service SLA and tell me the uptime guarantee.","confusable_with":"","why":"read then pull its figures"}
+{"capability_id":"cap-read-document","lang":"en","query":"Read this project charter closely and flag its scope boundaries.","confusable_with":"","why":"read then surface the boundaries"}
+{"capability_id":"cap-read-document","lang":"en","query":"Read this licensing deal and describe the royalty terms.","confusable_with":"","why":"read then describe the structure"}
+{"capability_id":"cap-read-document","lang":"en","query":"Read this audit trail and explain the sequence of approvals.","confusable_with":"","why":"read then explain the sequence"}
+{"capability_id":"cap-read-document","lang":"en","query":"Read this construction schedule and explain the critical path.","confusable_with":"","why":"read then explain the schedule"}
+{"capability_id":"cap-read-document","lang":"en","query":"Read this test charter and clarify the pass criteria.","confusable_with":"","why":"read then explain the criteria"}
+{"capability_id":"cap-read-document","lang":"en","query":"Read this manuscript and list the unanswered questions.","confusable_with":"","why":"read then list the open questions"}
+{"capability_id":"cap-read-document","lang":"en","query":"Read this style guide and tell me the tone it prescribes.","confusable_with":"","why":"read then describe the guidance"}
+{"capability_id":"cap-read-document","lang":"en","query":"Read this due-diligence memo and summarise the red flags.","confusable_with":"","why":"read then extract the concerns"}
+{"capability_id":"cap-read-document","lang":"en","query":"Read this migration guide and tell me the breaking changes.","confusable_with":"","why":"read then locate the changes"}
+{"capability_id":"cap-read-document","lang":"en","query":"Read this field survey and tell me what sampling was used.","confusable_with":"","why":"read then explain the method"}
+{"capability_id":"cap-read-document","lang":"en","query":"Read this interview record and tell me what was promised.","confusable_with":"","why":"read then extract the commitments"}
+{"capability_id":"cap-read-document","lang":"en","query":"Read this scoring rubric and explain how points are awarded.","confusable_with":"","why":"read then explain the scheme"}
+{"capability_id":"cap-read-document","lang":"en","query":"Read through my reflection journal and tell me what's repetitive.","confusable_with":"cap-read-file","why":"reading a whole document, not a workspace file lookup"}
+{"capability_id":"cap-read-document","lang":"en","query":"Read this board pack and tell me what needs a decision.","confusable_with":"","why":"read then extract the decisions"}
+{"capability_id":"cap-read-document","lang":"en","query":"Read this code of conduct and explain the reporting duty.","confusable_with":"","why":"read then explain clauses"}
+{"capability_id":"cap-read-document","lang":"en","query":"Read this business case and state the expected payback.","confusable_with":"","why":"read then state the figures"}
+{"capability_id":"cap-read-document","lang":"en","query":"Read this referee report and explain the requested revisions.","confusable_with":"","why":"read then explain the requested changes"}
+{"capability_id":"cap-read-file","lang":"zh","query":"打开 .github/workflows/ci.yml 看看里面怎么配的","confusable_with":"","why":"读取工作区里的具体文件"}
+{"capability_id":"cap-read-file","lang":"zh","query":"帮我看一眼 Dockerfile 里用的基础镜像","confusable_with":"","why":"读取文件内容"}
+{"capability_id":"cap-read-file","lang":"zh","query":"把 requirements.txt 的内容列出来","confusable_with":"","why":"读出文件内容"}
+{"capability_id":"cap-read-file","lang":"zh","query":"工作区里的 Makefile 读一下","confusable_with":"","why":"读取工作区文件"}
+{"capability_id":"cap-read-file","lang":"zh","query":"看看 .gitignore 里忽略了哪些","confusable_with":"cap-edit-file","why":"只是查看内容，不是修改规则"}
+{"capability_id":"cap-read-file","lang":"zh","query":"输出 package.json 里的 scripts 段","confusable_with":"","why":"读取文件某段内容"}
+{"capability_id":"cap-read-file","lang":"zh","query":"读一下 alembic.ini 的配置","confusable_with":"","why":"读取配置文件内容"}
+{"capability_id":"cap-read-file","lang":"zh","query":"帮我看看 CHANGELOG.md 最近几条都写了啥","confusable_with":"cap-read-document","why":"读取工作区里的文件而非文档理解"}
+{"capability_id":"cap-read-file","lang":"zh","query":"打开 .env.example，把里面的变量名列出来","confusable_with":"cap-edit-file","why":"查看变量名，不是往里面补变量"}
+{"capability_id":"cap-read-file","lang":"zh","query":"看一下 nginx.conf 里的转发规则","confusable_with":"","why":"读取文件内容"}
+{"capability_id":"cap-read-file","lang":"zh","query":"把 docker-compose.yml 的内容显示出来","confusable_with":"","why":"显示文件内容"}
+{"capability_id":"cap-read-file","lang":"zh","query":"读一下 setup.py 里注册的入口点","confusable_with":"","why":"读取文件内容"}
+{"capability_id":"cap-read-file","lang":"zh","query":"看看 pyproject.toml 里声明的依赖","confusable_with":"","why":"读取文件内容"}
+{"capability_id":"cap-read-file","lang":"zh","query":"帮我列出 tests/conftest.py 里定义的 fixture","confusable_with":"","why":"读取工作区文件"}
+{"capability_id":"cap-read-file","lang":"zh","query":"帮我看下 .editorconfig 的缩进设置","confusable_with":"","why":"读取文件设置"}
+{"capability_id":"cap-read-file","lang":"zh","query":"输出这个 py.typed 文件有没有内容","confusable_with":"","why":"读取文件内容"}
+{"capability_id":"cap-read-file","lang":"zh","query":"读一下 src/config/settings.py 的默认值","confusable_with":"","why":"读取文件内容"}
+{"capability_id":"cap-read-file","lang":"zh","query":"看看 .pre-commit-config.yaml 挂了哪些钩子","confusable_with":"","why":"读取文件内容"}
+{"capability_id":"cap-read-file","lang":"zh","query":"translations/zh.json 里都有哪些键","confusable_with":"","why":"读取文件内容"}
+{"capability_id":"cap-read-file","lang":"zh","query":"帮我把 .stylelintrc 的内容读出来","confusable_with":"","why":"读取文件内容"}
+{"capability_id":"cap-read-file","lang":"zh","query":"看一眼 tsconfig.json 的编译目标","confusable_with":"","why":"读取文件内容"}
+{"capability_id":"cap-read-file","lang":"zh","query":"读一下 docs/index.md 的开头部分","confusable_with":"cap-read-document","why":"读取工作区里的具体文件"}
+{"capability_id":"cap-read-file","lang":"zh","query":"看看 .dockerignore 里排除了什么","confusable_with":"","why":"读取文件内容"}
+{"capability_id":"cap-read-file","lang":"zh","query":"输出这个 lock 文件的版本号","confusable_with":"","why":"读取文件里的字段"}
+{"capability_id":"cap-read-file","lang":"zh","query":"打开 src/schema.sql 看看表结构","confusable_with":"","why":"读取工作区文件"}
+{"capability_id":"cap-read-file","lang":"zh","query":"帮我看下 .gitattributes 怎么设的","confusable_with":"","why":"读取文件内容"}
+{"capability_id":"cap-read-file","lang":"zh","query":"读一下 .flake8 的规则","confusable_with":"","why":"读取文件内容"}
+{"capability_id":"cap-read-file","lang":"zh","query":"看看 changelog.rst 里最新一版记了什么","confusable_with":"cap-read-document","why":"读取工作区文件内容"}
+{"capability_id":"cap-read-file","lang":"en","query":"Open .github/CODEOWNERS and show who owns each path.","confusable_with":"","why":"reads a specific workspace file"}
+{"capability_id":"cap-read-file","lang":"en","query":"Show which ecosystems .github/dependabot.yml tracks.","confusable_with":"","why":"reads file content"}
+{"capability_id":"cap-read-file","lang":"en","query":"What's pinned in tox.ini?","confusable_with":"","why":"reads file content"}
+{"capability_id":"cap-read-file","lang":"en","query":"Show me the files MANIFEST.in includes.","confusable_with":"","why":"reads file content"}
+{"capability_id":"cap-read-file","lang":"en","query":"Read the start command in the Procfile.","confusable_with":"","why":"reads a workspace file"}
+{"capability_id":"cap-read-file","lang":"en","query":"Take a look at the box settings in the Vagrantfile.","confusable_with":"","why":"reads file content"}
+{"capability_id":"cap-read-file","lang":"en","query":"Which Node version does .nvmrc pin?","confusable_with":"","why":"reads file content"}
+{"capability_id":"cap-read-file","lang":"en","query":"Read the endpoints described in openapi.yaml.","confusable_with":"","why":"reads file content"}
+{"capability_id":"cap-read-file","lang":"en","query":"Show the replica count in values.yaml.","confusable_with":"","why":"reads a section of a file"}
+{"capability_id":"cap-read-file","lang":"en","query":"Read the chart version in Chart.yaml.","confusable_with":"","why":"reads a config file"}
+{"capability_id":"cap-read-file","lang":"en","query":"Show me the cops enabled in .rubocop.yml.","confusable_with":"","why":"reads file content"}
+{"capability_id":"cap-read-file","lang":"en","query":"Read the dependencies listed in Cargo.toml.","confusable_with":"","why":"reads file content"}
+{"capability_id":"cap-read-file","lang":"en","query":"Show the module path in go.mod.","confusable_with":"","why":"reads file content"}
+{"capability_id":"cap-read-file","lang":"en","query":"Read the dependency versions in pom.xml.","confusable_with":"","why":"reads file content"}
+{"capability_id":"cap-read-file","lang":"en","query":"Show me the plugin block in build.gradle.","confusable_with":"","why":"reads file content"}
+{"capability_id":"cap-read-file","lang":"en","query":"Read the registry setting in .npmrc.","confusable_with":"","why":"reads file settings"}
+{"capability_id":"cap-read-file","lang":"en","query":"Show the print width in .prettierrc.","confusable_with":"","why":"reads file content"}
+{"capability_id":"cap-read-file","lang":"en","query":"Read the update schedule in renovate.json.","confusable_with":"cap-edit-file","why":"view the schedule, not edit config"}
+{"capability_id":"cap-read-file","lang":"en","query":"Show me the entries in .mailmap.","confusable_with":"","why":"reads file content"}
+{"capability_id":"cap-read-file","lang":"en","query":"Read the contributor list in AUTHORS.","confusable_with":"","why":"reads file content"}
+{"capability_id":"cap-read-file","lang":"en","query":"Show the enforcement section of CODE_OF_CONDUCT.md.","confusable_with":"cap-read-document","why":"reads a workspace file, not document comprehension"}
+{"capability_id":"cap-read-file","lang":"en","query":"Read the reporting policy in SECURITY.md.","confusable_with":"","why":"reads a specific workspace file"}
+{"capability_id":"cap-read-file","lang":"en","query":"Show me the submodules listed in .gitmodules.","confusable_with":"","why":"reads file content"}
+{"capability_id":"cap-read-file","lang":"en","query":"Read the preset in .babelrc.","confusable_with":"","why":"reads file content"}
+{"capability_id":"cap-read-file","lang":"en","query":"Show what .eslintignore skips.","confusable_with":"","why":"reads file content"}
+{"capability_id":"cap-read-file","lang":"en","query":"What does .python-version specify?","confusable_with":"","why":"reads a field from a file"}
+{"capability_id":"cap-read-file","lang":"en","query":"Read the ignored rules in .hadolint.yaml.","confusable_with":"","why":"reads a workspace file"}
+{"capability_id":"cap-slides","lang":"zh","query":"把季度业务回顾整理成一份演示稿","confusable_with":"","why":"产出演示文稿"}
+{"capability_id":"cap-slides","lang":"zh","query":"明天路演，帮我把这份商业计划书做成 slides","confusable_with":"","why":"生成幻灯片"}
+{"capability_id":"cap-slides","lang":"zh","query":"用这份教学大纲生成一版课堂用的课件","confusable_with":"","why":"生成课堂演示"}
+{"capability_id":"cap-slides","lang":"zh","query":"给董事会准备一套汇报用的 PPT","confusable_with":"","why":"制作汇报演示稿"}
+{"capability_id":"cap-slides","lang":"zh","query":"把这次发布说明做成对外演示的幻灯片","confusable_with":"","why":"生成对外幻灯片"}
+{"capability_id":"cap-slides","lang":"zh","query":"帮我做一套 onboarding 培训用的演示文稿","confusable_with":"","why":"生成培训演示文稿"}
+{"capability_id":"cap-slides","lang":"zh","query":"把实验方案做成答辩用的 slides","confusable_with":"","why":"生成答辩幻灯片"}
+{"capability_id":"cap-slides","lang":"zh","query":"要开个内部技术分享，根据这份文档做 PPT","confusable_with":"","why":"生成分享 PPT"}
+{"capability_id":"cap-slides","lang":"zh","query":"把财报做成投资者说明会的演示稿","confusable_with":"","why":"生成说明会幻灯片"}
+{"capability_id":"cap-slides","lang":"zh","query":"帮我把这份 SOP 转成培训幻灯片","confusable_with":"","why":"转成培训幻灯片"}
+{"capability_id":"cap-slides","lang":"zh","query":"做一套面向新员工的介绍 slides","confusable_with":"","why":"生成入职介绍幻灯片"}
+{"capability_id":"cap-slides","lang":"zh","query":"把这份竞品分析做成演示文稿","confusable_with":"","why":"生成演示文稿"}
+{"capability_id":"cap-slides","lang":"zh","query":"需要一个项目复盘的 PPT，材料在这份文档里","confusable_with":"","why":"制作复盘 PPT"}
+{"capability_id":"cap-slides","lang":"zh","query":"帮我把研究进展做成组会汇报的幻灯片","confusable_with":"","why":"生成组会幻灯片"}
+{"capability_id":"cap-slides","lang":"zh","query":"把这份政策说明做成宣讲用的演示稿","confusable_with":"","why":"生成宣讲演示稿"}
+{"capability_id":"cap-slides","lang":"zh","query":"出一版产品发布的 slides","confusable_with":"","why":"生成发布幻灯片"}
+{"capability_id":"cap-slides","lang":"zh","query":"把年度总结做成汇报 PPT","confusable_with":"","why":"制作年度汇报 PPT"}
+{"capability_id":"cap-slides","lang":"zh","query":"根据这份需求评审材料做一套幻灯片","confusable_with":"","why":"生成评审幻灯片"}
+{"capability_id":"cap-slides","lang":"zh","query":"帮我把这份论文做成会议演讲的 PPT","confusable_with":"","why":"生成会议演讲 PPT"}
+{"capability_id":"cap-slides","lang":"zh","query":"做一套融资路演用的演示文稿","confusable_with":"","why":"生成路演演示文稿"}
+{"capability_id":"cap-slides","lang":"zh","query":"把这份巡检记录整理成汇报 slides","confusable_with":"","why":"整理成汇报幻灯片"}
+{"capability_id":"cap-slides","lang":"zh","query":"帮我把培训手册做成演示课件","confusable_with":"","why":"生成演示课件"}
+{"capability_id":"cap-slides","lang":"zh","query":"做一份给客户的方案介绍 PPT","confusable_with":"","why":"生成方案介绍 PPT"}
+{"capability_id":"cap-slides","lang":"zh","query":"把这份测试报告做成质量评审的演示稿","confusable_with":"","why":"生成评审演示稿"}
+{"capability_id":"cap-slides","lang":"zh","query":"根据这份白皮书出一套对外宣讲的幻灯片","confusable_with":"","why":"生成宣讲幻灯片"}
+{"capability_id":"cap-slides","lang":"zh","query":"帮我把课程讲义做成一套 slides","confusable_with":"cap-mindmap","why":"产出的是幻灯片而非结构图"}
+{"capability_id":"cap-slides","lang":"en","query":"Make a deck out of this sales forecast for the planning meeting.","confusable_with":"","why":"generates a slide deck"}
+{"capability_id":"cap-slides","lang":"en","query":"Turn this campaign brief into a deck for the agency.","confusable_with":"","why":"generates a slide deck"}
+{"capability_id":"cap-slides","lang":"en","query":"Build a lesson deck from this textbook chapter.","confusable_with":"","why":"generates a teaching deck"}
+{"capability_id":"cap-slides","lang":"en","query":"Put this compliance summary into a deck for the auditors.","confusable_with":"","why":"makes an audit presentation"}
+{"capability_id":"cap-slides","lang":"en","query":"Make slides out of this architecture overview for the engineering review.","confusable_with":"","why":"generates slides"}
+{"capability_id":"cap-slides","lang":"en","query":"Create a deck from this benefits summary for the open-enrolment session.","confusable_with":"","why":"builds a presentation"}
+{"capability_id":"cap-slides","lang":"en","query":"Turn this grant proposal into a pitch deck.","confusable_with":"","why":"produces a deck"}
+{"capability_id":"cap-slides","lang":"en","query":"Make a deck from this usability study for the design review.","confusable_with":"","why":"generates slides"}
+{"capability_id":"cap-slides","lang":"en","query":"Turn this sales playbook into a deck for the regional team.","confusable_with":"","why":"produces a deck"}
+{"capability_id":"cap-slides","lang":"en","query":"Build a deck from this budget request for the finance committee.","confusable_with":"","why":"builds a presentation"}
+{"capability_id":"cap-slides","lang":"en","query":"Make slides from this case study for the client workshop.","confusable_with":"","why":"generates slides"}
+{"capability_id":"cap-slides","lang":"en","query":"Turn this roadmap into a deck for the leadership sync.","confusable_with":"cap-mindmap","why":"produces a deck"}
+{"capability_id":"cap-slides","lang":"en","query":"Build a deck from this safety briefing for the site induction.","confusable_with":"","why":"generates a briefing deck"}
+{"capability_id":"cap-slides","lang":"en","query":"Make a deck from this patent disclosure for the IP committee.","confusable_with":"","why":"generates slides"}
+{"capability_id":"cap-slides","lang":"en","query":"Turn this membership report into a deck for the AGM.","confusable_with":"","why":"produces a deck"}
+{"capability_id":"cap-slides","lang":"en","query":"Create slides from this pricing strategy for the sales kickoff.","confusable_with":"","why":"generates slides"}
+{"capability_id":"cap-slides","lang":"en","query":"Turn this progress update into a deck for the steering committee.","confusable_with":"","why":"produces a deck"}
+{"capability_id":"cap-slides","lang":"en","query":"Build a deck from this curriculum map for the faculty meeting.","confusable_with":"","why":"builds a presentation"}
+{"capability_id":"cap-slides","lang":"en","query":"Turn this deployment plan into a cutover deck.","confusable_with":"","why":"generates a deck"}
+{"capability_id":"cap-slides","lang":"en","query":"Prepare a results deck for the quarterly town hall.","confusable_with":"","why":"prepares a presentation"}
+{"capability_id":"cap-slides","lang":"en","query":"Organise this workshop output into a deck for the sponsors.","confusable_with":"","why":"organises into a deck"}
+{"capability_id":"cap-slides","lang":"en","query":"Convert this reference architecture into slides for the guild talk.","confusable_with":"","why":"converts to slides"}
+{"capability_id":"cap-slides","lang":"en","query":"Make a deck from this security assessment for the CISO review.","confusable_with":"","why":"generates a review deck"}
+{"capability_id":"cap-slides","lang":"en","query":"Turn this quality policy into slides for the induction.","confusable_with":"","why":"converts to slides"}
+{"capability_id":"cap-slides","lang":"en","query":"Build a deck from this investment thesis for the LP meeting.","confusable_with":"","why":"builds a briefing deck"}
+{"capability_id":"cap-social-search","lang":"zh","query":"去 X 上看看大家对这个更新的吐槽","confusable_with":"cap-web-search","why":"在社交平台的用户讨论里搜，不是通用网页检索"}
+{"capability_id":"cap-social-search","lang":"zh","query":"知乎上关于这个话题的高赞回答帮我找出来","confusable_with":"","why":"找社区问答内容"}
+{"capability_id":"cap-social-search","lang":"zh","query":"微博上搜一下这个品牌最近的舆情","confusable_with":"","why":"搜社交平台的舆情"}
+{"capability_id":"cap-social-search","lang":"zh","query":"小红书有没有人分享过这个产品的使用体验","confusable_with":"","why":"找社区用户分享"}
+{"capability_id":"cap-social-search","lang":"zh","query":"去 V2EX 看看有没有人讨论这个技术选型","confusable_with":"","why":"在技术社区找讨论"}
+{"capability_id":"cap-social-search","lang":"zh","query":"豆瓣读书的短评里对这本书评价怎么样","confusable_with":"","why":"找社区书评"}
+{"capability_id":"cap-social-search","lang":"zh","query":"贴吧里有没有人遇到过这个硬件问题","confusable_with":"","why":"在社区帖子里找"}
+{"capability_id":"cap-social-search","lang":"zh","query":"看看 Discord 频道里大家对这次改版的反应","confusable_with":"","why":"看社区即时讨论"}
+{"capability_id":"cap-social-search","lang":"zh","query":"帮我找 GitHub Discussions 里关于这个提案的讨论","confusable_with":"","why":"找社区讨论串"}
+{"capability_id":"cap-social-search","lang":"zh","query":"Mastodon 上关注的开发者怎么评价这个标准","confusable_with":"","why":"在社交平台找开发者评价"}
+{"capability_id":"cap-social-search","lang":"zh","query":"去 Quora 看看有没有人问过类似的问题","confusable_with":"cap-web-search","why":"找社区问答，不是通用搜索"}
+{"capability_id":"cap-social-search","lang":"zh","query":"Product Hunt 上这个产品的评论怎么样","confusable_with":"","why":"找社区评论"}
+{"capability_id":"cap-social-search","lang":"zh","query":"看看 B 站评论区对这个教程的反馈","confusable_with":"","why":"看社区评论区反馈"}
+{"capability_id":"cap-social-search","lang":"zh","query":"帮我在 Hacker News 上找关于这个漏洞的帖子","confusable_with":"","why":"在社区找帖子"}
+{"capability_id":"cap-social-search","lang":"zh","query":"贴吧里有没有人分享过这个游戏的攻略","confusable_with":"","why":"找社区分享帖"}
+{"capability_id":"cap-social-search","lang":"zh","query":"去看看知乎上大家推荐哪些替代方案","confusable_with":"","why":"找社区推荐"}
+{"capability_id":"cap-social-search","lang":"zh","query":"微博超话里粉丝对这次改档怎么说","confusable_with":"","why":"看社交平台粉丝讨论"}
+{"capability_id":"cap-social-search","lang":"zh","query":"小红书有没有关于这个旅游地的避雷帖","confusable_with":"","why":"找社区经验帖"}
+{"capability_id":"cap-social-search","lang":"zh","query":"找一下 V2EX 上关于这个框架性能的讨论","confusable_with":"","why":"找技术社区讨论"}
+{"capability_id":"cap-social-search","lang":"zh","query":"Discord 群里有没有人贴过这个报错的解决办法","confusable_with":"","why":"在社区群里找"}
+{"capability_id":"cap-social-search","lang":"zh","query":"看看豆瓣短评里对这部电影的分歧","confusable_with":"","why":"看社区短评"}
+{"capability_id":"cap-social-search","lang":"zh","query":"知乎问题下面有没有人给过实测数据","confusable_with":"","why":"找社区回答里的数据"}
+{"capability_id":"cap-social-search","lang":"zh","query":"去 X 上搜搜这个 API 改动的开发者反馈","confusable_with":"","why":"搜社交平台反馈"}
+{"capability_id":"cap-social-search","lang":"zh","query":"贴吧里大家对这个新规的争议在哪","confusable_with":"","why":"看社区争议"}
+{"capability_id":"cap-social-search","lang":"zh","query":"除了 Reddit，还有哪些社区在讨论这个工具","confusable_with":"cap-web-search","why":"在社区平台里找，不是全网检索"}
+{"capability_id":"cap-social-search","lang":"zh","query":"微博上这个话题的热搜评论区怎么说","confusable_with":"","why":"看社交平台评论"}
+{"capability_id":"cap-social-search","lang":"zh","query":"看看 Hacker News 上大家怎么评价这次发布","confusable_with":"","why":"看社区评价"}
+{"capability_id":"cap-social-search","lang":"zh","query":"小红书有没有人推荐过这套学习方法","confusable_with":"","why":"找社区推荐"}
+{"capability_id":"cap-social-search","lang":"zh","query":"去掘金看看有没有人写过这个功能的实践帖","confusable_with":"","why":"找社区实践帖"}
+{"capability_id":"cap-social-search","lang":"en","query":"Check the maker forums for mods people have published for this board.","confusable_with":"cap-web-search","why":"finds community-shared content"}
+{"capability_id":"cap-social-search","lang":"en","query":"Find the pinned community post explaining this breaking change.","confusable_with":"","why":"finds community Q&A content"}
+{"capability_id":"cap-social-search","lang":"en","query":"See what members of this Slack workspace are saying about the outage.","confusable_with":"","why":"searches community chatter"}
+{"capability_id":"cap-social-search","lang":"en","query":"Is anyone on this review site complaining about the new interface?","confusable_with":"","why":"finds community reviews"}
+{"capability_id":"cap-social-search","lang":"en","query":"Look through the bug tracker for reports matching this crash.","confusable_with":"","why":"finds community reports"}
+{"capability_id":"cap-social-search","lang":"en","query":"See what contributors on the mailing list say about this proposal.","confusable_with":"","why":"reads community opinions"}
+{"capability_id":"cap-social-search","lang":"en","query":"Find the discussion threads in the project's issue tracker about this refactor.","confusable_with":"","why":"finds community threads"}
+{"capability_id":"cap-social-search","lang":"en","query":"Search for YouTube comment threads discussing this tutorial.","confusable_with":"","why":"searches community comments"}
+{"capability_id":"cap-social-search","lang":"en","query":"See what people on Stack Overflow say about this error.","confusable_with":"","why":"reads community Q&A"}
+{"capability_id":"cap-social-search","lang":"en","query":"Find long-form community answers about this topic.","confusable_with":"","why":"finds community answers"}
+{"capability_id":"cap-social-search","lang":"en","query":"Find the most-liked community posts about this brand.","confusable_with":"","why":"finds community posts"}
+{"capability_id":"cap-social-search","lang":"en","query":"Are there travel-warning posts about this place in forums?","confusable_with":"","why":"finds community warnings"}
+{"capability_id":"cap-social-search","lang":"en","query":"Look for community threads comparing alternatives to this library.","confusable_with":"","why":"finds comparison threads"}
+{"capability_id":"cap-social-search","lang":"en","query":"See how fans reacted to this schedule change on social media.","confusable_with":"","why":"reads social reactions"}
+{"capability_id":"cap-social-search","lang":"en","query":"Find chat messages where someone explained this pricing change.","confusable_with":"","why":"finds community messages"}
+{"capability_id":"cap-social-search","lang":"en","query":"Check the comment sections of this course for feedback.","confusable_with":"","why":"reads community comments"}
+{"capability_id":"cap-social-search","lang":"en","query":"Look for discussions of this framework's performance on developer forums.","confusable_with":"","why":"searches community forums"}
+{"capability_id":"cap-social-search","lang":"en","query":"See what people in the community say about this new regulation.","confusable_with":"","why":"reads community discussion"}
+{"capability_id":"cap-social-search","lang":"en","query":"Find the top reader reviews for this title on community platforms.","confusable_with":"","why":"finds community reviews"}
+{"capability_id":"cap-social-search","lang":"en","query":"Are there community posts recommending this study method?","confusable_with":"","why":"finds community recommendations"}
+{"capability_id":"cap-social-search","lang":"en","query":"Look for posts where users benchmarked this themselves.","confusable_with":"","why":"finds community posts"}
+{"capability_id":"cap-social-search","lang":"en","query":"See the controversy around this rule in community forums.","confusable_with":"","why":"reads community debate"}
+{"capability_id":"cap-social-search","lang":"en","query":"Find threads where people discuss this game's walkthrough.","confusable_with":"","why":"finds community threads"}
+{"capability_id":"cap-social-search","lang":"en","query":"Check Mastodon tags for discussion of this event.","confusable_with":"","why":"searches social-platform tags"}
+{"capability_id":"cap-social-search","lang":"en","query":"Look for \"avoid this\" style community warnings about this destination.","confusable_with":"","why":"finds community warnings"}
+{"capability_id":"cap-social-search","lang":"en","query":"See what the dev community says about this release on social platforms.","confusable_with":"cap-web-search","why":"reads social-platform discussion, not general web results"}
+{"capability_id":"cap-social-search","lang":"en","query":"Find community Q&A threads about this same error message.","confusable_with":"","why":"finds community Q&A"}
+{"capability_id":"cap-social-search","lang":"en","query":"Review community discussions to separate recurring praise from recurring complaints about this product.","confusable_with":"","why":"目标是检索社区讨论并归纳用户对产品的正反反馈。"}
+{"capability_id":"cap-summary","lang":"zh","query":"把这份长合同浓缩成一页纸的要点","confusable_with":"","why":"做内容概括"}
+{"capability_id":"cap-summary","lang":"zh","query":"这篇论文的摘要我懒得看，直接给我结论","confusable_with":"","why":"压缩出结论"}
+{"capability_id":"cap-summary","lang":"zh","query":"用三句话概括这份新闻","confusable_with":"","why":"浓缩成几句"}
+{"capability_id":"cap-summary","lang":"zh","query":"把这堆会议邮件总结成几条待办","confusable_with":"","why":"总结成要点"}
+{"capability_id":"cap-summary","lang":"zh","query":"给我这份技术报告的执行摘要","confusable_with":"cap-artifact","why":"要的是摘要文字，不是另做一份成品文档"}
+{"capability_id":"cap-summary","lang":"zh","query":"把这个季度的客服工单压缩成主要问题","confusable_with":"","why":"压缩为问题清单"}
+{"capability_id":"cap-summary","lang":"zh","query":"用大白话讲讲这份法律文件的意思","confusable_with":"","why":"用简明语言概括"}
+{"capability_id":"cap-summary","lang":"zh","query":"把这份说明书概括成给用户的简短说明","confusable_with":"","why":"概括为简短说明"}
+{"capability_id":"cap-summary","lang":"zh","query":"提炼这份招标文件里的关键条款","confusable_with":"","why":"提炼要点"}
+{"capability_id":"cap-summary","lang":"zh","query":"把这段访谈浓缩成要点列表","confusable_with":"cap-mindmap","why":"要的是要点列表而非结构图"}
+{"capability_id":"cap-summary","lang":"zh","query":"给我这份研究的一页纸摘要","confusable_with":"","why":"做一页摘要"}
+{"capability_id":"cap-summary","lang":"zh","query":"把这篇长文砍成核心几句","confusable_with":"","why":"压缩到核心"}
+{"capability_id":"cap-summary","lang":"zh","query":"帮我用一段话概括这次评审的结论","confusable_with":"","why":"概括结论"}
+{"capability_id":"cap-summary","lang":"zh","query":"把这份年报的要点提炼成提纲","confusable_with":"cap-mindmap","why":"产出文字提纲，不是层级图"}
+{"capability_id":"cap-summary","lang":"zh","query":"这份规范太长，给我一个精简版","confusable_with":"","why":"产出精简版本"}
+{"capability_id":"cap-summary","lang":"zh","query":"把这几封邮件的主要诉求总结一下","confusable_with":"","why":"总结主要诉求"}
+{"capability_id":"cap-summary","lang":"zh","query":"提炼这份调研里最值得注意的发现","confusable_with":"","why":"提炼发现"}
+{"capability_id":"cap-summary","lang":"zh","query":"给我这组数据的文字结论，不用表格","confusable_with":"","why":"给出文字结论"}
+{"capability_id":"cap-summary","lang":"zh","query":"把这份复盘浓缩成经验教训几条","confusable_with":"","why":"浓缩为要点"}
+{"capability_id":"cap-summary","lang":"zh","query":"用简单的话总结这份保险条款","confusable_with":"","why":"简单语言概括"}
+{"capability_id":"cap-summary","lang":"zh","query":"把这份长篇报道浓缩成摘要","confusable_with":"","why":"浓缩成摘要"}
+{"capability_id":"cap-summary","lang":"zh","query":"提炼这次访谈对话里的核心观点","confusable_with":"","why":"提炼观点"}
+{"capability_id":"cap-summary","lang":"zh","query":"给我这份文档的 TL;DR","confusable_with":"","why":"给极简摘要"}
+{"capability_id":"cap-summary","lang":"zh","query":"把这份纪要总结成决议清单","confusable_with":"","why":"总结成清单"}
+{"capability_id":"cap-summary","lang":"zh","query":"把这篇综述的核心结论抽出来","confusable_with":"","why":"抽取核心结论"}
+{"capability_id":"cap-summary","lang":"en","query":"There are sixty pages of vendor replies; give me a one-line verdict on each.","confusable_with":"","why":"condenses many replies"}
+{"capability_id":"cap-summary","lang":"en","query":"I only care about the limitations section — compress it to a couple of lines.","confusable_with":"","why":"compresses one section"}
+{"capability_id":"cap-summary","lang":"en","query":"This changelog is enormous; tell me which change actually matters.","confusable_with":"","why":"condenses to the significant item"}
+{"capability_id":"cap-summary","lang":"en","query":"Reduce this year's security advisories to the ones that affect us.","confusable_with":"","why":"condenses a list to the relevant items"}
+{"capability_id":"cap-summary","lang":"en","query":"Turn this three-hour webinar transcript into the five points I should remember.","confusable_with":"","why":"condenses a transcript into points"}
+{"capability_id":"cap-summary","lang":"en","query":"Summarise this bug report's comment thread into what the fix turned out to be.","confusable_with":"","why":"condenses a thread to the outcome"}
+{"capability_id":"cap-summary","lang":"en","query":"Boil this ninety-minute podcast episode down to its main argument.","confusable_with":"","why":"condenses a podcast"}
+{"capability_id":"cap-summary","lang":"en","query":"Compress this design document into the decisions that were actually made.","confusable_with":"","why":"condenses to decisions"}
+{"capability_id":"cap-summary","lang":"en","query":"Pull the headline numbers out of this quarterly earnings call.","confusable_with":"","why":"extracts the headline figures"}
+{"capability_id":"cap-summary","lang":"en","query":"Give me a short digest of this year's customer-survey free-text answers.","confusable_with":"","why":"condenses free-text responses"}
+{"capability_id":"cap-summary","lang":"en","query":"Turn this pile of standup notes into what's blocked and what moved.","confusable_with":"","why":"condenses into status points"}
+{"capability_id":"cap-summary","lang":"en","query":"Reduce this doctoral thesis to its contribution in one paragraph.","confusable_with":"","why":"condenses to the contribution"}
+{"capability_id":"cap-summary","lang":"en","query":"Reduce this onboarding handbook to the first-week checklist.","confusable_with":"","why":"condenses a handbook"}
+{"capability_id":"cap-summary","lang":"en","query":"Distil this patent into the problem it solves.","confusable_with":"","why":"condenses to the problem solved"}
+{"capability_id":"cap-summary","lang":"en","query":"This accessibility audit is long; give me only the critical findings.","confusable_with":"","why":"condenses to critical findings"}
+{"capability_id":"cap-summary","lang":"en","query":"Condense this support escalation into the customer's core complaint.","confusable_with":"","why":"condenses to the core complaint"}
+{"capability_id":"cap-summary","lang":"en","query":"Turn this conference keynote into its main thesis.","confusable_with":"","why":"condenses a keynote"}
+{"capability_id":"cap-summary","lang":"en","query":"Give me the takeaway from this hundred-slide investor deck.","confusable_with":"","why":"condenses a deck to a takeaway"}
+{"capability_id":"cap-summary","lang":"en","query":"Summarise this news investigation into the central allegation.","confusable_with":"","why":"condenses an investigation"}
+{"capability_id":"cap-summary","lang":"en","query":"Compress this grant proposal into the ask and the justification.","confusable_with":"","why":"condenses a proposal"}
+{"capability_id":"cap-summary","lang":"en","query":"Boil this code review thread down to the blocking issues.","confusable_with":"","why":"condenses a review thread"}
+{"capability_id":"cap-summary","lang":"en","query":"Reduce this fifty-page environmental assessment to the main objections.","confusable_with":"","why":"condenses to the objections"}
+{"capability_id":"cap-summary","lang":"en","query":"Summarise this legal opinion into its reasoning.","confusable_with":"","why":"condenses a legal opinion"}
+{"capability_id":"cap-summary","lang":"en","query":"Condense this two-hundred-page bill into what it actually changes.","confusable_with":"","why":"condenses a bill"}
+{"capability_id":"cap-summary","lang":"en","query":"Condense this test plan into the risks it leaves uncovered.","confusable_with":"","why":"condenses a test plan"}
+{"capability_id":"cap-translate","lang":"zh","query":"把这张菜单上的菜名翻成中文，客人要看","confusable_with":"","why":"翻译文本"}
+{"capability_id":"cap-translate","lang":"zh","query":"这句日语字幕帮我译成中文字幕","confusable_with":"","why":"翻译字幕"}
+{"capability_id":"cap-translate","lang":"zh","query":"帮我把这条推文翻成中文","confusable_with":"","why":"翻译一条文本"}
+{"capability_id":"cap-translate","lang":"zh","query":"这个俄语报错信息翻译一下","confusable_with":"","why":"翻译报错文本"}
+{"capability_id":"cap-translate","lang":"zh","query":"把这条合同条款译成中文，别改数字","confusable_with":"cap-read-document","why":"要译文，不是读懂文档"}
+{"capability_id":"cap-translate","lang":"zh","query":"这首诗的原文帮我翻成中文，尽量保留意境","confusable_with":"","why":"翻译诗歌"}
+{"capability_id":"cap-translate","lang":"zh","query":"这句德语谚语对应的中文说法是什么","confusable_with":"","why":"翻译习语"}
+{"capability_id":"cap-translate","lang":"zh","query":"药品说明书上的英文帮我译成中文","confusable_with":"","why":"翻译说明书文本"}
+{"capability_id":"cap-translate","lang":"zh","query":"这个 app 界面的荷兰语翻成中文","confusable_with":"","why":"翻译界面文字"}
+{"capability_id":"cap-translate","lang":"zh","query":"帮我把简历上的英文翻译成中文","confusable_with":"","why":"翻译简历文字"}
+{"capability_id":"cap-translate","lang":"zh","query":"这句意大利语歌词译成中文，要押韵","confusable_with":"","why":"翻译歌词"}
+{"capability_id":"cap-translate","lang":"zh","query":"电影里这段法语对白帮我翻译","confusable_with":"","why":"翻译对白"}
+{"capability_id":"cap-translate","lang":"zh","query":"产品标签上的波兰文译成中文","confusable_with":"","why":"翻译标签文本"}
+{"capability_id":"cap-translate","lang":"zh","query":"这台设备的德语操作提示翻译一下","confusable_with":"","why":"翻译提示文字"}
+{"capability_id":"cap-translate","lang":"zh","query":"把这份葡萄牙语证书译成中文","confusable_with":"cap-read-document","why":"要译文"}
+{"capability_id":"cap-translate","lang":"zh","query":"这封阿拉伯语来信翻成中文","confusable_with":"","why":"翻译来信"}
+{"capability_id":"cap-translate","lang":"zh","query":"这道菜的越南语做法帮我翻译","confusable_with":"","why":"翻译做法文字"}
+{"capability_id":"cap-translate","lang":"zh","query":"论文摘要是瑞典语的，译成中文","confusable_with":"cap-summary","why":"要逐句译文，不是概括摘要"}
+{"capability_id":"cap-translate","lang":"zh","query":"把这段专利摘要从德语译成中文","confusable_with":"","why":"翻译专利摘要"}
+{"capability_id":"cap-translate","lang":"zh","query":"泰语评论帮我翻译成中文","confusable_with":"","why":"翻译评论"}
+{"capability_id":"cap-translate","lang":"zh","query":"把这段希腊语引文译成英文","confusable_with":"","why":"翻译引文"}
+{"capability_id":"cap-translate","lang":"zh","query":"这份土耳其语的合同附件翻译一下","confusable_with":"","why":"翻译附件文字"}
+{"capability_id":"cap-translate","lang":"zh","query":"希伯来语的路牌帮我翻译","confusable_with":"","why":"翻译路牌文字"}
+{"capability_id":"cap-translate","lang":"zh","query":"把这段芬兰语新闻译成中文","confusable_with":"","why":"翻译新闻"}
+{"capability_id":"cap-translate","lang":"zh","query":"这个丹麦语的按钮文字是什么意思，翻成中文","confusable_with":"","why":"翻译界面文字"}
+{"capability_id":"cap-translate","lang":"zh","query":"这首韩语歌词翻成中文给我看","confusable_with":"","why":"翻译歌词"}
+{"capability_id":"cap-translate","lang":"en","query":"Translate this warranty card from Spanish for me.","confusable_with":"","why":"translates text"}
+{"capability_id":"cap-translate","lang":"en","query":"Put this Norwegian museum placard into English.","confusable_with":"","why":"translates sign text"}
+{"capability_id":"cap-translate","lang":"en","query":"Translate this Bengali form letter into English.","confusable_with":"","why":"translates a letter"}
+{"capability_id":"cap-translate","lang":"en","query":"What does this Tagalog voicemail transcription say in English?","confusable_with":"","why":"translates spoken text"}
+{"capability_id":"cap-translate","lang":"en","query":"Translate this Czech tenancy form into English.","confusable_with":"","why":"translates a form"}
+{"capability_id":"cap-translate","lang":"en","query":"Translate this Persian greeting card into English.","confusable_with":"","why":"translates a short text"}
+{"capability_id":"cap-translate","lang":"en","query":"Translate this Nepali folk song into English.","confusable_with":"","why":"translates a song"}
+{"capability_id":"cap-translate","lang":"en","query":"Put this Estonian safety notice into English.","confusable_with":"","why":"translates a notice"}
+{"capability_id":"cap-translate","lang":"en","query":"Translate this Georgian warranty sheet into English.","confusable_with":"","why":"translates a document"}
+{"capability_id":"cap-translate","lang":"en","query":"Translate this Romanian employment record into English.","confusable_with":"","why":"translates a record"}
+{"capability_id":"cap-translate","lang":"en","query":"Translate this Icelandic lullaby into English.","confusable_with":"","why":"translates lyrics"}
+{"capability_id":"cap-translate","lang":"en","query":"Translate this Tamil oral-history excerpt into English.","confusable_with":"","why":"translates an excerpt"}
+{"capability_id":"cap-translate","lang":"en","query":"Turn this Croatian delivery note into English.","confusable_with":"","why":"translates a note"}
+{"capability_id":"cap-translate","lang":"en","query":"Translate this Bulgarian product insert into English.","confusable_with":"","why":"translates an insert"}
+{"capability_id":"cap-translate","lang":"en","query":"Render this Malay invitation in English.","confusable_with":"","why":"translates a document"}
+{"capability_id":"cap-translate","lang":"en","query":"Translate this Punjabi email thread into English.","confusable_with":"","why":"translates correspondence"}
+{"capability_id":"cap-translate","lang":"en","query":"Translate this Filipino auction notice into English.","confusable_with":"","why":"translates a notice"}
+{"capability_id":"cap-translate","lang":"en","query":"Put this Slovenian earnings release into English.","confusable_with":"","why":"translates a release"}
+{"capability_id":"cap-translate","lang":"en","query":"Translate this Slovak safety data sheet into English.","confusable_with":"","why":"translates a datasheet"}
+{"capability_id":"cap-translate","lang":"en","query":"Translate this Indonesian complaint email into English.","confusable_with":"","why":"translates an email"}
+{"capability_id":"cap-translate","lang":"en","query":"Put this Latin motto into English.","confusable_with":"","why":"translates a motto"}
+{"capability_id":"cap-translate","lang":"en","query":"Translate this Serbian insurance schedule into English.","confusable_with":"","why":"translates a schedule"}
+{"capability_id":"cap-translate","lang":"en","query":"Translate this Amharic street sign.","confusable_with":"","why":"translates sign text"}
+{"capability_id":"cap-translate","lang":"en","query":"Translate this Lithuanian press circular into English.","confusable_with":"","why":"translates a circular"}
+{"capability_id":"cap-translate","lang":"en","query":"What do these Uzbek form labels mean?","confusable_with":"","why":"translates UI labels"}
+{"capability_id":"cap-vision","lang":"zh","query":"这张 X 光片帮我看看有没有明显异常","confusable_with":"","why":"理解图片内容"}
+{"capability_id":"cap-vision","lang":"zh","query":"这个面包的营养成分表帮我读一下","confusable_with":"cap-pdf-extract-text","why":"读的是一张图片，不是提取文档文字"}
+{"capability_id":"cap-vision","lang":"zh","query":"这张地铁线路图告诉我怎么换乘最快","confusable_with":"","why":"分析图片里的路线"}
+{"capability_id":"cap-vision","lang":"zh","query":"这幅画的构图帮我分析一下","confusable_with":"","why":"分析图像内容"}
+{"capability_id":"cap-vision","lang":"zh","query":"这个电路图里电流怎么走的","confusable_with":"","why":"解读图像结构"}
+{"capability_id":"cap-vision","lang":"zh","query":"这张座位表看看我们几个坐哪","confusable_with":"","why":"从图中读信息"}
+{"capability_id":"cap-vision","lang":"zh","query":"帮我读一下这张收据上的总额和日期","confusable_with":"cap-pdf-extract-text","why":"读图片中的文字"}
+{"capability_id":"cap-vision","lang":"zh","query":"这张演奏谱是什么调性的","confusable_with":"","why":"解读图像内容"}
+{"capability_id":"cap-vision","lang":"zh","query":"这个仪表盘截图里的告警有几个","confusable_with":"","why":"看截图里的信息"}
+{"capability_id":"cap-vision","lang":"zh","query":"这张信息图里主要讲了什么","confusable_with":"","why":"理解信息图"}
+{"capability_id":"cap-vision","lang":"zh","query":"看看这张地图上的等高线，坡度大概多少","confusable_with":"","why":"分析地图图像"}
+{"capability_id":"cap-vision","lang":"zh","query":"这张监控画面里有人经过吗","confusable_with":"","why":"分析图像内容"}
+{"capability_id":"cap-vision","lang":"zh","query":"帮我解读这张化验单上的指标","confusable_with":"cap-read-document","why":"图片中的单据，看的是图"}
+{"capability_id":"cap-vision","lang":"zh","query":"这张手写便条写的是什么","confusable_with":"","why":"识别图片文字"}
+{"capability_id":"cap-vision","lang":"zh","query":"这个二维码扫出来指向哪里","confusable_with":"","why":"解读图像"}
+{"capability_id":"cap-vision","lang":"zh","query":"这张装配图里零件是怎么装的","confusable_with":"","why":"理解图示"}
+{"capability_id":"cap-vision","lang":"zh","query":"看看这张海报的排版有什么问题","confusable_with":"","why":"评估图像设计"}
+{"capability_id":"cap-vision","lang":"zh","query":"这张走势图最近一周是涨还是跌","confusable_with":"","why":"读图表趋势"}
+{"capability_id":"cap-vision","lang":"zh","query":"帮我读出这张机票上的航班和时间","confusable_with":"cap-pdf-extract-text","why":"看图片取信息"}
+{"capability_id":"cap-vision","lang":"zh","query":"这张户型图里主卧在哪边","confusable_with":"","why":"理解平面图"}
+{"capability_id":"cap-vision","lang":"zh","query":"看看这张菜谱图里的步骤编号","confusable_with":"","why":"读图片中的编号"}
+{"capability_id":"cap-vision","lang":"zh","query":"这个化学结构式是什么化合物","confusable_with":"","why":"解读结构图"}
+{"capability_id":"cap-vision","lang":"zh","query":"这张考勤表里谁缺勤了","confusable_with":"","why":"从图中读记录"}
+{"capability_id":"cap-vision","lang":"zh","query":"帮我看看这张心电图有没有异常波形","confusable_with":"","why":"分析图像波形"}
+{"capability_id":"cap-vision","lang":"zh","query":"这张包装盒上的生产日期是哪天","confusable_with":"","why":"读图片文字"}
+{"capability_id":"cap-vision","lang":"zh","query":"这个界面截图里按钮为什么是灰的","confusable_with":"","why":"看截图分析"}
+{"capability_id":"cap-vision","lang":"zh","query":"这张流程图里判断框有几个分支","confusable_with":"","why":"解读流程图"}
+{"capability_id":"cap-vision","lang":"zh","query":"帮我识别这张名片上的联系方式","confusable_with":"","why":"读图片信息"}
+{"capability_id":"cap-vision","lang":"zh","query":"这张成绩单里总分是多少","confusable_with":"cap-read-document","why":"读的是图片版成绩单"}
+{"capability_id":"cap-vision","lang":"en","query":"This wiring schematic is dense; trace which breaker feeds the kitchen outlets.","confusable_with":"","why":"interprets a diagram image"}
+{"capability_id":"cap-vision","lang":"en","query":"There's a wine label in this photo; tell me the region and the vintage.","confusable_with":"cap-pdf-extract-text","why":"reads text off a label photo"}
+{"capability_id":"cap-vision","lang":"en","query":"Read the parking sign in this picture and say when the restriction applies.","confusable_with":"cap-pdf-extract-text","why":"reads text off a sign photo"}
+{"capability_id":"cap-vision","lang":"en","query":"This knit pattern chart is confusing; explain how the repeats line up.","confusable_with":"","why":"interprets a pattern chart"}
+{"capability_id":"cap-vision","lang":"en","query":"What blood pressure reading does this monitor photo show?","confusable_with":"","why":"reads a value off a device photo"}
+{"capability_id":"cap-vision","lang":"en","query":"Tell me the load rating from the markings on this tire sidewall.","confusable_with":"cap-pdf-extract-text","why":"reads markings off an image"}
+{"capability_id":"cap-vision","lang":"en","query":"This packing slip has a mismatch; find the line item that doesn't add up.","confusable_with":"","why":"inspects a document image"}
+{"capability_id":"cap-vision","lang":"en","query":"Show me the fingerings in this guitar chord chart.","confusable_with":"","why":"interprets a chart image"}
+{"capability_id":"cap-vision","lang":"en","query":"This shelf planogram — which products sit on the top row?","confusable_with":"","why":"reads a layout image"}
+{"capability_id":"cap-vision","lang":"en","query":"What does the placard next to this exhibit say about the artist?","confusable_with":"cap-pdf-extract-text","why":"reads text off an image"}
+{"capability_id":"cap-vision","lang":"en","query":"Read the fuel pump display and tell me the total and the litres.","confusable_with":"","why":"reads numbers off a display photo"}
+{"capability_id":"cap-vision","lang":"en","query":"This spectrogram — is there a strong tone near the low end?","confusable_with":"","why":"interprets a plot image"}
+{"capability_id":"cap-vision","lang":"en","query":"Check the solar inverter label and tell me the rated output.","confusable_with":"cap-pdf-extract-text","why":"reads text off a label photo"}
+{"capability_id":"cap-vision","lang":"en","query":"From this seed packet photo, what are the planting depth and spacing?","confusable_with":"","why":"reads instructions off a package image"}
+{"capability_id":"cap-vision","lang":"en","query":"The care label uses symbols only; tell me what wash setting it wants.","confusable_with":"","why":"interprets symbols on an image"}
+{"capability_id":"cap-vision","lang":"en","query":"This chess score sheet — whose move is it next?","confusable_with":"cap-pdf-extract-text","why":"reads a record from an image"}
+{"capability_id":"cap-vision","lang":"en","query":"Read the boarding gate off this departure-board photo.","confusable_with":"","why":"reads a field off a board photo"}
+{"capability_id":"cap-vision","lang":"en","query":"This hotel folio — list the room charges and the taxes separately.","confusable_with":"","why":"reads items off a document image"}
+{"capability_id":"cap-vision","lang":"en","query":"What temperature is shown on this oven dial photo?","confusable_with":"","why":"reads a value off a dial photo"}
+{"capability_id":"cap-vision","lang":"en","query":"This blueprint shows a section view; what's the wall thickness?","confusable_with":"","why":"interprets a drawing image"}
+{"capability_id":"cap-vision","lang":"en","query":"Tell me the dosage schedule printed on this pill bottle label.","confusable_with":"cap-pdf-extract-text","why":"reads text off a label photo"}
+{"capability_id":"cap-vision","lang":"en","query":"This trail marker photo — how far to the next shelter?","confusable_with":"","why":"reads text off a sign photo"}
+{"capability_id":"cap-vision","lang":"en","query":"Read the barcode number off this package photo.","confusable_with":"cap-pdf-extract-text","why":"reads a code off an image"}
+{"capability_id":"cap-vision","lang":"en","query":"This circuit board silkscreen — what revision number is printed?","confusable_with":"cap-pdf-extract-text","why":"reads markings off a board photo"}
+{"capability_id":"cap-vision","lang":"en","query":"From this wedding invitation photo, give me the date and the venue.","confusable_with":"","why":"reads fields off an image"}
+{"capability_id":"cap-vision","lang":"en","query":"This weather-station gauge — what's the current humidity?","confusable_with":"","why":"reads a value off a gauge photo"}
+{"capability_id":"cap-vision","lang":"en","query":"What's the total distance shown on this bike computer photo?","confusable_with":"","why":"reads a value off a device photo"}
+{"capability_id":"cap-vision","lang":"en","query":"This station timetable board — which platform does my train leave from?","confusable_with":"","why":"reads a field off a board photo"}
+{"capability_id":"cap-vision","lang":"en","query":"Read the serial number and model off this appliance nameplate.","confusable_with":"cap-pdf-extract-text","why":"reads markings off a nameplate photo"}
+{"capability_id":"cap-web-search","lang":"zh","query":"帮我查一下这个算法最早是谁提出的","confusable_with":"","why":"公开信息检索"}
+{"capability_id":"cap-web-search","lang":"zh","query":"上网看看这个标准最新版是哪一年的","confusable_with":"","why":"检索公开信息"}
+{"capability_id":"cap-web-search","lang":"zh","query":"搜一下这家公司的注册地在哪","confusable_with":"","why":"查公开信息"}
+{"capability_id":"cap-web-search","lang":"zh","query":"查一下明天这个城市的天气","confusable_with":"","why":"检索公开信息"}
+{"capability_id":"cap-web-search","lang":"zh","query":"帮我找一下这个 API 的官方文档地址","confusable_with":"cap-rag-search","why":"找的是公开文档，不是自有资料"}
+{"capability_id":"cap-web-search","lang":"zh","query":"搜一下这款手机的当前售价","confusable_with":"","why":"查公开价格"}
+{"capability_id":"cap-web-search","lang":"zh","query":"上网查这个历史事件发生的具体日期","confusable_with":"","why":"检索公开史实"}
+{"capability_id":"cap-web-search","lang":"zh","query":"查一下这道题的答案网上的说法","confusable_with":"","why":"检索公开解答"}
+{"capability_id":"cap-web-search","lang":"zh","query":"搜一下这个病的最新治疗方案","confusable_with":"","why":"检索公开医学信息"}
+{"capability_id":"cap-web-search","lang":"zh","query":"帮我查这个国家的签证要求","confusable_with":"","why":"查公开规定"}
+{"capability_id":"cap-web-search","lang":"zh","query":"上网搜一下这道菜的正宗做法","confusable_with":"","why":"检索公开做法"}
+{"capability_id":"cap-web-search","lang":"zh","query":"查一下这个软件最近一次更新了什么","confusable_with":"","why":"检索公开发布说明"}
+{"capability_id":"cap-web-search","lang":"zh","query":"搜一下这个论文的正式发表页面","confusable_with":"","why":"检索公开出版物"}
+{"capability_id":"cap-web-search","lang":"zh","query":"帮我查一下这个条约的现行条款","confusable_with":"","why":"检索公开条文"}
+{"capability_id":"cap-web-search","lang":"zh","query":"上网看看这个术语的标准定义","confusable_with":"","why":"检索公开定义"}
+{"capability_id":"cap-web-search","lang":"zh","query":"查一下这个展会今年的举办时间","confusable_with":"","why":"检索公开日程"}
+{"capability_id":"cap-web-search","lang":"zh","query":"搜一下这个城市的常住人口是多少","confusable_with":"","why":"检索公开统计"}
+{"capability_id":"cap-web-search","lang":"zh","query":"帮我查这个航班有没有延误","confusable_with":"","why":"检索公开航班信息"}
+{"capability_id":"cap-web-search","lang":"zh","query":"上网查一下这款材料的耐温范围","confusable_with":"","why":"检索公开参数"}
+{"capability_id":"cap-web-search","lang":"zh","query":"搜一下这个法案通过了吗","confusable_with":"","why":"检索公开新闻"}
+{"capability_id":"cap-web-search","lang":"zh","query":"查一下这个物种的学名是什么","confusable_with":"","why":"检索公开资料"}
+{"capability_id":"cap-web-search","lang":"zh","query":"帮我找一下这个考试的报名入口","confusable_with":"","why":"查公开信息"}
+{"capability_id":"cap-web-search","lang":"zh","query":"上网搜一下这个型号的停产时间","confusable_with":"","why":"检索公开信息"}
+{"capability_id":"cap-web-search","lang":"zh","query":"查一下这个奖项今年的得主是谁","confusable_with":"","why":"检索公开新闻"}
+{"capability_id":"cap-web-search","lang":"zh","query":"搜一下这条新闻的原始报道","confusable_with":"cap-social-search","why":"找的是公开报道，不是社交讨论"}
+{"capability_id":"cap-web-search","lang":"zh","query":"帮我查一下这个产品的召回公告","confusable_with":"","why":"检索公开公告"}
+{"capability_id":"cap-web-search","lang":"en","query":"What's the current exchange rate between these two currencies?","confusable_with":"","why":"looks up public data"}
+{"capability_id":"cap-web-search","lang":"en","query":"Find out whether this medication needs a prescription.","confusable_with":"","why":"looks up public information"}
+{"capability_id":"cap-web-search","lang":"en","query":"When does the museum open on Sundays?","confusable_with":"","why":"looks up a public schedule"}
+{"capability_id":"cap-web-search","lang":"en","query":"What year was this bridge built?","confusable_with":"","why":"looks up a public fact"}
+{"capability_id":"cap-web-search","lang":"en","query":"Look up the licensing requirements for electricians in this state.","confusable_with":"","why":"looks up public regulations"}
+{"capability_id":"cap-web-search","lang":"en","query":"What's the sunset time here this evening?","confusable_with":"","why":"looks up public information"}
+{"capability_id":"cap-web-search","lang":"en","query":"Find the score of last night's match.","confusable_with":"","why":"looks up a public result"}
+{"capability_id":"cap-web-search","lang":"en","query":"Look up the tuition for this university's master's programme.","confusable_with":"","why":"looks up a public fee"}
+{"capability_id":"cap-web-search","lang":"en","query":"Is this road closed for repairs right now?","confusable_with":"","why":"looks up a public status"}
+{"capability_id":"cap-web-search","lang":"en","query":"Find the contact number for this government office.","confusable_with":"","why":"looks up public contact details"}
+{"capability_id":"cap-web-search","lang":"en","query":"What's the typical salary for this job title in this city?","confusable_with":"","why":"looks up public statistics"}
+{"capability_id":"cap-web-search","lang":"en","query":"When is this film released in cinemas?","confusable_with":"","why":"looks up a public release date"}
+{"capability_id":"cap-web-search","lang":"en","query":"Look up how long a passport takes to renew.","confusable_with":"","why":"looks up a public procedure"}
+{"capability_id":"cap-web-search","lang":"en","query":"What are the entry requirements for this national park?","confusable_with":"","why":"looks up public rules"}
+{"capability_id":"cap-web-search","lang":"en","query":"Find out which airline operates this route.","confusable_with":"","why":"looks up public information"}
+{"capability_id":"cap-web-search","lang":"en","query":"Who is the current prime minister of this country?","confusable_with":"","why":"looks up a public fact"}
+{"capability_id":"cap-web-search","lang":"en","query":"Look up the bus schedule between these two towns.","confusable_with":"","why":"looks up a public timetable"}
+{"capability_id":"cap-web-search","lang":"en","query":"What's the alcohol limit for drivers here?","confusable_with":"","why":"looks up a public rule"}
+{"capability_id":"cap-web-search","lang":"en","query":"Does this software still support this operating system?","confusable_with":"","why":"looks up public compatibility info"}
+{"capability_id":"cap-web-search","lang":"en","query":"Find the opening date announced for this store.","confusable_with":"","why":"looks up a public announcement"}
+{"capability_id":"cap-web-search","lang":"en","query":"Look up the ingredients listed for this food additive.","confusable_with":"","why":"looks up a public reference"}
+{"capability_id":"cap-web-search","lang":"en","query":"What's the maximum weight for checked baggage on this airline?","confusable_with":"","why":"looks up a public policy"}
+{"capability_id":"cap-web-search","lang":"en","query":"Find the application deadline for this scholarship.","confusable_with":"","why":"looks up a public deadline"}
+{"capability_id":"cap-web-search","lang":"en","query":"Look up the rules for bringing food across this border.","confusable_with":"","why":"looks up public rules"}
+{"capability_id":"cap-web-search","lang":"en","query":"Find the current interest rate this bank offers on savings.","confusable_with":"","why":"looks up a public rate"}

@@ -1,0 +1,150 @@
+{"capability_id":"cap-add-term","lang":"zh","query":"这个词以后还要反复用，收进我的专业词汇里吧","confusable_with":"","why":"需要把术语保存到词汇库而不是修改文件"}
+{"capability_id":"cap-add-term","lang":"zh","query":"把“向量检索”存进我的术语表，后面写方案要用","confusable_with":"","why":"需要新增词汇条目而不是编辑文档内容"}
+{"capability_id":"cap-add-term","lang":"zh","query":"我在整理项目术语，这个新表达帮我加入词库","confusable_with":"cap-edit-file","why":"需要维护词汇库而不是改现有文件"}
+{"capability_id":"cap-add-term","lang":"zh","query":"这个缩写也请记到项目的词汇清单里","confusable_with":"","why":"需要把表达加入词汇域而不是执行命令"}
+{"capability_id":"cap-add-term","lang":"zh","query":"以后做模型评测会用到这个说法，帮我存一下","confusable_with":"cap-edit-file","why":"需要保存一个术语而不是修改原文件"}
+{"capability_id":"cap-add-term","lang":"en","query":"Please save this phrase in my technical glossary for later.","confusable_with":"","why":"the request adds a vocabulary entry rather than changing a file"}
+{"capability_id":"cap-add-term","lang":"en","query":"Add “vector index” to my project terminology list.","confusable_with":"","why":"the task is to register a term in the vocabulary"}
+{"capability_id":"cap-add-term","lang":"en","query":"I’m maintaining a terminology list for the team; put this new expression in it.","confusable_with":"cap-edit-file","why":"the request updates the glossary rather than file contents"}
+{"capability_id":"cap-add-term","lang":"en","query":"Keep this concept in my research vocabulary so I can reuse the wording later.","confusable_with":"","why":"the action is adding a reusable term to the vocabulary"}
+{"capability_id":"cap-artifact","lang":"zh","query":"这次内部评审已经结束，帮我把 Research OS 的产出整理成正式 PDF 供归档。","confusable_with":"cap-summary","why":"需要生成正式 PDF 交付物，而不是只提炼研究内容。"}
+{"capability_id":"cap-artifact","lang":"zh","query":"请把已审阅的研究包按正式出版格式编译成 PDF，引用和图表都保留。","confusable_with":"cap-slides","why":"目标是编译正式研究 PDF，而不是制作演示文稿。"}
+{"capability_id":"cap-artifact","lang":"zh","query":"我需要给合作方一份成品文件，把当前研究交付包做成可分发的正式 PDF。","confusable_with":"cap-summary","why":"需要可分发的正式 PDF 文件，而不是摘要。"}
+{"capability_id":"cap-artifact","lang":"zh","query":"这份研究包已经通过 review，给它生成一份用于长期归档的正式 PDF。","confusable_with":"cap-slides","why":"请求的是归档版研究 PDF，而不是 slide deck。"}
+{"capability_id":"cap-artifact","lang":"zh","query":"把最终审阅过的章节、图表和参考文献编排成一份完整的研究 PDF。","confusable_with":"cap-summary","why":"需要把完整研究材料编译成正式 PDF，而不是压缩成摘要。"}
+{"capability_id":"cap-artifact","lang":"en","query":"The study has cleared internal review; package the deliverable as the archival PDF for circulation.","confusable_with":"cap-summary","why":"The request is for a formal PDF deliverable rather than a condensed summary."}
+{"capability_id":"cap-artifact","lang":"en","query":"Please typeset the approved research package into a formal PDF with its references intact.","confusable_with":"cap-slides","why":"The requested output is a formal research PDF, not a presentation deck."}
+{"capability_id":"cap-artifact","lang":"en","query":"I need a distribution-ready document from the reviewed research bundle; compile it as a PDF.","confusable_with":"cap-summary","why":"The task is to produce the final PDF document rather than summarize the bundle."}
+{"capability_id":"cap-artifact","lang":"en","query":"The manuscript and figures are settled; build the formal PDF edition from the current research package.","confusable_with":"cap-slides","why":"The request asks for a formal PDF edition, not slides."}
+{"capability_id":"cap-bash","lang":"zh","query":"在工作区跑一下这个安装脚本，把终端输出贴给我","confusable_with":"cap-read-file","why":"需要执行脚本而不是读取文件内容"}
+{"capability_id":"cap-bash","lang":"zh","query":"执行一下这个 shell 命令，看看返回码是多少","confusable_with":"","why":"需要运行命令而不是编辑或查看文件"}
+{"capability_id":"cap-bash","lang":"zh","query":"帮我在当前沙盒里跑个 Python 小脚本","confusable_with":"","why":"需要实际执行脚本"}
+{"capability_id":"cap-bash","lang":"zh","query":"把测试命令跑一遍，失败的话把报错带回来","confusable_with":"","why":"需要执行测试命令而不是只查看日志"}
+{"capability_id":"cap-bash","lang":"zh","query":"在项目环境里运行这个构建指令，等它结束再告诉我结果","confusable_with":"","why":"需要运行构建命令而不是改文件"}
+{"capability_id":"cap-bash","lang":"en","query":"Run the setup script in the workspace and show me the terminal output.","confusable_with":"cap-read-file","why":"the request is to execute a script rather than inspect it"}
+{"capability_id":"cap-bash","lang":"en","query":"Execute this shell command and tell me its exit status.","confusable_with":"","why":"the requested action is command execution"}
+{"capability_id":"cap-bash","lang":"en","query":"Please run the small Python script in the sandbox.","confusable_with":"","why":"the task explicitly asks to execute code"}
+{"capability_id":"cap-bash","lang":"en","query":"Run the test command once and bring back any errors it produces.","confusable_with":"","why":"the request is to execute the test command"}
+{"capability_id":"cap-create-folder","lang":"zh","query":"在工作区根目录下新建一个叫 draft-assets 的文件夹","confusable_with":"","why":"需要创建新目录而不是修改文件"}
+{"capability_id":"cap-create-folder","lang":"zh","query":"给这次实验建个单独的 logs 子目录","confusable_with":"cap-bash","why":"需要新建目录而不是运行 mkdir 命令本身"}
+{"capability_id":"cap-create-folder","lang":"zh","query":"请创建一个名为 eval_cache 的目录，放后面的中间结果","confusable_with":"","why":"目标是创建文件夹"}
+{"capability_id":"cap-create-folder","lang":"zh","query":"在当前项目里加一个 reports/2026 子文件夹","confusable_with":"","why":"需要建立目录层级"}
+{"capability_id":"cap-create-folder","lang":"zh","query":"帮我准备一个空文件夹放这批验证产物","confusable_with":"","why":"需要创建文件夹而不是编辑已有文件"}
+{"capability_id":"cap-create-folder","lang":"en","query":"Create a folder named staging-results in the workspace.","confusable_with":"","why":"the requested operation is creating a new directory"}
+{"capability_id":"cap-create-folder","lang":"en","query":"Make a separate directory for the experiment outputs here.","confusable_with":"","why":"the task is to create a folder"}
+{"capability_id":"cap-create-folder","lang":"en","query":"Please add a new subfolder called archived-runs under the reports directory.","confusable_with":"","why":"the request creates a directory hierarchy"}
+{"capability_id":"cap-create-folder","lang":"en","query":"Set up an empty folder where I can keep the validation artifacts.","confusable_with":"","why":"the requested action is folder creation rather than file editing"}
+{"capability_id":"cap-edit-file","lang":"zh","query":"把配置文件里的旧端口号改成新的端口，其他内容别动","confusable_with":"cap-bash","why":"需要修改现有文件内容而不是执行命令"}
+{"capability_id":"cap-edit-file","lang":"zh","query":"在这个 Markdown 文档末尾补一段安装说明","confusable_with":"","why":"目标是编辑已有文件"}
+{"capability_id":"cap-edit-file","lang":"zh","query":"把 README 里的项目名称统一成 Delveta","confusable_with":"","why":"需要修改文件内容而不是创建目录"}
+{"capability_id":"cap-edit-file","lang":"zh","query":"把 JSON 配置中的 timeout 改成 30 秒","confusable_with":"cap-read-file","why":"需要更新现有配置文件"}
+{"capability_id":"cap-edit-file","lang":"zh","query":"帮我把这份脚本里的默认路径替换掉，保留其余逻辑","confusable_with":"","why":"需要编辑文件中的文本内容"}
+{"capability_id":"cap-edit-file","lang":"en","query":"Change the deprecated API endpoint in the config file and leave everything else untouched.","confusable_with":"cap-bash","why":"the request is to modify existing file contents"}
+{"capability_id":"cap-edit-file","lang":"en","query":"Append the missing setup note to the end of this Markdown file.","confusable_with":"","why":"the task edits an existing file"}
+{"capability_id":"cap-edit-file","lang":"en","query":"Update the project name throughout the README.","confusable_with":"","why":"the requested action is content modification"}
+{"capability_id":"cap-edit-file","lang":"en","query":"A configuration comment still describes the deprecated retry behavior; revise that sentence to match the current policy.","confusable_with":"cap-read-file","why":"The user asks to change existing file content rather than merely inspect it."}
+{"capability_id":"cap-mindmap","lang":"zh","query":"把这批研究笔记的概念关系画成一张知识树","confusable_with":"","why":"需要生成思维导图而不是文字摘要"}
+{"capability_id":"cap-mindmap","lang":"zh","query":"从这些项目文档里梳理出一张层级式思维导图","confusable_with":"","why":"目标是组织成知识树"}
+{"capability_id":"cap-mindmap","lang":"zh","query":"我想看清这几个模块之间的从属关系，做成 mind map 吧","confusable_with":"cap-summary","why":"需要视觉化层级关系而不是写摘要"}
+{"capability_id":"cap-mindmap","lang":"zh","query":"把工作区里的资料整理成一张 Mermaid 思维导图","confusable_with":"","why":"需要生成 mind map"}
+{"capability_id":"cap-mindmap","lang":"en","query":"Turn these project notes into a hierarchical mind map.","confusable_with":"","why":"the desired output is a knowledge tree"}
+{"capability_id":"cap-mindmap","lang":"en","query":"I’m trying to understand how the modules depend on one another; turn those relationships into a mind map.","confusable_with":"cap-summary","why":"The requested output is a visual relationship map rather than a prose summary."}
+{"capability_id":"cap-mindmap","lang":"en","query":"Could you organize these files into a Mermaid knowledge tree?","confusable_with":"cap-summary","why":"the task is to build a mind map"}
+{"capability_id":"cap-mindmap","lang":"en","query":"I need a visual hierarchy of the topics covered by this research set.","confusable_with":"","why":"the requested artifact is a mind map of the topics"}
+{"capability_id":"cap-pdf-extract-text","lang":"zh","query":"这份 PDF 我只要完整原文，按页面顺序把文字全部抽出来","confusable_with":"","why":"需要提取整个 PDF 的原始文字而不是只取表格"}
+{"capability_id":"cap-pdf-extract-text","lang":"zh","query":"把这份扫描报告里的可用文字全部导成纯文本，别做总结","confusable_with":"cap-read-document","why":"需要输出原始文本而不是理解内容"}
+{"capability_id":"cap-pdf-extract-text","lang":"zh","query":"从这个合同 PDF 里导出全文，段落顺序尽量保持原样","confusable_with":"","why":"需要抽取文档全文"}
+{"capability_id":"cap-pdf-extract-text","lang":"zh","query":"这本手册太长了，先给我一个包含全部正文的 txt 版本","confusable_with":"","why":"需要获取完整文本而不是回答文档问题"}
+{"capability_id":"cap-pdf-extract-text","lang":"en","query":"Export the complete text of this PDF as plain text, preserving the reading order.","confusable_with":"","why":"the task is full raw text extraction"}
+{"capability_id":"cap-pdf-extract-text","lang":"en","query":"I need the entire body text from this PDF, not an explanation of what it says.","confusable_with":"cap-read-document","why":"the request asks for raw document text rather than comprehension"}
+{"capability_id":"cap-pdf-extract-text","lang":"en","query":"Pull all readable text from the contract PDF into a text file.","confusable_with":"","why":"the requested output is the full extracted text"}
+{"capability_id":"cap-pdf-extract-text","lang":"en","query":"Give me the raw textual contents of this handbook from start to finish.","confusable_with":"","why":"the task is to extract the document text"}
+{"capability_id":"cap-pdf-table-to-text","lang":"zh","query":"只把这份 PDF 里的统计表提出来，行列关系要保持不变","confusable_with":"","why":"需要提取表格并保留结构而不是导出全文"}
+{"capability_id":"cap-pdf-table-to-text","lang":"zh","query":"把财务报表中的表格转成 CSV，单元格位置不能乱","confusable_with":"","why":"需要做表格结构化提取"}
+{"capability_id":"cap-pdf-table-to-text","lang":"zh","query":"这份合同里有价格表，帮我单独转成可编辑的表格","confusable_with":"cap-pdf-extract-text","why":"需要提取表格而不是整份正文"}
+{"capability_id":"cap-pdf-table-to-text","lang":"zh","query":"从 PDF 里只抽销售明细表的数据，不要带正文","confusable_with":"","why":"需要只处理 PDF 表格"}
+{"capability_id":"cap-pdf-table-to-text","lang":"en","query":"Extract only the tables from this PDF and preserve their rows and columns.","confusable_with":"","why":"the request targets PDF tables rather than the full document"}
+{"capability_id":"cap-pdf-table-to-text","lang":"en","query":"Convert the financial tables in this PDF into CSV without changing the cell layout.","confusable_with":"","why":"the task is structured table extraction"}
+{"capability_id":"cap-pdf-table-to-text","lang":"en","query":"Pull the pricing tables out of the PDF as editable tabular data.","confusable_with":"cap-pdf-extract-text","why":"the request asks for tables only rather than all text"}
+{"capability_id":"cap-pdf-table-to-text","lang":"en","query":"I only need the tabular sections from this report in spreadsheet-ready form.","confusable_with":"","why":"the desired output is structured table data"}
+{"capability_id":"cap-rag-search","lang":"zh","query":"在我上传的项目资料里找一下关于缓存失效策略的说明","confusable_with":"","why":"需要检索用户自己的资料而不是公开网页"}
+{"capability_id":"cap-rag-search","lang":"zh","query":"从我导入的文档中查部署回滚的步骤，找原文相关段落","confusable_with":"","why":"需要在导入材料中检索信息"}
+{"capability_id":"cap-rag-search","lang":"zh","query":"帮我搜一下工作区资料里有没有提到多租户隔离","confusable_with":"cap-web-search","why":"目标是搜索已有材料而不是互联网"}
+{"capability_id":"cap-rag-search","lang":"zh","query":"在刚上传的几份报告里找和模型量化有关的内容","confusable_with":"","why":"需要检索用户提供的文档库"}
+{"capability_id":"cap-rag-search","lang":"zh","query":"从我的研究资料中翻出所有讲评测基线的地方","confusable_with":"cap-social-search","why":"需要搜索个人材料而不是社交平台"}
+{"capability_id":"cap-rag-search","lang":"en","query":"Search my uploaded project materials for the section on cache invalidation.","confusable_with":"","why":"the request targets the user's imported materials"}
+{"capability_id":"cap-rag-search","lang":"en","query":"Look through my document library for the rollback procedure and relevant passages.","confusable_with":"","why":"the task is retrieval from user-provided documents"}
+{"capability_id":"cap-rag-search","lang":"en","query":"Find mentions of tenant isolation in the files I imported.","confusable_with":"cap-web-search","why":"the search is over the user's own materials"}
+{"capability_id":"cap-rag-search","lang":"en","query":"Search the reports I uploaded for discussion of model quantization.","confusable_with":"","why":"the requested source is the user's document collection"}
+{"capability_id":"cap-read-document","lang":"zh","query":"读一下这份研究报告，然后告诉我作者对实验结果的主要解释","confusable_with":"","why":"需要理解文档内容并回答问题"}
+{"capability_id":"cap-read-document","lang":"zh","query":"帮我看完这个方案，重点说说它为什么选择这种架构","confusable_with":"cap-pdf-extract-text","why":"需要阅读并解释文档而不是导出原文"}
+{"capability_id":"cap-read-document","lang":"zh","query":"根据这份会议纪要，告诉我最后定下来的时间表是什么","confusable_with":"","why":"需要从文档内容中回答具体问题"}
+{"capability_id":"cap-read-document","lang":"zh","query":"把这份技术设计通读一遍，再指出其中最关键的限制","confusable_with":"cap-read-file","why":"需要理解结构化文档内容"}
+{"capability_id":"cap-read-document","lang":"zh","query":"我想知道这篇报告的结论是怎么一步步得出来的，帮我读一下","confusable_with":"","why":"需要阅读和理解文档"}
+{"capability_id":"cap-read-document","lang":"en","query":"Read the research report and explain the reasoning behind its main conclusion.","confusable_with":"","why":"the task requires understanding the document"}
+{"capability_id":"cap-read-document","lang":"en","query":"Go through this technical proposal and tell me why the architecture was chosen.","confusable_with":"cap-pdf-extract-text","why":"the user wants document comprehension rather than raw text export"}
+{"capability_id":"cap-read-document","lang":"en","query":"Based on the meeting notes, what deadline did the team finally agree on?","confusable_with":"","why":"the answer must come from understanding the document"}
+{"capability_id":"cap-read-document","lang":"en","query":"Read the design document and point out the most important constraints it describes.","confusable_with":"cap-read-file","why":"the task is structured document understanding"}
+{"capability_id":"cap-read-file","lang":"zh","query":"把工作区里 config/app.yaml 的内容读给我看，不要改它","confusable_with":"","why":"需要读取本地工作区文件而不是编辑它"}
+{"capability_id":"cap-read-file","lang":"zh","query":"打开 src/router.py，我想检查里面现在写了什么","confusable_with":"cap-edit-file","why":"需要查看文件内容而不是修改文件"}
+{"capability_id":"cap-read-file","lang":"zh","query":"请读取这个项目下的 LICENSE 文件原文","confusable_with":"","why":"需要读取本地文件"}
+{"capability_id":"cap-read-file","lang":"zh","query":"把 tests/fixtures/sample.json 打开看看里面有哪些字段","confusable_with":"cap-read-document","why":"需要按路径读取工作区文件"}
+{"capability_id":"cap-read-file","lang":"zh","query":"帮我查看一下当前目录里的环境配置文件内容，保持原样","confusable_with":"","why":"需要读取已有文件"}
+{"capability_id":"cap-read-file","lang":"en","query":"Read the contents of config/app.yaml from the workspace without changing it.","confusable_with":"cap-edit-file","why":"the request is to inspect a workspace-local file"}
+{"capability_id":"cap-read-file","lang":"en","query":"I need the exact contents of pyproject.toml before reviewing the build settings.","confusable_with":"cap-edit-file","why":"The request is to inspect a workspace-local file without changing it."}
+{"capability_id":"cap-read-file","lang":"en","query":"Show me the original text of the LICENSE file in this project.","confusable_with":"","why":"the requested operation is file reading"}
+{"capability_id":"cap-read-file","lang":"en","query":"Inspect tests/fixtures/sample.json and tell me which fields it contains.","confusable_with":"cap-read-document","why":"the user asks to read a file by workspace path"}
+{"capability_id":"cap-slides","lang":"zh","query":"把这份调研材料做成一套十页左右的汇报 PPT","confusable_with":"","why":"需要生成演示文稿而不是文字摘要"}
+{"capability_id":"cap-slides","lang":"zh","query":"给产品评审准备一版 16:9 的演示稿，重点突出结论","confusable_with":"","why":"需要产出 slide deck"}
+{"capability_id":"cap-slides","lang":"zh","query":"把这些实验结果整理成适合现场讲解的幻灯片","confusable_with":"cap-artifact","why":"需要生成演示文稿而不是正式研究 PDF"}
+{"capability_id":"cap-slides","lang":"zh","query":"帮我把这份方案改造成一套可以直接汇报的 PowerPoint","confusable_with":"cap-mindmap","why":"目标是生成演示文稿"}
+{"capability_id":"cap-slides","lang":"en","query":"Turn these research findings into a concise presentation deck for the review meeting.","confusable_with":"","why":"the requested output is a slide deck rather than a prose summary"}
+{"capability_id":"cap-slides","lang":"en","query":"Build a 16:9 slide presentation from these experiment results.","confusable_with":"","why":"the task explicitly asks for slides"}
+{"capability_id":"cap-slides","lang":"en","query":"Create a PowerPoint-style deck that walks the team through this proposal.","confusable_with":"cap-artifact","why":"the requested artifact is a presentation rather than a publication PDF"}
+{"capability_id":"cap-slides","lang":"en","query":"I need a set of slides for presenting the evaluation results to the client.","confusable_with":"","why":"the output is a presentation deck"}
+{"capability_id":"cap-slides","lang":"en","query":"Make the project update into a polished deck with clear section breaks.","confusable_with":"cap-mindmap","why":"the request is for slides rather than a knowledge tree"}
+{"capability_id":"cap-social-search","lang":"zh","query":"去 Reddit 看看开发者最近怎么讨论这个框架的兼容性问题","confusable_with":"cap-web-search","why":"需要搜索社交平台上的用户讨论"}
+{"capability_id":"cap-social-search","lang":"zh","query":"帮我找找社区里有没有人踩过类似的部署坑","confusable_with":"","why":"目标是查看社交社区经验而不是普通网页"}
+{"capability_id":"cap-social-search","lang":"zh","query":"看看 Hacker News 上大家对这个工具的真实反馈","confusable_with":"cap-web-search","why":"需要检索社交平台上的讨论和意见"}
+{"capability_id":"cap-social-search","lang":"zh","query":"我想知道 Reddit 用户推荐哪些替代方案，帮我搜一下","confusable_with":"","why":"需要获取社区推荐和观点"}
+{"capability_id":"cap-social-search","lang":"en","query":"Search Reddit for developers discussing compatibility problems with this framework.","confusable_with":"cap-web-search","why":"the request targets a social platform discussion"}
+{"capability_id":"cap-social-search","lang":"en","query":"See whether people in the community have reported the same deployment issue.","confusable_with":"","why":"the task is to find user discussions and experiences"}
+{"capability_id":"cap-social-search","lang":"en","query":"Check developer forums for first-hand reports about migrating away from this library.","confusable_with":"cap-web-search","why":"The request specifically seeks community experiences rather than general public-web documentation."}
+{"capability_id":"cap-social-search","lang":"en","query":"Find Reddit threads where people compare alternatives to this library.","confusable_with":"","why":"the task is social-platform search"}
+{"capability_id":"cap-social-search","lang":"en","query":"I want community opinions on whether this workflow is reliable; check Reddit.","confusable_with":"cap-web-search","why":"the request asks for social user opinions"}
+{"capability_id":"cap-summary","lang":"zh","query":"把这批研究材料压缩成一份带关键结论的简明摘要","confusable_with":"","why":"需要概括研究材料而不是生成其他形式的产物"}
+{"capability_id":"cap-summary","lang":"zh","query":"帮我从这些文档里提炼主要发现和证据线索","confusable_with":"","why":"需要总结可用材料的重点"}
+{"capability_id":"cap-summary","lang":"zh","query":"给我一页纸的研究要点，保留引用位置","confusable_with":"","why":"需要输出 grounded summary"}
+{"capability_id":"cap-summary","lang":"zh","query":"读完这些资料后，整理出项目当前最重要的几条结论","confusable_with":"","why":"需要把材料压缩成摘要"}
+{"capability_id":"cap-summary","lang":"en","query":"Condense these research notes into a brief summary with the main findings.","confusable_with":"","why":"the task is to summarize the available research"}
+{"capability_id":"cap-summary","lang":"en","query":"Extract the key takeaways from this collection of study materials.","confusable_with":"","why":"the requested output is a grounded summary"}
+{"capability_id":"cap-summary","lang":"en","query":"Give me a one-page overview of the research, keeping the citation references.","confusable_with":"","why":"the request asks for a concise research summary"}
+{"capability_id":"cap-summary","lang":"en","query":"Summarize the evidence across these documents and highlight the central conclusions.","confusable_with":"","why":"the goal is to condense the research material"}
+{"capability_id":"cap-translate","lang":"zh","query":"把这封西班牙语邮件译成中文，保留称呼和段落层级","confusable_with":"cap-read-document","why":"需要把文本转换到另一种语言而不是解释邮件"}
+{"capability_id":"cap-translate","lang":"zh","query":"这段德语采访稿帮我翻成自然的英文，语气别太生硬","confusable_with":"","why":"需要在不同语言之间进行翻译"}
+{"capability_id":"cap-translate","lang":"zh","query":"请把附件里的日文合同翻译成中文，条款编号保持不变","confusable_with":"cap-read-document","why":"需要跨语言翻译而不是阅读理解"}
+{"capability_id":"cap-translate","lang":"zh","query":"把下面的法语说明译成英文，技术术语尽量保持一致","confusable_with":"","why":"需要输出另一语言的版本"}
+{"capability_id":"cap-translate","lang":"en","query":"Translate this German product note into English while keeping the technical terms consistent.","confusable_with":"","why":"the request is cross-language translation"}
+{"capability_id":"cap-translate","lang":"en","query":"Please render the Japanese instructions in natural Chinese without changing the section order.","confusable_with":"cap-read-document","why":"the task is to translate into another language"}
+{"capability_id":"cap-translate","lang":"en","query":"Put this French customer message into clear English and preserve its paragraph breaks.","confusable_with":"","why":"the requested transformation changes the language"}
+{"capability_id":"cap-translate","lang":"en","query":"Translate the Korean release notes into Chinese, keeping the version labels intact.","confusable_with":"","why":"the request is for a different-language version"}
+{"capability_id":"cap-translate","lang":"en","query":"Convert the Italian policy excerpt into plain English without changing its meaning.","confusable_with":"cap-summary","why":"the user asks for translation rather than a summary"}
+{"capability_id":"cap-vision","lang":"zh","query":"看一下这张产品截图，告诉我右上角那个报错提示是什么意思","confusable_with":"","why":"需要分析图像内容而不是读取文字文档"}
+{"capability_id":"cap-vision","lang":"zh","query":"这张折线图的走势有什么明显变化，帮我解读一下","confusable_with":"","why":"需要理解图表视觉信息"}
+{"capability_id":"cap-vision","lang":"zh","query":"我拍了一张白板照片，帮我把上面的结构关系说清楚","confusable_with":"cap-read-document","why":"需要分析照片中的视觉结构"}
+{"capability_id":"cap-vision","lang":"zh","query":"看看这张流程图，指出哪个环节和其他模块连得最多","confusable_with":"","why":"需要分析图像中的图形关系"}
+{"capability_id":"cap-vision","lang":"zh","query":"这张发票照片里有没有明显的金额或日期异常，帮我看一下","confusable_with":"","why":"需要分析图片中的视觉信息"}
+{"capability_id":"cap-vision","lang":"en","query":"What stands out in this dashboard screenshot, especially in the upper-right panel?","confusable_with":"","why":"the task requires visual analysis of a screenshot"}
+{"capability_id":"cap-vision","lang":"en","query":"Interpret the trend shown in this line chart and describe the main change.","confusable_with":"","why":"the request is to analyze a chart image"}
+{"capability_id":"cap-vision","lang":"en","query":"I took a photo of a whiteboard; explain the structure of the diagram on it.","confusable_with":"cap-read-document","why":"the task depends on understanding a visual diagram"}
+{"capability_id":"cap-vision","lang":"en","query":"Look at this flowchart and identify the step with the most outgoing connections.","confusable_with":"","why":"the request is image-based diagram analysis"}
+{"capability_id":"cap-vision","lang":"en","query":"Check this photo of a receipt for any obvious amount or date anomalies.","confusable_with":"","why":"the user asks for visual inspection of an image"}
+{"capability_id":"cap-web-search","lang":"zh","query":"去网上查一下这个开源项目最近的版本变更","confusable_with":"","why":"需要搜索公开互联网信息而不是用户自己的资料"}
+{"capability_id":"cap-web-search","lang":"zh","query":"帮我搜公开网页，看看今年这个领域有哪些新的基准数据集","confusable_with":"","why":"需要检索公共网页"}
+{"capability_id":"cap-web-search","lang":"zh","query":"查一下最近关于这家公司的官方公告","confusable_with":"cap-social-search","why":"需要获取公开网页上的最新信息"}
+{"capability_id":"cap-web-search","lang":"zh","query":"上网找几个权威来源，对比一下这个标准目前的最新规定","confusable_with":"cap-rag-search","why":"需要搜索互联网公开资料而不是导入文件"}
+{"capability_id":"cap-web-search","lang":"en","query":"Search the public web for the latest release notes from this open-source project.","confusable_with":"","why":"the request targets current public web information"}
+{"capability_id":"cap-web-search","lang":"en","query":"Look online for recent benchmark datasets published in this area.","confusable_with":"","why":"the task is public web search"}
+{"capability_id":"cap-web-search","lang":"en","query":"Find the company's latest official announcement on the web.","confusable_with":"cap-social-search","why":"the requested source is the public internet rather than social discussion"}
+{"capability_id":"cap-web-search","lang":"en","query":"Search authoritative websites to see what the current version of this standard requires.","confusable_with":"cap-rag-search","why":"the task is to retrieve information from public web sources"}
+{"capability_id":"cap-web-search","lang":"en","query":"Check online sources for recent changes to this specification.","confusable_with":"","why":"the requested source is external web information"}
