@@ -357,22 +357,24 @@ def _certify(requirements, entry, args, *, facts, view, trace, capture):
 
 
 def _acquisition_hop(requirements, deps, entry, *, facts, view, trace, capture):
-    """Argument Path Router hop for a DECIDED capability (Phase 4 Step 2).
+    """Argument Path Router hop for a DECIDED capability (Phase 4 Step 2/3).
 
     The capability is already pinned (Matcher HIT or cap_router SELECTED); this
     node decides HOW its arguments are acquired — NEVER re-selecting it. The ARP
     inputs come from the injected seam (``deps.acquisition_inputs``); absent →
     the capability is acquisition-undeclared → Agent (§G).
 
-    Step 2 boundary: CONTEXT_DIRECT reuses the existing Binder/certified handoff
-    (consuming ONLY the supplied system values — no merge, no new validation);
-    every MODEL strategy (QUERY_TO_QWEN / QUERY_PLUS_5_USER_TURNS / MIXED)
-    requires the Qwen extractor, which is not wired in this step, so it exits to
+    CONTEXT_DIRECT reuses the existing Binder/certified handoff, consuming ONLY
+    the supplied system values (no merge, no new validation). MIXED (Step 3)
+    merges the system values with the injected MODEL values (§B/§F) and hands the
+    merged draft to the SAME Binder/certified handoff. The MODEL strategies that
+    need Qwen (QUERY_TO_QWEN / QUERY_PLUS_5_USER_TURNS) are not wired and exit to
     the Agent. MISSING (no legal value) likewise exits to the Agent."""
     from .argument_acquisition import path_router
     from .argument_acquisition.contract import (
         STRATEGY_CONTEXT_DIRECT,
         STRATEGY_MISSING,
+        STRATEGY_MIXED,
     )
 
     provider = getattr(deps, "acquisition_inputs", None)
@@ -380,6 +382,9 @@ def _acquisition_hop(requirements, deps, entry, *, facts, view, trace, capture):
     declaration = dict(inputs.declaration) if inputs else {}
     evidence = dict(inputs.evidence) if inputs else {}
     system_values = dict(inputs.system_values) if inputs else {}
+    system_sources = dict(inputs.system_sources) if inputs else {}
+    model_values = dict(inputs.model_values) if inputs else {}
+    model_source = str(inputs.model_source or "") if inputs else ""
     decision = path_router.route(entry.parameters, declaration,
                                  evidence=evidence, system_values=system_values)
     if capture is not None:
@@ -399,15 +404,34 @@ def _acquisition_hop(requirements, deps, entry, *, facts, view, trace, capture):
     if decision.strategy == STRATEGY_MISSING:
         trace["fallback"] = REASON_ACQUISITION_MISSING
         return None
-    if decision.strategy != STRATEGY_CONTEXT_DIRECT:
-        # A MODEL acquisition need: Qwen is not wired in this step -> Agent.
-        trace["fallback"] = REASON_ACQUISITION_MODEL_PENDING
-        return None
-    # CONTEXT_DIRECT: all required slots are deterministically ready and no MODEL
-    # acquisition is needed. Consume ONLY the legal system values supplied via
-    # the seam; the existing Binder resolves context slots and validates.
-    return _certify(requirements, entry, system_values, facts=facts, view=view,
-                    trace=trace, capture=capture)
+    if decision.strategy == STRATEGY_CONTEXT_DIRECT:
+        # All required slots are deterministically ready and no MODEL acquisition
+        # is needed. Consume ONLY the legal system values supplied via the seam;
+        # the existing Binder resolves context slots and validates.
+        return _certify(requirements, entry, system_values, facts=facts,
+                        view=view, trace=trace, capture=capture)
+    if decision.strategy == STRATEGY_MIXED:
+        # MIXED (Step 3): the system side and the MODEL side merge into ONE draft
+        # (§B) with per-slot provenance; the SAME existing Binder then validates
+        # it — the system value wins on any collision and provenance records the
+        # ACTUAL source each side was resolved from.
+        from .argument_acquisition import merge as merge_mod
+
+        merged = merge_mod.merge(system_values, model_values,
+                                 declaration=declaration,
+                                 system_sources=system_sources,
+                                 model_source=model_source)
+        if capture is not None:  # telemetry only; the action schema is unchanged
+            capture["acquisition"]["provenance"] = [
+                {"slot": p.slot, "source": p.source, "produced_by": p.produced_by}
+                for p in merged.provenance
+            ]
+        return _certify(requirements, entry, merged.args, facts=facts,
+                        view=view, trace=trace, capture=capture)
+    # QUERY_TO_QWEN / QUERY_PLUS_5_USER_TURNS: a MODEL acquisition need whose
+    # Qwen extractor is not wired -> Agent.
+    trace["fallback"] = REASON_ACQUISITION_MODEL_PENDING
+    return None
 
 
 def certified(requirements, entry, args, registry_fp, *,
