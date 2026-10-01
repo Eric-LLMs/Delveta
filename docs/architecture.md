@@ -6248,4 +6248,213 @@ error analysis, invalid runs and lessons learned — lives in
 records only the stable architectural facts; the benchmark detail is deliberately
 not duplicated here.
 
+## Recall Top-1 / Top-3 and Threshold
+
+Recall is responsible for **high-recall candidate retrieval**, not final capability discrimination.
+
+For each query, Recall first produces a **raw ranking**: an ordered list of candidate capabilities ranked by similarity score. This raw ranking is produced **before** the quality threshold is applied.
+
+The Recall layer therefore has two stages, and they must remain separate:
+
+1. **Stage 1 — Raw Recall Ranking**: an ordered candidate list produced **before** any threshold filtering. Raw Top-1 / Top-3 are positions in this raw ranking.
+2. **Stage 2 — Recall Quality Gate**: admission of a ranked candidate into the downstream candidate pool, based on its similarity score.
+
+These two stages are independent. Raw Top-1 / Top-3 must never be recomputed after threshold filtering.
+
+### Stage 1 — Raw Recall Ranking
+
+On the 900-query evaluation set:
+
+| Metric                                                   |     Count |  Ratio |
+| :------------------------------------------------------- | --------: | -----: |
+| Recall raw Top-1 coverage — gold capability ranked #1    | 684 / 900 | 76.00% |
+| Recall raw Top-3 coverage — gold capability ranked #1–#3 | 847 / 900 | 94.11% |
+
+**Top-1 coverage** measures how often Recall itself ranks the correct capability first.
+
+**Top-3 coverage** measures how often the correct capability is already within the candidate range that can be passed to the downstream capability discriminator.
+
+The difference between the two is intentional: Recall does not need to make the final capability decision when several plausible candidates exist. Its responsibility is to keep the correct capability within a sufficiently small candidate set for the next stage.
+
+### Stage 2 — Recall Quality Gate
+
+After raw ranking, Recall applies a similarity quality gate:
+
+```text
+candidate is admitted
+    only if
+similarity score >= threshold
+```
+
+The adopted production threshold is:
+
+> **Recall threshold = 0.60**
+
+The threshold is a **quality gate**, not a capability selector. A higher threshold removes more low-similarity candidates but can also remove the correct capability before it reaches the downstream discriminator. A lower threshold preserves more potentially correct capabilities but admits more non-action candidates.
+
+The threshold sweep is evaluated using two independent dimensions:
+
+| Threshold | Action Recall Coverage Top-1 | Action Recall Coverage Top-3 | Non-Action False Admission Top-1 | Non-Action False Admission Top-3 |
+| --------: | ---------------------------: | ---------------------------: | -------------------------------: | -------------------------------: |
+|      0.55 |                        75.7% |                        92.9% |                            71.2% |                            71.2% |
+|      0.56 |                        75.7% |                        92.8% |                            69.2% |                            69.2% |
+|      0.57 |                        75.4% |                        92.6% |                            63.5% |                            63.5% |
+|      0.58 |                        75.0% |                        91.9% |                            63.5% |                            63.5% |
+|      0.59 |                        74.3% |                        91.1% |                            59.6% |                            59.6% |
+|  **0.60** |                    **74.1%** |                    **90.6%** |                        **55.8%** |                        **55.8%** |
+|      0.61 |                        72.4% |                        88.1% |                            55.8% |                            55.8% |
+|      0.62 |                        71.2% |                        85.1% |                            55.8% |                            55.8% |
+|      0.63 |                        69.4% |                        82.4% |                            50.0% |                            50.0% |
+|      0.64 |                        67.1% |                        78.4% |                            44.2% |                            44.2% |
+|      0.65 |                        65.0% |                        75.3% |                            42.3% |                            42.3% |
+|      0.66 |                        62.7% |                        72.3% |                            34.6% |                            34.6% |
+|      0.67 |                        59.2% |                        67.7% |                            30.8% |                            30.8% |
+|      0.68 |                        55.1% |                        62.2% |                            26.9% |                            26.9% |
+|      0.69 |                        50.1% |                        55.2% |                            25.0% |                            25.0% |
+|      0.70 |                        46.1% |                        50.4% |                            19.2% |                            19.2% |
+|      0.71 |                        41.4% |                        44.3% |                            15.4% |                            15.4% |
+|      0.72 |                        36.0% |                        38.3% |                            13.5% |                            13.5% |
+|      0.73 |                        32.1% |                        33.7% |                            13.5% |                            13.5% |
+|      0.74 |                        28.2% |                        29.4% |                            11.5% |                            11.5% |
+|      0.75 |                        23.9% |                        24.7% |                             7.7% |                             7.7% |
+|      0.76 |                        19.7% |                        20.3% |                             7.7% |                             7.7% |
+|      0.77 |                        16.0% |                        16.6% |                             7.7% |                             7.7% |
+|      0.78 |                        12.3% |                        12.8% |                             3.8% |                             3.8% |
+|      0.79 |                         9.6% |                         9.8% |                             1.9% |                             1.9% |
+|      0.80 |                         7.1% |                         7.2% |                             1.9% |                             1.9% |
+|      0.81 |                         5.1% |                         5.2% |                             1.9% |                             1.9% |
+|      0.82 |                         3.4% |                         3.6% |                             1.9% |                             1.9% |
+|      0.83 |                         2.4% |                         2.6% |                             1.9% |                             1.9% |
+|      0.84 |                         1.7% |                         1.8% |                             1.9% |                             1.9% |
+|      0.85 |                         1.2% |                         1.3% |                             0.0% |                             0.0% |
+|      0.86 |                         0.9% |                         1.0% |                             0.0% |                             0.0% |
+|      0.87 |                         0.6% |                         0.6% |                             0.0% |                             0.0% |
+
+**Action Recall Coverage Top-1** is the fraction of action queries for which the gold capability is raw-ranked at #1 and its similarity score passes the threshold.
+
+**Action Recall Coverage Top-3** is the fraction of action queries for which the gold capability is raw-ranked within #1–#3 and its similarity score passes the threshold.
+
+**Non-Action False Admission Top-1** is the fraction of curated non-action queries for which the raw Top-1 candidate passes the threshold and is therefore incorrectly admitted as an action candidate.
+
+**Non-Action False Admission Top-3** is the fraction of curated non-action queries for which at least one raw Top-3 candidate passes the threshold and is therefore incorrectly admitted as an action candidate.
+
+The threshold therefore controls the trade-off between **Action Recall Coverage** and **Non-Action False Admission**. The selected value is **0.60** — the architecture's adopted design decision, not a mathematically optimal or globally optimal threshold.
+
+---
+
+## Unrecalled Capability Handling
+
+When the correct capability does not reach the downstream candidate pool, the problem is treated as a **Recall semantic coverage** problem.
+
+There are two relevant cases:
+
+1. The correct capability is not sufficiently high in the raw Recall ranking.
+2. The correct capability is present in the raw ranking but does not pass the Recall similarity threshold.
+
+In either case, the downstream capability discriminator cannot recover a capability that was not admitted into its candidate pool.
+
+The defined remedy is to expand Recall's semantic coverage by adding **high-quality similar queries / paraphrases** for the affected capability.
+
+The purpose of these additional queries is to make the capability more likely to be represented by an appropriate semantic match and therefore enter the downstream candidate pool.
+
+This is a Recall coverage problem and is not solved by changing the Laya capability-selection model.
+
+---
+
+## Top-3 Candidates → Laya
+
+Recall and Laya have separate responsibilities.
+
+**Recall is responsible for retrieving a high-recall candidate pool. Laya is responsible for discriminating among the retrieved candidates and selecting the capability.**
+
+After threshold admission and candidate aggregation/normalization, Recall passes at most **Top-3 candidates** to Laya.
+
+The use of Top-3 is an architectural boundary rather than merely an evaluation metric:
+
+```text
+Query
+  ↓
+Recall raw ranking
+  ↓
+Threshold admission
+  ↓
+Candidate aggregation / normalization
+  ↓
+Top-3 candidates
+  ↓
+Laya capability discrimination
+  ↓
+Selected capability
+```
+
+The 900-query Recall evaluation shows that the correct capability is within the raw Top-3 in:
+
+> **847 / 900 = 94.11%**
+
+This means the Top-3 candidate boundary captures the correct capability for the large majority of queries before the final capability-discrimination step.
+
+LayaChoice-v1 was evaluated under the same three-candidate capability-selection setting, with a frozen capability-selection Top-1 accuracy of:
+
+> **93.56%**
+
+This metric means that, when the candidate capability is within Laya's three-candidate input range, Laya selects the correct capability with **93.56% Top-1 accuracy**.
+
+The two metrics measure different stages:
+
+```text
+Recall raw Top-3 coverage
+= whether the correct capability reaches the Laya candidate range
+
+Laya 93.56%
+= whether Laya selects the correct capability from that candidate range
+```
+
+They are therefore **not the same metric and must not be treated as interchangeable**.
+
+Laya does not perform Recall, threshold filtering, parameter extraction, Binder validation, or Tool execution. Its responsibility is limited to **capability discrimination within the provided candidate set**.
+
+---
+
+## Candidate Cardinality Routing
+
+After threshold admission and candidate aggregation / normalization, let `K` be the number of surviving candidate capabilities. Routing is determined solely by `K`:
+
+| `K` | Routing |
+| :----: | :------ |
+| `K = 0` | No candidate survives → **Agent** fallback. |
+| `K = 1` | Capability is already uniquely determined → enter the **Argument Path** directly; **Laya is not invoked**. |
+| `K = 2–3` | All candidates are passed to **Laya** for capability discrimination. |
+| `K >= 4` | Apply **normalization / Top-3** first, then pass the Top-3 candidates to **Laya**. |
+
+If Laya fails — unavailable, times out, returns malformed output, or selects a capability outside the provided candidate set — the request falls back to **Agent**.
+
+`K` always denotes the candidate capability count **after** threshold admission and aggregation / normalization, never the size of the raw ranking.
+
+---
+
+## Laya Responsibility Boundary
+
+Laya's responsibility is exactly:
+
+```text
+candidate capabilities → selected capability
+```
+
+Laya does **not** perform:
+
+- Recall
+- threshold filtering
+- candidate aggregation
+- parameter extraction
+- Binder validation
+- Tool execution
+
+Stated as a division of labour:
+
+- **Recall** retrieves candidates.
+- **Laya** selects the capability among the candidates.
+- The **Argument Path / Qwen / Binder / Executor** stages handle argument acquisition and execution.
+
+A Recall coverage failure is therefore not a Laya failure, and a Laya failure is not a Recall coverage failure; the two must not be conflated.
+
 [↑ Back to top](#table-of-contents)
