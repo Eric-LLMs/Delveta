@@ -6303,7 +6303,7 @@ The threshold is a **quality gate**, not a capability selector. A higher thresho
 
 The threshold sweep is evaluated using two independent dimensions:
 
-| Threshold | Action Recall Coverage Top-1 | Action Recall Coverage Top-3 | Non-Action False Admission Top-1 | Non-Action False Admission Top-3 |
+| Threshold | Action Recall@1 | Action Recall@3 | Non-Action FA@1 | Non-Action FA@3 |
 | --------: | ---------------------------: | ---------------------------: | -------------------------------: | -------------------------------: |
 |      0.55 |                        75.7% |                        92.9% |                            71.2% |                            71.2% |
 |      0.56 |                        75.7% |                        92.8% |                            69.2% |                            69.2% |
@@ -6339,13 +6339,13 @@ The threshold sweep is evaluated using two independent dimensions:
 |      0.86 |                         0.9% |                         1.0% |                             0.0% |                             0.0% |
 |      0.87 |                         0.6% |                         0.6% |                             0.0% |                             0.0% |
 
-**Action Recall Coverage Top-1** is the fraction of action queries for which the gold capability is raw-ranked at #1 and its similarity score passes the threshold.
+**Action Recall@1** is the fraction of action queries for which the gold capability is raw-ranked at #1 and its similarity score passes the threshold.
 
-**Action Recall Coverage Top-3** is the fraction of action queries for which the gold capability is raw-ranked within #1–#3 and its similarity score passes the threshold.
+**Action Recall@3** is the fraction of action queries for which the gold capability is raw-ranked within #1–#3 and its similarity score passes the threshold.
 
-**Non-Action False Admission Top-1** is the fraction of curated non-action queries for which the raw Top-1 candidate passes the threshold and is therefore incorrectly admitted as an action candidate.
+**Non-Action FA@1** (FA = False Admission) is the fraction of curated non-action queries for which the raw Top-1 candidate passes the threshold and is therefore incorrectly admitted as an action candidate.
 
-**Non-Action False Admission Top-3** is the fraction of curated non-action queries for which at least one raw Top-3 candidate passes the threshold and is therefore incorrectly admitted as an action candidate.
+**Non-Action FA@3** (FA = False Admission) is the fraction of curated non-action queries for which at least one raw Top-3 candidate passes the threshold and is therefore incorrectly admitted as an action candidate.
 
 The threshold therefore controls the trade-off between **Action Recall Coverage** and **Non-Action False Admission**. The selected value is **0.60** — the architecture's adopted design decision, not a mathematically optimal or globally optimal threshold.
 
