@@ -192,6 +192,15 @@ class Settings(BaseSettings):
     chat_tool_intent_online_api_key: str = ""
     chat_tool_intent_timeout_seconds: float = 4.0      # per-call guardrail inside the 5s cascade
 
+    # ── cap_router lane (Phase 2, 2026-10-01) ────────────────────────────────────
+    # Capability SELECTION node backend. The new split chain
+    # (Recall -> Aggregation -> cap_router -> Argument Path Router -> Qwen extract)
+    # is OPT-IN: "off" keeps the existing single-call select_and_extract hop
+    # BYTE-IDENTICAL (rollback / compatibility lane). "stub" = deterministic
+    # selector (wiring tests only); "laya" = the real LayaChoice model. The new
+    # lane is dev/test/shadow ONLY until a separate ruling opens it.
+    chat_cap_router_backend: str = "off"               # "off" | "stub" | "laya"
+
     # ── Web search (agent web_search tool) ──
     # provider is free text: aggregate/keyless (no key) | duckduckgo (no key) | tavily |
     # bing | google (see web_search.py). Defaults to the keyless multi-engine aggregate so
