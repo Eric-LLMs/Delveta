@@ -186,3 +186,39 @@ def test_spec_defines_no_incomplete_declaration_state():
     # "incomplete declaration" status or reason is introduced.
     text = SPEC.read_text(encoding="utf-8").lower()
     assert "incomplete declaration" in text
+
+
+# ── 3. MARKER: follow-up review rulings #1/#3/#4/#5 are pinned ──────────────────
+
+
+def test_spec_model_slot_source_is_evidence_driven_not_allowed_sources():
+    # Ruling #3: WHERE a MODEL slot's value comes from is decided by the ACTUAL
+    # evidence signal, never inferred from what the declaration merely allows.
+    text = SPEC.read_text(encoding="utf-8").lower()
+    assert "evidence-driven" in text
+    assert "never inferred from `allowed_sources`" in text
+
+
+def test_spec_required_param_without_declaration_is_missing_not_legacy_fallback():
+    # Ruling #1: a required parameter with NO declaration entry has no legal
+    # source -> MISSING/INVALID, never a legacy fallback.
+    text = SPEC.read_text(encoding="utf-8").lower()
+    assert "with no declaration entry" in text
+    assert "no legal acquisition" in text
+
+
+def test_spec_evidence_is_a_router_input_with_detector_deferred_to_step_2():
+    # Ruling #4: evidence is an injected external input with TWO uses; Step 1
+    # implements NO detector — the producer + wiring land in Step 2.
+    text = SPEC.read_text(encoding="utf-8").lower()
+    assert "router input" in text
+    assert "step 2" in text
+
+
+def test_spec_provenance_records_actual_source_not_allowed_sources_fallback():
+    # Ruling #5: provenance.source is the ACTUAL source; allowed_sources[0] is
+    # never a legal provenance fallback.
+    text = SPEC.read_text(encoding="utf-8").lower()
+    assert "provenance" in text
+    assert "actual" in text
+    assert "allowed_sources[0]" in text

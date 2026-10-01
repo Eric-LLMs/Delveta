@@ -2,6 +2,13 @@
 
 Status: **Step 0 (2026-10-01). Specification only. Nothing implemented, nothing wired.**
 
+Follow-up review (2026-10-01): rulings #1/#3/#4/#5 are folded in as explicit contract rules —
+§B (evidence-driven MODEL slot source; actual-source merge provenance), §C (a required
+parameter with no declaration entry → `MISSING`), §D (required MODEL slot source),
+§E (evidence as a router input; the detector is deferred to Step 2). The status line above
+still describes Step 0: this document is a specification; only the pure ARP modules of
+Step 1 implement it, and nothing here is wired.
+
 Precedence: this document is binding per `CLAUDE.md` → *Business Logic First*. Where current
 code conflicts, the current code is **legacy / current implementation**, never the spec.
 No production code, no `orchestrator` change, no `path_router`, no Qwen, no Laya, no
@@ -73,8 +80,31 @@ Determination:
 
 No linear precedence such as `MISSING > CONTEXT_DIRECT > MIXED > …` is defined. Ordering
 between QUERY_TO_QWEN and QUERY_PLUS_5_USER_TURNS is not a precedence ladder — it is the
-`escalation`/evidence determination (§E, §I): query-first, escalate to the last-5 user
-turns only when the query-only acquisition is proven insufficient.
+`escalation`/evidence determination (§E, §I).
+
+**Model-slot source is evidence-driven — never inferred from `allowed_sources`.**
+For every MODEL-owned slot that must be acquired, WHERE its value comes from is decided by
+the presence of the **actual** evidence signal, never by what the declaration merely
+*allows*:
+
+- query evidence present (source `QUERY`, allowed) → **QUERY_TO_QWEN**;
+- history evidence present (source `CONVERSATION_5_USER_TURNS`, allowed) →
+  **QUERY_PLUS_5_USER_TURNS**;
+- neither evidence present → the slot's source cannot be legally determined →
+  **MISSING / INVALID** (§D); never a guess, never a legacy fallback.
+
+`allowed_sources` gates whether a given evidence source is ACCEPTABLE; it never CREATES
+evidence. A slot whose `allowed_sources` contains `QUERY` does **not** thereby have query
+evidence.
+
+**Merge provenance is the ACTUAL source — never inferred from `allowed_sources`.**
+A system-owned slot (`SYSTEM_BINDER` / `TOOL_DEFAULT`) entering a `MIXED` merge records the
+**actual** `source` and value it was resolved from, supplied to the merge as inputs
+(`system_values` + `system_sources`). A declaration's `allowed_sources[0]` is **not** a
+legal provenance source and MUST NOT be used as a fallback. A system slot with no actual
+source/value produces **no** provenance record and is **not** merged — never fabricated
+(§D). MODEL-owned provenance likewise records the **actual** acquisition source (query or
+last-5 user turns), never a merely-allowed one.
 
 Every strategy is derived deterministically from `(parameters, acquisition, turn facts,
 query, recent-5-user-turns)`.
@@ -126,6 +156,14 @@ It carries **no** `required`/`type`/`enum`/`description`/`max_len` — those liv
 - whether the declaration must cover every `required` parameter is **not** an additional
   state in Step 0 — **no** “incomplete declaration” status or reason is defined.
 
+**RESOLVED — a `required` parameter with NO declaration entry has no legal acquisition
+source.** Because ownership (and therefore any allowed source) is undeclared, nothing can
+legally fill the slot: it is treated as `UNAVAILABLE` → Gate 1 `UNSAT` → **MISSING /
+INVALID** → Agent / follow-up (§D). It is **never** resolved by falling back to the legacy
+`select_and_extract`, and never guessed. This is **not** an additional “incomplete
+declaration” reason: no separate status is introduced — the outcome is the ordinary
+`MISSING` path.
+
 ### Ownership derivations (approved)
 
 - **MODEL** → Qwen MAY obtain it; sources limited to `QUERY` / `CONVERSATION_5_USER_TURNS`.
@@ -154,6 +192,13 @@ It carries **no** `required`/`type`/`enum`/`description`/`max_len` — those liv
   (§E); with no evidence it contributes **nothing**.
 - An optional MODEL slot that merely *exists in the schema* MUST NOT trigger Qwen.
 
+**Required MODEL slot — its source is evidence-driven (§B).** A required MODEL slot always
+sets `needs_acquisition = True`, but WHERE its value comes from (`QUERY` vs
+`CONVERSATION_5_USER_TURNS`) is decided by the **actual** evidence signal, never by
+`allowed_sources`. If neither query nor history evidence is present — or the present
+evidence's source is not in the slot's `allowed_sources` — the slot's source cannot be
+legally determined → **MISSING / INVALID** (§C), never a guess, never a legacy fallback.
+
 `unsatisfiable` = the required slots nothing can fill (Gate 1 `UNSAT`) → `MISSING` → Agent/follow-up.
 
 ### Worked examples
@@ -166,19 +211,28 @@ It carries **no** `required`/`type`/`enum`/`description`/`max_len` — those liv
 
 ---
 
-## E. Optional MODEL evidence — specification (no detector in Step 0)
+## E. MODEL evidence — a router input (the detector is NOT implemented in Step 1)
 
 **RESOLVED — Step 0 locks only these properties:**
 
 - Evidence MUST be **deterministic**;
 - Evidence MUST be **schema-aware**;
-- Evidence MUST be **non-LLM**;
-- Evidence is used for exactly one purpose: to decide whether an **optional** MODEL slot
-  has a **real acquisition need** (Gate 2, §D).
-- **Default is conservative:** no evidence → **no Qwen** → the optional slot is simply
-  omitted (never fabricated).
-- The detector implementation lands in Step 1. Step 0 specifies **no** further implementation
-  detail — no DB access, no latency budget, no matcher / regex / parser shape.
+- Evidence MUST be **non-LLM** — deciding “call Qwen or not”, and “from where”, is never
+  delegated to an LLM;
+- Evidence is a **router input**: it is produced OUTSIDE the router by a deterministic,
+  schema-aware, non-LLM producer and injected as `{slot: source}`. The router never computes
+  evidence itself and never reads a DB or a parser.
+- Evidence is used for **two** purposes:
+  1. to decide whether an **optional** MODEL slot has a **real acquisition need** (Gate 2, §D);
+  2. to decide the **source / path** of a required MODEL slot — query vs query + last-5 user
+     turns (§B) — so a required MODEL slot with no determinable source becomes `MISSING`.
+- **Default is conservative:** no evidence → no Qwen need for an optional slot (the slot is
+  simply omitted, never fabricated); for a required slot → the source cannot be determined →
+  **MISSING / INVALID**.
+- **Step 1 does NOT implement the detector.** Evidence is an injected external input; the
+  real producer and the orchestrator wiring land in **Step 2**. Step 0 / Step 1 specify **no**
+  further implementation detail — no DB access, no latency budget, no matcher / regex /
+  parser shape.
 
 ---
 
@@ -243,9 +297,12 @@ The two lanes MUST stay physically distinguishable (CLAUDE.md rule 8).
 **Delivered (Step 0):** this contract + `tests/test_phase4_acquisition_contract.py`
 (green vocabulary-invariant tests + doc markers).
 
-**Deferred to Step 1+ (production):** the `acquisition` declaration entry; the ARP modules
-(`path_router.py` / `context_bundle.py` / `merge.py`) and the Qwen extractor; orchestrator
-wiring; `selection_transition.py` removal; `REASON_CAP_ROUTER_HIT_DEFERRED` removal.
+**Deferred to Step 1+ (production):** the `acquisition` declaration entry; the Qwen extractor;
+the orchestrator wiring; `selection_transition.py` removal;
+`REASON_CAP_ROUTER_HIT_DEFERRED` removal. The deterministic ARP modules
+(`path_router.py` / `context_bundle.py` / `merge.py`) are delivered as pure functions in
+**Step 1**; the **evidence producer** and the **system value / source resolution** that feed
+them are external inputs wired in **Step 2** — Step 1 implements neither.
 
 **Resolved decisions (formerly open):**
 1. **Strategy determination** — two dimensions (Required Readiness, then Acquisition Need),
@@ -254,8 +311,15 @@ wiring; `selection_transition.py` removal; `REASON_CAP_ROUTER_HIT_DEFERRED` remo
    undeclared → Agent semantics; **no** “incomplete declaration” state or reason (§C).
 3. **Reason codes** — only the acquisition-undeclared **semantics** is locked; constant
    names are implementation detail (§G).
-4. **Evidence** — locked only as deterministic / schema-aware / non-LLM, to judge a **real**
-   optional-MODEL acquisition need; no DB / latency / matcher / regex / parser detail (§E).
+4. **Evidence** — locked only as deterministic / schema-aware / non-LLM, and as a **router
+   input** with **two** approved uses: a **real** optional-MODEL acquisition need AND the
+   **source / path** of a required MODEL slot. No DB / latency / matcher / regex / parser
+   detail; the detector (producer) and the wiring are deferred to Step 2 (§E).
+5. **Required parameter without a declaration entry** — no legal source → treated as
+   `UNAVAILABLE` → `MISSING / INVALID`; never a legacy fallback and never a guess (§C).
+6. **Provenance source** — the **actual** source/value supplied as inputs; a declaration's
+   `allowed_sources[0]` is **never** a fallback, and an unprovenanced system slot is **not**
+   merged (§B).
 
 **Future test checklist (Step 1+) — to be written only when the modules exist.** Recorded
 here as a list on purpose; **not** implemented as `skip`ped pytest tests in Step 0:
