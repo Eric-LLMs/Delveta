@@ -117,6 +117,13 @@
   - [26.4 Input configuration](#264-input-configuration)
   - [26.5 Training and selection](#265-training-and-selection)
   - [26.6 Artifacts](#266-artifacts)
+- [27. Intent Funnel — Evaluation & Validation](#27-intent-funnel--evaluation--validation)
+  - [27.1 Recall Top-1 / Top-3 and Threshold](#271-recall-top-1--top-3-and-threshold)
+  - [27.2 Unrecalled Capability Handling](#272-unrecalled-capability-handling)
+  - [27.3 Top-3 Candidates → Laya](#273-top-3-candidates--laya)
+  - [27.4 Candidate Cardinality Routing](#274-candidate-cardinality-routing)
+  - [27.5 Laya Responsibility Boundary](#275-laya-responsibility-boundary)
+  - [27.6 End-to-End Evaluation](#276-end-to-end-evaluation)
 
 [↑ Back to top](#table-of-contents)
 
@@ -6248,7 +6255,9 @@ error analysis, invalid runs and lessons learned — lives in
 records only the stable architectural facts; the benchmark detail is deliberately
 not duplicated here.
 
-## Recall Top-1 / Top-3 and Threshold
+## 27. Intent Funnel — Evaluation & Validation
+
+### 27.1 Recall Top-1 / Top-3 and Threshold
 
 Recall is responsible for **high-recall candidate retrieval**, not final capability discrimination.
 
@@ -6261,7 +6270,7 @@ The Recall layer therefore has two stages, and they must remain separate:
 
 These two stages are independent. Raw Top-1 / Top-3 must never be recomputed after threshold filtering.
 
-### Stage 1 — Raw Recall Ranking
+#### Stage 1 — Raw Recall Ranking
 
 On the 900-query evaluation set:
 
@@ -6276,7 +6285,7 @@ On the 900-query evaluation set:
 
 The difference between the two is intentional: Recall does not need to make the final capability decision when several plausible candidates exist. Its responsibility is to keep the correct capability within a sufficiently small candidate set for the next stage.
 
-### Stage 2 — Recall Quality Gate
+#### Stage 2 — Recall Quality Gate
 
 After raw ranking, Recall applies a similarity quality gate:
 
@@ -6342,7 +6351,7 @@ The threshold therefore controls the trade-off between **Action Recall Coverage*
 
 ---
 
-## Unrecalled Capability Handling
+### 27.2 Unrecalled Capability Handling
 
 When the correct capability does not reach the downstream candidate pool, the problem is treated as a **Recall semantic coverage** problem.
 
@@ -6361,7 +6370,7 @@ This is a Recall coverage problem and is not solved by changing the Laya capabil
 
 ---
 
-## Top-3 Candidates → Laya
+### 27.3 Top-3 Candidates → Laya
 
 Recall and Laya have separate responsibilities.
 
@@ -6415,7 +6424,7 @@ Laya does not perform Recall, threshold filtering, parameter extraction, Binder 
 
 ---
 
-## Candidate Cardinality Routing
+### 27.4 Candidate Cardinality Routing
 
 After threshold admission and candidate aggregation / normalization, let `K` be the number of surviving candidate capabilities. Routing is determined solely by `K`:
 
@@ -6432,7 +6441,7 @@ If Laya fails — unavailable, times out, returns malformed output, or selects a
 
 ---
 
-## Laya Responsibility Boundary
+### 27.5 Laya Responsibility Boundary
 
 Laya's responsibility is exactly:
 
@@ -6456,5 +6465,7 @@ Stated as a division of labour:
 - The **Argument Path / Qwen / Binder / Executor** stages handle argument acquisition and execution.
 
 A Recall coverage failure is therefore not a Laya failure, and a Laya failure is not a Recall coverage failure; the two must not be conflated.
+
+### 27.6 End-to-End Evaluation
 
 [↑ Back to top](#table-of-contents)
