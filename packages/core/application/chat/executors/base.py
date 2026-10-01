@@ -77,6 +77,13 @@ class ChatDeps:
     # guards, ACL pipeline inherited) — the fast path is flow control, never a second
     # capability registry. None = not wired → the ACTION branch degrades to the Agent.
     run_tool: Callable[[str, dict, Any], Awaitable[dict]] | None = None
+    # Phase 4 acquisition seam: resolve the Argument Path Router's inputs for ONE
+    # decided capability (declaration / evidence / system values+sources), i.e. an
+    # ``argument_acquisition.inputs.AcquisitionInputs`` per capability id. None =
+    # not wired → the capability is acquisition-undeclared → the turn exits to the
+    # Agent (funnel §G). The cascade reads it duck-typed, so legacy deps objects
+    # (and deps=None) keep working unchanged. No production producer is wired yet.
+    acquisition_inputs: Any = None
 
 
 class EscalateToAgent(Exception):

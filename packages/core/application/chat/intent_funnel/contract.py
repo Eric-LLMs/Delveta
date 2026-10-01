@@ -94,11 +94,15 @@ REASON_TOOL_INTENT_TIMEOUT = "TOOL_INTENT_TIMEOUT"
 REASON_CAP_ROUTER_NONE = "CAP_ROUTER_NONE"                 # selector answered NONE
 REASON_CAP_ROUTER_UNAVAILABLE = "CAP_ROUTER_UNAVAILABLE"   # backend could not serve
 REASON_CAP_ROUTER_TIMEOUT = "CAP_ROUTER_TIMEOUT"           # selector exceeded the budget
-# PHASE-3-ONLY (2026-10-01): the Matcher already pinned the capability, so on the
-# NEW lane a HIT must NOT re-select (neither via cap_router nor via the legacy
-# select_and_extract). Until the Argument Path Router exists (Phase 4) the HIT
-# lane cannot proceed and safely falls back to the Agent. REMOVE IN PHASE 4.
-REASON_CAP_ROUTER_HIT_DEFERRED = "CAP_ROUTER_HIT_DEFERRED"
+# Phase 4 argument-acquisition lane (2026-10-01) — the Argument Path Router's
+# downward exits on the new lane (backend=stub|laya). Kept DISTINCT from the
+# Binder's BIND_* codes: the node that produced these is the ARP, not the Binder.
+REASON_ACQUISITION_UNDECLARED = "ACQUISITION_UNDECLARED"   # §G: no declaration opt-in -> Agent
+REASON_ACQUISITION_MISSING = "ACQUISITION_MISSING"         # §D: no legal value for a required slot
+# Phase 4 Step 2 transitional limit: a MODEL acquisition need (QUERY_TO_QWEN /
+# QUERY_PLUS_5_USER_TURNS / MIXED) requires the Qwen extractor, which this step
+# does not yet wire, so the turn exits to the Agent. Replaced when Qwen lands.
+REASON_ACQUISITION_MODEL_PENDING = "ACQUISITION_MODEL_PENDING"
 REASON_REGISTRY_UNAVAILABLE = "REGISTRY_UNAVAILABLE"
 REASON_VERSION_MISMATCH = "REGISTRY_VERSION_MISMATCH"
 # P3: the capability's intent kind exists but its rollout gate is closed —

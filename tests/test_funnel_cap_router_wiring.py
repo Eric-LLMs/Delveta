@@ -1,18 +1,17 @@
-"""Phase 3 (2026-10-01) — cap_router selection-lane wiring (transition seam).
+"""Phase 3/4 (2026-10-01) — cap_router selection + Argument Path Router wiring.
 
-Pins the LOCKED Phase 3 business rules:
+Pins the LOCKED business rules:
 
 * ``backend=off``  -> the FULL legacy chain, byte-identical (HIT and MISS/AMB);
-* ``backend=stub`` -> the NEW lane: MISS/AMBIGUOUS selects via cap_router (stub);
-* a MATCH_HIT on the NEW lane is NEVER re-selected — neither via cap_router nor
-  via the legacy ``select_and_extract`` — because the Matcher already pinned the
-  capability. With no Argument Path Router yet it safely falls back to the Agent
-  with ``CAP_ROUTER_HIT_DEFERRED`` (a Phase 3 compatibility limitation);
+* ``backend=stub`` -> the NEW lane: MISS/AMBIGUOUS selects via cap_router (stub),
+  then the decided capability feeds the Argument Path Router;
+* a MATCH_HIT on the NEW lane goes STRAIGHT to the Argument Path Router — it is
+  NEVER re-selected (no Recall, no Aggregation, no cap_router, no legacy
+  ``select_and_extract``), because the Matcher already pinned the capability;
 * NONE -> ``CAP_ROUTER_NONE``; a selector that cannot serve ->
   ``CAP_ROUTER_UNAVAILABLE``; both exit to the Agent, never to a Qwen fallback;
-* the Phase 3 stub extracts NO arguments, so a schema'd capability exits
-  ``BIND_MISSING`` — the deliberate limit of the phase, NOT a cap_router failure;
-* the CapabilityRoute -> ToolIntentVerdict bridge is a marked TRANSITION SHIM.
+* the phase-3 transition shim is GONE: ``selection_transition`` was deleted and
+  ``CAP_ROUTER_HIT_DEFERRED`` no longer exists — the ARP replaces both.
 
 Aggregation is NOT modified; the spies below only observe it.
 """
@@ -32,8 +31,8 @@ from core.application.chat.intent_funnel.contract import (
     MATCH_AMBIGUOUS,
     MATCH_HIT,
     MATCH_MISS,
+    REASON_ACQUISITION_UNDECLARED,
     REASON_BIND_MISSING,
-    REASON_CAP_ROUTER_HIT_DEFERRED,
     REASON_CAP_ROUTER_NONE,
     REASON_CAP_ROUTER_UNAVAILABLE,
     TOOL_INTENT_CONFIDENT,
@@ -193,8 +192,9 @@ async def test_stub_miss_routes_through_cap_router(monkeypatch, caplog):
     assert rec.factory == ["stub"]   # cap_router consulted
     assert rec.recall and rec.aggregate
     assert not rec.legacy            # the legacy hop is NOT used on the new lane
-    # stub extracts no args -> schema'd cap exits BIND_MISSING (phase limit)
-    assert out is req and fb == REASON_BIND_MISSING
+    # cap_router selected cap-a -> the ARP: no acquisition declaration is wired
+    # (deps carries no acquisition_inputs) -> acquisition-undeclared -> Agent.
+    assert out is req and fb == REASON_ACQUISITION_UNDECLARED
 
 
 async def test_stub_ambiguous_routes_through_cap_router(monkeypatch, caplog):
@@ -202,23 +202,24 @@ async def test_stub_ambiguous_routes_through_cap_router(monkeypatch, caplog):
         monkeypatch, caplog, state=MATCH_AMBIGUOUS, backend="stub")
     assert rec.factory == ["stub"] and rec.recall and rec.aggregate
     assert not rec.legacy
-    # ambiguous seeds are untrusted -> the stub answers NONE
-    assert out is req and fb in (REASON_CAP_ROUTER_NONE, REASON_BIND_MISSING)
+    # ambiguous seeds are untrusted -> the stub answers NONE (the ARP is never reached)
+    assert out is req and fb == REASON_CAP_ROUTER_NONE
 
 
-# ── backend=stub + HIT: capability decided, no re-selection, safe fallback ────────
+# ── backend=stub + HIT: capability decided -> ARP directly, no re-selection ───────
 
 
-async def test_stub_hit_is_deferred_without_reselection(monkeypatch, caplog):
-    # The Matcher pinned the capability; Phase 3 must NOT re-select it (neither
-    # cap_router nor legacy select_and_extract) and must short-circuit BEFORE
-    # Recall / Aggregation.
+async def test_stub_hit_goes_to_arp_without_reselection(monkeypatch, caplog):
+    # The Matcher pinned the capability; the new lane must NOT re-select it
+    # (neither cap_router nor legacy select_and_extract) and must short-circuit
+    # BEFORE Recall / Aggregation. It goes STRAIGHT to the Argument Path Router:
+    # with no acquisition declaration wired the ARP answers undeclared -> Agent.
     out, req, rec, fb = await _run(monkeypatch, caplog, state=MATCH_HIT, backend="stub")
     assert not rec.factory           # no cap_router selection
     assert not rec.legacy            # no legacy capability selection
     assert not rec.recall            # no Recall
     assert not rec.aggregate         # no Candidate Aggregation
-    assert out is req and fb == REASON_CAP_ROUTER_HIT_DEFERRED
+    assert out is req and fb == REASON_ACQUISITION_UNDECLARED
 
 
 # ── NONE / unavailable fallbacks ─────────────────────────────────────────────────
@@ -258,24 +259,32 @@ async def test_selector_that_raises_exits_unavailable(monkeypatch, caplog):
     assert not rec.legacy
 
 
-# ── marked transition seams (code + shim) ────────────────────────────────────────
+# ── Phase 4: the ARP is wired; the Phase 3 shim is deleted ───────────────────────
 
 
-def test_hit_compatibility_limitation_is_documented():
+def test_hit_is_wired_straight_to_the_argument_path_router():
     import core.application.chat.intent_funnel.orchestrator as orch
 
     with open(orch.__file__, encoding="utf-8") as fh:
         src = (orch.__doc__ or "") + fh.read()
-    assert "PHASE 3 COMPATIBILITY LIMITATION" in src
-    assert "Phase 4" in src
+    assert "_acquisition_hop" in src and "path_router" in src   # actually wired, not dead
+    # the Phase 3 compatibility limitation and its reason are gone entirely
+    assert "CAP_ROUTER_HIT_DEFERRED" not in src
+    assert "PHASE 3 COMPATIBILITY LIMITATION" not in src
 
 
-def test_transition_shim_is_marked_for_removal_and_used():
+def test_transition_shim_is_deleted_and_route_never_laundered():
     import core.application.chat.intent_funnel.orchestrator as orch
-    import core.application.chat.intent_funnel.selection_transition as shim
+    from core.application.chat.intent_funnel import contract
 
-    with open(shim.__file__, encoding="utf-8") as fh:
-        shim_src = (shim.__doc__ or "") + fh.read()
-    assert "TRANSITION SHIM" in shim_src and "REMOVE IN PHASE 4" in shim_src
+    # the shim module no longer exists
+    try:
+        import core.application.chat.intent_funnel.selection_transition  # noqa: F401
+    except ImportError:
+        pass
+    else:
+        raise AssertionError("selection_transition must be deleted in Phase 4")
+    # the transitional reason is removed from the vocabulary
+    assert not hasattr(contract, "REASON_CAP_ROUTER_HIT_DEFERRED")
     with open(orch.__file__, encoding="utf-8") as fh:
-        assert "selection_transition" in fh.read()   # actually wired, not dead
+        assert "selection_transition" not in fh.read()   # no residue wiring

@@ -32,6 +32,7 @@ from .contract import (
     SlotDecl,
     is_declared,
 )
+from .inputs import AcquisitionInputs, AcquisitionInputProvider, no_acquisition_inputs
 
 __all__ = [
     "OWNERSHIPS", "SOURCES", "SOURCES_OF", "STRATEGIES",
@@ -42,4 +43,5 @@ __all__ = [
     "STRATEGY_CONTEXT_DIRECT", "STRATEGY_QUERY_TO_QWEN",
     "STRATEGY_QUERY_PLUS_5_USER_TURNS", "STRATEGY_MIXED", "STRATEGY_MISSING",
     "SlotDecl", "Readiness", "ArgumentProvenance", "is_declared",
+    "AcquisitionInputs", "AcquisitionInputProvider", "no_acquisition_inputs",
 ]

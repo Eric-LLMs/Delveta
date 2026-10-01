@@ -4,15 +4,17 @@ Registry → Matcher → (Recall on MISS/AMBIGUOUS) → Candidate Aggregation �
 ToolIntentModel (ONE call) → Binder → certified TurnRequirements, every
 non-COMPLETE outcome exiting to the Agent byte-identically (8.10).
 
-Phase 3 seam (2026-10-01): when ``chat_cap_router_backend != off`` the
-MISS/AMBIGUOUS lane's selection hop is served by cap_router (``stub``|``laya``)
-instead of ToolIntentModel — ``MISS/AMBIGUOUS -> Recall -> Aggregation ->
-cap_router -> ONE|NONE``. A MATCH_HIT is NEVER re-selected on the new lane: the
-Matcher already pinned the capability, and the final HIT path (HIT -> Argument
-Path Router -> Certified/acquisition) does not exist yet, so a HIT safely falls
-back to the Agent with ``CAP_ROUTER_HIT_DEFERRED`` (a **Phase 3 compatibility
-limitation** — Phase 4 replaces it). With the default ``off`` every turn takes
-the fully-legacy hop, byte-identical.
+Phase 4 seam (2026-10-01): when ``chat_cap_router_backend != off`` the decided
+capability — a MATCH_HIT directly, or a MISS/AMBIGUOUS via ``Recall ->
+Aggregation -> cap_router -> ONE|NONE`` — feeds the **Argument Path Router**
+(:mod:`.argument_acquisition.path_router`), which derives the acquisition
+strategy from the capability's declaration + injected inputs. A MATCH_HIT is
+NEVER re-selected (no Recall, no Aggregation, no cap_router). This step wires
+the ARP only: CONTEXT_DIRECT reuses the existing Binder/certified handoff, while
+a MODEL acquisition need (QUERY_TO_QWEN / QUERY_PLUS_5_USER_TURNS / MIXED) is
+not yet executable (no Qwen) and exits to the Agent; so does an
+acquisition-undeclared or -MISSING capability. With the default ``off`` every
+turn takes the fully-legacy hop, byte-identical.
 This module
 owns sequencing, the wall-clock budget and fail-open classification ONLY —
 node algorithms, SQL, prompts, parsing and schema validation live in their own
@@ -40,10 +42,12 @@ from .contract import (
     MATCH_AMBIGUOUS,
     MATCH_HIT,
     MATCH_MISS,
+    REASON_ACQUISITION_MISSING,
+    REASON_ACQUISITION_MODEL_PENDING,
+    REASON_ACQUISITION_UNDECLARED,
     REASON_BIND_AMBIGUOUS,
     REASON_BIND_INVALID,
     REASON_BIND_MISSING,
-    REASON_CAP_ROUTER_HIT_DEFERRED,
     REASON_CAP_ROUTER_NONE,
     REASON_CAP_ROUTER_UNAVAILABLE,
     REASON_CASCADE_ERROR,
@@ -128,7 +132,7 @@ async def run_nodes(ctx, deps, requirements, trace, *,
     Returns a certified TurnRequirements, or None after
     setting trace['fallback'] — the caller converts None into the original
     object. Raises only for faults, which the caller maps by trace['stage']."""
-    from . import binder, cap_router, guardrails, matcher, recall, selection_transition
+    from . import cap_router, guardrails, matcher, recall
     from .registry import active_view as registry_active_view
     from .registry.entry import chat_plane_candidate
     from .tool_intent import select_and_extract as tool_intent
@@ -164,23 +168,20 @@ async def run_nodes(ctx, deps, requirements, trace, *,
             "matched_literal": mres.matched_literal,
         }
 
-    # ── New lane, MATCH_HIT: capability ALREADY decided, and Phase 3 has no ─────
-    # Argument Path Router yet. A HIT must NOT re-select — neither via cap_router
-    # nor via the legacy select_and_extract — so the only safe move is the Agent.
-    # PHASE 3 COMPATIBILITY LIMITATION (2026-10-01); Phase 4 replaces this with
-    # HIT -> Argument Path Router -> Certified|acquisition. It short-circuits
-    # BEFORE candidate assembly/aggregation/recall, so no downstream node runs.
+    # ── New lane, MATCH_HIT: the Matcher already pinned the capability (§A.10 / ─
+    # §I). HIT -> Argument Path Router DIRECTLY: NO re-selection — no Recall, no
+    # Candidate Aggregation, no cap_router. It short-circuits BEFORE candidate
+    # assembly so none of those nodes runs. ``backend=off`` keeps the legacy HIT
+    # hop (select_and_extract) further below.
     backend = settings.chat_cap_router_backend
     if backend != cap_router.BACKEND_OFF and mres.state == MATCH_HIT:
-        trace["stage"] = "cap_router"
-        trace["fallback"] = REASON_CAP_ROUTER_HIT_DEFERRED
-        if capture is not None:
-            capture["cap_router"] = {
-                "decision": "HIT_DEFERRED",
-                "reason": REASON_CAP_ROUTER_HIT_DEFERRED,
-                "note": "Phase 3 compatibility limitation: no Argument Path Router yet",
-            }
-        return None
+        trace["stage"] = "capability"
+        entry = entries_by_id.get(mres.capability_id)
+        if entry is None:  # a HIT the active table no longer honors: refuse
+            trace["fallback"] = REASON_VERSION_MISMATCH
+            return None
+        return _acquisition_hop(requirements, deps, entry, facts=facts,
+                                view=view, trace=trace, capture=capture)
 
     # ── One candidate set, ONE convergence point: a HIT enters ToolIntentModel with the ─
     # same semantics as a Recall lane — the direct-certification special path is
@@ -256,14 +257,15 @@ async def run_nodes(ctx, deps, requirements, trace, *,
         return None
 
     # ── Node 2: capability SELECTION ────────────────────────────────────────────
-    # Phase 3 split (2026-10-01): the NEW lane (backend != off) serves ONLY the
+    # Phase 4 split (2026-10-01): the NEW lane (backend != off) serves ONLY the
     # MISS/AMBIGUOUS selection here:
     #
     #     MISS/AMBIGUOUS -> Recall -> Aggregation -> cap_router -> ONE | NONE
     #
-    # A MATCH_HIT on the new lane already returned above (CAP_ROUTER_HIT_DEFERRED).
-    # The ``else`` is the backend=off compatibility/rollback lane: the FULL legacy
-    # single-call ToolIntentModel hop for HIT *and* MISS/AMBIGUOUS, byte-identical.
+    # ... then the decided capability feeds the Argument Path Router (below). A
+    # MATCH_HIT on the new lane already returned above (HIT -> ARP). The ``else``
+    # is the backend=off compatibility/rollback lane: the FULL legacy single-call
+    # ToolIntentModel hop for HIT *and* MISS/AMBIGUOUS, byte-identical.
     if backend != cap_router.BACKEND_OFF:
         trace["stage"] = "cap_router"
         selector = cap_router.selector_for(backend)
@@ -287,37 +289,51 @@ async def run_nodes(ctx, deps, requirements, trace, *,
         if not route.selected:
             trace["fallback"] = REASON_CAP_ROUTER_NONE
             return None
-        # TRANSITION SHIM (Phase 4 removes): cap_router's route is adapted into
-        # the legacy verdict shape so the existing Binder downstream can consume
-        # it. The stub extracts NO arguments -> arguments=None rides to the
-        # Binder, so a schema'd capability exits BIND_MISSING. That is the
-        # DELIBERATE limit of this phase, NOT a cap_router failure.
-        jv = selection_transition.route_to_verdict(route)
-    else:
-        # backend=off compatibility/rollback lane: the legacy single-call
-        # ToolIntentModel selection hop, UNCHANGED (HIT and MISS/AMBIGUOUS alike).
-        trace["stage"] = "tool_intent"
-        jv = await tool_intent(message, cands, entries_by_id=entries_by_id,
-                           llm=deps.llm, facts=facts)
-        trace["tool_intent"] = f"{jv.decision}:{jv.capability_id or '-'}"
-        if capture is not None:
-            capture["tool_intent"] = {
-                "decision": jv.decision, "capability_id": jv.capability_id,
-                "confidence": jv.confidence, "arguments": jv.arguments,
-                "rationale": jv.rationale,
-            }
-        if jv.decision != TOOL_INTENT_CONFIDENT:
-            trace["fallback"] = (
-                REASON_TOOL_INTENT_REJECT if jv.decision == TOOL_INTENT_REJECT
-                else REASON_TOOL_INTENT_UNCERTAIN
-            )
+        # capability decided -> the Argument Path Router decides HOW its
+        # arguments are acquired (CONTEXT_DIRECT reuses the Binder; a MODEL need
+        # is not yet executable and exits to the Agent).
+        entry = entries_by_id.get(route.capability_id)
+        if entry is None:  # a route the active table no longer honors: refuse
+            trace["fallback"] = REASON_VERSION_MISMATCH
             return None
+        return _acquisition_hop(requirements, deps, entry, facts=facts,
+                                view=view, trace=trace, capture=capture)
 
-    # ── Capability → Binder validate → certified ACTION metadata ───────────────
+    # backend=off compatibility/rollback lane: the legacy single-call
+    # ToolIntentModel selection hop, UNCHANGED (HIT and MISS/AMBIGUOUS alike).
+    trace["stage"] = "tool_intent"
+    jv = await tool_intent(message, cands, entries_by_id=entries_by_id,
+                       llm=deps.llm, facts=facts)
+    trace["tool_intent"] = f"{jv.decision}:{jv.capability_id or '-'}"
+    if capture is not None:
+        capture["tool_intent"] = {
+            "decision": jv.decision, "capability_id": jv.capability_id,
+            "confidence": jv.confidence, "arguments": jv.arguments,
+            "rationale": jv.rationale,
+        }
+    if jv.decision != TOOL_INTENT_CONFIDENT:
+        trace["fallback"] = (
+            REASON_TOOL_INTENT_REJECT if jv.decision == TOOL_INTENT_REJECT
+            else REASON_TOOL_INTENT_UNCERTAIN
+        )
+        return None
     entry = entries_by_id.get(jv.capability_id)
     if entry is None:  # a verdict the active table no longer honors: refuse
         trace["fallback"] = REASON_VERSION_MISMATCH
         return None
+    return _certify(requirements, entry, jv.arguments, facts=facts, view=view,
+                    trace=trace, capture=capture)
+
+
+def _certify(requirements, entry, args, *, facts, view, trace, capture):
+    """Capability -> kind gate -> Binder validate -> certified ACTION metadata.
+
+    Shared by the legacy lane and the ARP's CONTEXT_DIRECT. ``args`` is the
+    argument DRAFT (legacy: the model's extraction; ARP: the legal system values
+    supplied via ``acquisition_inputs``) — the Binder still resolves context
+    slots from the turn facts and is the final gate (never modified here)."""
+    from . import binder
+
     if not policy.kind_enabled(entry.intent_kind):  # P3: in the table, but not ON
         trace["fallback"] = REASON_KIND_DISABLED
         return None
@@ -325,7 +341,7 @@ async def run_nodes(ctx, deps, requirements, trace, *,
         capture["entry"] = {"intent_kind": entry.intent_kind,
                             "tool_binding": entry.tool_binding}
     trace["stage"] = "binder"
-    bound = binder.validate(entry, jv.arguments, facts)
+    bound = binder.validate(entry, args, facts)
     if capture is not None:
         capture["binder"] = bound.state
     if not bound.is_complete:
@@ -338,6 +354,60 @@ async def run_nodes(ctx, deps, requirements, trace, *,
     trace["stage"] = "certified"
     return certified(requirements, entry, bound.args, view.fingerprint,
                      stage="tool_intent")
+
+
+def _acquisition_hop(requirements, deps, entry, *, facts, view, trace, capture):
+    """Argument Path Router hop for a DECIDED capability (Phase 4 Step 2).
+
+    The capability is already pinned (Matcher HIT or cap_router SELECTED); this
+    node decides HOW its arguments are acquired — NEVER re-selecting it. The ARP
+    inputs come from the injected seam (``deps.acquisition_inputs``); absent →
+    the capability is acquisition-undeclared → Agent (§G).
+
+    Step 2 boundary: CONTEXT_DIRECT reuses the existing Binder/certified handoff
+    (consuming ONLY the supplied system values — no merge, no new validation);
+    every MODEL strategy (QUERY_TO_QWEN / QUERY_PLUS_5_USER_TURNS / MIXED)
+    requires the Qwen extractor, which is not wired in this step, so it exits to
+    the Agent. MISSING (no legal value) likewise exits to the Agent."""
+    from .argument_acquisition import path_router
+    from .argument_acquisition.contract import (
+        STRATEGY_CONTEXT_DIRECT,
+        STRATEGY_MISSING,
+    )
+
+    provider = getattr(deps, "acquisition_inputs", None)
+    inputs = provider(entry.capability_id) if callable(provider) else None
+    declaration = dict(inputs.declaration) if inputs else {}
+    evidence = dict(inputs.evidence) if inputs else {}
+    system_values = dict(inputs.system_values) if inputs else {}
+    decision = path_router.route(entry.parameters, declaration,
+                                 evidence=evidence, system_values=system_values)
+    if capture is not None:
+        capture["acquisition"] = {
+            "declared": decision.declared, "strategy": decision.strategy,
+            "model_slots": list(decision.model_slots),
+            "system_slots": list(decision.system_slots),
+            "bundle_source": decision.bundle_source,
+            "ready": decision.readiness.ready,
+            "needs_acquisition": decision.readiness.needs_acquisition,
+            "unsatisfiable": list(decision.readiness.unsatisfiable),
+        }
+    trace["acquisition"] = decision.strategy or "UNDECLARED"
+    if not decision.declared:
+        trace["fallback"] = REASON_ACQUISITION_UNDECLARED
+        return None
+    if decision.strategy == STRATEGY_MISSING:
+        trace["fallback"] = REASON_ACQUISITION_MISSING
+        return None
+    if decision.strategy != STRATEGY_CONTEXT_DIRECT:
+        # A MODEL acquisition need: Qwen is not wired in this step -> Agent.
+        trace["fallback"] = REASON_ACQUISITION_MODEL_PENDING
+        return None
+    # CONTEXT_DIRECT: all required slots are deterministically ready and no MODEL
+    # acquisition is needed. Consume ONLY the legal system values supplied via
+    # the seam; the existing Binder resolves context slots and validates.
+    return _certify(requirements, entry, system_values, facts=facts, view=view,
+                    trace=trace, capture=capture)
 
 
 def certified(requirements, entry, args, registry_fp, *,
