@@ -6265,10 +6265,10 @@ For each query, Recall first produces a **raw ranking**: an ordered list of cand
 
 The Recall layer therefore has two stages, and they must remain separate:
 
-1. **Stage 1 — Raw Recall Ranking**: an ordered candidate list produced **before** any threshold filtering. Raw Top-1 / Top-3 are positions in this raw ranking.
+1. **Stage 1 — Raw Recall Ranking**: an ordered candidate list produced **before** any threshold filtering. The raw ranking is capability-level: after capability aggregation, each capability occupies one ranking position.
 2. **Stage 2 — Recall Quality Gate**: admission of a ranked candidate into the downstream candidate pool, based on its similarity score.
 
-These two stages are independent. Raw Top-1 / Top-3 must never be recomputed after threshold filtering.
+After threshold filtering, hits are aggregated by capability, the aggregated candidates are sorted by score, and Recall@1 / Recall@3 are measured on this aggregated ranking.
 
 #### Stage 1 — Raw Recall Ranking
 
@@ -6339,9 +6339,9 @@ The threshold sweep is evaluated using two independent dimensions:
 |      0.86 |                         0.9% |                         1.0% |                             0.0% |                             0.0% |
 |      0.87 |                         0.6% |                         0.6% |                             0.0% |                             0.0% |
 
-**Action Recall@1** is the fraction of action queries for which the gold capability is raw-ranked at #1 and its similarity score passes the threshold.
+**Action Recall@1** is the fraction of action queries for which the gold capability is ranked #1 after threshold filtering, capability aggregation, and sorting by the aggregated score.
 
-**Action Recall@3** is the fraction of action queries for which the gold capability is raw-ranked within #1–#3 and its similarity score passes the threshold.
+**Action Recall@3** is the fraction of action queries for which the gold capability is ranked within the Top-3 after threshold filtering, capability aggregation, and sorting by the aggregated score.
 
 **Non-Action FA@1** (FA = False Admission) is the fraction of curated non-action queries for which the raw Top-1 candidate passes the threshold and is therefore incorrectly admitted as an action candidate.
 
