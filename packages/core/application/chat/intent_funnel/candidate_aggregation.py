@@ -9,7 +9,56 @@ capability wins is the ToolIntentModel's call, not here).
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from .contract import Candidate
+
+# The candidate contract the SELECTION node is defined over (§26.2): the model
+# was trained and benchmarked at K = 3 options, so the business layer hands it at
+# most this many — it is NOT a model-side limit.
+K_DEFAULT = 3
+
+
+@dataclass(frozen=True)
+class NormalizedCandidates:
+    """The outcome of the business-layer K normalization (§26.2).
+
+    ``candidates`` is the list the selector may see: at most ``k``, highest score
+    first (the caller sorts by score before normalizing). ``direct`` is set ONLY
+    for K = 1 — the business layer executes that single capability itself and the
+    selector (stub or laya) is never consulted. K = 0 yields an empty list with
+    ``direct`` None; the caller has already short-circuited an empty candidate
+    set before reaching normalization.
+    """
+
+    candidates: tuple[Candidate, ...] = ()
+    direct: Candidate | None = None
+
+    @property
+    def is_direct(self) -> bool:
+        return self.direct is not None
+
+
+def normalize_top_k(candidates: list[Candidate], k: int = K_DEFAULT) -> NormalizedCandidates:
+    """Business-layer K normalization for the SELECTION node (§26.2).
+
+    Pure, no I/O, backend-agnostic — the SAME rule governs the stub lane and the
+    laya lane, and ``backend=off`` never enters here. The candidate count K maps:
+
+    * ``K = 0`` — nothing to select (caller short-circuits on the empty set);
+    * ``K = 1`` — the business layer executes it directly; the selector is never
+      called, so no model is consulted and no confidence is fabricated;
+    * ``K = 2..k`` — the whole list goes to the selector;
+    * ``K >= k+1`` — only the top-``k`` (highest score) go to the selector.
+
+    The model's decision head therefore only ever sees at most ``k`` options.
+    """
+    ordered = list(candidates)
+    if not ordered:
+        return NormalizedCandidates()
+    if len(ordered) == 1:
+        return NormalizedCandidates(direct=ordered[0])
+    return NormalizedCandidates(candidates=tuple(ordered[:k]))
 
 
 def aggregate_by_capability(candidates: list[Candidate]) -> list[Candidate]:

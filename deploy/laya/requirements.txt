@@ -1,0 +1,13 @@
+# Delveta-LayaChoice sidecar — the local Laya (System-1) decision model on CPU.
+# Every pin is exact and matches the environment the shipped checkpoint was
+# validated in (.venv-laya). The torch CPU wheel comes from the official PyTorch
+# index so the image never drags in a CUDA toolchain (device is cpu).
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+laya==0.3.21
+torch==2.14.0
+transformers==5.17.0
+safetensors==0.8.0
+numpy==2.4.6
+fastapi==0.115.14
+uvicorn==0.34.3

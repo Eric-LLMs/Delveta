@@ -260,26 +260,41 @@ async def run_nodes(ctx, deps, requirements, trace, *,
     # Phase 4 split (2026-10-01): the NEW lane (backend != off) serves ONLY the
     # MISS/AMBIGUOUS selection here:
     #
-    #     MISS/AMBIGUOUS -> Recall -> Aggregation -> cap_router -> ONE | NONE
+    #     MISS/AMBIGUOUS -> Recall -> Aggregation -> K normalization
+    #                    -> cap_router (stub | laya) -> ONE | NONE
     #
     # ... then the decided capability feeds the Argument Path Router (below). A
     # MATCH_HIT on the new lane already returned above (HIT -> ARP). The ``else``
     # is the backend=off compatibility/rollback lane: the FULL legacy single-call
-    # ToolIntentModel hop for HIT *and* MISS/AMBIGUOUS, byte-identical.
+    # ToolIntentModel hop for HIT *and* MISS/AMBIGUOUS, byte-identical (K
+    # normalization is a new-lane business step and never runs on that lane).
     if backend != cap_router.BACKEND_OFF:
         trace["stage"] = "cap_router"
         selector = cap_router.selector_for(backend)
-        if selector is None:  # unknown / laya-not-yet-deployed: never falls through
+        if selector is None:  # unknown backend: never falls through
             trace["fallback"] = REASON_CAP_ROUTER_UNAVAILABLE
             return None
-        try:
-            route = await selector.select(message, cands,
-                                          entries_by_id=entries_by_id, facts=facts)
-        except cap_router.CapabilityRouterUnavailable:
-            # ruling 2026-10-01: a selector that cannot serve exits to the Agent;
-            # selection NEVER falls back to Qwen (the metric would be polluted).
-            trace["fallback"] = REASON_CAP_ROUTER_UNAVAILABLE
-            return None
+        # Business-layer K normalization (§26.2) — the SAME rule for stub and
+        # laya: the selector only ever sees a list of at most K candidates, and a
+        # K=1 turn is executed by the business layer directly (the selector is
+        # never consulted, so no model is called and no confidence is invented).
+        # Applied AFTER the backend is resolved, so an unknown backend can never
+        # be laundered into a K=1 direct selection. backend=off never reaches here.
+        norm = candidate_aggregation.normalize_top_k(cands)
+        if norm.direct is not None:
+            route = cap_router.CapabilityRoute(
+                cap_router.ROUTE_SELECTED, norm.direct.capability_id,
+                provenance="K=1 business-layer direct selection")
+        else:
+            try:
+                route = await selector.select(message, list(norm.candidates),
+                                              entries_by_id=entries_by_id, facts=facts)
+            except cap_router.CapabilityRouterUnavailable:
+                # ruling 2026-10-01: a selector that cannot serve exits to the
+                # Agent; selection NEVER falls back to Qwen (the metric would be
+                # polluted).
+                trace["fallback"] = REASON_CAP_ROUTER_UNAVAILABLE
+                return None
         trace["cap_router"] = f"{route.decision}:{route.capability_id or '-'}"
         if capture is not None:
             capture["cap_router"] = {

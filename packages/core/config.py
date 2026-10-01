@@ -200,6 +200,19 @@ class Settings(BaseSettings):
     # selector (wiring tests only); "laya" = the real LayaChoice model. The new
     # lane is dev/test/shadow ONLY until a separate ruling opens it.
     chat_cap_router_backend: str = "off"               # "off" | "stub" | "laya"
+    # LayaChoice = Delveta's capability-selection decision model, served OUT OF
+    # PROCESS by the `deploy/laya` sidecar (`POST /v1/systemone`, one choice
+    # question per turn). This is a BASE url such as http://localhost:18092;
+    # "" keeps the honest "not deployed -> CapabilityRouterUnavailable -> Agent"
+    # semantics (ruling 2026-10-01: a laya failure NEVER falls back to Qwen or
+    # the legacy ToolIntentModel). The model directory is supplied to the
+    # SERVICE via LAYA_CHOICE_MODEL_DIR (a read-only bind mount) — it is never
+    # referenced in this process and never baked into the image.
+    chat_cap_router_laya_url: str = ""                 # deployed LayaChoice endpoint ("" = none)
+    # Per-call guardrail. The sidecar preloads/warms the model at startup, so the
+    # first load is NOT counted against this budget; a local endpoint slower than
+    # the guardrail is an UNAVAILABLE -> Agent, never a hang.
+    chat_cap_router_laya_timeout_seconds: float = 5.0
 
     # ── Web search (agent web_search tool) ──
     # provider is free text: aggregate/keyless (no key) | duckduckgo (no key) | tavily |
