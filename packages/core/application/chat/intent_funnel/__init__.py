@@ -14,21 +14,20 @@ hook were deleted; ``funnel_live`` only keeps the fail-open safety semantics
 (missing deps / guardrail veto). The legacy QIR lane was deleted with migration
 0014 (live-table ruling 2026-09-26) — ``funnel_live`` + ``route`` are the whole
 public surface.
+
+Import-cycle note (2026-10-01): ``understanding`` imports ``actions``, whose
+moved-name façade imports back into ``intent_funnel`` (``registry``/``binder``).
+Importing a subpackage runs this package's ``__init__``, so an eager ``funnel``
+import here used to re-enter a half-built ``understanding``. The cycle is now
+broken structurally: ``funnel`` keeps ``TurnRequirements`` under ``TYPE_CHECKING``
+and the runtime consumers (``orchestrator`` / ``preview`` / ``shadow``) import it
+at call time, so nothing on the funnel import path pulls ``understanding`` while
+it is mid-initialization. This module only re-exports the public API (see
+CLAUDE.md, ``__init__.py`` Responsibility Rule).
 """
+from __future__ import annotations
+
 from . import contract
-
-# LAZY re-exports (2026-09-24 structure rulings): ``funnel`` imports
-# ``understanding`` which imports ``actions`` — eagerly importing funnel here
-# would detonate a cycle whenever ``actions``' façade resolves its moved names
-# (actions -> registry/binder -> this package -> funnel -> understanding ->
-# actions, with understanding still half-built). Attribute access happens at
-# CALL time, when every module in that chain is fully initialized.
-
-def __getattr__(name: str):
-    if name in ("funnel_live", "route"):
-        from . import funnel as _funnel
-        return getattr(_funnel, name)
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
+from .funnel import funnel_live, route
 
 __all__ = ["contract", "funnel_live", "route"]

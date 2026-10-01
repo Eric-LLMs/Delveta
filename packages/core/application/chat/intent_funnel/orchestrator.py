@@ -23,14 +23,17 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import TYPE_CHECKING
 
-from core.application.chat.understanding import (
-    Complexity,
-    Confidence,
-    Signal,
-    TurnRequirements,
-)
 from core.config import settings
+
+if TYPE_CHECKING:  # import cycle: understanding -> actions -> intent_funnel (see __init__)
+    from core.application.chat.understanding import (
+        Complexity,
+        Confidence,
+        Signal,
+        TurnRequirements,
+    )
 
 from . import candidate_aggregation, observability, policy
 from .contract import (
@@ -344,6 +347,16 @@ def certified(requirements, entry, args, registry_fp, *,
     carries the LIVE Registry content fingerprint — the executor's TOCTOU
     re-validation (8.9) checks against the same fingerprint (migration 0014:
     single namespace, the legacy index-version stamp is gone)."""
+    # Runtime import (kept out of module top): understanding imports actions,
+    # whose moved-name façade imports this package — a top-level import would
+    # close the cycle. See the package __init__ note.
+    from core.application.chat.understanding import (
+        Complexity,
+        Confidence,
+        Signal,
+        TurnRequirements,
+    )
+
     action = {
         "tool": entry.tool_binding, "args": args,
         "capability_id": entry.capability_id,

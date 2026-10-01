@@ -22,7 +22,10 @@ monkeypatch sites.
 """
 from __future__ import annotations
 
-from core.application.chat.understanding import TurnRequirements
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # import cycle: understanding -> actions -> intent_funnel (see __init__)
+    from core.application.chat.understanding import TurnRequirements
 
 from .observability import new_trace as _new_trace, persist_event as _persist_event
 from .orchestrator import cascade as _cascade, run_cascade as _run_cascade

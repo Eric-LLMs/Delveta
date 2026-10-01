@@ -22,12 +22,6 @@ from __future__ import annotations
 
 import logging
 
-from core.application.chat.understanding import (
-    Complexity,
-    Confidence,
-    Signal,
-    TurnRequirements,
-)
 from core.infrastructure.request_context import (
     reset_request_execution_mode,
     set_request_execution_mode,
@@ -66,6 +60,15 @@ async def cascade_shadow(ctx, *, deps, requirements=None,
     pinned ``execution_mode=shadow``) so observation accumulates in the same
     table the observability admin reads; ``turn_key`` rides the row's
     trace_json (plus the stage captures — never the query) as the join key."""
+    # Runtime import (kept out of module top to break the
+    # understanding -> actions -> intent_funnel import cycle; see __init__).
+    from core.application.chat.understanding import (
+        Complexity,
+        Confidence,
+        Signal,
+        TurnRequirements,
+    )
+
     if requirements is None:
         requirements = TurnRequirements(
             complexity=Complexity.LOW, confidence=Confidence.LOW,

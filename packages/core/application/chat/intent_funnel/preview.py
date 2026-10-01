@@ -12,13 +12,6 @@ from __future__ import annotations
 
 import types
 
-from core.application.chat.understanding import (
-    Complexity,
-    Confidence,
-    Signal,
-    TurnRequirements,
-)
-
 from . import observability
 from .orchestrator import run_cascade
 
@@ -38,6 +31,14 @@ async def preview(message: str, *, deps) -> dict:
     """§8.5: run the ACTIVE (Registry, Index) pair end to end for one query —
     Registry → Matcher → (Recall) → ToolIntentModel → Binder → Final Route —
     and return the trace as a verdict, executing nothing."""
+    # Runtime import (kept out of module top to break the
+    # understanding -> actions -> intent_funnel import cycle; see __init__).
+    from core.application.chat.understanding import (
+        Complexity,
+        Confidence,
+        Signal,
+        TurnRequirements,
+    )
     from core.infrastructure.request_context import (
         reset_request_execution_mode,
         set_request_execution_mode,
