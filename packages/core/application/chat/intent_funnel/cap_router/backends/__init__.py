@@ -1,25 +1,17 @@
-"""cap_router backends — the selector INTERFACE (Phase 2 scaffold).
+"""cap_router backends — package surface (re-exports only).
 
-The concrete backends land in Phase 3: ``stub`` (deterministic) and ``laya``
-(the real LayaChoice model). This module defines only the seam every backend
-honors, so Phase 3 fills in implementations without touching the contract.
-Nothing here is wired into the cascade yet.
+Responsibilities are separated and this module holds NONE of them:
+
+* the selector CONTRACT (``CapabilitySelector``) lives in :mod:`..base`;
+* backend resolution (:func:`selector_for`) lives in :mod:`.factory`;
+* each concrete backend lives in its own module (:mod:`.stub`, ``laya`` later).
+
+The re-exports below preserve the historic import surface
+(``from ..cap_router.backends import CapabilitySelector, selector_for``).
 """
 from __future__ import annotations
 
-from typing import Protocol, Sequence, runtime_checkable
+from ..base import CapabilitySelector
+from .factory import selector_for
 
-from ..base import CapabilityRoute
-
-
-@runtime_checkable
-class CapabilitySelector(Protocol):
-    """One backend's selection call: given the user query and the
-    capability-level candidate cards, return the ONE capability (or NONE).
-
-    A backend that cannot serve raises :class:`..base.CapabilityRouterUnavailable`
-    — the caller maps that to the Agent; selection never falls through to another
-    model (ruling 2026-10-01)."""
-
-    async def select(self, query: str, candidates: Sequence, *,
-                     entries_by_id: dict, facts=None) -> CapabilityRoute: ...
+__all__ = ["CapabilitySelector", "selector_for"]

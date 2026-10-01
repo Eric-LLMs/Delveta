@@ -6,7 +6,7 @@ holds the contract surface only (Phase 2 scaffold, no runtime wiring yet).
 """
 from __future__ import annotations
 
-from .backends import CapabilitySelector
+from .backends import selector_for
 from .base import (
     BACKEND_LAYA,
     BACKEND_OFF,
@@ -16,10 +16,12 @@ from .base import (
     ROUTE_SELECTED,
     CapabilityRoute,
     CapabilityRouterUnavailable,
+    CapabilitySelector,
 )
 
 __all__ = [
     "BACKENDS", "BACKEND_OFF", "BACKEND_STUB", "BACKEND_LAYA",
     "ROUTE_SELECTED", "ROUTE_NONE",
     "CapabilityRoute", "CapabilityRouterUnavailable", "CapabilitySelector",
+    "selector_for",
 ]

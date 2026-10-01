@@ -14,6 +14,7 @@ turn, and unknown intent kinds route nothing.
 from __future__ import annotations
 
 from .contract import (
+    REASON_CAP_ROUTER_TIMEOUT,
     REASON_CASCADE_ERROR,
     REASON_CASCADE_TIMEOUT,
     REASON_RECALL_TIMEOUT,
@@ -49,6 +50,7 @@ def stage_reason(stage: str, *, timed_out: bool) -> str:
         return {
             "recall": REASON_RECALL_TIMEOUT,
             "tool_intent": REASON_TOOL_INTENT_TIMEOUT,  # the ONE model hop owns the budget
+            "cap_router": REASON_CAP_ROUTER_TIMEOUT,     # Phase 3 selection node (stub|laya)
         }.get(stage, REASON_CASCADE_TIMEOUT)
     return {
         "registry": REASON_REGISTRY_UNAVAILABLE,

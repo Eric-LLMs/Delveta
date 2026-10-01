@@ -87,6 +87,18 @@ REASON_RECALL_UNAVAILABLE = "RECALL_UNAVAILABLE"
 REASON_TOOL_INTENT_REJECT = "TOOL_INTENT_REJECT"
 REASON_TOOL_INTENT_UNCERTAIN = "TOOL_INTENT_UNCERTAIN"
 REASON_TOOL_INTENT_TIMEOUT = "TOOL_INTENT_TIMEOUT"
+# cap_router lane (Phase 3, 2026-10-01) — kept DISTINCT from the TOOL_INTENT_*
+# codes on purpose: the selection node that produced these is cap_router (stub |
+# laya), not the legacy single-call ToolIntentModel, so a trace can always tell
+# the two lanes apart (Active/Deprecated must stay distinguishable, rule 8).
+REASON_CAP_ROUTER_NONE = "CAP_ROUTER_NONE"                 # selector answered NONE
+REASON_CAP_ROUTER_UNAVAILABLE = "CAP_ROUTER_UNAVAILABLE"   # backend could not serve
+REASON_CAP_ROUTER_TIMEOUT = "CAP_ROUTER_TIMEOUT"           # selector exceeded the budget
+# PHASE-3-ONLY (2026-10-01): the Matcher already pinned the capability, so on the
+# NEW lane a HIT must NOT re-select (neither via cap_router nor via the legacy
+# select_and_extract). Until the Argument Path Router exists (Phase 4) the HIT
+# lane cannot proceed and safely falls back to the Agent. REMOVE IN PHASE 4.
+REASON_CAP_ROUTER_HIT_DEFERRED = "CAP_ROUTER_HIT_DEFERRED"
 REASON_REGISTRY_UNAVAILABLE = "REGISTRY_UNAVAILABLE"
 REASON_VERSION_MISMATCH = "REGISTRY_VERSION_MISMATCH"
 # P3: the capability's intent kind exists but its rollout gate is closed —

@@ -17,10 +17,15 @@ Failure contract (ruling 2026-10-01): a ``laya`` failure — timeout, service
 unavailable, malformed output, or an off-candidate capability id — exits to the
 Agent. Selection NEVER falls back to Qwen; otherwise the Laya E2E metrics would
 be polluted by the very model under test.
+
+The backend seam is :class:`CapabilitySelector`, defined here as the node's
+abstract contract. Backend resolution (``selector_for``) and the concrete
+backends live in :mod:`.backends`.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Protocol, Sequence, runtime_checkable
 
 BACKEND_OFF = "off"
 BACKEND_STUB = "stub"
@@ -51,3 +56,16 @@ class CapabilityRouterUnavailable(Exception):
     """The configured cap_router backend cannot serve (not deployed / transport
     down / malformed output). The CALLER maps this to the Agent — selection
     never falls through to another model (ruling 2026-10-01)."""
+
+
+@runtime_checkable
+class CapabilitySelector(Protocol):
+    """The backend seam: one selection call — given the user query and the
+    capability-level candidate cards, return the ONE capability (or NONE).
+
+    A backend that cannot serve raises :class:`CapabilityRouterUnavailable`
+    — the caller maps that to the Agent; selection never falls through to
+    another model (ruling 2026-10-01)."""
+
+    async def select(self, query: str, candidates: Sequence, *,
+                     entries_by_id: dict, facts=None) -> CapabilityRoute: ...

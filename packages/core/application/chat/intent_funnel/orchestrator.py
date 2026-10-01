@@ -2,7 +2,18 @@
 
 Registry → Matcher → (Recall on MISS/AMBIGUOUS) → Candidate Aggregation →
 ToolIntentModel (ONE call) → Binder → certified TurnRequirements, every
-non-COMPLETE outcome exiting to the Agent byte-identically (8.10). This module
+non-COMPLETE outcome exiting to the Agent byte-identically (8.10).
+
+Phase 3 seam (2026-10-01): when ``chat_cap_router_backend != off`` the
+MISS/AMBIGUOUS lane's selection hop is served by cap_router (``stub``|``laya``)
+instead of ToolIntentModel — ``MISS/AMBIGUOUS -> Recall -> Aggregation ->
+cap_router -> ONE|NONE``. A MATCH_HIT is NEVER re-selected on the new lane: the
+Matcher already pinned the capability, and the final HIT path (HIT -> Argument
+Path Router -> Certified/acquisition) does not exist yet, so a HIT safely falls
+back to the Agent with ``CAP_ROUTER_HIT_DEFERRED`` (a **Phase 3 compatibility
+limitation** — Phase 4 replaces it). With the default ``off`` every turn takes
+the fully-legacy hop, byte-identical.
+This module
 owns sequencing, the wall-clock budget and fail-open classification ONLY —
 node algorithms, SQL, prompts, parsing and schema validation live in their own
 packages; rollout gating and reason naming live in :mod:`.policy`; the trace
@@ -29,6 +40,9 @@ from .contract import (
     REASON_BIND_AMBIGUOUS,
     REASON_BIND_INVALID,
     REASON_BIND_MISSING,
+    REASON_CAP_ROUTER_HIT_DEFERRED,
+    REASON_CAP_ROUTER_NONE,
+    REASON_CAP_ROUTER_UNAVAILABLE,
     REASON_CASCADE_ERROR,
     REASON_KIND_DISABLED,
     REASON_NO_CANDIDATE,
@@ -111,7 +125,7 @@ async def run_nodes(ctx, deps, requirements, trace, *,
     Returns a certified TurnRequirements, or None after
     setting trace['fallback'] — the caller converts None into the original
     object. Raises only for faults, which the caller maps by trace['stage']."""
-    from . import binder, guardrails, matcher, recall
+    from . import binder, cap_router, guardrails, matcher, recall, selection_transition
     from .registry import active_view as registry_active_view
     from .registry.entry import chat_plane_candidate
     from .tool_intent import select_and_extract as tool_intent
@@ -146,6 +160,24 @@ async def run_nodes(ctx, deps, requirements, trace, *,
             "candidates": list(mres.candidates or []),
             "matched_literal": mres.matched_literal,
         }
+
+    # ── New lane, MATCH_HIT: capability ALREADY decided, and Phase 3 has no ─────
+    # Argument Path Router yet. A HIT must NOT re-select — neither via cap_router
+    # nor via the legacy select_and_extract — so the only safe move is the Agent.
+    # PHASE 3 COMPATIBILITY LIMITATION (2026-10-01); Phase 4 replaces this with
+    # HIT -> Argument Path Router -> Certified|acquisition. It short-circuits
+    # BEFORE candidate assembly/aggregation/recall, so no downstream node runs.
+    backend = settings.chat_cap_router_backend
+    if backend != cap_router.BACKEND_OFF and mres.state == MATCH_HIT:
+        trace["stage"] = "cap_router"
+        trace["fallback"] = REASON_CAP_ROUTER_HIT_DEFERRED
+        if capture is not None:
+            capture["cap_router"] = {
+                "decision": "HIT_DEFERRED",
+                "reason": REASON_CAP_ROUTER_HIT_DEFERRED,
+                "note": "Phase 3 compatibility limitation: no Argument Path Router yet",
+            }
+        return None
 
     # ── One candidate set, ONE convergence point: a HIT enters ToolIntentModel with the ─
     # same semantics as a Recall lane — the direct-certification special path is
@@ -220,23 +252,63 @@ async def run_nodes(ctx, deps, requirements, trace, *,
         trace["fallback"] = REASON_NO_CANDIDATE
         return None
 
-    # ── Node 2: ToolIntentModel — the ONE model call of the turn (select + extract) ────
-    trace["stage"] = "tool_intent"
-    jv = await tool_intent(message, cands, entries_by_id=entries_by_id,
-                       llm=deps.llm, facts=facts)
-    trace["tool_intent"] = f"{jv.decision}:{jv.capability_id or '-'}"
-    if capture is not None:
-        capture["tool_intent"] = {
-            "decision": jv.decision, "capability_id": jv.capability_id,
-            "confidence": jv.confidence, "arguments": jv.arguments,
-            "rationale": jv.rationale,
-        }
-    if jv.decision != TOOL_INTENT_CONFIDENT:
-        trace["fallback"] = (
-            REASON_TOOL_INTENT_REJECT if jv.decision == TOOL_INTENT_REJECT
-            else REASON_TOOL_INTENT_UNCERTAIN
-        )
-        return None
+    # ── Node 2: capability SELECTION ────────────────────────────────────────────
+    # Phase 3 split (2026-10-01): the NEW lane (backend != off) serves ONLY the
+    # MISS/AMBIGUOUS selection here:
+    #
+    #     MISS/AMBIGUOUS -> Recall -> Aggregation -> cap_router -> ONE | NONE
+    #
+    # A MATCH_HIT on the new lane already returned above (CAP_ROUTER_HIT_DEFERRED).
+    # The ``else`` is the backend=off compatibility/rollback lane: the FULL legacy
+    # single-call ToolIntentModel hop for HIT *and* MISS/AMBIGUOUS, byte-identical.
+    if backend != cap_router.BACKEND_OFF:
+        trace["stage"] = "cap_router"
+        selector = cap_router.selector_for(backend)
+        if selector is None:  # unknown / laya-not-yet-deployed: never falls through
+            trace["fallback"] = REASON_CAP_ROUTER_UNAVAILABLE
+            return None
+        try:
+            route = await selector.select(message, cands,
+                                          entries_by_id=entries_by_id, facts=facts)
+        except cap_router.CapabilityRouterUnavailable:
+            # ruling 2026-10-01: a selector that cannot serve exits to the Agent;
+            # selection NEVER falls back to Qwen (the metric would be polluted).
+            trace["fallback"] = REASON_CAP_ROUTER_UNAVAILABLE
+            return None
+        trace["cap_router"] = f"{route.decision}:{route.capability_id or '-'}"
+        if capture is not None:
+            capture["cap_router"] = {
+                "decision": route.decision, "capability_id": route.capability_id,
+                "confidence": route.confidence, "provenance": route.provenance,
+            }
+        if not route.selected:
+            trace["fallback"] = REASON_CAP_ROUTER_NONE
+            return None
+        # TRANSITION SHIM (Phase 4 removes): cap_router's route is adapted into
+        # the legacy verdict shape so the existing Binder downstream can consume
+        # it. The stub extracts NO arguments -> arguments=None rides to the
+        # Binder, so a schema'd capability exits BIND_MISSING. That is the
+        # DELIBERATE limit of this phase, NOT a cap_router failure.
+        jv = selection_transition.route_to_verdict(route)
+    else:
+        # backend=off compatibility/rollback lane: the legacy single-call
+        # ToolIntentModel selection hop, UNCHANGED (HIT and MISS/AMBIGUOUS alike).
+        trace["stage"] = "tool_intent"
+        jv = await tool_intent(message, cands, entries_by_id=entries_by_id,
+                           llm=deps.llm, facts=facts)
+        trace["tool_intent"] = f"{jv.decision}:{jv.capability_id or '-'}"
+        if capture is not None:
+            capture["tool_intent"] = {
+                "decision": jv.decision, "capability_id": jv.capability_id,
+                "confidence": jv.confidence, "arguments": jv.arguments,
+                "rationale": jv.rationale,
+            }
+        if jv.decision != TOOL_INTENT_CONFIDENT:
+            trace["fallback"] = (
+                REASON_TOOL_INTENT_REJECT if jv.decision == TOOL_INTENT_REJECT
+                else REASON_TOOL_INTENT_UNCERTAIN
+            )
+            return None
 
     # ── Capability → Binder validate → certified ACTION metadata ───────────────
     entry = entries_by_id.get(jv.capability_id)
