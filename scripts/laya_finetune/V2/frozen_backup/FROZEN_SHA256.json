@@ -1,0 +1,12 @@
+{
+  "note": "SHA256 of the frozen V2 bundle BEFORE the 2026-10-02 Test->Train move",
+  "at": "2026-10-02",
+  "files": {
+    "manifest.json": "f62a678400aea324866ec8388d7d61e584b862b49b9d7fa47471ea16fe8709c3",
+    "v2_build_report.json": "e2a3dae1d7228ea31b7d318473edd6a795a4561b62b7ebc18f4aad8dd6fc0703",
+    "v2_construction_audit.jsonl": "2464e187a667d515b97f0082e18d37b66b2b3c377b6f54f681a265c7e4b6091a",
+    "v2_test.jsonl": "02a15ab30b624f0d1d132238095d5470287238068031cf14b81be0c3ceef954c",
+    "v2_train.jsonl": "6cd125b0f2f245425241ae88bfadaf71951d4ad99cab28b77ed60a2627aec715",
+    "v2_val.jsonl": "f7d97670c96c13330f07dad2a3aecabbae42b3194e54c2cf0dafddc8af51de7b"
+  }
+}

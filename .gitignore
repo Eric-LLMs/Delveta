@@ -40,9 +40,6 @@ apps/desktop/release/
 .vscode/
 .DS_Store
 
-# Claude Code (local-only settings)
-.claude/settings.local.json
-
 # Local temp record (never committed)
 docs/temp.md
 
@@ -56,5 +53,9 @@ scripts/trace_chat_prompt.py
 # LayaChoice-v1 frozen bundle — the model-phase inputs and the two un-regenerable
 # raw files; exempted from the generic `data/` rule above so they are committed.
 # The generated `smoke/` subset stays ignored.
-!scripts/laya_finetune/data/
-scripts/laya_finetune/data/smoke/
+!scripts/laya_finetune/V1/data/
+scripts/laya_finetune/V1/data/smoke/
+
+# LayaChoice-v2 frozen dataset — the accepted 4-way (3 capability + REJECT) bundle;
+# exempted from the generic `data/` rule above so it is committed, like V1.
+!scripts/laya_finetune/V2/data/

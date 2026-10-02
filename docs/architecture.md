@@ -6200,60 +6200,88 @@ invoked — the model only ever receives an already-normalized list:
 | `K = 3` | LayaChoice |
 | `K >= 4` | the business layer truncates to the top-3 first, then LayaChoice |
 
-The benchmark and training data are fixed at **K = 3** candidates. The `K >= 4`
-truncation is the business layer's job, not the model's — the model's decision head
-only ever sees at most three options.
+The benchmark and training data are fixed at **K = 3 capability candidates plus one
+`REJECT` option** (`OPTION_SLOTS = 4`). `REJECT` is a normal fourth option — not a
+threshold and not a post-hoc rule — carried on every row, so the decision head always
+scores exactly four options. The `K >= 4` truncation is the business layer's job, not
+the model's.
+
+**Rendering requirement.** A LayaChoice call MUST render the `REJECT` card as one of the
+criteria. A caller that renders only the capability cards (a 3-option question) does not
+match the pipeline the model was trained and measured under, and its scores are not
+meaningful.
 
 ### 26.3 Model
 
-- **Base**: `convaiinnovations/laya` (multilingual checkpoint, upstream revision
-  pinned; consumed through the `laya` inference package, version pinned).
-- **Fine-tuned**: **Delveta LayaChoice v1** — full-parameter fine-tune of the base
-  decision model on Delveta's capability-selection task.
+- **Base**: `convaiinnovations/laya` (multilingual checkpoint, revision `55cf4c4e…`,
+  subfolder `multilingual`; consumed through the `laya` inference package, version
+  pinned).
+- **Fine-tuned**: **Delveta LayaChoice v2** — full-parameter fine-tune of the base
+  decision model on Delveta's capability-selection task, with an explicit `REJECT`
+  option. The task is a **4-way flat classification** over three capability cards plus
+  one `REJECT` card.
+- **Superseded**: **Delveta LayaChoice v1** (3-way, no `REJECT`) is the previously
+  shipped checkpoint, retained as a frozen archive. v2 is the current model.
+
+> **Integration status.** The production `cap_router` card renderer and the `deploy/laya`
+> sidecar still render the 3-option v1 question and do **not** emit a `REJECT` criteria;
+> v2 is therefore **not yet wired into production**. Migrating to v2 requires the renderer
+> to add the `REJECT` option (see the rendering requirement in §26.2) and the sidecar to
+> load the v2 checkpoint. Until that lands, the deployed model remains v1.
 
 ### 26.4 Input configuration
 
 ```
-OPTION_CAP    = 256     # token budget per candidate capability card
-head_max_len  = 768     # COMBINED head + options budget (not an option length, not a context limit)
-max_len       = 1024
+OPTION_MAX_TOKENS = 256   # token budget per option card (capability cards and REJECT)
+head_max_len      = 768   # COMBINED head + options budget (not an option length, not a context limit)
+max_len           = 1024
 ```
 
 `head_max_len` is the joint budget for the instruction head plus the concatenated
 option cards — it is **not** a per-option cap and **not** the encoder's context
 limit. These three values are the input configuration for Delveta's long `B_noprov`
 capability cards; they are an experiment-defined budget, and the underlying encoder
-context window is a separate, larger number.
+context window is a separate, larger number. The v2 input builder is a byte-verbatim
+copy of `laya.common.build_sequence` with one line changed (`max_length=48` → `256`),
+and the 256/768/1024 budget was audited as sufficient at four option slots — no option
+card is truncated and the `REJECT` card enters the sequence in full.
 
 ### 26.5 Training and selection
 
 - Full-parameter fine-tuning (no adapters).
-- The best checkpoint is selected **only** by Validation v3 top-1.
+- The best checkpoint is selected **only** by Validation v3 top-1; train loss is never
+  used to select.
 - The Final Test set is never used for checkpoint selection or for any training
   decision.
 
-On the frozen Final Test v3 (`K = 3`, curated 17-capability EN/ZH set) the
-shipped checkpoint scores **93.56 % top-1**, against **57.89 %** for the un-finetuned
-base model on the same frozen test set. That is benchmark accuracy on a frozen
-curated split — not production-traffic accuracy and not an open-world generalization
-claim. The per-language, per-capability and confusion breakdowns live in the
-experiment record.
+For v2, Validation v3 top-1 peaks at epoch 7 (**96.67 % = 290/300**), which is the
+selected checkpoint. On the frozen Final Test v3 (1 400 rows, `K = 3` + `REJECT`,
+curated 17-capability EN/ZH set) the selected checkpoint scores **87.79 % top-1**; the
+weak class is `REJECT` (recall 71.93 %, precision 55.78 %). These are benchmark numbers
+on a frozen curated split — not production-traffic accuracy and not an open-world
+generalization claim.
+
+The v2 test number is **not directly comparable to v1's 93.56 %**: v1's frozen test was
+a 3-way 900-row split with no `REJECT` option, while v2's split adds the `REJECT` class
+and is correspondingly harder. The per-language, per-capability, per-epoch and confusion
+breakdowns live in the experiment record (§26.6).
 
 ### 26.6 Artifacts
 
 | Artifact | Home |
 |---|---|
-| Source code / experiment definition | [`scripts/laya_finetune/`](https://github.com/Eric-LLMs/Delveta/tree/main/scripts/laya_finetune) |
-| Selected model (FP32 weights + eval reports) | [Delveta-LayaChoice-v1](https://huggingface.co/eric-ml-nlp/Delveta-LayaChoice-v1) |
-| Non-selected checkpoints (epochs 1 / 3 / 4) | [Delveta-LayaChoice-v1-checkpoints](https://huggingface.co/eric-ml-nlp/Delveta-LayaChoice-v1-checkpoints) |
-| Frozen dataset (bundles + raw + `SHA256SUMS`) | [`scripts/laya_finetune/data/`](https://github.com/Eric-LLMs/Delveta/tree/main/scripts/laya_finetune/data) |
+| Source code / experiment definition (v2) | [`scripts/laya_finetune/V2/`](https://github.com/Eric-LLMs/Delveta/tree/main/scripts/laya_finetune/V2) |
+| Selected model (v2, FP32 weights + eval reports) | [Delveta-LayaChoice-v2](https://huggingface.co/eric-ml-nlp/Delveta-LayaChoice-v2) |
+| Non-selected checkpoints (epochs 1–6) | [Delveta-LayaChoice-v2-checkpoints](https://huggingface.co/eric-ml-nlp/Delveta-LayaChoice-v2-checkpoints) |
+| Frozen dataset (v2 bundles; shas in `manifest.json`) | [`scripts/laya_finetune/V2/data/`](https://github.com/Eric-LLMs/Delveta/tree/main/scripts/laya_finetune/V2/data) · [Delveta-LayaChoice-v2-Data](https://huggingface.co/datasets/eric-ml-nlp/Delveta-LayaChoice-v2-Data) |
+| Archived v1 source + data | [`scripts/laya_finetune/V1/`](https://github.com/Eric-LLMs/Delveta/tree/main/scripts/laya_finetune/V1) |
 
-The full experiment record — dataset definition, frozen SHA256s, token-budget
-investigation, baselines, epoch results, temperature calibration, final-test and
-error analysis, invalid runs and lessons learned — lives in
-[LayaChoice-v1 Fine-Tuning](experiments/LayaChoice-v1-Fine-Tuning.md). This section
-records only the stable architectural facts; the benchmark detail is deliberately
-not duplicated here.
+The full v2 experiment record — dataset definition, frozen SHA256s, token budget,
+per-epoch results, temperature calibration, final-test and error analysis — lives in
+[LayaChoice-v2 Fine-Tuning](experiments/LayaChoice-v2-Fine-Tuning.md). The frozen v1
+record lives in [LayaChoice-v1 Fine-Tuning](experiments/LayaChoice-v1-Fine-Tuning.md).
+This section records only the stable architectural facts; the benchmark detail is
+deliberately not duplicated here.
 
 ## 27. Intent Funnel — Evaluation & Validation
 
@@ -6402,11 +6430,11 @@ The 900-query Recall evaluation shows that the correct capability is within the 
 
 This means the Top-3 candidate boundary captures the correct capability for the large majority of queries before the final capability-discrimination step.
 
-LayaChoice-v1 was evaluated under the same three-candidate capability-selection setting, with a frozen capability-selection Top-1 accuracy of:
+LayaChoice-v2 was evaluated under the same candidate-selection setting, with a frozen capability-selection Top-1 accuracy of:
 
-> **93.56%**
+> **87.79%**
 
-This metric means that, when the candidate capability is within Laya's three-candidate input range, Laya selects the correct capability with **93.56% Top-1 accuracy**.
+This metric means that, when the correct capability is within Laya's candidate input range and a `REJECT` option is also on offer, Laya selects the correct capability with **87.79% Top-1 accuracy** (frozen Final Test, 1 400 rows). The number is lower than v1's 93.56 % in part because the task is harder: v2's frozen split adds the `REJECT` class that v1 did not carry.
 
 The two metrics measure different stages:
 
@@ -6414,7 +6442,7 @@ The two metrics measure different stages:
 Recall raw Top-3 coverage
 = whether the correct capability reaches the Laya candidate range
 
-Laya 93.56%
+Laya 87.79%
 = whether Laya selects the correct capability from that candidate range
 ```
 

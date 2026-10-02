@@ -128,15 +128,22 @@ See [docs/architecture.md §Implementation Status](docs/architecture.md#implemen
 ### Delveta LayaChoice
 
 Delveta includes a fine-tuned LayaChoice model for local capability selection
-and tool-intent routing.
+and tool-intent routing. The current model is **v2** — a 4-way decision that
+either selects a capability or explicitly `REJECT`s the candidate set.
 
-- Model: [Delveta-LayaChoice-v1](https://huggingface.co/eric-ml-nlp/Delveta-LayaChoice-v1)
-- Dataset: [`scripts/laya_finetune/data/`](scripts/laya_finetune/data/)
-- Training code: [`scripts/laya_finetune/`](scripts/laya_finetune/)
-- Checkpoints: [Delveta-LayaChoice-v1-checkpoints](https://huggingface.co/eric-ml-nlp/Delveta-LayaChoice-v1-checkpoints)
+- Model: [Delveta-LayaChoice-v2](https://huggingface.co/eric-ml-nlp/Delveta-LayaChoice-v2)
+- Dataset: [Delveta-LayaChoice-v2-Data](https://huggingface.co/datasets/eric-ml-nlp/Delveta-LayaChoice-v2-Data) · [`scripts/laya_finetune/V2/data/`](scripts/laya_finetune/V2/data/)
+- Training code: [`scripts/laya_finetune/V2/`](scripts/laya_finetune/V2/)
+- Checkpoints: [Delveta-LayaChoice-v2-checkpoints](https://huggingface.co/eric-ml-nlp/Delveta-LayaChoice-v2-checkpoints)
+- Experiment record: [LayaChoice-v2 Fine-Tuning](docs/experiments/LayaChoice-v2-Fine-Tuning.md)
 
-The model is used by the local Intent Funnel as a capability-selection model. The
+The model is used by the local Intent Funnel as a capability-selection model
+([architecture.md §26](docs/architecture.md#26-layachoice-capability-selection)). The
 production model artifact is hosted separately from the Delveta source repository.
+
+> **Integration status.** The production `cap_router` and the `deploy/laya` sidecar still
+> render the 3-option v1 question and emit no `REJECT` option; v2 is therefore **not yet
+> wired into production**.
 
 ---
 

@@ -130,15 +130,21 @@ Delveta 自研了高可控的 Agent 运行时，拒绝将核心编排委托给�
 ### Delveta LayaChoice
 
 Delveta 包含一个微调后的 LayaChoice 模型，用于本地的 capability selection 与
-tool-intent routing。
+tool-intent routing。当前模型为 **v2** —— 一个 4-way 决策：要么选中某个 capability，
+要么显式 `REJECT` 整个候选集。
 
-* 模型：[Delveta-LayaChoice-v1](https://huggingface.co/eric-ml-nlp/Delveta-LayaChoice-v1)
-* 数据集：[`scripts/laya_finetune/data/`](scripts/laya_finetune/data/)
-* 训练代码：[`scripts/laya_finetune/`](scripts/laya_finetune/)
-* Checkpoints：[Delveta-LayaChoice-v1-checkpoints](https://huggingface.co/eric-ml-nlp/Delveta-LayaChoice-v1-checkpoints)
+* 模型：[Delveta-LayaChoice-v2](https://huggingface.co/eric-ml-nlp/Delveta-LayaChoice-v2)
+* 数据集：[Delveta-LayaChoice-v2-Data](https://huggingface.co/datasets/eric-ml-nlp/Delveta-LayaChoice-v2-Data) · [`scripts/laya_finetune/V2/data/`](scripts/laya_finetune/V2/data/)
+* 训练代码：[`scripts/laya_finetune/V2/`](scripts/laya_finetune/V2/)
+* Checkpoints：[Delveta-LayaChoice-v2-checkpoints](https://huggingface.co/eric-ml-nlp/Delveta-LayaChoice-v2-checkpoints)
+* 实验记录：[LayaChoice-v2 Fine-Tuning](docs/experiments/LayaChoice-v2-Fine-Tuning.md)
 
-该模型被本地 Intent Funnel 用作 capability-selection 模型。生产模型 artifact 与
-Delveta 源码仓库分开托管。
+该模型被本地 Intent Funnel 用作 capability-selection 模型
+（[architecture.md §26](docs/architecture.md#26-layachoice-capability-selection)）。
+生产模型 artifact 与 Delveta 源码仓库分开托管。
+
+> **集成状态。** 生产 `cap_router` 与 `deploy/laya` sidecar 仍渲染 3-option 的 v1
+> 问题、不输出 `REJECT` 选项，因此 v2 **尚未接入生产**。
 
 ---
 
