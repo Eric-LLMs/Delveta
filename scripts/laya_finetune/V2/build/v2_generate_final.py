@@ -31,7 +31,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 OUT = Path(__file__).resolve().parent
 DEST = OUT / "v2_final"
-BUNDLE = REPO / "scripts" / "laya_finetune" / "data"
+BUNDLE = REPO / "V1" / "data"   # upstream V1 query bundles; NOT V2 training data
 RAW = OUT / "v2_raw_recall.jsonl"
 
 SRC_OF = {"train": "train2", "val": "val2", "test": "test2"}

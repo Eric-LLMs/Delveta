@@ -283,6 +283,11 @@ def parse_args(argv=None) -> argparse.Namespace:
 
 
 def main(argv=None) -> None:
+    for stream in (sys.stdout, sys.stderr):          # live, line-buffered output
+        try:
+            stream.reconfigure(line_buffering=True)
+        except (AttributeError, ValueError):
+            pass
     args = parse_args(argv)
     if args.baseline_zero_shot:
         arm_baseline(args)

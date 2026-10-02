@@ -56,22 +56,44 @@ Card view `B_noprov`; 3 capability cards + 1 `REJECT` card (`OPTION_SLOTS=4`);
 V1 bundles plus `v2_final/v2_{train2,val2,test2}.jsonl`):
 
 ```
-V1 B_noprov bundles (856/150/900)
+V1/data  (upstream query bundles, read-only)  +  production recall index / DB
   → v2_capture.py            no-threshold SQL recall (index corpus1-d030fea9e32a)
                              → v2_raw_recall.jsonl (1906 rows)
-  → v2_generate_final.py     drop self-hit → cap dedup (max) → sort → Top-3 → 4-way rows
-                             → v2_final/v2_{train2,val2,test2}.jsonl
+  → v2_generate_final.py     drop self-hit → cap dedup (max) → sort → Top-3
+                             → v2_final/v2_{train2,val2,test2}.jsonl   (3 caps; no REJECT yet)
+  → v2_generate_dataset.py   DATA AUGMENTATION: REJECT labelling, synthetic + natural
+                             REJECT, target_kind / gold_capability_id / reject_index,
+                             4-way option-card shuffle, row shuffle, p1/p2 anti-adjacency
+                             → v2_dataset/v2_{train,val,test}.jsonl
   → v2_adjust_test_to_train.py  move 400 Test rows (200 whole source queries) into Train
-                             → v2_{train,val,test}.jsonl + frozen_backup of the 1800-row Test
+                             → V2/data/v2_{train,val,test}.jsonl + frozen_backup of the 1800-row Test
 ```
+
+Direction of the data semantics (must not be conflated):
+
+```
+V1/data  (upstream input — V1 query bundles; NOT V2 training data)
+   +  production recall index / DB
+        ↓   V2/build  (construct / augment / adjust)
+V2/data  (final frozen training data)
+        ↓   run.sh  (reads V2/data only)
+   training
+```
+
+`V1/data` feeds only steps 1–3 of the build chain as its upstream raw material;
+`V2/data` is the only data training reads. The frozen `data/` is the finished
+result, so **a normal training reproduction does not re-run the build chain**.
+
 The Test→Train adjustment (2026-10-02) changed **only the `split` field**; the
 pre-adjustment 1800-row Test is preserved under `frozen_backup/`.
 
-> `build/` scripts are restored **verbatim** from the run. `v2_capture.py`
-> depends on the **production recall index** (`SessionLocal` + the V1 bundles),
-> so it re-runs only in an environment with that database/DB access — it is not
-> offline-reproducible. It also references the pre-archive V1 path
-> (`scripts/laya_finetune/data/…`); V1 now lives under `scripts/laya_finetune/V1/`.
+> `build/` scripts are restored from the run. `v2_capture.py` depends on the
+> **production recall index** (`SessionLocal` + the V1 bundles), so it re-runs
+> only in an environment with that database/DB access — it is not
+> offline-reproducible. The scripts read the V1 bundles from
+> `scripts/laya_finetune/V1/data/` (upstream input) and write inside `V2/build/`;
+> `v2_adjust_test_to_train.py` reads and writes `V2/data/`. No machine-absolute
+> path remains in `build/`.
 
 ## 3. Training parameters (10 epochs)
 
@@ -189,9 +211,10 @@ The on-host layout is corroborated by the assembly helper
 | `layachoice_v2_eval.py` | `f86c366a887d60284db541f03370b674d89c10cb345aa0326951e61469ae2f18` | **unverifiable** |
 | `analysis/plot_val_curves.py` | `1b8682e7e82813daa5c8e3d3313072a908eaf73a455d6a14cbd88214b5f7e951` | **unverifiable** |
 | `analysis/val_metrics.json` | `97129e7c99d8f14161b9aee7b57c85b1644a599528487bf4f9c02e6878c859b3` | unverifiable |
-| `build/v2_capture.py` | `cf1861d0e1db6276cb6bc246536b979f7af8c18f0ce2d1afb164d0c7a6bd475b` | unverifiable |
-| `build/v2_generate_final.py` | `f74367a6968517515d0b347f8f7ebd7fbbaf2d1cbb245895b8def0fa76fcad62` | unverifiable |
-| `build/v2_adjust_test_to_train.py` | `9701267056727bff5d40822d2fde2abdab1093c1032b89e0a9db85bbb26c6c56` | unverifiable |
+| `build/v2_capture.py` | `c9adb2c5635dd21624d779bd9acc57062b7250bee08f073199e741494db5d82f` | unverifiable |
+| `build/v2_generate_final.py` | `d742cf453250f96e669cdd7f17b57e6c31ac25776f2e4a59008dbe1f8a62a040` | unverifiable |
+| `build/v2_generate_dataset.py` | `36a699ef64968cf76257d0d3bccdf9845831873873445017beaee4f643eaad66` | unverifiable |
+| `build/v2_adjust_test_to_train.py` | `82613f0dfb455cbb06725ab8a492d2bdabafe92e14529f748b19418136cb4496` | unverifiable |
 | `smoke/build_smoke_fixture.py` | `1ba41b7ed68bf22f3398e196e1427faedf0803f5755e23541418a154bf6cd76e` | unverifiable |
 | `smoke/_step7_driver.py` | `2036afa0b51053c161379906f614079fd2c04878ddb212dd9425c9cc77d62713` | unverifiable |
 
@@ -205,6 +228,14 @@ copies** in the run workspace; their identity with the executed originals is
 strongly indicated (same run tree, internally consistent outputs) but
 **not cryptographically proven**.
 
+**Path normalisation of the build scripts.** `v2_capture`, `v2_generate_final`
+and `v2_adjust_test_to_train` were additionally adjusted for this repo so they
+carry no machine-absolute path: they now read the V1 bundles from
+`scripts/laya_finetune/V1/data/` (upstream input) and `v2_adjust_test_to_train`
+writes to `V2/data/`. Their hashes above are this repo's state, which differs
+from the host originals **only in those path constants** (`v2_generate_dataset.py`
+is included as the augmentation step; its logic is unchanged from the run).
+
 ## 9. Commands: recorded vs reconstructed
 
 **There is no recorded command log.** No `run.sh` existed on the host; no shell
@@ -216,9 +247,11 @@ module's argparse and from the run's output layout (§7). Treat them as a faithf
 
 ```bash
 # ── data construction (evidence: _capture.log; outputs = frozen bundle) ──
+# reads scripts/laya_finetune/V1/data/ (upstream); writes under V2/build/
 python v2_capture.py                 # → v2_raw_recall.jsonl (1906 rows)
 python v2_generate_final.py          # → v2_final/v2_{train2,val2,test2}.jsonl
-python v2_adjust_test_to_train.py    # → v2_{train,val,test}.jsonl + 1800-row backup
+python v2_generate_dataset.py        # augmentation (REJECT/shuffle) → v2_dataset/v2_{train,val,test}.jsonl
+python v2_adjust_test_to_train.py    # reads+writes V2/data/ → v2_{train,val,test}.jsonl + 1800-row backup
 
 # ── training / eval / analysis (host: /root/delveta/scripts/laya_finetune/V2) ──
 python layachoice_v2_finetune.py --train --epochs 10 --data data --out out

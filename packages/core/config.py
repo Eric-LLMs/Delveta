@@ -131,7 +131,7 @@ class Settings(BaseSettings):
     # fail-open Agent fallback. The QIR legacy cascade was deleted with migration
     # 0014 — this is the only table-driven routing lane.
     chat_funnel_timeout_seconds: float = 5.0     # whole-cascade wall clock, then Agent
-    chat_funnel_min_score: float = 0.78          # Recall quality gate — EVERY hit >= it reaches the
+    chat_funnel_min_score: float = 0.60          # Recall quality gate — EVERY hit >= it reaches the
                                                  # model; no width cap (ruling 2026-09-26), and an
                                                  # EMPTY set short-circuits to NO_CANDIDATE (Agent)
     chat_funnel_margin: float = 0.06             # ToolIntentModel(stub) leader-vs-runner-up margin

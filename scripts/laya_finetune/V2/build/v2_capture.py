@@ -2,10 +2,10 @@
 """V2 dataset step 1: capture the NO-THRESHOLD production recall for the three
 V1 query sets that V2 is derived from.
 
-Query sources (V1 frozen bundles, read-only):
-  train  scripts/laya_finetune/data/layachoice_v1_train_b_noprov.jsonl.gz   (856)
-  val    scripts/laya_finetune/data/layachoice_v1_val_b_noprov.jsonl.gz     (150)
-  test   scripts/laya_finetune/data/layachoice_v1_test_b_noprov.jsonl.gz    (900)
+Query sources (V1 frozen bundles, read-only; upstream input, not V2 training data):
+  train  scripts/laya_finetune/V1/data/layachoice_v1_train_b_noprov.jsonl.gz   (856)
+  val    scripts/laya_finetune/V1/data/layachoice_v1_val_b_noprov.jsonl.gz     (150)
+  test   scripts/laya_finetune/V1/data/layachoice_v1_test_b_noprov.jsonl.gz    (900)
 
 Same production seams as the funnel / the frozen T2 diagnostic:
   recall.load_index(SessionLocal)                          -> live index (admin view)
@@ -31,7 +31,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
 OUT = Path(__file__).resolve().parent
-BUNDLE = REPO / "scripts" / "laya_finetune" / "data"
+BUNDLE = REPO / "V1" / "data"   # upstream V1 query bundles; NOT V2 training data
 
 
 def load_split(split: str):

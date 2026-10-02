@@ -190,7 +190,7 @@ services:
     ports:
       - "127.0.0.1:18092:8000"
     volumes:
-      - ${LAYA_CHOICE_MODEL_DIR:-./scripts/laya_finetune/out/release_repro/model}:/models/layachoice-v1:ro
+      - ${LAYA_CHOICE_MODEL_DIR:-./scripts/laya_finetune/V1/out/release_repro/model}:/models/layachoice-v1:ro
     environment:
       LAYA_CHOICE_MODEL_DIR: /models/layachoice-v1
       LAYA_DEVICE: cpu

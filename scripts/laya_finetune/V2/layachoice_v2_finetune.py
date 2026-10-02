@@ -258,6 +258,7 @@ def mode_train(args) -> None:
     instructions = manifest.get("instructions", S.DEFAULT_INSTRUCTIONS)
 
     train_rows = D.load_split("train", data_dir)
+    val_rows = D.load_split("val", data_dir, limit=S.SMOKE_ROWS if smoke else None)
     calib_rows, fit_rows = D.frozen_calibration(train_rows, manifest)
     epochs = 1 if smoke else args.epochs
     world_size = int(os.environ.get("WORLD_SIZE", "1"))
@@ -314,6 +315,7 @@ def mode_train(args) -> None:
     scaler = torch.amp.GradScaler(device.type, enabled=use_scaler)
 
     model.train()
+    run_start = time.time()
     for epoch in range(epochs):
         t0 = time.time()
         random.seed(S.SEED_BASE + epoch + rank)
@@ -381,8 +383,36 @@ def mode_train(args) -> None:
             if epoch_dir.exists() and not args.overwrite:
                 raise FileExistsError(f"{epoch_dir} exists; pass --overwrite to replace it")
             save_checkpoint(epoch_dir, model, optimizer, scheduler, scaler, meta)
-            print(f"[epoch {epoch + 1}/{epochs}] loss={meta['mean_loss']} sigma={meta['sigma']} "
-                  f"updates={updates} {meta['seconds']}s -> {epoch_dir}")
+            # Per-epoch validation, reported the moment the epoch ends. Forward-only
+            # (no_grad + eval); the RNG is snapshotted and restored around it so the
+            # training trajectory stays byte-identical to a run without validation.
+            import layachoice_v2_eval as E          # lazy: eval imports this module
+            rng_before = rng_state()
+            core = model.module if hasattr(model, "module") else model
+            t_val = time.time()
+            decided = decide(core, tok, val_rows, cfg, instructions,
+                             [1.0, 1.0, 1.0], device)
+            restore_rng_state(rng_before)
+            model.train()
+            rep = E.summarise(decided, arm=f"validation-epoch-{epoch + 1}", split="val",
+                              temperature=[1.0, 1.0, 1.0],
+                              card_view=manifest["formal_card_view"])
+            rj = rep["reject"]
+            val_metrics = {
+                "epoch": epoch + 1, "rows": rep["rows"], "top1": rep["top1"],
+                "ece": rep["ece"], "reject_recall": rj["recall"],
+                "reject_fpr": rj["false_positive_rate"], "gold_reject_n": rj["gold_reject_n"],
+                "seconds": round(time.time() - t_val, 2),
+            }
+            (epoch_dir / "val_metrics.json").write_text(
+                json.dumps(val_metrics, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            print(f"[epoch {epoch + 1}/{epochs}] train_loss={meta['mean_loss']:.6f} "
+                  f"val_top1={val_metrics['top1']:.4f} val_ece={val_metrics['ece']:.4f} "
+                  f"reject_recall={val_metrics['reject_recall']:.4f} "
+                  f"reject_fpr={val_metrics['reject_fpr']:.4f}  "
+                  f"[sigma={meta['sigma']} updates={updates} "
+                  f"train {meta['seconds']}s, val {val_metrics['seconds']}s, "
+                  f"elapsed {round(time.time() - run_start, 2)}s] -> {epoch_dir}", flush=True)
 
     # The LR schedule must have advanced exactly once per optimizer step, and exactly the
     # planned number of times -- otherwise the cosine never matched the training horizon.
@@ -591,6 +621,11 @@ def parse_args(argv=None) -> argparse.Namespace:
 
 
 def main(argv=None) -> None:
+    for stream in (sys.stdout, sys.stderr):          # live, line-buffered output
+        try:
+            stream.reconfigure(line_buffering=True)
+        except (AttributeError, ValueError):
+            pass
     args = parse_args(argv)
     if args.export:
         mode_export(args)

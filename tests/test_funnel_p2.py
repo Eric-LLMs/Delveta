@@ -940,6 +940,54 @@ def test_prompt_defensively_replaces_leaked_regex_literal(caplog):
     assert any("regex literal leaked" in r.getMessage() for r in caplog.records)
 
 
+def test_prompt_carries_recall_semantic_references():
+    """Iteration 2 payload injection: next to the raw query the model sees
+    Recall's top-similarity hit and that capability's canonical standard query.
+    Both are DERIVED from Recall's own candidates — a Matcher card never
+    supplies a similarity, and an absent reference renders as an explicit
+    ``(none)`` rather than an invented sentence."""
+    entry = _entry("cap-a", corpus=("新建文件夹", "建个文件夹"), parameters=_NAME_SCHEMA)
+    # a Similar-row hit: its standard_query_id names the canonical anchor
+    sim = (Candidate("cap-a", 0.87, matched_example="建个文件夹", origin="recall",
+                     query_kind="similar", query_id="q10", standard_query_id="q1"),)
+    p = jprompt.build_prompt("帮我搞个文件夹", sim, {"cap-a": entry})
+    assert "<retrieved_similar>建个文件夹</retrieved_similar>" in p
+    assert "<canonical>新建文件夹</canonical>" in p
+    assert "<user_sentence>帮我搞个文件夹</user_sentence>" in p  # raw query untouched
+
+    # the HIGHEST-similarity Recall hit wins; a Matcher card (score 1.0) is
+    # table evidence, not a cosine, and never becomes the reference
+    mixed = (
+        Candidate("cap-a", 0.55, matched_example="建个文件夹", origin="recall",
+                  query_kind="similar", query_id="q10", standard_query_id="q1"),
+        Candidate("cap-b", 0.91, matched_example="加个词条", origin="recall",
+                  query_kind="standard", query_id="q1"),
+        Candidate("cap-c", 1.0, matched_example="新建文件夹", origin="matcher_hit"),
+    )
+    p2 = jprompt.build_prompt("q", mixed, {"cap-a": entry,
+                                           "cap-b": _entry("cap-b", tool="add_term",
+                                                           corpus=("加个词条",))})
+    assert "<retrieved_similar>加个词条</retrieved_similar>" in p2
+    assert "<canonical>加个词条</canonical>" in p2   # a standard hit anchors itself
+
+    # no Recall hit at all -> both references are explicitly empty, never a
+    # Matcher literal passed off as a similarity
+    only_hit = (Candidate("cap-a", 1.0, matched_example="新建文件夹",
+                          origin="matcher_hit"),)
+    p3 = jprompt.build_prompt("q", only_hit, {"cap-a": entry})
+    assert "<retrieved_similar>(none)</retrieved_similar>" in p3
+    assert "<canonical>(none)</canonical>" in p3
+
+    # unresolvable canonical (no enabled standard row) -> empty, not invented
+    p4 = jprompt.build_prompt(
+        "q",
+        (Candidate("cap-z", 0.8, matched_example="建个文件夹", origin="recall",
+                   query_kind="similar"),),
+        {"cap-z": _entry("cap-z", corpus=())})
+    assert "<retrieved_similar>建个文件夹</retrieved_similar>" in p4
+    assert "<canonical>(none)</canonical>" in p4
+
+
 def test_prompt_empty_candidate_set_is_explicit_not_silent():
     # defensive reachability: since ruling 2026-09-26 the funnel short-circuits
     # an empty set BEFORE the hop, so build_prompt only sees () if a caller

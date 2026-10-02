@@ -26,7 +26,7 @@ import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
-DATA = Path(r"e:/Work Space/Git Repositories/DeepDive/scripts/laya_finetune/V2/data")
+DATA = Path(__file__).resolve().parents[1] / "data"   # V2 root -> V2/data (portable)
 BACKUP = DATA.parent / "frozen_backup"
 AUDIT = DATA / "v2_construction_audit.jsonl"
 

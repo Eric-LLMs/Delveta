@@ -25,6 +25,10 @@
 # and never uploads. Each invocation appends one line to $OUT/run_ledger.jsonl.
 set -euo pipefail
 
+# Real-time logs: child Python runs unbuffered, so per-epoch results and every phase
+# summary appear in the log the instant they are produced (not only when a buffer fills).
+export PYTHONUNBUFFERED=1
+
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PY="${PYTHON:-python3}"
 DATA="$HERE/data"
@@ -127,8 +131,58 @@ PY
 }
 
 # ── phases ───────────────────────────────────────────────────────────────────
+# A few bundle JSON files were hashed on Windows (CRLF) but committed as LF, so a
+# fresh Linux checkout fails the SHA gate. Restore the exact byte form each file's
+# own SHA256SUMS records — no parsed content changes — before verifying. If a file
+# already matches, nothing is touched; originals are copied under $OUT/eol_backup.
+normalize_bundle_eol() {
+  [[ -f "$DATA/SHA256SUMS" ]] || return 0
+  "$PY" - "$DATA" "$OUT" <<'PY'
+import hashlib, pathlib, shutil, sys
+data, out = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+
+def sha(b):
+    return hashlib.sha256(b).hexdigest()
+
+recorded = {}
+for line in (data / "SHA256SUMS").read_text(encoding="utf-8").splitlines():
+    line = line.strip()
+    if line and not line.startswith("#"):
+        h, name = line.split(None, 1)
+        recorded[name.strip()] = h
+
+changed = []
+for name, want in recorded.items():
+    p = data / name
+    if not p.is_file():
+        continue
+    raw = p.read_bytes()
+    if sha(raw) == want:
+        continue
+    lf = raw.replace(b"\r\n", b"\n")
+    hit = None
+    for variant, tag in ((lf.replace(b"\n", b"\r\n"), "CRLF"), (lf, "LF")):
+        if sha(variant) == want:
+            hit = (variant, tag)
+            break
+    if hit is None:
+        print(f"[eol] {name}: no single EOL change reproduces the recorded hash")
+        continue
+    variant, tag = hit
+    bak = out / "eol_backup"
+    bak.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(p, bak / name)
+    p.write_bytes(variant)
+    changed.append(f"{name}->{tag}")
+
+if changed:
+    print("[eol] normalised to the recorded bytes: " + ", ".join(changed))
+PY
+}
+
 do_verify() {
   phase "verify the frozen bundle (stdlib only, no GPU)"
+  normalize_bundle_eol
   "$PY" "$HERE/layachoice_v2_verify.py"
 }
 
