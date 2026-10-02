@@ -21,8 +21,10 @@ v1 only in the dataset/task**, never by silently re-tuning the recipe.
 ```
 scripts/laya_finetune/V2/
   README.md                     this file
-  run.sh                        single entry point: verify / baseline / train / select /
-                                temperature / benchmark / export / all
+  run.sh                        single entry point: a bare `bash run.sh` runs the whole
+                                pipeline; each phase is also runnable alone
+                                (setup / verify / baseline / train / select /
+                                temperature / benchmark / export / analysis / all)
   requirements.txt              the pinned fine-tune environment (isolated from the app)
   layachoice_v2_spec.py         the frozen constants: token budget, base checkpoint, seeds, hyper-parameters
   layachoice_v2_render.py       the model-input boundary: the 256-token builder and install()
@@ -76,10 +78,27 @@ Disk: each epoch checkpoint is ~3.9 GB (1.3 GB fp32 weights + 2.6 GB AdamW state
 
 ## Deploy
 
-`run.sh` is the single entry point. **Every phase is explicit** — a bare `bash run.sh` prints
-usage and exits non-zero, so an accidental invocation can never start training.
+> **Historical note.** The 2026-10-02 GPU training ran **without** a `run.sh` — there was
+> none on the host; every stage was invoked directly (see `RUN_RECORD.md` §9–10). The
+> `run.sh` below is a reproducible entry point assembled from the recovered and verified CLI
+> workflow; it is **not** a transcript of the original run.
+
+`run.sh` is the single entry point. **A bare `bash run.sh` runs the whole pipeline end to
+end** — the fresh-clone "one command" path. It installs the pinned environment on first use
+(creating `.venv` if the chosen interpreter lacks `laya`), then runs
+`verify → baseline → train → select → temperature → benchmark → export → analysis`, stopping
+on the first failing phase.
 
 ```bash
+bash run.sh                                 # the whole pipeline, defaults (10 epochs)
+bash run.sh --epochs 10                     # same, explicit epoch count
+bash run.sh --python /path/to/python        # use a pre-built interpreter (skips setup)
+```
+
+Every phase is also runnable **alone**, so a run is resumable from any step:
+
+```bash
+bash run.sh setup                           # create .venv + pip install -r requirements.txt
 bash run.sh verify                          # hashes + schema + labels + splits (no GPU)
 bash run.sh baseline                        # zero-shot baseline on the frozen Test
 bash run.sh train --epochs 10               # fine-tune (GPU)
@@ -87,7 +106,7 @@ bash run.sh select                          # per-epoch validation -> best_epoch
 bash run.sh temperature                     # fit the temperature on the calibration split
 bash run.sh benchmark                       # best checkpoint on the frozen Test
 bash run.sh export                          # write the Agent-loadable artifact
-bash run.sh all --epochs 10                 # the whole pipeline end to end
+bash run.sh analysis                        # per-epoch Val curves for this run
 ```
 
 Add `--smoke` to any stage for a CPU run (8 rows per split, 1 training step), and

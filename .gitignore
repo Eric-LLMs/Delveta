@@ -59,3 +59,7 @@ scripts/laya_finetune/V1/data/smoke/
 # LayaChoice-v2 frozen dataset — the accepted 4-way (3 capability + REJECT) bundle;
 # exempted from the generic `data/` rule above so it is committed, like V1.
 !scripts/laya_finetune/V2/data/
+
+# LayaChoice-v2 data-construction chain (capture -> generate_final -> adjust_test_to_train);
+# exempted from the generic `build/` rule above so the reproducible chain is committed.
+!scripts/laya_finetune/V2/build/
