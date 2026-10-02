@@ -29,6 +29,7 @@ from core.application.chat.intent_funnel import observability as obs_mod
 from core.application.chat.intent_funnel import recall as recall_mod
 from core.application.chat.intent_funnel import registry as reg_mod
 from core.application.chat.intent_funnel.registry import entry as entry_mod
+from core.config import settings
 from core.infrastructure.request_context import (
     get_request_execution_mode,
 )
@@ -132,16 +133,24 @@ def wired(monkeypatch, request):
 
 @pytest.mark.asyncio
 async def test_default_call_is_production_recall(wired):
-    """No seam args -> settings' quality gate stays INSIDE recall: the 0.60
-    card is filtered before the model (min_score 0.82 default), only 0.90 rides."""
+    """No seam args -> settings' quality gate stays INSIDE recall. The synthetic
+    index carries fixed cosines but NO threshold of its own, so WHICH of them
+    ride to the model is decided by the live config gate: the expectation is
+    derived from ``settings.chat_funnel_min_score``, never hardcoded."""
+    gate = settings.chat_funnel_min_score
+    riding = {cap for cap, score in _SCORES.items() if score >= gate}
+    assert "cap-add-term" in riding            # 0.90 clears any sane production gate
     llm = _LLM({"cap": {"capability_id": "cap-add-term", "confidence": 0.9,
                         "arguments": {"term": "keystone", "domain": "工程"}}})
     ctx = R.ctx_for("帮我把 keystone 收录到工程词汇库", None, session_bound=False)
     trace = funnel._new_trace()
     out = await funnel._run_cascade(ctx, _deps(llm), _req(), trace)
     assert out is not None and out.requested_action["capability_id"] == "cap-add-term"
-    assert trace["recall_count"] == 1          # 0.60 and 0.30 were filtered in recall
-    assert llm.calls and "cap-create-folder" not in llm.calls[0]["prompt"]
+    # the gate ran INSIDE recall: exactly the cosines >= the config gate were kept ...
+    assert trace["recall_count"] == len(riding)
+    prompt = llm.calls[0]["prompt"]
+    for cap in _SCORES:                        # ... and each card reached the model iff it rode
+        assert (f"### {cap}" in prompt) == (cap in riding)
 
 
 @pytest.mark.asyncio
