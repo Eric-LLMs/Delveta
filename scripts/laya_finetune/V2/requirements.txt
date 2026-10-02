@@ -1,0 +1,31 @@
+# LayaChoice-v2 fine-tuning environment (isolated from the app's root requirements.txt).
+#
+# The Delveta app runs on the root requirements.txt / pyproject.toml; the Laya
+# fine-tune uses its own pinned environment because the recipe depends on the exact
+# `laya` and `transformers` APIs. Install this file into a dedicated venv on the GPU
+# box (and into any CPU box used only for the --smoke path); do not merge it into the
+# app environment.
+#
+#   python3 -m venv .venv && . .venv/bin/activate
+#   pip install -r requirements.txt
+#
+# `laya` is exact-pinned: the upstream repository went private, so the recipe is
+# verified only against this version and run.sh / the loader fail loudly otherwise.
+laya==0.3.21
+
+# Exact-pinned: the model plumbing calls version-specific APIs
+# (laya.agent._fix_tokenizer_config, laya.common.build_model/collate_items/proper_reward,
+# torch.amp.GradScaler).
+transformers==5.17.0
+
+# Accelerator runtime. Verified on torch 2.14.1+cu130 (1x NVIDIA A30, bf16) and on
+# torch 2.14.0 CPU for the --smoke path. A CUDA build must be installed from the
+# PyTorch index that matches the box's driver; a plain `pip install torch` may pick a
+# CPU-only wheel.
+torch>=2.4
+
+safetensors>=0.8
+huggingface_hub>=0.30
+numpy>=1.26
+# plot_val_curves.py only (the per-epoch analysis stage); not needed for train/eval.
+matplotlib>=3.8

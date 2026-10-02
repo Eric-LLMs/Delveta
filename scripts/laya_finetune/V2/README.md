@@ -21,48 +21,82 @@ v1 only in the dataset/task**, never by silently re-tuning the recipe.
 ```
 scripts/laya_finetune/V2/
   README.md                     this file
+  run.sh                        single entry point: verify / baseline / train / select /
+                                temperature / benchmark / export / all
+  requirements.txt              the pinned fine-tune environment (isolated from the app)
   layachoice_v2_spec.py         the frozen constants: token budget, base checkpoint, seeds, hyper-parameters
   layachoice_v2_render.py       the model-input boundary: the 256-token builder and install()
   layachoice_v2_dataset.py      the dataset contract: adapter (V2Example) + manifest-checked loader
   layachoice_v2_finetune.py     stage 2: --train / --fit-temperature / --export
   layachoice_v2_eval.py         stage 3: --baseline-zero-shot / --select / --benchmark
+  layachoice_v2_verify.py       bundle verifier: hashes, schema, labels, splits, calibration
+                                (stdlib only — no GPU, no tokenizer, no network)
+  plot_val_curves.py            analysis: per-epoch Val curves -> PNGs + val_metrics.csv
+                                (reads val_metrics.json only; Test is never read)
+  val_metrics.json              the frozen per-epoch Val metrics the plot reads (run record)
   data/                         the frozen bundle, self-contained and also the GitHub backup
     v2_{train,val,test}.jsonl   the three splits
-    manifest.json               shas, row counts, calibration ids, part/language counts, base revision
+    manifest.json               row counts, calibration ids, part/language counts, base revision
     v2_build_report.json        the construction report
     v2_construction_audit.jsonl the per-row construction audit
+    SHA256SUMS                  sha256 of each bundle file (computed from the files above)
   frozen_backup/                the pre-adjustment Test split and its SHA256 record
     v2_test_1800_pre_adjustment.jsonl
     FROZEN_SHA256.json
-  out/                          training artifacts (not committed)
+  out/                          run artifacts (not committed)
 ```
 
-## Deploy
+## Environment
 
-The GPU box needs no registry, no database and no repo checkout beyond this directory.
+| | |
+|---|---|
+| Python | **3.11** (the verified run used 3.11) |
+| OS / shell | Linux or macOS. **Windows:** run the `*.py` stages directly (Git-Bash or WSL can run `run.sh`; PowerShell cannot). |
+| GPU | **1× NVIDIA A30** for the verified run; any CUDA GPU with ≥40 GB free disk works (bf16 on Ampere+, fp16 + `GradScaler` on T4). A CPU-only box can run `--smoke` and `verify`. |
+| CUDA / torch | verified on `torch 2.14.1+cu130`; the `--smoke` and `verify` paths run on `torch 2.14.0` CPU |
+| transformers | `5.17.0` (exact-pinned) |
+| laya | `0.3.21` (exact-pinned, asserted at every stage start) |
+| network | the base checkpoint is fetched once from the pinned revision and then cached; nothing else is downloaded |
+
+The environment is **isolated from the app**: install [`requirements.txt`](requirements.txt)
+into a dedicated venv, not the Delveta app environment (which uses the repo-root
+`requirements.txt`).
 
 ```bash
-# 1. env
 python3 -m venv .venv && . .venv/bin/activate
-pip install "laya==0.3.21" torch transformers safetensors huggingface_hub numpy
-
-# 2. smoke first: CPU, float32, no GradScaler, no DDP, 8 rows per split, 1 training step
-python layachoice_v2_finetune.py --train --smoke
-python layachoice_v2_eval.py --baseline-zero-shot --out out/baseline --smoke
-
-# 3. the real run (10 epochs, bf16 on Ampere+, fp16 + GradScaler on T4)
-python layachoice_v2_finetune.py --train --epochs 10 --out out
+pip install -r requirements.txt      # laya==0.3.21, transformers==5.17.0, torch, ...
 ```
 
-Unlike v1 there is no `run.sh`; the stages are invoked directly (see *Stages* below), and each
-stage re-runs independently.
-
 `laya` is pinned to `0.3.21`. The upstream repository went private after this recipe was
-written, so the modules fail loudly on any other version rather than silently training on a
-different API.
+written, so `run.sh` and the modules fail loudly on any other version rather than silently
+training on a different API.
 
 Disk: each epoch checkpoint is ~3.9 GB (1.3 GB fp32 weights + 2.6 GB AdamW state), so budget
 ~40 GB for ten epochs.
+
+## Deploy
+
+`run.sh` is the single entry point. **Every phase is explicit** — a bare `bash run.sh` prints
+usage and exits non-zero, so an accidental invocation can never start training.
+
+```bash
+bash run.sh verify                          # hashes + schema + labels + splits (no GPU)
+bash run.sh baseline                        # zero-shot baseline on the frozen Test
+bash run.sh train --epochs 10               # fine-tune (GPU)
+bash run.sh select                          # per-epoch validation -> best_epoch
+bash run.sh temperature                     # fit the temperature on the calibration split
+bash run.sh benchmark                       # best checkpoint on the frozen Test
+bash run.sh export                          # write the Agent-loadable artifact
+bash run.sh all --epochs 10                 # the whole pipeline end to end
+```
+
+Add `--smoke` to any stage for a CPU run (8 rows per split, 1 training step), and
+`--python <exe>` / `--data DIR` / `--out DIR` to point at a specific interpreter or
+directories. `run.sh` never deletes an output directory, never downloads anything unpinned and
+never uploads; it stops on the first failing stage and returns non-zero. Each run appends a
+record (git sha, config, data version) to `out/run_ledger.jsonl`.
+
+The GPU box needs no registry, no database and no repo checkout beyond this directory.
 
 ## Recipe
 

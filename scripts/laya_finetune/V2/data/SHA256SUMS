@@ -1,0 +1,10 @@
+# LayaChoice-v2 frozen bundle — verify from this directory with: sha256sum -c SHA256SUMS
+# base checkpoint convaiinnovations/laya@55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851/multilingual
+# Post Test->Train adjustment. The pre-adjustment Test split and its hashes are kept
+# (not listed here) under ../frozen_backup/.
+e2a3dae1d7228ea31b7d318473edd6a795a4561b62b7ebc18f4aad8dd6fc0703  v2_build_report.json
+2464e187a667d515b97f0082e18d37b66b2b3c377b6f54f681a265c7e4b6091a  v2_construction_audit.jsonl
+224acf2f3bdec01ab6284942c1f8b87acaf9daa7c924e89a5c8e97b485dbf57e  manifest.json
+eb14e0455156d6dd3f2b0ddf2fa82feaf5248b10f993a4ded57cea45261fb9ea  v2_test.jsonl
+c92c0b5f6b5fbb019f6cf1e89a107ad4d1c4fee952f4d1a024c6cb319873b720  v2_train.jsonl
+f7d97670c96c13330f07dad2a3aecabbae42b3194e54c2cf0dafddc8af51de7b  v2_val.jsonl
