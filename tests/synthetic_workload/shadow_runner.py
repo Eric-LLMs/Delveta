@@ -1,7 +1,7 @@
 """Phase-E Cascade Shadow runner — replay the synthetic workload through the
 PRODUCTION node body, stop at the Binder.
 
-Chain per turn (constraint set, 2026-09-25): Registry → Matcher → (Recall,
+Chain per turn (constraint set): Registry → Matcher → (Recall,
 raw lane: min_score=0, every hit kept) → ToolIntentModel (ONE call on the
 model-floor-screened union) → Binder validate → STOP. No Runtime, no
 Dispatch, no event row, no settings mutation — :func:`cascade_shadow` is the
@@ -137,7 +137,7 @@ def model_set_at(capture: dict, t: float, top_k: int | None = None) -> list[str]
     """Production's model-facing set AT threshold t, recomputed from raw
     scores: matcher-origin cards are exempt from the floor; recall cards are
     floor-screened and EVERY survivor rides (the width cap was retired by the
-    2026-09-26 ruling; ``top_k`` remains only as an optional offline what-if
+     ruling; ``top_k`` remains only as an optional offline what-if
     axis)."""
     recall_c = sorted((c for c in capture.get("recall_raw", [])
                        if c["score"] >= t), key=lambda c: c["score"],

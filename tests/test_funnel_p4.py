@@ -6,7 +6,7 @@ Pinning the P4 rulings:
   (Registry → Matcher → Recall → ToolIntentModel → Binder → Final Route)
   with zero side effects — run_tool is not even on the preview object graph;
 * the preview bypasses per-turn gating entirely (it drives the cascade body
-  directly — single-path ruling 2026-09-28 left no production rollout gate at
+  directly — single-path ruling left no production rollout gate at
   all), but it IS gated per-kind exactly like routing (入表≠开闸 holds);
 * 8.14: every embedding/LLM call a preview makes is billed
   ``execution_mode=preview``; the pin resets exception-included;
@@ -99,7 +99,7 @@ class _Embedder:
 def _open(monkeypatch, *, mode="off", private=False, funnel_on=True):
     from core.config import settings
 
-    # Single-path ruling 2026-09-28: the rollout gates + matcher shadow mode +
+    # Single-path ruling: the rollout gates + matcher shadow mode +
     # private kind switch were deleted (kwargs kept for call-site compatibility).
     # certification lanes need real argument drafts: ride the online seam with
     # the scripted ToolIntentModel double (the stub's zero extraction power is pinned
@@ -174,7 +174,7 @@ async def test_preview_certifies_and_reports_the_whole_chain(monkeypatch):
     assert res["deepest_stage"] == "certified"
     assert res["execution_mode"] == "preview"
     assert res["registry_version"] == view.fingerprint
-    # E2 (final semantics 2026-09-26): an exact HIT never touches the Recall
+    # E2 (final semantics): an exact HIT never touches the Recall
     # index — the HIT-lane preview/report carries NO index version.
     assert res["index_version"] == "-"
     assert res["route"]["capability_id"] == "cap-a"
@@ -197,7 +197,7 @@ async def test_preview_abstains_with_the_reason_and_no_route(monkeypatch):
 
 
 async def test_preview_ignores_production_gating(monkeypatch):
-    # Single-path ruling 2026-09-28: with the rollout gates deleted there is no
+    # Single-path ruling: with the rollout gates deleted there is no
     # production switch left to bypass — the console drives the SAME cascade
     # body directly, so it stays available unconditionally.
     _open(monkeypatch, mode="on")
@@ -365,7 +365,7 @@ def _exec_req(action, run_tool, session_factory, *, roster=None):
 
     ctx = types.SimpleNamespace(user_text=MSG, session_memory=_SM(), history=[])
     # the executor's tool-existence/schema truth is deps.agent.runtime.schemas()
-    # (ruling 2026-09-26); the unit world fakes it — default carries create_folder.
+    # (ruling); the unit world fakes it — default carries create_folder.
     schemas = lambda: (_DEFAULT_ROSTER if roster is None else roster)
     kernel = types.SimpleNamespace(
         runtime=types.SimpleNamespace(schemas=schemas))
@@ -444,7 +444,7 @@ async def test_capability_disabled_mid_air_is_terminal_stale(monkeypatch):
 
 
 async def test_tool_missing_from_runtime_roster_is_terminal_stale(monkeypatch):
-    """Ruling 2026-09-26 (point 3): the drift check runs against the LIVE
+    """Ruling (point 3): the drift check runs against the LIVE
     ToolRuntime roster, not the legacy DIRECT_TOOLS table — a stamped route
     whose tool has vanished from the runtime dies pre-commit."""
     _open(monkeypatch, mode="on")
@@ -487,7 +487,7 @@ async def test_roster_tool_absent_from_direct_tools_still_dispatches(monkeypatch
 
 
 async def test_non_action_kind_never_dispatches(monkeypatch):
-    # Single-path ruling 2026-09-28: with the private switch deleted, kind_enabled
+    # Single-path ruling: with the private switch deleted, kind_enabled
     # fail-closes non-ACTION kinds unconditionally — even a hand-built funnel
     # stamp for a private-kind entry must reach the stale-route terminal, and
     # the ToolRuntime must never be called.

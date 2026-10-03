@@ -2391,7 +2391,7 @@ class ResearchService:
             "cloud_folder_path": cloud_folder["path"],
             "materials": [],
             "cloud_mirrors": {},
-            "pdf_report": True,         # publication PDF is default-ON (2026-09-14):
+            "pdf_report": True,         # publication PDF is default-ON:
                                         # PUBLISH compiles outputs/<name>_v{N}.pdf after
                                         # the Markdown gate; set explicitly False to opt out
             "run_seq": 0,               # monotonic per-run version (bumped atomically in begin_run)
@@ -2531,7 +2531,7 @@ class ResearchService:
         - **Versioned run** (``driver.run_version`` set): the working copy mirrors into
           ``temp/v{N}/<stem>.md`` (``_report_stem`` — an id already ending in ``.md`` gains
           exactly one suffix, never ``.md.md``). Report artifacts mirror there TOO — since
-          the 2026-09-14 publication-surface decision, ``outputs/`` carries PUBLICATION
+          the publication-surface decision, ``outputs/`` carries PUBLICATION
           FILES ONLY (the versioned PDF), the .md draft is an intermediate that lives with
           the run's temp tree. The run's ``cloud_assets`` ledger holds the temp asset id so
           a same-run rewrite updates in place. ``record["cloud_output_asset_id"]`` stays
@@ -2589,7 +2589,7 @@ class ResearchService:
             except Exception:
                 logger.exception("research run-temp mirror failed for %s", record["artifact_id"])
                 return False
-            # (2026-09-14) no report→outputs special case: outputs/ is publication-only.
+            # no report→outputs special case: outputs/ is publication-only.
             self._merge_cloud_assets(
                 owner_id, record["project_id"], {"_dirs": dirs, key: entry}
             )

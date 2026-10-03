@@ -4,7 +4,7 @@ Two INDEPENDENT vector searches per turn (Standard path + Similar path) over
 ONE user-query embedding; the hit sets are simply concatenated. The retired
 per-capability MAX/AVG merge is GONE by construction: every hit at or above
 ``min_score`` is kept as its own candidate with full provenance (live-table
-ruling 2026-09-26).
+ruling).
 """
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Phase 3 (2026-10-01) — cap_router stub backend + backend factory.
+"""Phase 3 — cap_router stub backend + backend factory.
 
 Pins the deterministic selector contract only: ONE capability or NONE, with the
 leader-vs-runner-up margin discipline the legacy ToolIntentModel stub proved.
@@ -36,7 +36,7 @@ def test_factory_returns_stub_and_cap_router_else_none():
     assert isinstance(s, StubSelector)
     assert isinstance(s, CapabilitySelector)  # honors the protocol
     # "cap_router" resolves UNCONDITIONALLY (endpoint resolution and availability
-    # are separate concerns, ruling 2026-10-01): a missing endpoint surfaces as
+    # are separate concerns, ruling): a missing endpoint surfaces as
     # CapabilityRouterUnavailable from select(), NOT as a None selector here.
     cr = selector_for(BACKEND_CAP_ROUTER)
     assert isinstance(cr, CapRouterSelector)

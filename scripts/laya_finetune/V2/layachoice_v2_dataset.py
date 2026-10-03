@@ -189,7 +189,7 @@ def load_split(split: str, data_dir: Path = DATA, limit: int | None = None) -> l
     if {r.split for r in rows} != {split}:
         raise RuntimeError(f"{split}: rows carry a foreign split tag")
     # A split may legitimately draw from more than one frozen source (e.g. after the
-    # 2026-10-02 Test->Train move, Train carries both the train and the test source
+    # Test->Train move, Train carries both the train and the test source
     # sha). When the manifest declares the split's provenances, every row must match
     # one; without a declaration the original single-source invariant still holds.
     declared = manifest.get("split_provenance", {}).get(split)

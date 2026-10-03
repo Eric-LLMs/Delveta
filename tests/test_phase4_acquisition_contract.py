@@ -1,4 +1,4 @@
-"""Phase 4 Step 0 (2026-10-01) — Argument Acquisition CONTRACT skeleton.
+"""Phase 4 Step 0 — Argument Acquisition CONTRACT skeleton.
 
 Step 0 locks the BUSINESS CONTRACT only. Nothing is implemented and nothing is
 wired, so this file has two tiers:

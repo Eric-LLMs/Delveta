@@ -1,6 +1,6 @@
 """Node 1 — Matcher: deterministic EXACT hits from the LIVE tables ONLY.
 
-Live-table ruling (2026-09-26): the exact set is the enabled Standard +
+Live-table ruling: the exact set is the enabled Standard +
 Similar query sentences (``entry.intent_corpus`` over
 capability_standard_queries / capability_similar_queries), normalized for
 comparison; a HIT means the turn's sentence IS one of the human-curated
@@ -38,7 +38,7 @@ def match(query: str, facts: TurnFacts, view) -> MatchResult:
     Cost: a single dict lookup — this node is cheap enough to run on every
     shadowed turn.
 
-    ``facts`` is the formal turn-side contract (ruling 2026-09-24): the Matcher
+    ``facts`` is the formal turn-side contract (ruling): the Matcher
     receives the current turn's settled structured facts (viewer / attachment),
     never raw history. Table entries may gate on these facts from P3 on.
     ``view`` is the Registry side (§8.1: the ONLY match data this node reads)."""

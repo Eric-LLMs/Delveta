@@ -2,14 +2,14 @@
 threshold; REAL Precision / Recall / F1 from actual routing (not candidate
 coverage).
 
-Method (2026-09-25, "full replay" ruling + 0.58 anchor):
+Method (, "full replay" ruling + 0.58 anchor):
   * input: the CLEAN baseline run (turns.jsonl with the RAW recall capture) +
     the LOCKED dataset v1 (never modified);
   * for EVERY (turn, threshold t) the downstream is REPLAYED THROUGH THE
     PRODUCTION ENTRY ``funnel.cascade_shadow`` (Registry -> Matcher -> Recall
     raw -> floor t -> ToolIntentModel -> Binder -> STOP). No reuse: even when
     the candidate set equals the baseline's, the real model is called again
-    (this also exposes model non-determinism honestly). Per the 2026-09-26
+    (this also exposes model non-determinism honestly). Per the
     ruling an EMPTY model-facing candidate set short-circuits to NO_CANDIDATE
     BEFORE the hop — rows whose set is empty at threshold t cost zero calls;
   * thresholds sweep INDEPENDENTLY, one metric table per t (the 0.58 column is

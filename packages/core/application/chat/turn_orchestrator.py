@@ -125,7 +125,7 @@ class TurnOrchestrator:
             composite_enabled=settings.chat_composite_fast_path_enabled,
         )
         requirements = resolve_requirements(ctx, ctx.body.message)
-        # Single path (ruling 2026-09-28): the funnel cascade owns every turn's
+        # Single path (ruling): the funnel cascade owns every turn's
         # routing attempt — gate + QIR cascade + argument binding live in
         # intent_funnel; the orchestrator keeps only the lifecycle and this
         # single call. The funnel returns the SAME requirements object when it

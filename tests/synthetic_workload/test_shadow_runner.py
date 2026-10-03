@@ -180,7 +180,7 @@ async def test_shadow_lane_keeps_raw_scores_and_floors_the_model_set(wired):
 
 @pytest.mark.asyncio
 async def test_aggregation_collapses_hits_but_recall_raw_stays_raw(wired, monkeypatch):
-    """E1 (final semantics 2026-09-26): the Capability Candidate Aggregation sits
+    """E1 (final semantics): the Capability Candidate Aggregation sits
     AFTER the raw capture — capture["recall_raw"] keeps EVERY >= gate hit
     (cap-add-term arrives twice), while the model-facing set carries ONE
     capability-level card per capability: the winning hit's score AND

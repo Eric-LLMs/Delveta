@@ -4,7 +4,7 @@ Backend resolution is a distinct responsibility from any backend itself: each
 backend module (:mod:`.stub`, :mod:`.service`) defines its selector; THIS module
 owns the ONE place that maps a configured backend name to it. The caller maps
 ``None`` to the Agent (``CAP_ROUTER_UNAVAILABLE``) — selection never falls
-through to another model (ruling 2026-10-01).
+through to another model (ruling).
 """
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ def selector_for(backend: str) -> CapabilitySelector | None:
     """Resolve a configured backend name to its selector, or None when the
     backend cannot serve (``off`` / unknown). The caller maps None to the Agent
     via ``CAP_ROUTER_UNAVAILABLE`` — selection never falls through to another
-    model (ruling 2026-10-01).
+    model (ruling).
 
     ``cap_router`` ALWAYS resolves to a :class:`CapRouterSelector` — backend
     resolution and service availability are separate concerns: whether the

@@ -1722,7 +1722,7 @@ class TestRunOutputLayout:
         svc.end_run(USER, task_id)
 
     async def test_promote_archives_versioned_final_in_temp_vN(self, env):
-        """(2026-09-14 surface decision) the promoted .md final rides the run's
+        """( surface decision) the promoted .md final rides the run's
         temp/v{N} folder as an intermediate of record; outputs/ is left for the
         publication PDF only."""
         svc, task_id, cloud_root = await self._new_task(env)

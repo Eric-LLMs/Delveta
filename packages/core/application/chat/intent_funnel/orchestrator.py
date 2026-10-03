@@ -4,7 +4,7 @@ Registry → Matcher → (Recall on MISS/AMBIGUOUS) → Candidate Aggregation �
 ToolIntentModel (ONE call) → Binder → certified TurnRequirements, every
 non-COMPLETE outcome exiting to the Agent byte-identically (8.10).
 
-Phase 4 seam (2026-10-01): when ``chat_cap_router_backend != off`` the decided
+Phase 4 seam: when ``chat_cap_router_backend != off`` the decided
 capability — a MATCH_HIT directly, or a MISS/AMBIGUOUS via ``Recall ->
 Aggregation -> K normalization -> cap_router -> SELECTED|REJECT|NONE`` — feeds
 the **Argument Path Router** (:mod:`.argument_acquisition.path_router`), which
@@ -181,7 +181,7 @@ async def run_nodes(ctx, deps, requirements, trace, *,
 
     # ── Node 1: Matcher (table-only; the negation guard applies BEFORE it ───────
     # can certify anything, ruling 8.1-a) ────────────────────────────────────────
-    # E2 (final semantics 2026-09-26): the HIT lane NEVER touches the Recall
+    # E2 (final semantics): the HIT lane NEVER touches the Recall
     # index — exact table evidence certifies independently of Recall
     # availability. load_index lives in the MISS/AMBIGUOUS branch below, so an
     # index fault or an unembedded corpus can only ever degrade the Recall lane
@@ -219,8 +219,8 @@ async def run_nodes(ctx, deps, requirements, trace, *,
 
     # ── One candidate set, ONE convergence point: a HIT enters ToolIntentModel with the ─
     # same semantics as a Recall lane — the direct-certification special path is
-    # deleted (chain ruling 2026-09-24). Recall runs only when the table missed.
-    # Live-table ruling 2026-09-26 (RAW lane): every recall hit >= threshold is
+    # deleted (chain ruling). Recall runs only when the table missed.
+    # Live-table ruling (RAW lane): every recall hit >= threshold is
     # kept AS IS at the raw stage — no MAX/AVG, no per-capability dedup THERE —
     # a capability may legitimately arrive several times through different
     # sentences. The no-dedup ruling scopes to Raw Recall only: the Capability
@@ -264,7 +264,7 @@ async def run_nodes(ctx, deps, requirements, trace, *,
     if candidates:
         top = max(candidates, key=lambda c: c.score)
         trace["recall_top"] = f"{top.capability_id}@{top.score:.3f}"
-    # ── Capability Candidate Aggregation (final semantics 2026-09-26) ──────────
+    # ── Capability Candidate Aggregation (final semantics) ──────────
     # Between Raw Recall and ToolIntentModel: group the query-level candidates
     # by capability_id and keep ONE candidate per capability (see
     # :mod:`candidate_aggregation`); the model sees capability-level cards.
@@ -281,8 +281,8 @@ async def run_nodes(ctx, deps, requirements, trace, *,
         ]
     if model_candidate_floor is not None:
         cands = candidate_aggregation.apply_model_floor(cands, model_candidate_floor)
-    # Empty candidate set -> Agent, no model hop (ruling 2026-09-26, supersedes
-    # the 2026-09-25 "Action Detection is UNCONDITIONAL" note): with no Matcher
+    # Empty candidate set -> Agent, no model hop (ruling, supersedes
+    # the "Action Detection is UNCONDITIONAL" note): with no Matcher
     # HIT/AMBIGUOUS card AND no Recall hit at/above the quality gate there is
     # nothing for the single hop to select from. NO_CANDIDATE is back as the
     # honest deepest-stage=recall exit; the byte-identical turn goes to Agent.
@@ -291,7 +291,7 @@ async def run_nodes(ctx, deps, requirements, trace, *,
         return None
 
     # ── Node 2: capability SELECTION ────────────────────────────────────────────
-    # Phase 4 split (2026-10-01): the NEW lane (backend != off) serves ONLY the
+    # Phase 4 split: the NEW lane (backend != off) serves ONLY the
     # MISS/AMBIGUOUS selection here:
     #
     #     MISS/AMBIGUOUS -> Recall -> Aggregation -> K normalization
@@ -355,7 +355,7 @@ async def run_nodes(ctx, deps, requirements, trace, *,
                                               entries_by_id=entries_by_id, facts=facts)
                 _mark(capture, "selection_ms", _t_select)
             except cap_router.CapabilityRouterUnavailable:
-                # ruling 2026-10-01: a selector that cannot serve exits to the
+                # ruling: a selector that cannot serve exits to the
                 # Agent; selection NEVER falls back to another model (the metric
                 # would be polluted).
                 trace["fallback"] = REASON_CAP_ROUTER_UNAVAILABLE
@@ -606,7 +606,7 @@ def certified(requirements, entry, args, registry_fp, *,
     return TurnRequirements(
         needs_action=Signal.HIGH, requested_action=action,
         complexity=Complexity.LOW, confidence=Confidence.HIGH,
-        # Web demand RIDES THROUGH (E2E-matrix ruling 2026-09-27): the entry veto
+        # Web demand RIDES THROUGH (E2E-matrix ruling): the entry veto
         # no longer blanket-refuses web turns, so the composite guard lives in
         # execution_plan._is_action_eligible, which needs the turn's true
         # needs_web to refuse "新建文件夹并查新闻"-style half-certifications.

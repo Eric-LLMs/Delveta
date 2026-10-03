@@ -112,7 +112,7 @@ async def _collect(agent, user_msg, memory):
 
 
 # ── streaming telemetry parity: steps + token usage must reach the TurnSpan ──
-# Regression (2026-09-23 live audit): run_stream never called record_step, so every
+# Regression ( live audit): run_stream never called record_step, so every
 # streaming turn-end reported ``steps: 0`` and ``tokens: 0`` while user_usage_logs had
 # the real usage (14,036 vs 0). The span must be driven by the same provider usage the
 # DB books, with the same per-step delta convention as non-streaming run().
@@ -265,7 +265,7 @@ async def test_stream_tool_call_then_final_answer():
 
 
 async def test_stream_step_cap_exhausted_never_replays_history_answer():
-    """Streaming twin of the 2026-09-19 regression: step-cap exit with no final text
+    """Streaming twin of the regression: step-cap exit with no final text
     must not scan back through ``history`` into the previous turn's answer.
     """
     runtime = ToolRuntime()

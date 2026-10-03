@@ -1,4 +1,4 @@
-"""Live-table query corpus plane (migration 0014, final ruling 2026-09-26).
+"""Live-table query corpus plane (migration 0014, final ruling).
 
 The ONLY way a sentence reaches the runtime corpus: straight into
 ``capability_standard_queries`` / ``capability_similar_queries`` /
@@ -267,7 +267,7 @@ async def set_query_enabled(table: str, query_id: str, enabled: bool, *,
                             session_factory: Any = None) -> dict:
     """Soft disable/enable. Enabling is REFUSED while the embedding is NULL
     (no active query without a vector). Standard and Similar enabled flags are
-    INDEPENDENT (ruling 2026-09-26): disabling a Standard neither auto-disables
+    INDEPENDENT (ruling): disabling a Standard neither auto-disables
     nor is refused because of its Similar children — recall SQL chains through
     the parent, so the children simply stop participating until the Standard
     is re-enabled (then still-enabled children recall again)."""

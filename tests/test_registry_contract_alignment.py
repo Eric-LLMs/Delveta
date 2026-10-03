@@ -1,4 +1,4 @@
-"""Contract-alignment regression pins from the 2026-09-27 Registry /
+"""Contract-alignment regression pins from the Registry /
 Capability Contract Audit (P0 + P1 only), with the 0927 lane correction.
 
 Plane 1 (P0, lane-corrected): ``cap-research`` is an ACTIVE research-lane
@@ -98,7 +98,7 @@ HEALTHY_CAPS = {
     "cap-create-folder": "create_folder",
     "cap-pdf-extract-text": "pdf_extract_text",
 }
-# The exact P1/healthy parameters written 2026-09-27 — pinned verbatim so a
+# The exact P1/healthy parameters written — pinned verbatim so a
 # later edit must be a deliberate, reviewed change (dual-source drift is the
 # original audit finding).
 FROZEN_PARAMETERS: dict[str, dict] = {
@@ -215,7 +215,7 @@ def test_research_is_a_plugin_name_not_a_roster_tool():
 
 
 async def test_cap_research_lane_scoped_active_and_invisible_in_chat_planes():
-    """Lane ruling (2026-09-27 correction): cap-research is NOT globally
+    """Lane ruling ( correction): cap-research is NOT globally
     disabled — it stays active for the RESEARCH lane (catalog + curated
     corpus), while ``intent_kind="research"`` removes it from every chat/files
     funnel consumption point."""
@@ -290,7 +290,7 @@ async def test_healthy_three_keep_frozen_parameters():
 
 # ── Plane 3: Binder + executor schema gates ───────────────────────────────────────
 
-# 2026-09-27 (E2E-matrix ruling): asset_id is a CONTEXT slot — the Binder
+# (E2E-matrix ruling): asset_id is a CONTEXT slot — the Binder
 # sources it from TurnFacts, never from the model draft. The contract tests
 # therefore supply the settled fact; the draft's copy is inert either way.
 _FACTS_ASSET_ID = "0ea50a94-f4f7-45eb-bbaa-43966d6af575"
@@ -320,7 +320,7 @@ async def test_binder_requires_the_real_slots_and_accepts_a_complete_draft():
             assert not binder.validate(e, {}, _facts_for(cid)).is_complete, \
                 f"{cid}: empty draft still COMPLETE — F-1 regression"
         else:
-            # 2026-09-27 contract: an asset-only cap is FULLY determined by the
+            # contract: an asset-only cap is FULLY determined by the
             # turn fact — empty draft + real attachment certifies,
             # empty draft + no fact stays MISSING (facts, not the model, decide)
             assert binder.validate(e, {}, _facts_for(cid)).args == \
@@ -332,7 +332,7 @@ async def test_binder_requires_the_real_slots_and_accepts_a_complete_draft():
         assert bound.is_complete, f"{cid}: minimal draft rejected: {bound.state}"
         assert set(bound.args) == {
             k for k, v in e.parameters.items() if v.get("required")}
-        # the context-slot contract (2026-09-27): an asset_id ONLY from the
+        # the context-slot contract: an asset_id ONLY from the
         # draft, with no turn fact, is never certified (no hallucinated bind)
         if cid in _ASSET_SOURCED:
             naked = binder.validate(e, dict(MINIMAL_ARGS[cid]), TurnFacts())

@@ -1,9 +1,11 @@
 """cap_router — capability selection node (cap_router service | stub | off).
 
-Implementation map: :mod:`.base` (backend-independent contract). The selection
-orchestration and the concrete backends are added in Phase 3/4; this package
-holds the contract surface only (Phase 2 scaffold, no runtime wiring yet).
-"""
+Implementation map: :mod:`.base` holds the backend-independent contract
+(``CapabilitySelector`` + ``CapabilityRoute`` with SELECTED / NONE / REJECT);
+:mod:`.card_renderer` renders the 4-slot payload (3 capability cards + the
+frozen REJECT card); :mod:`.backends` resolves the configured backend name to a
+concrete selector via :func:`selector_for`. The node is wired into the funnel
+orchestrator on the split lane (§25.6/§26)."""
 from __future__ import annotations
 
 from .backends import selector_for

@@ -1,4 +1,4 @@
-"""fs tools plane dispatch (rule 2026-09-28): read_file / edit_file address ONE
+"""fs tools plane dispatch (rule): read_file / edit_file address ONE
 capability across two planes — "My Drive/<path>" resolves to the real Drive asset
 (no workspace materialization), anything else stays workspace-rooted.
 """

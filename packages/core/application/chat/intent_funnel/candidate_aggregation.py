@@ -1,6 +1,6 @@
 """Capability Candidate Aggregation — the data-shaping stage between Recall and ToolIntentModel.
 
-Final semantics (2026-09-26): Recall keeps EVERY hit >= threshold at the raw
+Final semantics: Recall keeps EVERY hit >= threshold at the raw
 stage (a capability may legitimately arrive several times through different
 sentences); this stage collapses the query-level candidates into ONE
 capability-level card per capability before the model sees them. Pure list
@@ -14,8 +14,12 @@ from dataclasses import dataclass
 from .contract import Candidate
 
 # The candidate contract the SELECTION node is defined over (§26.2): the model
-# was trained and benchmarked at K = 3 options, so the business layer hands it at
-# most this many — it is NOT a model-side limit.
+# was trained and benchmarked at K = 3 capability cards, so the business layer
+# hands it at most this many — it is NOT a model-side limit. The selector is
+# consulted ONLY at exactly K = 3 (3 cards + the frozen REJECT card = the 4
+# option slots the model expects); K = 2 is V2-ineligible at the ORCHESTRATION
+# layer (orchestrator.py gates on ``len(norm.candidates) < 3``) and degrades to
+# the Agent. See normalize_top_k below + §25.6/§26.2.
 K_DEFAULT = 3
 
 
@@ -26,9 +30,12 @@ class NormalizedCandidates:
     ``candidates`` is the list the selector may see: at most ``k``, highest score
     first (the caller sorts by score before normalizing). ``direct`` is set ONLY
     for K = 1 — the business layer executes that single capability itself and the
-    selector (stub or laya) is never consulted. K = 0 yields an empty list with
-    ``direct`` None; the caller has already short-circuited an empty candidate
-    set before reaching normalization.
+    selector (stub or cap_router) is never consulted. K = 0 yields an empty list
+    with ``direct`` None; the caller has already short-circuited an empty
+    candidate set before reaching normalization. This dataclass carries the
+    PURE-function result only: the ORCHESTRATION layer independently refuses to
+    consult the selector at K = 2 (V2-ineligible — the selector needs exactly 3
+    cards + REJECT and a 2-card payload is never padded up).
     """
 
     candidates: tuple[Candidate, ...] = ()
@@ -43,15 +50,22 @@ def normalize_top_k(candidates: list[Candidate], k: int = K_DEFAULT) -> Normaliz
     """Business-layer K normalization for the SELECTION node (§26.2).
 
     Pure, no I/O, backend-agnostic — the SAME rule governs the stub lane and the
-    laya lane, and ``backend=off`` never enters here. The candidate count K maps:
+    cap_router lane, and ``backend=off`` never enters here. The candidate count K
+    maps:
 
     * ``K = 0`` — nothing to select (caller short-circuits on the empty set);
     * ``K = 1`` — the business layer executes it directly; the selector is never
       called, so no model is consulted and no confidence is fabricated;
-    * ``K = 2..k`` — the whole list goes to the selector;
+    * ``K = 2`` — this function returns the 2 candidates, but the ORCHESTRATION
+      layer does NOT consult the selector here: the deployed selector is defined
+      over exactly 3 capability cards (+ the frozen REJECT card = 4 slots), so a
+      2-card payload is V2-ineligible and the turn degrades to the Agent. K = 2
+      is a degradation metric — never padded with a fake card;
+    * ``K = 3..k`` — the whole list goes to the selector;
     * ``K >= k+1`` — only the top-``k`` (highest score) go to the selector.
 
-    The model's decision head therefore only ever sees at most ``k`` options.
+    The model's decision head therefore only ever sees at most ``k`` options —
+    and, on the deployed lane, exactly ``k`` = 3.
     """
     ordered = list(candidates)
     if not ordered:
@@ -81,7 +95,7 @@ def apply_model_floor(cands: list[Candidate], floor: float) -> list[Candidate]:
     set re-applies the floor to the aggregated (capability-level) cards and
     keeps every capability whose WINNING hit is at or above it —
     set-equivalent to screening the raw hits, since the representative carries
-    the max score (candidate-count cap retired by the 2026-09-26 ruling) —
+    the max score (candidate-count cap retired by the ruling) —
     plus every matcher-origin card (HIT 1.0 / AMBIGUOUS 0.0: table
     evidence, not calibrated cosine scores, exempt from the floor)."""
     recall_c = [c for c in cands if c.origin == "recall" and c.score >= floor]

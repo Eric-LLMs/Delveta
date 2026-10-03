@@ -97,7 +97,7 @@ class ChatTurnContext:
     # The kernel run(context=…) payload, assembled per route (see build_turn_context)
     agent_context: dict | None = None
     disable_thinking: bool = False
-    # Turn facts for the Funnel (E2E-matrix ruling 2026-09-27): the asset a
+    # Turn facts for the Funnel (E2E-matrix ruling): the asset a
     # "My Drive/…" path in the SENTENCE resolves to, settled once here at
     # context-build (the only place with drive I/O in the fact chain). "" =
     # the sentence names no resolvable asset; the Binder reads it via
@@ -500,7 +500,7 @@ async def build_turn_context(
         business_name=business_name, credential_id=credential_id,
         user_text=user_text, owned_asset_id=owned_asset_id, inline_image=inline_image,
     )
-    # Turn facts for the Funnel (2026-09-27): settle a "My Drive/…" path named IN
+    # Turn facts for the Funnel: settle a "My Drive/…" path named IN
     # THE SENTENCE to its real asset id, once, here — the fact chain's only I/O
     # point (TurnFacts.of itself stays pure). Skipped when an attach already
     # carries the turn's asset (attach wins in the Binder's precedence). Any

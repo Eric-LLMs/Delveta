@@ -13,7 +13,7 @@ store's mutual-exclusion contract is broken *within* a VM and every atomic commi
 at risk — that failure must page.
 
 The cross-VM cells are REPORTED, not asserted-pass: a verdict of "invisible" is a
-deployment-topology finding (it is the honest outcome recorded on 2026-09-09 over the
+deployment-topology finding (it is the honest outcome recorded on over the
 Docker Desktop ``./data`` bind mount) and the fix is a topology decision, not a test
 weakening. The matrix is printed as machine-readable JSON for the report.
 

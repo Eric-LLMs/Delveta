@@ -42,7 +42,7 @@ COMPOSITE_ONLY_MSG = "只用我的知识库回答，这一页提到的概念还�
 
 
 def _gates(monkeypatch, *, fast=True, composite=True):
-    # fast/action are inert since the 2026-09-28 single-path ruling (master +
+    # fast/action are inert since the single-path ruling (master +
     # action gates deleted; ACTION rides certification alone).
     monkeypatch.setattr(settings, "chat_direct_fast_path_enabled", False, raising=False)
     monkeypatch.setattr(settings, "chat_viewer_fast_path_enabled", True, raising=False)
@@ -153,7 +153,7 @@ async def test_nonrelevant_verdict_escalates_with_honest_note(monkeypatch):
 
 
 async def test_composite_lane_off_routes_viewer_or_agent_not_composite(monkeypatch):
-    """Lane off (the master gate is gone — single-path ruling 2026-09-28):
+    """Lane off (the master gate is gone — single-path ruling):
     viewer alone would answer — but this turn demands the corpus too, so it
     lands on the Agent untouched (Phase 5B must not disturb Phase 3/4)."""
     _gates(monkeypatch, composite=False)

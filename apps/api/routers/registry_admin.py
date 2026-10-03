@@ -8,7 +8,7 @@ guaranteed is re-established here as write discipline:
 
 * every mutation is gated by ``validate_entries`` against the LIVE
   ``ToolRuntime.schemas()`` roster projection (intent is never authorization;
-  the roster is the ONE tool existence/schema truth since the 2026-09-26
+  the roster is the ONE tool existence/schema truth since the
   ruling — the legacy L0 ``DIRECT_TOOLS`` table is not consulted here);
 * every accepted mutation first appends the pre-change content to
   ``registry_versions`` (history only; rollback = restore a snapshot +
@@ -305,7 +305,7 @@ async def post_catalog_create(
     after its Standard queries (zh + en) are curated and it is enabled.
     Parameters default to the mechanical projection of the LIVE runtime tool
     schema (``ToolRuntime.schemas()`` — the one existence/schema truth since
-    the 2026-09-26 ruling; a tool absent from the roster is not executable)."""
+    the ruling; a tool absent from the roster is not executable)."""
     me = await get_catalog(action_key, session_factory=SessionLocal)
     if me is None:
         raise HTTPException(status_code=404, detail=f"unknown action {action_key!r}")

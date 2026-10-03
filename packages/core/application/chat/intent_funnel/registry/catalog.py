@@ -1,4 +1,4 @@
-"""Action Catalog store (migration 0011, Action-Universe ruling 2026-09-25).
+"""Action Catalog store (migration 0011, Action-Universe ruling).
 
 The Catalog is INVENTORY, not routing — nothing here writes ``capabilities``
 or the live query tables. Joining to registered actions is a read-time

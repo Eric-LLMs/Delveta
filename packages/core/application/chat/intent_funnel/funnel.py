@@ -1,14 +1,14 @@
 """Intent Funnel — public façade.
 
-The 2026-09-24 chain correction pins the ACTIVE target chain to one hop and
-the 2026-09-26 live-table ruling retired the legacy QIR lane entirely:
+The chain correction pins the ACTIVE target chain to one hop and
+the live-table ruling retired the legacy QIR lane entirely:
 
     Matcher HIT  ─┐
                   ├→ ToolIntentModel (ONE call: select + extract) → Binder (validate) → Execute
     MISS/AMB → Recall ─┘
 
 every non-COMPLETE outcome exits to the Agent (8.10). The cascade is the
-product's single formal routing lane (ruling 2026-09-28): the old dark-launch
+product's single formal routing lane (ruling): the old dark-launch
 gate was deleted; the chain runs on every turn unless a guardrail vetoes it
 (:func:`.policy.funnel_live`).
 
@@ -44,7 +44,7 @@ async def route(ctx, *, deps, requirements: TurnRequirements) -> TurnRequirement
     # Migration compat boundary (P1 ruling): a turn L0 already certified is
     # never touched by the new lane while L0 stays in charge. This is a scoping
     # fact of the coexistence period, NOT a statement that L0 is the baseline.
-    # (2026-09-28 single-path ruling: kept — BUG-3/L0 retirement is a separate
+    # ( single-path ruling: kept — BUG-3/L0 retirement is a separate
     # follow-up task.)
     if requirements.requested_action is not None:
         return requirements

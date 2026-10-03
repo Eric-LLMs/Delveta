@@ -8,7 +8,7 @@ flap is worse than no golden):
 * the LIVE table carries exactly the four capabilities the matrix names:
   ``cap-folder`` (Standard query row + curated Similar rows; a legacy ``re:``
   pattern stays in storage as INERT proof — the exact-only Matcher (ruling
-  2026-09-25) never reads it; corpus vector [1,0]),
+  ) never reads it; corpus vector [1,0]),
   ``cap-vocab`` (own Standard + the shared multi-intent Similar — two caps
   curating one sentence is what produces MATCH_AMBIGUOUS now),
   ``cap-private`` / ``cap-web`` (exact Standards behind widened kind gates);
@@ -22,7 +22,7 @@ flap is worse than no golden):
   the single-candidate rule, and extracts by quote-stripping — the same
   contract a deployed small model serves, made flap-free. Its scripted NONE on
   a split card set is the only negative that reaches the model; the empty-set
-  negatives exit BEFORE it with NO_CANDIDATE (ruling 2026-09-26, zero calls);
+  negatives exit BEFORE it with NO_CANDIDATE (ruling, zero calls);
 * every run is pinned ``execution_mode="test"`` (8.14: a batch of goldens must
   never land cost on a user) and the embedder PROVES the pin rode every call.
 
@@ -66,7 +66,7 @@ FUNNEL_LOGGER = "core.application.chat.intent_funnel.funnel"
 GOLDEN_PATH = Path(__file__).parent / "golden" / "intent_funnel_golden.yaml"
 
 # YAML token -> the contract constant actually logged as fallback_reason.
-# FUNNEL_NO_CANDIDATE is in service (ruling 2026-09-26): an empty candidate
+# FUNNEL_NO_CANDIDATE is in service (ruling): an empty candidate
 # set (Matcher MISS + Recall below the gate) short-circuits to the Agent with
 # NO model hop; FUNNEL_TOOL_INTENT_REJECT now means the model was actually
 # called and answered NONE (e.g. the AMBIGUOUS split-pair case).
@@ -116,7 +116,7 @@ def _table() -> tuple[CapabilityEntry, ...]:
             similar_queries=(_q("m1", MSG_BARE_FOLDER, parent="s1", position=1),
                              _q("m2", MSG_MULTI_INTENT, parent="s1", position=2)),
             # INERT legacy storage: the exact-only Matcher never reads these
-            # (ruling 2026-09-25) — kept here so the goldens prove it
+            # (ruling) — kept here so the goldens prove it
             patterns=("re:新建文件夹",), aliases=(MSG_FOLDER,),
             request_query_examples=(MSG_FOLDER,),
             parameters={"name": {"type": "string", "required": True,
@@ -264,7 +264,7 @@ def _wire(monkeypatch, embedder: _Embedder):
     monkeypatch.setattr(settings, "chat_tool_intent_online_api_key", "")
     monkeypatch.setattr(settings, "chat_funnel_timeout_seconds", 5.0)
     # pin the quality gate so an env-tweaked default can never flap a golden
-    # (the model-facing candidate set is UNCAPPED — ruling 2026-09-26)
+    # (the model-facing candidate set is UNCAPPED — ruling)
     monkeypatch.setattr(settings, "chat_funnel_min_score", 0.82)
     return view, types.SimpleNamespace(
         session_factory=None, embedder=lambda: embedder, llm=_ScriptedToolIntent(),
@@ -280,7 +280,7 @@ def _trace_line(caplog) -> str:
 
 @pytest.mark.parametrize("case", CASES, ids=[c["id"] for c in CASES])
 async def test_golden_case(monkeypatch, caplog, case):
-    # Single-path ruling 2026-09-28: the removed rollout/matcher settings had
+    # Single-path ruling: the removed rollout/matcher settings had
     # no golden case depending on them (every case ran with the shipped gates).
 
     embedder = _Embedder()

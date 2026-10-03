@@ -181,7 +181,7 @@ def _src(text: str, name: str = "doc.md", offset: int = 1) -> sources.WorkspaceS
 
 
 def test_plan_big_document_none_within_capacity(monkeypatch):
-    # Directive 2026-09-15: at or below capacity the COMPLETE raw text goes in ONE call.
+    # Directive: at or below capacity the COMPLETE raw text goes in ONE call.
     monkeypatch.setattr(sources.settings, "toolkit_max_input_tokens", 1000)
     assert sources.plan_big_document([_src("short raw text\n")]) is None
 

@@ -7,7 +7,7 @@ These prove the Fail-Closed / honesty contracts the charter names:
   * empty recall / an irrelevant verdict / a seam error escalate to the Agent, and the
     honest-retrieval note rides ONLY a branch that actually searched the corpus;
   * the escalated Agent inherits the ORIGINAL request's source policy. Since the
-    2026-09-26 operator ruling web_search is READ-classed (never pops an approval), so
+     operator ruling web_search is READ-classed (never pops an approval), so
     the fence (which HARD-DENYs the NETWORK class) no longer stops it — pinned below as
     the accepted opt-out; the fence mechanism itself stays covered for NETWORK tools in
     tests/test_chat_source_policy.py and tests/test_sandbox_research.py.
@@ -82,7 +82,7 @@ async def test_rag_seam_error_escalates_fail_closed(monkeypatch):
 
 
 async def test_escalated_private_only_turn_runs_web_search_by_ruling(monkeypatch):
-    """Operator ruling 2026-09-26 (replaces the b3c0311 crown-jewel expectation): web_search
+    """Operator ruling (replaces the b3c0311 crown-jewel expectation): web_search
     is READ-classed so Chat never pops an approval for it; the knowingly-accepted
     consequence is that the private_only / private_first HARD DENY — which fences the
     NETWORK class — no longer stops it. A fenced, escalated turn therefore DOES reach the

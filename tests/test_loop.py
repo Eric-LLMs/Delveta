@@ -54,7 +54,7 @@ class _FakeMemory:
 
 
 async def test_step_cap_exhausted_never_replays_history_answer():
-    """Regression (2026-09-19 chat bug): a turn that burns the whole step budget on
+    """Regression ( chat bug): a turn that burns the whole step budget on
     tool calls with no final text must NOT fall back to a previous turn's answer from
     ``history`` — the old ``_final`` scanned through history and replayed the stale
     image description as this turn's reply.

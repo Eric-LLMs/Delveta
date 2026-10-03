@@ -1,10 +1,14 @@
-"""argument_acquisition — the Argument Path Router package (Phase 2 scaffold).
+"""argument_acquisition — the post-selection argument acquisition stage (§28).
 
-Map (ruling 2026-10-01): :mod:`.contract` (vocabulary: ownership/source/
-strategies/SlotDecl/Readiness/provenance), plus ``path_router`` / ``context_bundle``
-/ ``callback`` / ``merge`` added in Phase 4-6. Nothing here is wired into the
-cascade yet; the contract surface ships first so Phase 4 lands on a fixed vocabulary.
-"""
+Map (ruling): :mod:`.contract` holds the vocabulary (ownership /
+source / strategies / SlotDecl / Readiness / provenance); :mod:`.path_router` is
+the ARP (declaration + inputs -> strategy label); :mod:`.declaration` /
+``evidence`` / ``context_values`` bridge Registry ``arg_slots`` and turn facts
+into acquisition inputs; :mod:`.provider` composes the production per-turn
+``AcquisitionInputProvider``; :mod:`.extractor` is the extraction-only MODEL-slot
+adapter; :mod:`.context_bundle` builds the sanctioned bundle; :mod:`.merge`
+combines MIXED system + MODEL values. The stage runs on the split lane after a
+capability is selected (§25.6/§28)."""
 from __future__ import annotations
 
 from .contract import (

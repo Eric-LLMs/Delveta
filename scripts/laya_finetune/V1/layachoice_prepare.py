@@ -17,7 +17,7 @@ memory, through the same shared contract the other two went through
 resulting compact bundle is written - `data/LayaChoice_v1_validation_raw_v3.jsonl`
 itself is never touched, and no `LayaChoice_v1_validation.jsonl` is produced.
 
-Formal card view is B_noprov (frozen decision 2026-09-29): the production card with
+Formal card view is B_noprov (frozen decision): the production card with
 the `query examples:` block and the `evidence:` provenance line removed. Reading
 `questions.tool.criteria` instead would silently train on view B, which still
 carries the provenance line that names the answer in 856/856 train rows.

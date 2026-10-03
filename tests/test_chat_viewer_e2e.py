@@ -132,7 +132,7 @@ async def _stream(app, message):
     return events, done
 
 
-# (direct, viewer) lane pairs — the master gate is gone (single path 2026-09-28).
+# (direct, viewer) lane pairs — the master gate is gone (single path).
 async def test_viewer_turn_routes_viewer_when_lane_open(monkeypatch):
     monkeypatch.setattr(settings, "chat_direct_fast_path_enabled", False, raising=False)
     monkeypatch.setattr(settings, "chat_viewer_fast_path_enabled", True, raising=False)

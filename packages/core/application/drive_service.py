@@ -409,7 +409,7 @@ class DriveService:
         name via the existing repository lookup — no fuzzy matching, no
         guessing: ambiguous/missing/not-ready resolves to None so callers keep
         the honest "cannot determine" exit instead of a hallucinated asset id.
-        Added for the Funnel turn-facts chain (E2E-matrix ruling 2026-09-27);
+        Added for the Funnel turn-facts chain (E2E-matrix ruling);
         general-purpose, not chat-specific.
         """
         p = (path or "").strip().rstrip("/")
@@ -570,7 +570,7 @@ class DriveService:
         )
         return {"asset": self._asset_dict(updated), "content_changed": True}
 
-    # ── Text editing (cap-edit-file drive plane, ruling 2026-09-28) ──────────────
+    # ── Text editing (cap-edit-file drive plane, ruling) ──────────────
 
     async def _referenced_by_others(self, asset, editor_id: UUID) -> bool:
         """True when someone besides the editor can still resolve this asset row.

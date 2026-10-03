@@ -73,7 +73,7 @@ _TERMINAL_STALE_ROUTE = (
 def _tool_roster(deps) -> dict[str, dict[str, dict]] | None:
     """tool -> {slot: {"max_len": int, "required": bool}} projected from the
     live ``ToolRuntime.schemas()`` — the one tool existence/schema truth since
-    the 2026-09-26 ruling (max_len 0 = the schema states no length bound). A
+    the ruling (max_len 0 = the schema states no length bound). A
     schema with no ``required`` list is treated as fully required (fail
     closed). None when no runtime is reachable — callers fail closed honestly."""
     runtime = getattr(getattr(deps, "agent", None), "runtime", None)
@@ -102,7 +102,7 @@ class ActionExecutor(DirectExecutor):
         action = req.plan.action or {}
         tool, args = action.get("tool"), action.get("args")
 
-        # Tool existence/schema truth (ruling 2026-09-26): the LIVE
+        # Tool existence/schema truth (ruling): the LIVE
         # ``ToolRuntime.schemas()`` roster — the legacy DIRECT_TOOLS table is
         # no longer consulted anywhere on the dispatch path.
         roster = _tool_roster(req.deps)
@@ -167,7 +167,7 @@ class ActionExecutor(DirectExecutor):
 
         # 1. final schema gate, BEFORE the seam — malformed ⇒ nothing executed.
         #    Argument-shape problems are the user-input class: escalate and let the
-        #    Agent clarify. The roster is the schema truth (ruling 2026-09-26); a
+        #    Agent clarify. The roster is the schema truth (ruling); a
         #    missing roster fails closed through the schema error.
         try:
             validated = validate_action(str(tool or ""),

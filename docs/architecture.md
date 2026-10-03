@@ -5486,9 +5486,13 @@ point**. Four principles:
 > Aggregation are identical on both lanes; only the node that consumes the
 > candidate set differs.
 
-Both lanes converge on the SAME ToolIntentModel hop: an exact HIT is not an
-execution permit (chain ruling) — it still rides the one model call
-because the hop owns **argument extraction**. What an exact HIT wins is
+On the **split** lane the two outcomes diverge at the convergence point. An
+exact HIT has already fixed the capability (chain ruling: a HIT is not itself an
+execution permit, but it needs no re-selection) — it enters
+**ARGUMENT_ACQUISITION** (§28) directly and never touches `Recall` or the
+`cap_router` selector. MISS / AMBIGUOUS instead goes `Recall → Aggregation →
+cap_router` (§26) to *choose* the capability, and only a `SELECTED` route then
+enters **ARGUMENT_ACQUISITION**. What an exact HIT wins on BOTH lanes is
 independence from Recall: it never calls `recall.load_index()` and cannot be
 vetoed by an unembedded or faulting corpus (final-semantics ruling).
 
@@ -5557,10 +5561,14 @@ Cascade body (`_run_nodes`, one wall-clock budget `chat_funnel_timeout_seconds`)
    Matcher card and no Recall hit at/above the gate there is nothing to select
    from and the hop is not spent; `TOOL_INTENT_REJECT` now always means the
    model WAS called and answered `NONE`. The legacy direct-certification
-   special path (Matcher HIT skipping the model) is deleted — every lane that
-   reaches the model is structurally identical, one model call each.
-6. **ToolIntentModel** (Node 3, `tool_intent/`): the ONE model call of the
-   turn. Its inputs are the **User Original Query** plus, per capability-level
+   special path (Matcher HIT skipping the model) is deleted — on the **fused**
+   lane every path that reaches the model is structurally identical, one model
+   call each (the split lane consumes this candidate set with `cap_router`
+   instead; see the lane note above).
+6. **ToolIntentModel** (Node 3, `tool_intent/`): on the **fused** lane this is
+   the ONE model call of the turn — the split lane replaces it with the
+   `cap_router` selection hop (§26) feeding a separate ARGUMENT_ACQUISITION
+   stage (§28). Its inputs are the **User Original Query** plus, per capability-level
    candidate, the capability's action information — bound tool
    (`tool_binding`), capability/tool description, the canonical parameter
    schema, curated query examples and negatives — and the Recall
@@ -6023,18 +6031,23 @@ packages/core/application/chat/
 │                                   #   intent orchestration:
 │                                   #   context → funnel.route → plan → executor/runtime → lifecycle
 └── intent_funnel/                  # ★ the funnel — one decoupled package
+    ├── __init__.py                 #   package facade re-exports
     ├── funnel.py                   # public façade: route() + re-exports (orchestrator/
     │                               #   policy/preview split from the 09-27 restructuring)
     ├── orchestrator.py             #   cascade control flow (_run_nodes)
     ├── policy.py                   #   funnel_live gate + kind_enabled + reason naming
     ├── preview.py                  #   dry-run console lane
-    ├── observability.py            #   funnel_trace + chat_funnel_events plumbing
-    ├── candidate_aggregation.py    #   capability-level candidate shaping
+    ├── observability/              #   funnel_trace + chat_funnel_events plumbing
+    │   ├── __init__.py
+    │   ├── capture.py              #   the structured log line + the 8.12 event row
+    │   └── trace.py                #   the per-run trace record + trace_json() projection
+    ├── candidate_aggregation.py    #   capability-level candidate shaping + K normalization
     ├── contract.py                 # node-to-node slips: MatchResult, Candidate,
     │                               #   RecallResult, ToolIntentVerdict, BoundArguments,
     │                               #   TurnFacts, reason codes
     ├── guardrails.py               # §8.1-a system-wide vetoes (negation / context), code not data
     ├── registry/
+    │   ├── __init__.py
     │   ├── entry.py                #   CapabilityEntry + QueryRecord + RegistryLiveView
     │   │                           #   + kinds + derive_language (frozen language rule)
     │   ├── parameter_schema.py     #   the two-shape (flat | JSON-Schema) intake normalizer
@@ -6044,13 +6057,28 @@ packages/core/application/chat/
     │   ├── snapshot.py             #   the pure validation gate in front of every write
     │   └── plugins.py              #   §8.1-b extractor roster (PLUGINS) + DirectToolSpec +
     │                               #   DIRECT_TOOLS; the DAG leaf of the funnel
-    ├── matcher/__init__.py         # Node 1 — exact-only over intent_corpus
-    ├── recall/__init__.py          # Node 2 — dual vector search, quality gate, provenance
+    ├── matcher/                    # Node 1 — exact-only over intent_corpus
+    │   ├── __init__.py
+    │   ├── matcher.py              #   the exact HIT/MISS/AMBIGUOUS judgment
+    │   ├── index.py                #   fingerprint-cached exact-lookup index
+    │   └── normalize.py            #   canonical query text for the lookup
+    ├── recall/                     # Node 2 — dual vector search, quality gate, provenance
+    │   ├── __init__.py
+    │   ├── recall.py               #   query -> scored hits (evidence only)
+    │   ├── index.py                #   live-corpus index load + fingerprint cache
+    │   ├── retriever.py            #   pgvector ANN lane + degraded in-process lane
+    │   └── scoring.py              #   cosine, row->Candidate, the quality gate
     ├── cap_router/                 # selection node (§26) — the split-out selector
+    │   ├── __init__.py
     │   ├── base.py                 #   CapabilitySelector seam + route (SELECTED | NONE | REJECT)
     │   ├── card_renderer.py        #   B_noprov cards + the frozen REJECT card (4 option slots)
     │   └── backends/               #   off | stub | cap_router (deployed service)
+    │       ├── __init__.py
+    │       ├── factory.py          #   backend-name resolution -> selector (distinct responsibility)
+    │       ├── stub.py             #   deterministic transition stub (leader-vs-runner-up)
+    │       └── service.py          #   the deployed cap_router HTTP client (/v1/systemone)
     ├── argument_acquisition/       # the acquisition stage (§28), post-selection
+    │   ├── __init__.py
     │   ├── contract.py             #   ownership / source / strategy vocabulary + SlotDecl
     │   ├── path_router.py          #   the ARP: declaration + inputs -> strategy label
     │   ├── declaration.py          #   Registry arg_slots -> SlotDecl bridge (frozen slot table)
@@ -6063,9 +6091,20 @@ packages/core/application/chat/
     │   └── inputs.py               #   AcquisitionInputs
     ├── tool_intent/                # the FUSED lane (§25.6, backend=off): select + extract in ONE hop
     │   ├── __init__.py             #   ladder + verdict gate
-    │   ├── base.py                 #   card payload + ToolIntentUnavailable
-    │   ├── stub.py / local.py / online.py
-    ├── binder/__init__.py          # Node 4 (validate on the active path; bind for the L0 lane)
+    │   ├── base.py                 #   the backend-independent seam + card payload
+    │   ├── model.py                #   the one-call adjudicate+extract model
+    │   ├── parser.py               #   raw reply -> structured ToolIntentVerdict
+    │   ├── prompt.py               #   candidate-card prompt + output lock
+    │   └── backends/               #   stub | local | online
+    │       ├── __init__.py
+    │       ├── stub.py
+    │       ├── local.py
+    │       └── online.py
+    ├── binder/                     # Node 4 (validate on the active path; bind for the L0 lane)
+    │   ├── __init__.py
+    │   ├── binder.py               #   active Binder: draft + Registry schema -> BoundArguments
+    │   ├── validator.py            #   schema normalization + per-slot gates
+    │   └── legacy.py               #   LEGACY L0 lanes — compatibility only, off the active path
     └── shadow.py                   # cascade_shadow — dry-run telemetry for preview +
                                     #   offline tooling (the 8.15 matcher hook was deleted
                                     #   by the single-path ruling)

@@ -41,7 +41,7 @@ def test_default_requirements_abstain():
 def test_default_policy_keeps_undemanded_turns_on_agent():
     # Neutral (abstain) input maps to AGENT; a HIGH-confidence input with no
     # certified action and no lane gate open ALSO lands on AGENT — the experimental
-    # lanes stay dark by default (Option A, single-path ruling 2026-09-28).
+    # lanes stay dark by default (Option A, single-path ruling).
     neutral = build_execution_plan(TurnRequirements(), PolicyContext())
     assert neutral.kind is PlanKind.AGENT
 

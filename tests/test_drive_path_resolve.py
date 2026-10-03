@@ -1,4 +1,4 @@
-"""resolve_personal_path — the drive-path turn fact's resolver (2026-09-27).
+"""resolve_personal_path — the drive-path turn fact's resolver.
 
 One READY personal asset at the exact named path, or None — never a guess.
 Also pins the chat-context token extractor that feeds it.

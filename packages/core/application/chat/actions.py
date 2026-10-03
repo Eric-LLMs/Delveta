@@ -7,7 +7,7 @@ DIRECT_TOOL can invoke is a tool already registered in the agent's ``ToolRuntime
 partially-parameterized turn loses nothing: it falls through to the Agent + LLM + full
 tool/skill/workflow machinery exactly as before the fast path existed.
 
-Since the 2026-09-24 structure rulings (docs/temp.md 落点对表) this module carries
+Since the structure rulings (docs/temp.md 落点对表) this module carries
 ONLY the L0 flow-control layer and the governance vocabulary. It is a TERMINAL
 leaf: nothing importable from here may reach back into the funnel — funnel and
 understanding import this module at their top level, so the moved names below are

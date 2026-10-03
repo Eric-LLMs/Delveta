@@ -1,4 +1,4 @@
-"""Live-table Registry store (migration 0014, final ruling 2026-09-26).
+"""Live-table Registry store (migration 0014, final ruling).
 
 Doctrine pinned here:
 

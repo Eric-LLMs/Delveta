@@ -1,11 +1,11 @@
 """Node 4 — active Binder: ToolIntentModel draft + Registry schema -> BoundArguments.
 
 Four states, never a naked None (8.7): the argument truth is a STATE, and the
-non-COMPLETE states exit to the Agent (chain ruling 2026-09-24: the recheck
+non-COMPLETE states exit to the Agent (chain ruling: the recheck
 hop is gone — on the active path the Binder VALIDATES ToolIntentModel's
 extraction (:func:`validate`) and never extracts itself from the SENTENCE).
 Context-sourced slots are the deliberate second source (E2E-matrix ruling
-2026-09-27, see :func:`_resolve_context_slots`): asset identity comes from
+see :func:`_resolve_context_slots`): asset identity comes from
 TurnFacts, never from the model. The Binder executes nothing (8.8: routing
 metadata is all the funnel ever produces).
 
@@ -30,7 +30,7 @@ _CONTEXT_SLOT_SOURCES = {
 
 
 def _resolve_context_slots(args, facts, schema: dict) -> dict:
-    """Deterministically source context slots from TurnFacts (2026-09-27).
+    """Deterministically source context slots from TurnFacts.
 
     Facts present -> the draft value is OVERWRITTEN with the settled one (a
     model-copied UUID is never trusted; a hallucinated one dies here).

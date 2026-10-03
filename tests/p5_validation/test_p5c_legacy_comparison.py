@@ -2,7 +2,7 @@
 
 For every fast path, the same request is run twice through the real ``/chat/stream``:
 once with the funnel made TRANSPARENT (the pre-funnel Agent authority — the master
-gate was deleted by the 2026-09-28 single-path ruling, so the legacy leg is simulated
+gate was deleted by the single-path ruling, so the legacy leg is simulated
 by a pass-through funnel rather than a switch) and once on the live fast path. The
 charter asks for semantic/behavioral parity, NOT verbatim text — so we compare a
 behavioral fingerprint: side-effect counts, tool executions, the set of

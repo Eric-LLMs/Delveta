@@ -380,7 +380,7 @@ def test_tool_schemas_projection_is_the_pure_roster(client, monkeypatch):
         lambda: SimpleNamespace(runtime=SimpleNamespace(
             schemas=lambda: [fake_schema])))
     out = client.get("/admin/registry/tool-schemas").json()["tools"]
-    # pure ToolRuntime.schemas() projection (ruling 2026-09-26): the legacy
+    # pure ToolRuntime.schemas() projection (ruling): the legacy
     # DIRECT_TOOLS cross-check flag is retired — the roster is the truth.
     assert out[0]["name"] == "create_folder"
     assert "in_direct_tools" not in out[0]

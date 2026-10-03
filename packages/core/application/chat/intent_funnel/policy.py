@@ -6,7 +6,7 @@ the funnel-wide gate (:func:`funnel_live`), the per-kind capability gate
 Policy decides WHETHER a stage may run and how to EXPLAIN an exit; it never
 implements a node and nodes never read scattered rollout switches themselves.
 
-Single path (ruling 2026-09-28): the funnel IS the product's formal routing
+Single path (ruling): the funnel IS the product's formal routing
 lane — the old dark-launch rollout switches were deleted. What remains here
 is safety-only: missing deps fail open to the Agent, guardrails veto the
 turn, and unknown intent kinds route nothing.

@@ -14,7 +14,7 @@ compound turn, a missing context reference. Recognition failure is NO answer,
 never a guess.
 
 ``DIRECT_TOOLS`` is the legacy L0 action-binding table (tool -> spec). Post
-ruling 2026-09-24 it is DEFINED here (moved verbatim from ``chat.actions``,
+ruling it is DEFINED here (moved verbatim from ``chat.actions``,
 which keeps lazy façades for its historic import surface); the funnel Binder
 (:mod:`..binder`) consumes it for schemas and default extractors.
 """

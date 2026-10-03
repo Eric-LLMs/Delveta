@@ -5,7 +5,7 @@ Regression for a production 500: the agent loop stores assistant tool calls in a
 with a required ``type`` discriminator and a ``function`` wrapper and reject the compact shape
 with ``missing field 'type'``. ``_wire_messages`` normalizes before the request is sent.
 
-Second regression (2026-09-15): batch generation must ride a STREAMED wire with thinking
+Second regression: batch generation must ride a STREAMED wire with thinking
 disabled — dashscope cuts non-streaming requests at ~300s while a full-context Pass A is
 still legitimately generating.
 """
@@ -65,7 +65,7 @@ def test_missing_arguments_defaults_to_empty_object():
     assert out[0]["tool_calls"][0]["function"]["arguments"] == "{}"
 
 
-# ── streamed batch-generation wire (2026-09-15 regression) ────────────────────
+# ── streamed batch-generation wire ( regression) ────────────────────
 
 class _Delta:
     def __init__(self, content):
@@ -135,7 +135,7 @@ async def test_complete_json_streams_json_mode_and_parses_across_chunks():
     assert kw["extra_body"] == {"enable_thinking": False}
 
 
-# ── unsolicited usage chunk (2026-09-23 regression, found by the real QIR E2E) ───
+# ── unsolicited usage chunk ( regression, found by the real QIR E2E) ───
 #
 # DeepSeek sends a usage chunk even when include_usage was NOT requested. The old
 # accumulator wrote through a None sink on that chunk and raised TypeError, which

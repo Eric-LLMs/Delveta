@@ -1,7 +1,7 @@
 """Recall scoring: cosine, row->Candidate conversion, and the quality gate.
 
 Cosine here is a QUALITY GATE (filter obvious garbage), the "which one"
-decision belongs to the ToolIntentModel (chain ruling 2026-09-24); this
+decision belongs to the ToolIntentModel (chain ruling); this
 module never adjudicates a capability winner.
 """
 from __future__ import annotations

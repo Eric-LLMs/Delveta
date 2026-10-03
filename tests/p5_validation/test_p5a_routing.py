@@ -21,7 +21,7 @@ from tests.p5_validation._p5_harness import FakeBody, RoutingCtx, plan_for
 
 # ── gate bundles ────────────────────────────────────────────────────────────────
 # ``fast``/``action`` are inert kwargs (master + ACTION gates deleted by the
-# 2026-09-28 single-path ruling; ACTION rides certification alone). The DARK
+# single-path ruling; ACTION rides certification alone). The DARK
 # bundle is gone — the product default IS the dark bundle for the four
 # experimental lanes (NO_LANES below).
 FULL = {"fast": True, "direct": True, "viewer": True, "retrieval": True,

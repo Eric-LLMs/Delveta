@@ -1,4 +1,4 @@
-"""Intent Registry (migration 0014, final ruling 2026-09-26): the LIVE-table
+"""Intent Registry (migration 0014, final ruling): the LIVE-table
 source of routable capabilities.
 
 Layering:

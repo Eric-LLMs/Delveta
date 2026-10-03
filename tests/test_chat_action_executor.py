@@ -49,7 +49,7 @@ def _req(action, run_tool):
 
 
 # the roster the executor gates on is deps.agent.runtime.schemas() (ruling
-# 2026-09-26: the live ToolRuntime is the ONE tool existence/schema truth) —
+#: the live ToolRuntime is the ONE tool existence/schema truth) —
 # the unit world fakes exactly the one tool its cases dispatch.
 _FAKE_KERNEL = SimpleNamespace(runtime=SimpleNamespace(schemas=lambda: [
     {"name": "create_folder", "description": "d",
@@ -108,7 +108,7 @@ async def test_malformed_action_escalates_and_never_touches_the_seam():
     assert calls == []  # pre-execution failure: the seam was NEVER entered
 
 
-# Shadow-A/B #17 pin (2026-09-27): cap-summary carries an EMPTY registry
+# Shadow-A/B #17 pin: cap-summary carries an EMPTY registry
 # schema, so a certified action arrives with args={}; the live summary_gen
 # roster entry requires ["paths"] (workspace files only, per soul.md). The
 # takeover is therefore SEMANTICALLY DEAD: it always escalates at the schema
@@ -149,7 +149,7 @@ async def test_registry_empty_schema_summary_always_escalates_at_the_gate():
 
 
 async def test_certified_tool_missing_from_roster_is_terminal_integrity():
-    # (ruling 2026-09-26) tool existence is a C2 system-integrity fact: a turn
+    # (ruling) tool existence is a C2 system-integrity fact: a turn
     # naming a tool the live roster does not register terminates honestly —
     # the Agent must never re-plan around a missing executable.
     calls = []

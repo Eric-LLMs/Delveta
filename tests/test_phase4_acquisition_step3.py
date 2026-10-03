@@ -1,4 +1,4 @@
-"""Phase 4 Step 3 (2026-10-01) — MIXED argument merge WIRING.
+"""Phase 4 Step 3 — MIXED argument merge WIRING.
 
 Drives the REAL cascade (``run_nodes``) on the new lane
 (``chat_cap_router_backend != off``) and pins the merge contract:
@@ -13,7 +13,7 @@ Drives the REAL cascade (``run_nodes``) on the new lane
   certified action carries the merged args;
 * ``asset_id`` (SYSTEM_BINDER) is NOT authoritative here: the Binder still
   resolves it from TurnFacts, so a divergent seam value loses to the fact truth
-  (decision 2026-10-01, option (a));
+  (decision, option (a));
 * no legacy ``select_and_extract`` on the new lane; the MODEL strategies use the
   injected ``argument_extractor`` (or the test seam's ``model_values``), and a
   MODEL need with neither exits ``ACQUISITION_MODEL_PENDING`` to the Agent;
@@ -288,7 +288,7 @@ async def test_mixed_provenance_is_recorded(monkeypatch, real_pdf):
 
 async def test_mixed_asset_id_final_authority_is_turn_facts(monkeypatch, real_pdf):
     # The seam supplies a DIVERGENT asset id; the Binder still resolves asset_id
-    # from TurnFacts (decision 2026-10-01, option (a)) -> the fact truth wins.
+    # from TurnFacts (decision, option (a)) -> the fact truth wins.
     cid, _ = real_pdf
     entry = _entry("cap-open-pdf", _MIXED_PARAMS)
     out, req, rec, trace, capture = await _run(

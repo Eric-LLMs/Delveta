@@ -1,6 +1,6 @@
 """Intent Funnel node contracts — the vocabulary every node speaks.
 
-Chain ruling (2026-09-24, single-hop correction): the active chain is
+Chain ruling (, single-hop correction): the active chain is
 Matcher -> (Recall on MISS/AMBIGUOUS) -> ToolIntentModel (ONE call: capability
 selection + argument extraction) -> Binder (normalize/validate only) ->
 Execute; every non-COMPLETE outcome exits to the Agent (8.10). The former
@@ -23,7 +23,7 @@ MATCH_AMBIGUOUS = "MATCH_AMBIGUOUS"  # prefixed per 8.10; never the bare word
 @dataclass(frozen=True)
 class TurnFacts:
     """The current turn's settled structured facts — the Matcher contract input
-    (ruling 2026-09-24). Product semantics already depend on them: "总结一下"
+    (ruling). Product semantics already depend on them: "总结一下"
     targets the session context, "总结这一页" targets ``viewer.current_page``.
     The Matcher sees ONLY these derived facts — never the raw transcript, and it
     never parses history itself (resolution belongs upstream, once per turn).
@@ -35,7 +35,7 @@ class TurnFacts:
     has_viewer_selection: bool = False
     has_attachment: bool = False
     # Asset identity rides the SAME fact channel as everything else settled
-    # upstream (E2E-matrix ruling 2026-09-27): the attach's server-verified
+    # upstream (E2E-matrix ruling): the attach's server-verified
     # asset id and the asset a drive path in the sentence resolves to are TURN
     # FACTS, never model output — the Binder sources asset-id slots from here,
     # so the model can neither omit nor hallucinate them. "" = no asset.
@@ -78,7 +78,7 @@ class TurnFacts:
 # ── 8.10 fallback reason codes (prefixed, never bare words) ───────────────────────
 # The new cascade's ONLY downward exits. Any of these on a funnel_trace line means
 # the turn went to the Agent with the user text BYTE-IDENTICAL (8.10).
-# In service again per the 2026-09-26 ruling (supersedes 2026-09-25): an empty
+# In service again per the ruling (supersedes): an empty
 # model-facing candidate set short-circuits to the Agent — the single hop is
 # spent only when there is at least one card to select from.
 REASON_NO_CANDIDATE = "NO_CANDIDATE"
@@ -87,7 +87,7 @@ REASON_RECALL_UNAVAILABLE = "RECALL_UNAVAILABLE"
 REASON_TOOL_INTENT_REJECT = "TOOL_INTENT_REJECT"
 REASON_TOOL_INTENT_UNCERTAIN = "TOOL_INTENT_UNCERTAIN"
 REASON_TOOL_INTENT_TIMEOUT = "TOOL_INTENT_TIMEOUT"
-# cap_router lane (Phase 3, 2026-10-01) — kept DISTINCT from the TOOL_INTENT_*
+# cap_router lane (Phase 3) — kept DISTINCT from the TOOL_INTENT_*
 # codes on purpose: the selection node that produced these is cap_router (stub |
 # cap_router), not the legacy single-call ToolIntentModel, so a trace can always
 # tell the two lanes apart (Active/Deprecated must stay distinguishable, rule 8).
@@ -105,7 +105,7 @@ REASON_CAP_ROUTER_REJECT = "CAP_ROUTER_REJECT"             # selector answered R
 # service. Distinct from UNAVAILABLE: this is a business-layer eligibility rule,
 # not a service fault, so the two must never be conflated in the loss ladder.
 REASON_CAP_ROUTER_INELIGIBLE = "CAP_ROUTER_INELIGIBLE"     # K<3: V2 not eligible
-# Phase 4 argument-acquisition lane (2026-10-01) — the Argument Path Router's
+# Phase 4 argument-acquisition lane — the Argument Path Router's
 # downward exits on the new lane (backend=stub|cap_router). Kept DISTINCT from
 # the Binder's BIND_* codes: the node that produced these is the ARP, not the Binder.
 REASON_ACQUISITION_UNDECLARED = "ACQUISITION_UNDECLARED"   # §G: no declaration opt-in -> Agent
@@ -154,7 +154,7 @@ class Candidate:
     # ToolIntentModel sees the union of Recall hits and Matcher-AMBIGUOUS escalations (8.1)
     # and must know which ones carry a calibrated cosine score.
     origin: str = "recall"
-    # per-hit provenance (live-table ruling 2026-09-26): EVERY recall hit ≥
+    # per-hit provenance (live-table ruling): EVERY recall hit ≥
     # threshold is kept — no MAX/AVG, no per-capability dedup — so a hit
     # carries the exact sentence and table row that produced it.
     query_kind: str = ""        # "standard" | "similar" ("" for matcher origins)

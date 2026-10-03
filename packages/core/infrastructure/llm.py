@@ -170,7 +170,7 @@ class OpenAILLM:
         ``max_tokens`` bounds the output length for callers whose reply shape is
         known small (tool-intent verdicts); ``disable_thinking`` makes the thinking-off
         request EXPLICIT at that call site instead of riding the global knob —
-        the 2026-09-24 experiments pin both per-call.
+        the experiments pin both per-call.
 
         When ``usage_out`` is given, the provider's real token counts are merged into
         it (``stream_options.include_usage``): the usage chunk arrives last, with no
@@ -247,7 +247,7 @@ class OpenAILLM:
         chunks deadline, not a total-generation cutoff. ``images`` (data-URL list) makes
         the user turn multimodal — used by the deck visual-understanding pass.
         ``max_tokens``/``disable_thinking`` are pinned per-call by the funnel ToolIntentModel
-        (2026-09-24 latency experiments); every other caller keeps the old behavior.
+        ( latency experiments); every other caller keeps the old behavior.
         """
         client, mdl = self._call_channel(model, base_url, api_key, timeout=timeout)
         try:

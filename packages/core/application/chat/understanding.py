@@ -88,7 +88,7 @@ class TurnRequirements:
 # Anything time-sensitive or world-current belongs on the Agent path (which owns the
 # ``web_search`` tool), never on a tool-less direct answer. Deliberately narrow: a
 # false "needs_web" only costs the fast path, it never misroutes into a stale answer.
-# NOTE (2026-09-27 shadow-A/B finding): the CJK alternatives ride WITHOUT the \b
+# NOTE ( shadow-A/B finding): the CJK alternatives ride WITHOUT the \b
 # wrapper — between two CJK chars there is no word boundary, so "\b新闻\b" never
 # matches "重要新闻吗" and every mid-sentence Chinese web cue was missed.
 _WEB_PAT = re.compile(

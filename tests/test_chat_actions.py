@@ -136,7 +136,7 @@ def test_validate_action_optional_slot_may_be_absent_and_extras_drop():
 def test_validate_action_truth_is_the_roster_not_the_legacy_table():
     # a tool living ONLY in DIRECT_TOOLS (the legacy L0 table) is refused when
     # the runtime roster lacks it; a roster-only tool passes even though
-    # DIRECT_TOOLS never heard of it (ruling 2026-09-26 — single truth).
+    # DIRECT_TOOLS never heard of it (ruling — single truth).
     assert "pdf_extract_text" in DIRECT_TOOLS
     with pytest.raises(ActionSchemaError):
         validate_action("pdf_extract_text", {"asset_id": "a-1"},

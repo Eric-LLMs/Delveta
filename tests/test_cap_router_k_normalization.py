@@ -1,9 +1,13 @@
 """K normalization (§26.2) — the business-layer candidate-count rule.
 
-Pure, backend-agnostic: the SAME rule governs the stub lane and the laya lane,
-and ``backend=off`` never enters it. The model's decision head must only ever be
-handed at most K options, and a K=1 turn must be executed by the business layer
-WITHOUT consulting any model (so no confidence can be fabricated).
+Pure, backend-agnostic: the SAME rule governs the stub lane and the cap_router
+lane, and ``backend=off`` never enters it. The model's decision head must only
+ever be handed at most K options, and a K=1 turn must be executed by the
+business layer WITHOUT consulting any model (so no confidence can be fabricated).
+NOTE: these tests exercise the PURE function; selector ELIGIBILITY is an
+orchestration-layer concern (the orchestrator gates on ``len(norm.candidates)
+< 3``, so K = 2 is V2-ineligible and degrades to the Agent — see
+``test_k2_...`` below).
 """
 from __future__ import annotations
 
@@ -38,11 +42,15 @@ def test_k1_is_direct_and_never_selectable():
     assert n.candidates == ()
 
 
-def test_k2_goes_whole_to_the_selector():
+def test_k2_is_returned_but_orchestration_ineligible():
+    # The PURE function surfaces both candidates; the ORCHESTRATION layer then
+    # refuses to consult the selector at K = 2 (the selector needs exactly 3
+    # cards + REJECT = 4 slots), so the turn degrades to the Agent.
     cs = [_c("cap-a", 0.9), _c("cap-b", 0.7)]
     n = normalize_top_k(cs)
     assert n.direct is None
     assert n.candidates == (cs[0], cs[1])
+    assert len(n.candidates) < 3
 
 
 def test_k3_goes_whole_to_the_selector():

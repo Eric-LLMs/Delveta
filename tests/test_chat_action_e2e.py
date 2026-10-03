@@ -39,7 +39,7 @@ MSG = 'create a folder named "archive"'
 
 
 def _gates5(monkeypatch, *, fast=True, action=True, direct=False, retrieval=False):
-    # fast/action are inert since the 2026-09-28 single-path ruling: ACTION
+    # fast/action are inert since the single-path ruling: ACTION
     # rides certification alone, there is no master gate to open.
     monkeypatch.setattr(settings, "chat_direct_fast_path_enabled", direct, raising=False)
     monkeypatch.setattr(settings, "chat_viewer_fast_path_enabled", False, raising=False)

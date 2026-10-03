@@ -1,4 +1,4 @@
-"""Phase 2 contract pins (2026-10-01) — vocabulary + opt-in rule.
+"""Phase 2 contract pins — vocabulary + opt-in rule.
 
 These tests pin the DECLARATION contract only; no behavior is exercised and the
 cascade is not wired (``chat_cap_router_backend`` stays "off"). They lock the
@@ -51,7 +51,7 @@ def test_ownership_sources_subset_invariant():
 
 
 def test_opt_in_rule_no_synthesized_default():
-    # Ruling 2026-10-01: absence of arg_slots == legacy, and NO default SlotDecl.
+    # Ruling: absence of arg_slots == legacy, and NO default SlotDecl.
     assert is_declared(None) is False
     assert is_declared({}) is False
     assert is_declared({"asset_id": {"ownership": "SYSTEM_BINDER"}}) is True

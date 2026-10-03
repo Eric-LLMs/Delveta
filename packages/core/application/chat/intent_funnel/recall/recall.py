@@ -1,6 +1,6 @@
 """Node 2 — Recall: query -> scored hits, evidence only, never adjudicates.
 
-Discipline (chain ruling 2026-09-24 + live-table ruling 2026-09-26): cosine
+Discipline (chain ruling + live-table ruling): cosine
 here is a QUALITY GATE (filter obvious garbage), the "which one" decision
 belongs to the ToolIntentModel. The index is the LIVE corpus itself —
 ``capability_standard_queries`` / ``capability_similar_queries`` are the

@@ -1,4 +1,4 @@
-"""Argument-acquisition BRIDGE (Phase 4, 2026-10-03).
+"""Argument-acquisition BRIDGE (Phase 4).
 
 Pins the transitional adapter that lets a DECIDED capability with no explicit
 ``acquisition`` entry still enter the Argument Path Router, and the three

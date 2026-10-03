@@ -850,7 +850,7 @@ class CapabilityModel(Base):
     INTENT INFORMATION ONLY. The query corpus lives in the sibling live tables
     ``capability_standard_queries`` / ``capability_similar_queries`` /
     ``capability_negatives`` — those ARE the runtime truth; there is no
-    Draft -> Publish -> Projection lane any more (final ruling 2026-09-26).
+    Draft -> Publish -> Projection lane any more (final ruling).
 
     No hard delete (lifecycle doctrine): retiring a capability means flipping
     ``status``/``enabled``; history and audit must keep referencing it. ``row_version``
@@ -1067,7 +1067,7 @@ class RegistryAuditModel(Base):
 
 class ActionCatalogModel(Base):
     """The Action Universe: every USER-FACING action that exists in the system
-    (migration 0011, Action-Universe ruling 2026-09-25). Deliberately separate
+    (migration 0011, Action-Universe ruling). Deliberately separate
     from ``capabilities`` — catalog membership is inventory, NEVER routing.
     An action becomes routable only by an explicit register -> Draft -> Validate
     -> Publish sequence; joining it to ``capabilities.tool_binding`` is how the

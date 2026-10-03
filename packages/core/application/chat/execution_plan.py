@@ -5,7 +5,7 @@ This module OWNS ``ExecutionPlan`` and the pure mapping function
 I/O, no capability probing, no authorization (those live in Pre-flight and the
 executors). ``turn_orchestrator`` is a pure consumer of the result.
 
-Single path (ruling 2026-09-28): ACTION is the shipped formal lane — a certified
+Single path (ruling): ACTION is the shipped formal lane — a certified
 ``requested_action`` (funnel or its L0 compat boundary) maps to ACTION, anything
 else maps to AGENT (fail-open). The unshipped experimental lanes (DIRECT ->
 VIEWER -> LOCAL_RAG -> COMPOSITE) stay behind their own per-lane feature switch,
@@ -223,7 +223,7 @@ def _is_action_eligible(requirements: TurnRequirements) -> bool:
     presence is the full contract; no second registry check here (the executor's schema
     gate owns that).
 
-    Web demand (E2E-matrix ruling 2026-09-27): the blanket web veto moved off the
+    Web demand (E2E-matrix ruling): the blanket web veto moved off the
     funnel ENTRY and lands HERE, where the certified tool is known — a
     web-demanding turn may take the ACTION lane only when the certified tool is
     itself web-family (``web_search``/``search_social``). A composite like

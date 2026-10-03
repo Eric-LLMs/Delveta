@@ -2,7 +2,7 @@
 
 ``load_sources`` validates, reads, and text-extracts a set of workspace files and ALWAYS
 returns the full raw text — the toolkit never digests, trims, or rewrites its input
-(2026-09-15 directive: the old map-reduce pre-pass handed a generated summary to the
+( directive: the old map-reduce pre-pass handed a generated summary to the
 generator as its sole input, lost the detail the deck engine's line-anchored provenance
 needs, and timed out on long PDFs; it is removed for good).
 

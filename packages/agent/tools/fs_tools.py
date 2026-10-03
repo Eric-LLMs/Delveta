@@ -6,7 +6,7 @@ directory (path traversal is rejected), and the permission class is declared exp
 so the :class:`~agent.security.sandbox.Sandbox` gates them: the default READ-only session denies
 ``edit_file`` / ``bash`` unless the host grants WRITE / NETWORK.
 
-Two file planes, one capability (drive-edit ruling 2026-09-28): ``read_file`` /
+Two file planes, one capability (drive-edit ruling): ``read_file`` /
 ``edit_file`` address a file by PATH and dispatch on its plane — a path under
 ``My Drive/`` (or ``我的云盘/``) is a Drive asset resolved to its real asset_id and
 handled by the injected Drive service (edits follow its copy-on-write semantics);

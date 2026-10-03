@@ -1,6 +1,6 @@
 """Production AcquisitionInputProvider — per-turn bridge to the live Registry.
 
-Phase 4 (2026-10-03). The cascade resolves acquisition inputs per decided
+Phase 4. The cascade resolves acquisition inputs per decided
 capability through the injected seam (``executors.base.ChatDeps.acquisition_inputs``).
 Tests inject their own provider; PRODUCTION has none, and this module builds the
 real one ONCE per turn (it needs the live ``entries_by_id``, the query and the

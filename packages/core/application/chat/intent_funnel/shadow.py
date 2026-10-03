@@ -1,6 +1,6 @@
 """Shadow lanes — observation with zero execution authority.
 
-The 2026-09-28 single-path ruling deleted the 8.15 Matcher dark-launch hook
+The single-path ruling deleted the 8.15 Matcher dark-launch hook
 (``chat_matcher_mode`` + ``observe``): the Matcher node inside the cascade is
 the formal consumer, so a second observation-only copy of it no longer has a
 product role. What remains is the Phase-E full-cascade shadow:

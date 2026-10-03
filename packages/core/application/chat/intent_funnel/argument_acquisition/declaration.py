@@ -1,4 +1,4 @@
-"""Declaration bridge — Registry entry -> ``{slot: SlotDecl}`` (Phase 4, 2026-10-03).
+"""Declaration bridge — Registry entry -> ``{slot: SlotDecl}`` (Phase 4).
 
 The live Registry declares acquisition the LEGACY way: ``arg_slots`` is a
 ``{slot: {source: str}}`` (or ``{slot: str}``) map whose ``source`` comes from

@@ -1,4 +1,4 @@
-"""Phase 3/4 (2026-10-01) — cap_router selection + Argument Path Router wiring.
+"""Phase 3/4 — cap_router selection + Argument Path Router wiring.
 
 Pins the LOCKED business rules:
 

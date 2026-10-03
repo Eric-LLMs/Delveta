@@ -28,7 +28,7 @@ The 12 coverage items and where they are pinned:
  12 multi-turn     certified turn then a plain turn in one session: two event
                    rows, routing never leaks state.
 
-Chain ruling 2026-09-24: the active path is Matcher HIT / Recall -> ONE ToolIntentModel
+Chain ruling: the active path is Matcher HIT / Recall -> ONE ToolIntentModel
 call -> Binder validate -> runtime. No second hop, no Decision node — several
 tests pin "exactly one model-A call per routed turn".
 
@@ -48,8 +48,14 @@ from uuid import uuid4
 import pytest
 from api.routers import chat as chat_mod
 from core.application.chat import understanding as understanding_mod
+from core.application.chat.intent_funnel import cap_router as cap_router_mod
+from core.application.chat.intent_funnel.cap_router import (
+    ROUTE_REJECT,
+    CapabilityRoute,
+)
 from core.application.chat.intent_funnel.contract import (
     REASON_BIND_MISSING,
+    REASON_CAP_ROUTER_REJECT,
     REASON_NO_CANDIDATE,
     REASON_RECALL_TIMEOUT,
     REASON_REGISTRY_UNAVAILABLE,
@@ -106,7 +112,7 @@ def _entries() -> tuple[CapabilityEntry, ...]:
         CapabilityEntry(
             capability_id="cap-folder", tool_binding="create_folder",
             description="新建一个带引号名称的文件夹。",
-            # exact corpus = the live query rows (ruling 2026-09-26): the
+            # exact corpus = the live query rows (ruling): the
             # canonical phrasings are HIT-able; the stored regex/alias fields
             # are inert legacy storage.
             standard_queries=(_std("s1", MSG_FOLDER),),
@@ -192,7 +198,7 @@ class ToolIntentDouble:
 
 
 def _funnel_gates(monkeypatch, *, mode="on", timeout=5.0, tool_intent_backend="stub"):
-    # Single-path ruling 2026-09-28: chat_funnel_enabled / chat_matcher_mode /
+    # Single-path ruling: chat_funnel_enabled / chat_matcher_mode /
     # private+web kind switches were deleted — the cascade is always live and
     # only ACTION kind routes. The kwargs stay for call-site compatibility.
     monkeypatch.setattr(settings, "chat_tool_intent_backend", tool_intent_backend)
@@ -290,7 +296,7 @@ async def test_plain_chat_abstains_and_lands_one_production_event(monkeypatch, c
     assert port.requests[-1][-1]["content"] == msg             # 8.10 byte-identical
     trace = _trace(caplog)
     assert _field(trace, "matcher") == "MISS:-"
-    # ruling 2026-09-26: Matcher MISS + no Recall hit >= the gate is an EMPTY
+    # ruling: Matcher MISS + no Recall hit >= the gate is an EMPTY
     # model-facing set — the turn exits honestly at NO_CANDIDATE, no hop spent
     assert _field(trace, "fallback_reason") == REASON_NO_CANDIDATE
     assert _field(trace, "final_route") == "agent"
@@ -478,7 +484,7 @@ async def test_multi_turn_routing_does_not_leak_state(monkeypatch, caplog):
     assert r2.answer == "Agent took over."
     assert jd.calls == 1                                        # turn 1's hop was the only
     # spend: turn 2's empty candidate set exits at NO_CANDIDATE before the model
-    # (ruling 2026-09-26) — a no-candidate turn costs zero hops.
+    # (ruling) — a no-candidate turn costs zero hops.
     evs = _events(db)
     assert len(evs) == 2                                        # one row per routed turn
     assert evs[0].final_route == "action" and evs[0].capability_id == "cap-folder"
@@ -535,7 +541,7 @@ async def test_negated_demand_is_missed_before_certification(monkeypatch, caplog
     # a negated demand is not one of the curated exact sentences, so the table
     # misses it on its own; the 8.1-a guard stays as defense in depth. With the
     # HIT vetoed and recall empty the set is empty -> NO_CANDIDATE short-circuit
-    # before any hop (ruling 2026-09-26).
+    # before any hop (ruling).
     app, port, spy, _db, _emb, _ = _setup(monkeypatch, retire=True)
     caplog.set_level(logging.INFO, logger=FUNNEL_LOGGER)
     res = await sse(app, MSG_NEGATED)
@@ -551,7 +557,7 @@ async def test_negated_demand_is_missed_before_certification(monkeypatch, caplog
 # ── shadow observation at the router: a live turn emits zero shadow records ────────
 
 async def test_live_turn_records_no_shadow_telemetry(monkeypatch, caplog):
-    # The matcher-shadow hook was deleted (single-path ruling 2026-09-28): a live
+    # The matcher-shadow hook was deleted (single-path ruling): a live
     # routed turn must never write ``matcher_shadow`` lines.
     app, _port, _spy, _db, _emb, _ = _setup(monkeypatch, mode="off")
     caplog.set_level(logging.INFO, logger=SHADOW_LOGGER)
@@ -559,3 +565,85 @@ async def test_live_turn_records_no_shadow_telemetry(monkeypatch, caplog):
 
     assert not [r for r in caplog.records
                 if r.name == SHADOW_LOGGER and "matcher_shadow" in r.getMessage()]
+
+
+# ── REJECT (the 4th V2 slot) at the router: it never enters the argument chain ─────
+
+MSG_REJECT = "执行共享操作"
+
+
+def _reject_entries() -> tuple[CapabilityEntry, ...]:
+    """THREE capabilities share ONE curated sentence, so the Matcher can only
+    produce MATCH_AMBIGUOUS with all three as candidates (§25.6: a shared
+    sentence is the only ambiguity exact matching yields). K = 3 -> the
+    cap_router selector is genuinely consulted (a HIT would bypass it)."""
+    def _cap(cid: str, tool: str) -> CapabilityEntry:
+        return CapabilityEntry(
+            capability_id=cid, tool_binding=tool,
+            description=f"{cid} shares the curated sentence.",
+            standard_queries=(_std(f"{cid}-s", MSG_REJECT),),
+            parameters={"name": {"type": "string", "required": True,
+                                 "description": "arg"}},
+            arg_slots={"name": {"source": "user_input"}},
+            intent_kind=KIND_ACTION,
+        )
+    return (_cap("cap-a", "create_folder"), _cap("cap-b", "add_term"),
+            _cap("cap-c", "create_folder"))
+
+
+class _RejectSelector:
+    """A cap_router double that always answers REJECT (the 4th slot)."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+        self.slots: int | None = None
+
+    async def select(self, query, candidates, *, entries_by_id, facts):
+        self.calls += 1
+        self.slots = len(candidates)
+        return CapabilityRoute(ROUTE_REJECT, None, provenance="test reject")
+
+
+async def test_cap_router_reject_routes_to_agent_and_skips_the_argument_chain(
+        monkeypatch, caplog):
+    # A MATCH_AMBIGUOUS 3-capability set (K = 3) reaches the cap_router selector,
+    # which answers REJECT. REJECT is the NORMAL 4th decision -> the REAL Agent
+    # path: no capability selected (PlanKind.AGENT), and NOTHING downstream runs
+    # — no ARGUMENT_ACQUISITION, no extractor, no Binder, no executor.
+    view = RegistryLiveView(fingerprint=content_fingerprint(list(_reject_entries())),
+                            entries=_reject_entries())
+    app, port, spy, db, _emb, _ = _setup(monkeypatch, retire=True, view=view)
+    monkeypatch.setattr(settings, "chat_cap_router_backend", "stub")
+
+    selector = _RejectSelector()
+    monkeypatch.setattr(cap_router_mod, "selector_for", lambda backend: selector)
+
+    extractor_calls: list = []
+
+    async def boom_extract(**kw):
+        extractor_calls.append(kw)
+        raise AssertionError("the extractor must never run on a REJECT turn")
+
+    monkeypatch.setattr(chat_mod, "_extract_arguments", boom_extract)
+
+    caplog.set_level(logging.INFO, logger=FUNNEL_LOGGER)
+    await sse(app, MSG_REJECT)
+
+    # 1. the selector WAS consulted, at exactly K = 3 (3 cards + REJECT = 4 slots)
+    assert selector.calls == 1 and selector.slots == 3
+    # 2. the turn landed on the REAL Agent: it saw the text byte-identically and
+    #    executed NOTHING (no tool body ran).
+    assert port.steps == 1 and port.requests[-1][-1]["content"] == MSG_REJECT
+    assert spy.folders_created == [] and spy.terms_added == []
+    # 3. REJECT never entered ARGUMENT_ACQUISITION / Binder / the executor.
+    assert extractor_calls == []
+    # 4. telemetry: the REJECT reason (NOT NONE / not a bind exit), the deepest
+    #    stage = cap_router (the selector really ran), and the Agent route.
+    trace = _trace(caplog)
+    assert _field(trace, "fallback_reason") == REASON_CAP_ROUTER_REJECT
+    assert _field(trace, "final_route") == "agent"
+    assert _field(trace, "deepest_stage") == "cap_router"
+    ev = _events(db)[0]
+    assert ev.final_route == "agent"
+    assert ev.fallback_reason == REASON_CAP_ROUTER_REJECT
+    assert ev.deepest_stage == "cap_router"

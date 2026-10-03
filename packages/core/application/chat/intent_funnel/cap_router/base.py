@@ -1,6 +1,6 @@
 """cap_router — the capability-SELECTION node contract (backend-independent seam).
 
-Phase 2 (2026-10-01): capability selection is split out of the former
+Phase 2: capability selection is split out of the former
 single-call ``tool_intent.select_and_extract`` into its own node. ``cap_router``
 answers exactly ONE question — *which* capability the turn dispatches — and
 nothing else: it never authors arguments, never touches the Binder, never
@@ -13,7 +13,7 @@ Backend ladder (``settings.chat_cap_router_backend``):
   ``stub``        — deterministic selector (wiring/E2E tests only, no model);
   ``cap_router``  — the deployed cap_router service (current model impl: LayaChoice).
 
-Failure contract (ruling 2026-10-01): a ``cap_router`` failure — timeout, service
+Failure contract (ruling): a ``cap_router`` failure — timeout, service
 unavailable, malformed output, or an off-candidate capability id — exits to the
 Agent. Selection NEVER falls back to the extractor; otherwise the cap_router E2E
 metrics would be polluted by the very model under test.
@@ -64,7 +64,7 @@ class CapabilityRoute:
 class CapabilityRouterUnavailable(Exception):
     """The configured cap_router backend cannot serve (not deployed / transport
     down / malformed output). The CALLER maps this to the Agent — selection
-    never falls through to another model (ruling 2026-10-01)."""
+    never falls through to another model (ruling)."""
 
 
 @runtime_checkable
@@ -74,7 +74,7 @@ class CapabilitySelector(Protocol):
 
     A backend that cannot serve raises :class:`CapabilityRouterUnavailable`
     — the caller maps that to the Agent; selection never falls through to
-    another model (ruling 2026-10-01)."""
+    another model (ruling)."""
 
     async def select(self, query: str, candidates: Sequence, *,
                      entries_by_id: dict, facts=None) -> CapabilityRoute: ...

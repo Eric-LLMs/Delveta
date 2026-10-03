@@ -85,7 +85,7 @@ def test_validation_gate_rejects_unknown_kind():
 
 
 def test_kind_enabled_matrix():
-    # Single-path ruling 2026-09-28: kind_enabled is settings-free — only the
+    # Single-path ruling: kind_enabled is settings-free — only the
     # action family rides the live funnel; private/web kinds are fail-closed
     # forever (the dev switches guarded zero live Registry rows), unknown kinds
     # route nothing.
@@ -126,7 +126,7 @@ class _Embedder:
 def _open(monkeypatch, *, mode="on", private=False, backend="online"):
     from core.config import settings
 
-    # Single-path ruling 2026-09-28: the rollout gates + matcher shadow mode were
+    # Single-path ruling: the rollout gates + matcher shadow mode were
     # deleted; ACTION is the shipped kind, every other kind fail-closes unconditionally.
     monkeypatch.setattr(settings, "chat_tool_intent_backend", backend)
     monkeypatch.setattr(settings, "chat_tool_intent_local_url", "")
@@ -184,7 +184,7 @@ async def test_closed_private_kind_exits_with_reason_byte_identical(monkeypatch,
 
 
 async def test_private_kind_fail_closed_without_any_switch(monkeypatch, caplog):
-    """Single-path ruling 2026-09-28: the private rollout switch was deleted —
+    """Single-path ruling: the private rollout switch was deleted —
     non-ACTION kinds fail closed unconditionally until the lane re-ships."""
     _open(monkeypatch, private=True)
     view = _view([_entry("cap-p", kind=KIND_PRIVATE, corpus=(MSG,))])

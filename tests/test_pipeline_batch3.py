@@ -378,7 +378,7 @@ async def test_publish_promotes_substrate_terminal_advances(env, monkeypatch):
     assert pub["status"] == "PROMOTED" and pub["drive_asset_id"]
     assert pub["artifact"] == "report.md" and pub["version"] == 1
     # promoted .md is the run's intermediate of record: archived under temp/v{N}
-    # (2026-09-14 surface decision; outputs/ carries only the publication PDF)
+    # ( surface decision; outputs/ carries only the publication PDF)
     dp = pub["drive_path"] or ""
     assert "/temp/v" in dp or "outputs" in dp or "research/" in dp
     assert out.ledger == []

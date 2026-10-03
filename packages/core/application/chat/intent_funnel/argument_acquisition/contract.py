@@ -1,7 +1,7 @@
 """Argument Acquisition contract — the declaration + runtime vocabulary
-(Phase 2, 2026-10-01).
+(Phase 2).
 
-Two ORTHOGONAL dimensions, kept apart on purpose (ruling 2026-10-01):
+Two ORTHOGONAL dimensions, kept apart on purpose (ruling):
 
 * ``ownership``  — WHO may produce a slot value. ``MODEL`` (extracted by Qwen),
   ``SYSTEM_BINDER`` (filled by the Binder from settled turn facts),
@@ -44,7 +44,7 @@ SOURCES = frozenset({
     SOURCE_CALLBACK_CONTEXT, SOURCE_RESOLVER, SOURCE_DEFAULT,
 })
 
-# Invariant I4 (ruling 2026-10-01): allowed_sources MUST be a subset of the
+# Invariant I4 (ruling): allowed_sources MUST be a subset of the
 # sources its ownership can legitimately draw from — one table, no drift.
 SOURCES_OF: dict[str, frozenset[str]] = {
     OWNERSHIP_MODEL: frozenset({SOURCE_QUERY, SOURCE_CONVERSATION_5_USER_TURNS}),
@@ -71,7 +71,7 @@ STRATEGIES = frozenset({
 
 
 def is_declared(arg_slots: dict | None) -> bool:
-    """The acquisition OPT-IN switch (ruling 2026-10-01): a capability enters the
+    """The acquisition OPT-IN switch (ruling): a capability enters the
     new acquisition contract IFF it declares a NON-EMPTY ``arg_slots``.
 
     Absent / empty -> pure LEGACY semantics: no :class:`SlotDecl` is synthesized,
@@ -101,7 +101,7 @@ class SlotDecl:
 
 @dataclass(frozen=True)
 class Readiness:
-    """Result of the two deterministic gates (ruling 2026-10-01):
+    """Result of the two deterministic gates (ruling):
 
     * ``ready`` — every REQUIRED slot has a valid deterministic value already
       (gate 1, Required Readiness);

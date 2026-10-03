@@ -352,7 +352,7 @@ class ArtifactCompileService:
         # 8. Promotion through the SAME drive primitive promote_to_drive uses; the
         #    Markdown gate already ran upstream and remains the only publish
         #    authority — this is a SIBLING artifact, never a replacement.
-        #    Placement (product decision 2026-09-14): a chat task's PDF rides the
+        #    Placement (product decision): a chat task's PDF rides the
         #    TASK's own cloud folder — ``<task folder>/outputs/<name>_v{run_seq}.pdf``
         #    (outputs/ holds publication files only; the reviewed .md now archives
         #    under temp/); a skill-driven project without a cloud folder keeps the

@@ -1,10 +1,10 @@
 """P2 — node-level tests + the single-hop cascade through funnel.route.
 
-Chain ruling 2026-09-24: Matcher HIT -> ToolIntentModel (ONE call: select+extract);
+Chain ruling: Matcher HIT -> ToolIntentModel (ONE call: select+extract);
 MISS/AMBIGUOUS -> Recall -> same ToolIntentModel; Binder validates the draft; every
 failure exits to the Agent. No recheck hop, no Decision node in the active path.
 
-Discipline (ruling 2026-09-24, §8.17 pipeline doctrine): EVERY node section
+Discipline (ruling, §8.17 pipeline doctrine): EVERY node section
 below runs against fake contracts only — no node needs another node to be
 alive to be tested. Replacing a node's model or thresholds must keep its own
 tests passing and leave the other sections byte-unchanged; a test that could
@@ -66,7 +66,7 @@ def _entry(cid, *, tool="create_folder", corpus=(), patterns=(), aliases=(),
            arg_slots=None, enabled=True, status="active", examples=("做个事",),
            negatives=(), parameters=None):
     # ``corpus`` feeds the EXACT set: the live-table ruling hydrates it as
-    # Standard (first row) + Similar query rows (ruling 2026-09-25/26);
+    # Standard (first row) + Similar query rows (ruling/26);
     # patterns/aliases stay storable but are inert as far as the Matcher goes.
     corpus = tuple(corpus)
     sims = tuple(_q(10 + n, s, position=n, standard_query_id="q1" if corpus else None)
@@ -95,7 +95,7 @@ _TERM_SCHEMA = {
 
 
 def _view(entries, version=1):
-    # live-table ruling 2026-09-26: the read model IS the live corpus, keyed
+    # live-table ruling: the read model IS the live corpus, keyed
     # only by its content fingerprint (the ``version`` arg is call-site noise).
     return T.RegistryLiveView(
         fingerprint=content_fingerprint(list(entries)),
@@ -167,7 +167,7 @@ def _req(**kw):
     return TurnRequirements(**base)
 
 
-# ════════════════════════ TurnFacts (2026-09-24 contract ruling) ════════════════
+# ════════════════════════ TurnFacts ( contract ruling) ════════════════
 
 
 def test_turn_facts_reads_structured_viewer_and_attach_only():
@@ -179,7 +179,7 @@ def test_turn_facts_reads_structured_viewer_and_attach_only():
     assert f == TurnFacts(
         has_viewer=True, viewer_asset_id="a-7", viewer_current_page=12,
         has_viewer_selection=True, has_attachment=True,
-        attachment_asset_id="b-1",  # 2026-09-27: the attach's id is a settled fact
+        attachment_asset_id="b-1",  #: the attach's id is a settled fact
         has_turn_context=True,
     )
 
@@ -228,7 +228,7 @@ def test_turn_veto_reasons_and_pass_through():
     ctx = _ctx("新建文件夹")
     assert guardrails.turn_veto("新建文件夹", req, ctx) is None
     assert guardrails.turn_veto('{"tool": "x"}', req, ctx) == "input_not_pure_text"
-    # E2E-matrix ruling 2026-09-27: web demand is NO LONGER an entry veto — a
+    # E2E-matrix ruling: web demand is NO LONGER an entry veto — a
     # certified web_search action must reach the executor on the Funnel lane.
     # The composite guard moved to execution_plan._is_action_eligible (web-family
     # tool only), tested in test_chat_control_plane.
@@ -295,7 +295,7 @@ async def test_recall_gate_is_inclusive_near_ties_survive():
 
 
 def test_load_rows_sql_union_all_spacing():
-    """Anti-regression pin (2026-09-27 shadow-live sim): the in-process
+    """Anti-regression pin ( shadow-live sim): the in-process
     degraded lane's loader is assembled from adjacent string literals — a
     missing space after "UNION ALL" rendered as ``ALLSELECT`` and blew up
     against real Postgres (every MISS lane => RECALL_UNAVAILABLE). Every
@@ -381,7 +381,7 @@ def test_tool_intent_backends_raise_unavailable_not_answers():
     asyncio.run(go())
 
 
-# ── 8.17 real-backend wiring (2026-09-24 ruling: online first, dedicated
+# ── 8.17 real-backend wiring ( ruling: online first, dedicated
 #    small-model channel with explicit per-call forwarding) ──────────────────────
 
 async def test_tool_intent_online_serves_and_forwards_dedicated_channel(monkeypatch):
@@ -750,7 +750,7 @@ def test_local_tools_markdown_fallback_normalizes_to_same_internal_shape(monkeyp
 
 
 def test_local_tools_json_content_fallback_normalizes_to_same_internal_shape():
-    """Q5 ruling (2026-09-28): under the tools wire the checkpoint emits a
+    """Q5 ruling: under the tools wire the checkpoint emits a
     JSON-object content reply more often than a native call (OUTPUT_LOCK
     recency). The reader's FIXED priority is native tool_calls -> JSON content
     -> Markdown -> NONE; the JSON branch normalizes into the SAME internal
@@ -848,7 +848,7 @@ def test_tool_intent_card_carries_tool_schema_score_and_origin():
 
 
 def test_card_shows_all_four_semantic_fields():
-    """Action-Contract ruling 2026-09-25: the model must SEE the capability's
+    """Action-Contract ruling: the model must SEE the capability's
     semantic contour — the intent corpus (Standard + Similar rows) and the
     renamed request_query_examples are all on the card, the request rows
     labelled card-context-only (only the corpus feeds Exact/Recall)."""
@@ -896,7 +896,7 @@ def test_prompt_contract_says_provenance_is_not_action():
 
 
 def test_output_lock_rides_at_the_end_of_the_user_prompt():
-    # 2026-09-25 smoke finding: the long semantic contract alone lost JSON
+    # smoke finding: the long semantic contract alone lost JSON
     # discipline on the 0.6B (markdown bullets; a prose NONE even parsed as
     # backend-unavailable). The envelope template rides LAST (recency) and
     # carries PLACEHOLDERS ONLY — a real example value there is echoed
@@ -925,7 +925,7 @@ def test_card_example_guardrail_truncates_and_says_so(caplog):
 
 
 def test_prompt_defensively_replaces_leaked_regex_literal(caplog):
-    # Defense in depth (ruling 2026-09-25): the exact-only Matcher can no
+    # Defense in depth (ruling): the exact-only Matcher can no
     # longer hand a raw regex to a card; IF one ever leaks through a legacy
     # path, build_prompt swaps in the standard sentence and says so loudly.
     import logging as _logging
@@ -990,7 +990,7 @@ def test_prompt_carries_recall_semantic_references():
 
 
 def test_prompt_empty_candidate_set_is_explicit_not_silent():
-    # defensive reachability: since ruling 2026-09-26 the funnel short-circuits
+    # defensive reachability: since ruling the funnel short-circuits
     # an empty set BEFORE the hop, so build_prompt only sees () if a caller
     # bypasses that guard — the prompt must still say so honestly, never render
     # an empty section.
@@ -1034,7 +1034,7 @@ def test_binder_negation_is_missing_not_answer():
     assert binder.bind(entry, '不要新建文件夹"x"', _ctx("")).state == BIND_MISSING
 
 
-# ── validate-only gate over ToolIntentModel's draft (chain ruling 2026-09-24) ────────────
+# ── validate-only gate over ToolIntentModel's draft (chain ruling) ────────────
 
 
 def test_binder_validate_normalizes_against_registry_schema():
@@ -1064,7 +1064,7 @@ def test_binder_validate_normalizes_against_registry_schema():
 
 
 # ── context-sourced slots: the FACTS, never the draft, answer asset identity ──
-# (E2E-matrix ruling 2026-09-27 — asset_id "from turn facts, not the sentence")
+# (E2E-matrix ruling — asset_id "from turn facts, not the sentence")
 
 _ASSET_SCHEMA = {"asset_id": {"type": "string", "max_len": 64, "required": True}}
 
@@ -1118,7 +1118,7 @@ def test_binder_context_slots_touched_only_by_name_not_by_tool():
 def _open(monkeypatch, *, mode="off", timeout=5.0, backend="online"):
     from core.config import settings
 
-    # Single-path ruling 2026-09-28: the rollout gates + matcher shadow mode
+    # Single-path ruling: the rollout gates + matcher shadow mode
     # were deleted; the cascade is always live (mode kept for call sites).
     monkeypatch.setattr(settings, "chat_tool_intent_backend", backend)
     monkeypatch.setattr(settings, "chat_tool_intent_timeout_seconds", timeout + 1)
@@ -1149,7 +1149,7 @@ CAP = [_entry("cap-a", corpus=(MSG,), examples=("建个目录",), parameters=_NA
 
 
 async def test_missing_deps_fails_open_to_agent(monkeypatch):
-    """Single-path ruling 2026-09-28 supersedes the old dark-gate test: the
+    """Single-path ruling supersedes the old dark-gate test: the
     cascade is always live; the remaining fail-open door is absent deps — the
     registry must never be read, the Agent keeps the turn byte-identical."""
     monkeypatch.setattr(
@@ -1178,7 +1178,7 @@ async def test_vetoed_turn_skips_cascade(monkeypatch):
         "core.application.chat.intent_funnel.registry.active_view",
         lambda **kw: pytest.fail("veto before any cascade read"),
     )
-    # memory demand still vetoes at entry (web demand was lifted 2026-09-27 —
+    # memory demand still vetoes at entry (web demand was lifted —
     # see test_turn_veto_reasons_and_pass_through)
     req = _req(needs_memory=True)
     out = await funnel.route(_ctx(MSG), deps=object(), requirements=req)
@@ -1199,7 +1199,7 @@ async def test_registry_unavailable_fails_open(monkeypatch, caplog):
 
 
 async def test_index_unavailable_is_fault_empty_set_is_business(monkeypatch, caplog):
-    """Ruling 2026-09-26: a missing index is a FAULT (RECALL_UNAVAILABLE);
+    """Ruling: a missing index is a FAULT (RECALL_UNAVAILABLE);
     an EMPTY candidate set is a normal business result — it short-circuits to
     the Agent at deepest_stage=recall and the one model hop is NOT spent.
     E2 (final semantics): only the MISS/AMBIGUOUS lane depends on the index,
@@ -1226,7 +1226,7 @@ async def test_index_unavailable_is_fault_empty_set_is_business(monkeypatch, cap
 
 
 async def test_recall_faults_report_unavailable_never_fake_empty(monkeypatch, caplog):
-    """Ruling 2026-09-26 (point 2): a system fault in recall — embedder error
+    """Ruling (point 2): a system fault in recall — embedder error
     or embedder/corpus DIM mismatch (profile config error) — must report
     RECALL_UNAVAILABLE, never the business-result NO_CANDIDATE; no hop spent."""
     _open(monkeypatch)
@@ -1339,7 +1339,7 @@ async def test_stub_confident_without_extraction_exits_bind_missing(monkeypatch,
 async def test_bare_create_folder_demand_is_a_correct_clarification_exit(
     monkeypatch, caplog
 ):
-    """Sim-A/B item 1 pin (2026-09-27): "新建一个文件夹" IS a real capability
+    """Sim-A/B item 1 pin: "新建一个文件夹" IS a real capability
     demand but the sentence carries NO name. The model must not invent one and
     the Binder must not guess one: CONFIDENT-without-args -> MISSING -> Agent
     owns the clarification. This is the designed fallback (report class
@@ -1386,7 +1386,7 @@ async def test_self_contained_schemaless_summary_certifies(monkeypatch):
     assert len(llm.prompts) == 1
 
 
-# ── input-context veto (shadow-A/B follow-up 2026-09-27, suspects a403c4b341e1
+# ── input-context veto (shadow-A/B follow-up, suspects a403c4b341e1
 # / d795e47fe617): empty-schema capabilities must never takeover when the turn
 # names its input object only by a demonstrative and NOTHING is on screen. ──────
 
@@ -1596,7 +1596,7 @@ async def test_negated_matcher_hit_is_forced_to_miss(monkeypatch, caplog):
     # the corpus itself contains the negated sentence: an exact HIT WOULD fire —
     # only the 8.1-a guard can veto it. With the HIT vetoed and recall empty,
     # the model-facing set is empty -> NO_CANDIDATE short-circuit (ruling
-    # 2026-09-26); the hop is never spent on a turn with no card to select.
+    #); the hop is never spent on a turn with no card to select.
     view = _view([_entry("cap-a", corpus=("不要新建文件夹",))])
     llm = _LLM([{"capability_id": "NONE"}])
     _, deps = _wire(monkeypatch, view=view, index=_index([]),
@@ -1628,7 +1628,7 @@ async def test_ambiguous_carries_all_candidates_into_the_one_call(monkeypatch):
     assert out.requested_action["args"] == {"term": "季度汇总", "domain": "财务"}
 
 
-# ═══════════ E1/E2 — final semantics landing (2026-09-26 audit) ═════════════════
+# ═══════════ E1/E2 — final semantics landing ( audit) ═════════════════
 
 
 def test_aggregate_by_capability_keeps_the_winning_candidate():

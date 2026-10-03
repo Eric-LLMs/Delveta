@@ -13,7 +13,7 @@ def _coerce_top_k(raw) -> int:
 
     Strict Draft7 rejection of those was raising ToolArgsError before the provider was
     ever called (~0.2 ms fail), and the model then re-sent the same malformed value
-    step after step (2026-09-26 incident: 4 fast failures, 30 s turn). Anything
+    step after step ( incident: 4 fast failures, 30 s turn). Anything
     un-coercible falls back to the default rather than failing the turn.
     """
     try:
@@ -23,7 +23,7 @@ def _coerce_top_k(raw) -> int:
     return max(1, min(value, 20))
 
 
-# Source extension (2026-09-26 operator ruling): beyond the keyed search API, the
+# Source extension ( operator ruling): beyond the keyed search API, the
 # tool ALSO scrapes keyless SERPs (Bing URL-concat, like research does) and crawls
 # page text for the top hits. Everything ships as ONE appended list to the model —
 # [api results..., serp results..., page texts...] — deduped by URL, so a single
@@ -75,7 +75,7 @@ async def _crawl_pages(results: list[dict]) -> list[dict]:
 
 
 async def _provider_search_with_retry(provider, query: str, top_k: int) -> dict:
-    """Give-up rule (2026-09-26): at most TWO provider attempts, short backoff between.
+    """Give-up rule: at most TWO provider attempts, short backoff between.
 
     A second failure is terminal for this call — the error text tells the model to
     stop retrying instead of burning a full ReAct step per attempt. Tavily's own DDG
@@ -157,7 +157,7 @@ def register(runtime: ToolRuntime, ctx: Context, llm) -> None:
                 ],
             ),
             execute=web_search,
-            # READ security class (operator ruling 2026-09-26): read-only web search is a
+            # READ security class (operator ruling): read-only web search is a
             # Chat capability, not a human decision — it must never raise a sandbox approval
             # popup, so it sits in the default-allowed READ class alongside rag_search.
             # CONSEQUENCE, accepted knowingly: the private_only / private_first source-policy

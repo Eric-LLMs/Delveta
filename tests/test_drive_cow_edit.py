@@ -1,4 +1,4 @@
-"""Drive text edit — copy-on-write semantics (rule 2026-09-28, cap-edit-file drive plane).
+"""Drive text edit — copy-on-write semantics (rule, cap-edit-file drive plane).
 
 Exclusive asset → in-place (same asset_id). Asset referenced by another reader →
 the original row and bytes are NEVER touched: a successor asset carries the edit,

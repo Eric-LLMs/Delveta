@@ -203,7 +203,7 @@ def get_agent_kernel() -> AgentKernel:
 
     # Domain tools first (the kernel registers the core meta-tools on top).
     register_builtin_tools(runtime, ctx, llm)
-    # Chat-process tool hiding (exposure ruling 2026-09-28): tools named in
+    # Chat-process tool hiding (exposure ruling): tools named in
     # settings.agent_hidden_tools are never registered here, so they are absent
     # from every model-visible surface (prompt catalog, tool_search, mount, the
     # tools array). The same factory builds the worker/research kernel, but the

@@ -1362,7 +1362,7 @@ async def node_publish(ctx: NodeCtx) -> None:
         }
     ctx.service.atomic_update_project(ctx.owner_id, ctx.project_id, _persist)
 
-    # Publication PDF sibling (docs/19 §10): default-ON since 2026-09-14 (an
+    # Publication PDF sibling (docs/19 §10): default-ON since (an
     # explicit ``pdf_report: false`` opts out). The Markdown promotion above remains
     # the sole publish authority: the run publishes on BOTH outcomes — a PDF
     # failure never un-promotes and never raises StructuralStop — but it must be

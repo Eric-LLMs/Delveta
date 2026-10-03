@@ -246,7 +246,7 @@ class ToolKitPipeline:
             # Attach BEFORE the await: the engine fills this dict in place, so a
             # mid-run failure still leaves the partial per-node stats observable.
             self._deck_stats = deck_stats
-            # Engine switch (2026-09-17): "direct" = one semantic LLM call + the local
+            # Engine switch: "direct" = one semantic LLM call + the local
             # compiler (default); "legacy" = the Brief chain (TEXT→VISUAL→REDUCE→
             # SYNTHESIZE) over the generic workflow core, kept whole as fallback.
             mode = str(params.get("generation_mode")

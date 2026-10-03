@@ -72,7 +72,7 @@ def validate_action(tool: str, args: dict, *,
 
     ``tool_schemas`` is the caller's ``ToolRuntime.schemas()`` projection
     (tool -> {slot: {"max_len": int, "required": bool}}, max_len 0 = the schema
-    states no bound). Ruling 2026-09-26: the runtime roster is the ONE
+    states no bound). Ruling: the runtime roster is the ONE
     tool-existence/schema truth — the legacy L0 ``DIRECT_TOOLS`` table is
     never consulted here, so routing can never validate against one table and
     execute against another."""

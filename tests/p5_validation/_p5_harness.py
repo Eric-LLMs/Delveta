@@ -356,7 +356,7 @@ def _gates(
     monkeypatch, *, fast=True, direct=False, viewer=False, retrieval=False,
     action=True, composite=False,
 ):
-    # ``fast``/``action`` are inert since the 2026-09-28 single-path ruling: the
+    # ``fast``/``action`` are inert since the single-path ruling: the
     # master + ACTION gates were deleted; ACTION rides certification alone.
     monkeypatch.setattr(settings, "chat_direct_fast_path_enabled", direct, raising=False)
     monkeypatch.setattr(settings, "chat_viewer_fast_path_enabled", viewer, raising=False)
@@ -477,7 +477,7 @@ def plan_for(ctx: RoutingCtx, message: str, *, fast=True, direct=False, viewer=F
     """L0 (pure) → policy (pure): the resolved requirement set and execution plan.
 
     ``fast``/``action`` are inert kwargs kept for call-site compatibility — the
-    master + ACTION gates were deleted by the 2026-09-28 single-path ruling."""
+    master + ACTION gates were deleted by the single-path ruling."""
     reqs = resolve_requirements(ctx, message)
     policy = PPolicyContext(
         direct_fast_path_enabled=direct,

@@ -1,4 +1,4 @@
-"""Chat-plane exposure hiding for edit_file / cap-edit-file (ruling 2026-09-28).
+"""Chat-plane exposure hiding for edit_file / cap-edit-file (ruling).
 
 Two independent gates, one per surface:
 
@@ -159,7 +159,7 @@ def test_hidden_capability_cannot_be_certified(monkeypatch):
 
 
 def test_settings_keys_default_posture(monkeypatch):
-    """Shipped defaults (single-path ruling 2026-09-28): the chat-plane funnel
+    """Shipped defaults (single-path ruling): the chat-plane funnel
     hides cap-edit-file out of the box; agent_hidden_tools stays empty because the
     agent factory is shared with the worker — the API process injects edit_file
     hiding via AGENT_HIDDEN_TOOLS at startup (start_server.sh / start_desktop.sh)."""

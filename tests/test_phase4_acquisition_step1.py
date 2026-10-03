@@ -1,4 +1,4 @@
-"""Phase 4 Step 1 (2026-10-01) — Argument Path Router unit tests.
+"""Phase 4 Step 1 — Argument Path Router unit tests.
 
 Deterministic business logic only: the Readiness double gate (§D), the two
 dimensional strategy derivation (§B), the context bundle window (§F), and the

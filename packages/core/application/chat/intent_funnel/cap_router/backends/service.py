@@ -18,7 +18,7 @@ ids or the frozen REJECT label. A capability label becomes
 ``ROUTE_SELECTED``; the REJECT label becomes ``ROUTE_REJECT`` (a NORMAL 4th
 decision routing to the real Agent path, never a threshold/fallback).
 
-Failure contract (ruling 2026-10-01): a missing endpoint, a timeout, a transport
+Failure contract (ruling): a missing endpoint, a timeout, a transport
 error, a malformed/unexpected reply, a missing answer, a non-choice answer, or a
 choice outside {candidate ids} ∪ {REJECT} all raise
 :class:`~..base.CapabilityRouterUnavailable`. The caller maps that to the Agent —
@@ -46,7 +46,7 @@ class CapRouterSelector:
 
     Constructed unconditionally by the factory — the endpoint is NOT checked at
     construction (resolution and availability are separate concerns, ruling
-    2026-10-01). A missing endpoint surfaces as
+    ). A missing endpoint surfaces as
     :class:`CapabilityRouterUnavailable` from :meth:`select`.
     """
 

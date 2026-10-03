@@ -1,6 +1,6 @@
 """Prompt construction: the Candidate Cards the model sees, and the output lock.
 
-Card assembly (8.17 #2/#3, Action-Contract ruling 2026-09-25): each Card is
+Card assembly (8.17 #2/#3, Action-Contract ruling): each Card is
 built from the Registry row by capability_id — tool binding, tool description,
 the CANONICAL parameter schema with per-slot descriptions, the capability's
 SEMANTIC CONTOUR (query examples = intent corpus first + request_query_examples
@@ -34,7 +34,7 @@ def _facts_line(facts) -> str:
         f"viewer_current_page={facts.viewer_current_page if facts.viewer_current_page is not None else '-'}",
         f"has_viewer_selection={int(bool(facts.has_viewer_selection))}",
         f"has_attachment={int(bool(facts.has_attachment))}",
-        # Which asset the turn ACTUALLY points at (2026-09-27): shown so the
+        # Which asset the turn ACTUALLY points at: shown so the
         # model can select asset-demanding capabilities with full information.
         # Asset-id ARGUMENTS are still filled by the Binder from these facts —
         # whatever the model writes there is overwritten or stripped, never
@@ -71,7 +71,7 @@ def _params_block(entry) -> str:
     return "\n".join(lines)
 
 
-# Card-side guardrails (Action-Contract ruling 2026-09-25): the semantic
+# Card-side guardrails (Action-Contract ruling): the semantic
 # contour rides every card, but a curatorial runaway must not blow the small
 # model's window — positives (intent corpus first, request examples after) are
 # capped at 8 lines, negatives at 6, and a truncation is LOUD in the log.
@@ -80,7 +80,7 @@ _MAX_NEGATIVE_EXAMPLES = 6
 
 
 def _provenance_line(cand) -> str:
-    """Where a candidate came from, rendered honestly (ruling 2026-09-25):
+    """Where a candidate came from, rendered honestly (ruling):
     a table match is an EVIDENCE label, not a score — the 1.0 it used to carry
     was pseudo-authoritative; only recall, which IS a calibrated cosine,
     keeps ``score=``. Either way it is provenance, never proof of action."""
@@ -164,7 +164,7 @@ def build_prompt(query: str, candidates, entries_by_id: dict, *, facts=None) -> 
             continue
         matched = str(getattr(cand, "matched_example", "") or "")
         if matched.startswith("re:"):
-            # Defense in depth (Action-Contract ruling 2026-09-25): the Matcher
+            # Defense in depth (Action-Contract ruling): the Matcher
             # is exact-only now, a raw regex literal reaching a card is a
             # regression — swap in the canonical standard-query sentence.
             logger.warning("tool_intent: regex literal leaked into card %s "
@@ -229,7 +229,7 @@ SYSTEM = (
     "values a slot cannot be answered with — omit it instead. Report "
     "confidence honestly 0.0-1.0; reserve near-1.0 for unambiguous demands."
 )
-# Output discipline (2026-09-25 smoke finding): the full sentence-level
+# Output discipline ( smoke finding): the full sentence-level
 # contract above is long for the locally served 0.6B — it followed every
 # semantic rule but regressed to markdown bullets, and brace-extraction then
 # either failed (a prose NONE read as backend-unavailable) or grabbed an

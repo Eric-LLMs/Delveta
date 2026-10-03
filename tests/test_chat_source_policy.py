@@ -120,7 +120,7 @@ def test_source_policy_states():
 
 
 def test_neutral_requirements_carry_no_source_policy():
-    # Single-path ruling 2026-09-28 replaced the dark-launch pair: resolved
+    # Single-path ruling replaced the dark-launch pair: resolved
     # facts always ride the plan ("facts ride"), and only a NEUTRAL
     # requirement set (never produced on a live turn) fences nothing.
     req = _facts(ONLY_Q)
@@ -144,7 +144,7 @@ def _resolve(ctx):
 
 
 def test_sink_always_on_single_path(monkeypatch):
-    # Single-path ruling 2026-09-28: with no master gate the orchestrator sinks
+    # Single-path ruling: with no master gate the orchestrator sinks
     # the SOURCE POLICY on every turn whose original request carries the fact.
     import core.config as cfg
     monkeypatch.setattr(cfg.settings, "chat_retrieval_fast_path_enabled", True, raising=False)

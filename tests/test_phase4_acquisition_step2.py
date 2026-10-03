@@ -1,4 +1,4 @@
-"""Phase 4 Step 2 (2026-10-01) — Argument Path Router WIRING.
+"""Phase 4 Step 2 — Argument Path Router WIRING.
 
 Drives the REAL cascade (``funnel.route`` -> orchestrator) on the new lane
 (``chat_cap_router_backend != off``) and pins the wiring contract:

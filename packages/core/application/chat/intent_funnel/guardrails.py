@@ -14,7 +14,7 @@ import re
 from core.application.chat.actions import is_negated_request
 from core.application.chat.sanitization import is_pure_user_text
 
-# Entry veto "referenced_input_absent" (shadow-A/B follow-up 2026-09-27, suspects
+# Entry veto "referenced_input_absent" (shadow-A/B follow-up, suspects
 # a403c4b341e1 / d795e47fe617): a turn whose input OBJECT is named only by a
 # demonstrative ("这份笔记 / 这个术语 / 这些资料") demands content that lives
 # on-screen (viewer/attachment) or in the conversation — without either, the
@@ -48,7 +48,7 @@ def turn_veto(message: str, requirements, ctx) -> str | None:
     are inherently multi-step chains, and non-pure text (attachment markers,
     control payloads) must never be pattern-matched as user intent.
 
-    Web demand is NO LONGER an entry veto (E2E-matrix ruling 2026-09-27): a
+    Web demand is NO LONGER an entry veto (E2E-matrix ruling): a
     certified ``web_search``/``search_social`` action must be able to run on the
     Funnel lane, exactly like on the Agent lane. The composite protection the
     old blanket veto provided moved downstream, where the certified tool is

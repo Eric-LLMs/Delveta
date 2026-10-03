@@ -1,6 +1,6 @@
 """Node 3 — ToolIntentModel: one call adjudicates the capability AND extracts arguments.
 
-Chain ruling (2026-09-24): the funnel makes AT MOST one ToolIntentModel call per turn.
+Chain ruling: the funnel makes AT MOST one ToolIntentModel call per turn.
 The former ``recheck`` second hop is deleted — it added zero information
 (candidates narrowed to the one already picked, identical downstream outcome
 for every verdict), and the two online TTFBs it cost were the cascade timeout.
@@ -62,7 +62,7 @@ async def select_and_extract(query: str, candidates, *, entries_by_id: dict,
                      llm=None, facts=None) -> ToolIntentVerdict:
     """Run the ONE ToolIntentModel pass under the configured backend ladder.
 
-    Per the 2026-09-26 ruling the funnel only calls this hop when the
+    Per the ruling the funnel only calls this hop when the
     model-facing candidate set is NON-EMPTY (an empty set short-circuits to
     NO_CANDIDATE before any spend). An empty list remains a legitimate
     defensive input: the prompt renders the explicit "(none registered for

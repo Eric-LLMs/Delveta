@@ -1,6 +1,6 @@
 """Intent Funnel — the independent, decoupled routing lane above the Agent.
 
-Design (docs/temp.md, "Chat 意图路由重构"), chain ruling 2026-09-24: one model
+Design (docs/temp.md, "Chat 意图路由重构"), chain ruling: one model
 hop per turn — Matcher HIT -> ToolIntentModel, Matcher MISS/AMBIGUOUS -> Recall ->
 ToolIntentModel (ONE call: capability selection + argument extraction from Candidate
 Cards) -> Binder (normalize/validate) -> Shared Tool Runtime. Every failure
@@ -8,14 +8,14 @@ exits to the Agent, byte-identical. ToolIntentModel is a swappable provider
 (local primary, online fallback, stub) behind the tool_intent/ ladder.
 
 Scope status: P0 moved the orchestration out of ``TurnOrchestrator``; P1 added
-the Registry/Matcher. Single path (ruling 2026-09-28): the funnel IS the formal
+the Registry/Matcher. Single path (ruling): the funnel IS the formal
 routing lane — the dark-launch gate (``chat_funnel_enabled``) and the shadow
 hook were deleted; ``funnel_live`` only keeps the fail-open safety semantics
 (missing deps / guardrail veto). The legacy QIR lane was deleted with migration
-0014 (live-table ruling 2026-09-26) — ``funnel_live`` + ``route`` are the whole
+0014 (live-table ruling) — ``funnel_live`` + ``route`` are the whole
 public surface.
 
-Import-cycle note (2026-10-01): ``understanding`` imports ``actions``, whose
+Import-cycle note: ``understanding`` imports ``actions``, whose
 moved-name façade imports back into ``intent_funnel`` (``registry``/``binder``).
 Importing a subpackage runs this package's ``__init__``, so an eager ``funnel``
 import here used to re-enter a half-built ``understanding``. The cycle is now

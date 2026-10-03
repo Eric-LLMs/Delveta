@@ -1,6 +1,6 @@
 """ToolIntentModel backend: online small model via the platform LLM seam (8.17 fallback).
 
-Discipline (2026-09-23 ruling): thinking is off (the platform-wide
+Discipline ( ruling): thinking is off (the platform-wide
 ``llm_disable_thinking`` knob already does this for the chat route), the
 payload is the minimal card set from :mod:`.base`, temperature 0, and the
 reply is just {capability_id, confidence, arguments}. A transport fault is
@@ -8,7 +8,7 @@ reply is just {capability_id, confidence, arguments}. A transport fault is
 off-card verdict is UNCERTAIN — the online ToolIntentModel, like every backend, never
 fabricates.
 
-Channel (2026-09-24 deployment ruling): the model service rides a DEDICATED
+Channel ( deployment ruling): the model service rides a DEDICATED
 small-model channel, explicit per-call forwarding like the session-summary
 seam — ``chat_tool_intent_online_model`` always forwarded when set;
 ``chat_tool_intent_online_base_url``/``_api_key`` are honored only as a pair (the

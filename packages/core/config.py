@@ -71,7 +71,7 @@ class Settings(BaseSettings):
     media_output_dir: Path = Path("data/media_output")
 
     # ── Toolkit content generation (workspace files → slides / mindmap / summary) ──
-    # Output root (relative to the workspace) + input guardrails. Since 2026-09-15 the
+    # Output root (relative to the workspace) + input guardrails. Since the
     # three tools generate from the FULL raw text: ``toolkit_max_input_tokens`` is a pure
     # one-shot capacity CHECK — at or below it the complete text goes to the generator in
     # ONE call; above it the pipeline enters the EXPLICIT big-document multi-call flow
@@ -85,7 +85,7 @@ class Settings(BaseSettings):
     toolkit_max_input_tokens: int = 100000
     toolkit_max_file_bytes: int = 20 * 1024 * 1024
     toolkit_llm_timeout_s: float = 300.0
-    # Slides engine switch (2026-09-17): "direct" = one semantic LLM call + the local
+    # Slides engine switch: "direct" = one semantic LLM call + the local
     # deterministic compiler (apps.api.tools.toolkit.deck.generator); "legacy" = the
     # Brief chain (TEXT→VISUAL→REDUCE→SYNTHESIZE) kept whole as the escape hatch.
     # Overridable per request via the ``generation_mode`` job parameter.
@@ -106,7 +106,7 @@ class Settings(BaseSettings):
     deck_worker_concurrency: int = 8      # LLM calls one worker job may keep in flight
     deck_slide_timeout_s: float = 180.0   # per-attempt deadline; a timed-out page retries alone
 
-    # ── Chat control plane (single path, ruling 2026-09-28) ──────────────────────
+    # ── Chat control plane (single path, ruling) ──────────────────────
     # The product has ONE formal routing lane: User -> Intent Funnel -> ACTION,
     # with fail-open to the Agent whenever the funnel abstains. The old
     # dark-launch rollout gates (chat_funnel_enabled / chat_fast_paths_enabled /
@@ -115,7 +115,7 @@ class Settings(BaseSettings):
     # Safety knobs stay below (timeouts, thresholds, exposure, veto guardrails).
     #
     # Unshipped experimental L0 lanes (kept dark by design — Option A of the
-    # 2026-09-28 single-path ruling; never opened in production):
+    # single-path ruling; never opened in production):
     chat_direct_fast_path_enabled: bool = False  # Phase 2: tool-less direct answers
     chat_viewer_fast_path_enabled: bool = False  # Phase 3: grounded over injected blocks
     chat_retrieval_fast_path_enabled: bool = False  # Phase 4: staged RAG (shared pipeline, fail-closed)
@@ -132,14 +132,14 @@ class Settings(BaseSettings):
     # 0014 — this is the only table-driven routing lane.
     chat_funnel_timeout_seconds: float = 5.0     # whole-cascade wall clock, then Agent
     chat_funnel_min_score: float = 0.60          # Recall quality gate — EVERY hit >= it reaches the
-                                                 # model; no width cap (ruling 2026-09-26), and an
+                                                 # model; no width cap (ruling), and an
                                                  # EMPTY set short-circuits to NO_CANDIDATE (Agent)
     chat_funnel_margin: float = 0.06             # ToolIntentModel(stub) leader-vs-runner-up margin
     # Phase 6 observability: when ON, each funnel event row also carries
     # trace_json (rebuilt candidate-card summary + query + verdict — never the
     # full prompt). Dark launch: OFF keeps the write path byte-identical.
     chat_funnel_trace_capture: bool = False
-    # Chat-plane tool hiding (exposure ruling 2026-09-28). Comma-separated tool
+    # Chat-plane tool hiding (exposure ruling). Comma-separated tool
     # names the CHAT-process kernel must not register (e.g. "edit_file"): the tool
     # then disappears from the prompt catalog / tool_search / mount / LLM tool
     # array at once, without touching its implementation, the destructive marker,
@@ -150,11 +150,11 @@ class Settings(BaseSettings):
     # Funnel routing VIEW only (never the Registry row's enabled/status — the live
     # table is left intact for page/PC/worker/admin). A hidden capability can no
     # longer be matched/recalled-as-routable/certified, so its turns fail open to
-    # the Agent. DEFAULT hides cap-edit-file from Chat (exposure ruling 2026-09-28):
+    # the Agent. DEFAULT hides cap-edit-file from Chat (exposure ruling):
     # persistent file edits are user-initiated from page/PC; this consumer is
     # chat-plane-only, so Worker/Research keep full edit_file capability.
     chat_funnel_hidden_capabilities: str = "cap-edit-file"
-    # ToolIntentModel backend ladder (8.17 + 2026-09-24 chain ruling):
+    # ToolIntentModel backend ladder (8.17 + chain ruling):
     # "stub" | "local" | "online" | "auto" (local→online→stub). ToolIntentModel is a
     # swappable PROVIDER: the funnel only speaks the OpenAI-compatible card
     # contract in tool_intent/base.py — no model name or inference backend appears
@@ -193,7 +193,7 @@ class Settings(BaseSettings):
     chat_tool_intent_online_api_key: str = ""
     chat_tool_intent_timeout_seconds: float = 4.0      # per-call guardrail inside the 5s cascade
 
-    # ── cap_router lane (Phase 2, 2026-10-01) ────────────────────────────────────
+    # ── cap_router lane (Phase 2) ────────────────────────────────────
     # Capability SELECTION node backend. The new split chain
     # (Recall -> Aggregation -> cap_router -> Argument Path Router -> extractor)
     # is OPT-IN: "off" keeps the existing single-call select_and_extract hop
@@ -207,7 +207,7 @@ class Settings(BaseSettings):
     # question per turn). The current model implementation behind it is LayaChoice;
     # swapping that model must not change this contract. This is a BASE url such as
     # http://localhost:18092; "" keeps the honest "not deployed ->
-    # CapabilityRouterUnavailable -> Agent" semantics (ruling 2026-10-01: a
+    # CapabilityRouterUnavailable -> Agent" semantics (ruling: a
     # cap_router failure NEVER falls back to the extractor or the legacy
     # ToolIntentModel). The model directory is supplied to the SERVICE via
     # LAYA_CHOICE_MODEL_DIR (a read-only bind mount) — it is never referenced in
@@ -312,7 +312,7 @@ class Settings(BaseSettings):
         "remember", "recall", "earlier", "before", "previously", "prior",
         "last time", "we discussed", "we talked", "you told me",
         "你记得", "记得", "上次", "之前", "以前", "说过", "你说过", "我们说过",
-        # Chat-deixis class (shadow-A/B finding 2026-09-27): "把上面的内容总结一下"
+        # Chat-deixis class (shadow-A/B finding): "把上面的内容总结一下"
         # names no workable target — the object IS the prior conversation, which is
         # the Agent's (memory) domain, never a funnel takeover. "刚才" is
         # deliberately NOT added: cap-add-term curates 刚才-sentences as corpus.

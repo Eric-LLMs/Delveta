@@ -1,4 +1,4 @@
-"""Registry parameter-schema normalizer tests (2026-10-03).
+"""Registry parameter-schema normalizer tests.
 
 The live ``capabilities.parameters`` column carries TWO shapes: the canonical
 flat ``{slot: spec}`` and a raw JSON-Schema ``{type, required, properties}``.

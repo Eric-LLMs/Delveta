@@ -1,4 +1,4 @@
-"""Argument extractor — the MODEL-owned slot extractor adapter (Phase 4, 2026-10-03).
+"""Argument extractor — the MODEL-owned slot extractor adapter (Phase 4).
 
 EXTRACTION-ONLY. Given ONE already-decided capability and the MODEL-owned slots
 the Argument Path Router says must be acquired, ask the current extractor model

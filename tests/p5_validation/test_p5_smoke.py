@@ -25,7 +25,7 @@ HIT = [{"id": "c1", "text": "Gradient descent steps along the negative gradient.
 
 
 def _gate(monkeypatch, *, action=False, direct=False, viewer=False, retrieval=False, composite=False):
-    # ``action`` is inert since the 2026-09-28 single-path ruling (master + ACTION
+    # ``action`` is inert since the single-path ruling (master + ACTION
     # gates deleted; ACTION rides certification alone).
     monkeypatch.setattr(settings, "chat_direct_fast_path_enabled", direct, raising=False)
     monkeypatch.setattr(settings, "chat_viewer_fast_path_enabled", viewer, raising=False)

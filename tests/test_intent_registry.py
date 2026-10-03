@@ -473,7 +473,7 @@ async def test_enable_refused_while_vector_missing():
 
 
 async def test_disable_standard_is_independent_of_enabled_similar_children():
-    """Ruling 2026-09-26: Standard/Similar enabled flags are independent. A
+    """Ruling: Standard/Similar enabled flags are independent. A
     Standard with an enabled Similar child disables cleanly; the child's own
     flag is untouched (recall SQL chains through the parent, so the child
     merely stops participating until the Standard is re-enabled)."""

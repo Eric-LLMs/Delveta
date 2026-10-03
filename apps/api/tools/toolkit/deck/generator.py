@@ -1,4 +1,4 @@
-"""Direct generation engine — the default ``slides`` path (promoted 2026-09-17).
+"""Direct generation engine — the default ``slides`` path (promoted).
 
 One semantic LLM call designs the whole deck from the RAW extracted text; every
 other step is deterministic local code. The Brief chain

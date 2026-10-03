@@ -1,4 +1,4 @@
-"""Validation gate for live-table writes (migration 0014, final ruling 2026-09-26).
+"""Validation gate for live-table writes (migration 0014, final ruling).
 
 The Draft -> Validate -> Build -> Publish lane is retired: the live tables ARE
 the runtime truth and admin writes go live directly. What survives is the

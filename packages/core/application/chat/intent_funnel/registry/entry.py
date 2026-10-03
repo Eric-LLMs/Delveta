@@ -1,5 +1,5 @@
 """Registry value types — the in-code mirror of the LIVE tables (migration 0014,
-final ruling 2026-09-26).
+final ruling).
 
 One role only:
 
@@ -52,7 +52,7 @@ def chat_plane_candidate(e: "CapabilityEntry") -> bool:
     entries_by_id, and the shadow/preview lanes that share them): an entry is
     a chat/files candidate iff it is routable AND not owned by another lane
     AND not hidden from the chat plane by ``chat_funnel_hidden_capabilities``
-    (exposure ruling 2026-09-28: a HIDDEN capability stays fully active in the
+    (exposure ruling: a HIDDEN capability stays fully active in the
     live table — enabled/status untouched, page/PC/worker/admin unaffected —
     but is invisible to every chat funnel consumer: no Matcher exact hit, no
     card, no certification; turns fail open to the Agent).
@@ -69,7 +69,7 @@ def _hidden_capability_ids() -> frozenset[str]:
     raw = str(getattr(settings, "chat_funnel_hidden_capabilities", "") or "")
     return frozenset(t.strip() for t in raw.split(",") if t.strip())
 
-# Frozen language derivation rule (ruling 2026-09-26): a sentence containing a
+# Frozen language derivation rule (ruling): a sentence containing a
 # Han char (U+4E00..U+9FFF) is 'zh', everything else is 'en'. No languages
 # table — the value is materialized on the query rows.
 def derive_language(text: str) -> str:

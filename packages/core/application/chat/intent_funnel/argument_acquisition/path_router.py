@@ -1,6 +1,6 @@
 """Argument Path Router — the deterministic acquisition-strategy decision.
 
-Phase 4 Step 1 (2026-10-01). Pure, deterministic, no LLM, no I/O, no wiring.
+Phase 4 Step 1. Pure, deterministic, no LLM, no I/O, no wiring.
 
 Given the Registry schema truth (``parameters``) and the capability's
 ``acquisition`` declaration (``{slot: SlotDecl}``), this module computes the

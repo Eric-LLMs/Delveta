@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""V2 data adjustment (2026-10-02): move 400 Test rows into Train.
+"""V2 data adjustment: move 400 Test rows into Train.
 
 Data-only, no V3. Semantics:
   * Train 1712 -> 2112, Val 300 (unchanged), Test 1800 -> 1400.

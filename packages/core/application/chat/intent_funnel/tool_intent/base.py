@@ -1,8 +1,8 @@
 """Shared ToolIntentModel contracts — the backend-independent seam.
 
-ToolIntentModel contract (chain ruling 2026-09-24): ONE call per turn does BOTH
+ToolIntentModel contract (chain ruling): ONE call per turn does BOTH
 decisions — which capability the sentence demands, and the argument draft for
-it. Input discipline (8.17 #2/#3, Action-Contract ruling 2026-09-25): query +
+it. Input discipline (8.17 #2/#3, Action-Contract ruling): query +
 TurnFacts + candidate Cards (assembled by :mod:`.prompt` from the Registry
 row); the reply is only {capability_id, confidence, arguments}. Candidate and
 verdict types live in :mod:`..contract` — the funnel-wide vocabulary.

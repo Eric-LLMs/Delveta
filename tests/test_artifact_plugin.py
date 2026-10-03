@@ -152,7 +152,7 @@ async def test_compile_real_typst_produces_promoted_pdf(env):
     assert ref["artifact_id"] == "report.md@pdf"
     assert ref["published_from"] == {"artifact_id": "report.md", "version": 1}
     assert len(ref["pdf_sha256"]) == 64 and ref["pdf_size_bytes"] > 1000
-    # task publications land version-named in the TASK folder's outputs/ (2026-09-14)
+    # task publications land version-named in the TASK folder's outputs/
     assert ref["outputs_relative_path"] == "outputs/tomato research_v1.pdf"
     assert ref["drive_path"].endswith("/outputs/tomato research_v1.pdf")
 
@@ -306,7 +306,7 @@ def test_pdf_name_versioning_and_length_cap():
 
 @requires_typst
 async def test_publish_default_on_compiles_pdf_sibling(env):
-    """Default-ON (2026-09-14): a create_task'd project carries pdf_report=True,
+    """Default-ON: a create_task'd project carries pdf_report=True,
     so PUBLISH promotes the .md AND compiles the versioned PDF sibling."""
     await _ready_project(env)
     assert _proj(env)["pdf_report"] is True  # seeded by create_task itself

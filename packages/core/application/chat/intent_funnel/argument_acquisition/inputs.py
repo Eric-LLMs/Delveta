@@ -1,6 +1,6 @@
 """Acquisition inputs — the injected seam between the cascade and the ARP.
 
-Phase 4 Step 2 (2026-10-01). :mod:`.path_router` is a PURE function of four
+Phase 4 Step 2. :mod:`.path_router` is a PURE function of four
 injected inputs and never reads a Registry field, a parser or a fact table. This
 module defines the ONE shape those inputs take, plus the production default
 provider. The cascade resolves it per decided capability from the injected deps

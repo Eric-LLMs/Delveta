@@ -412,7 +412,7 @@ def test_estimate_tokens_sanity():
     assert estimate_tokens("abcd") == 1
 
 
-# ── word lists: explicit page queries + summary synonyms (2026-09-20) ────────
+# ── word lists: explicit page queries + summary synonyms ────────
 
 @pytest.mark.parametrize("msg,expect", [
     ("本页讲什么", "FOCUS"),

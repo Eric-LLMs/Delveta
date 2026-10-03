@@ -83,7 +83,7 @@ class FakePort:
 
 
 class _Runtime:
-    """The live ToolRuntime double — since the 2026-09-26 ruling the executor's
+    """The live ToolRuntime double — since the ruling the executor's
     tool-existence/schema truth is deps.agent.runtime.schemas(), so the fake
     kernel must expose the roster exactly like AgentKernel does."""
 
@@ -152,7 +152,7 @@ def _harness(monkeypatch, port, seam):
 
 
 def _gates(monkeypatch, *, fast=True, retrieval, direct=False, viewer=False):
-    # `fast` is inert since the 2026-09-28 single-path ruling (master gate deleted).
+    # `fast` is inert since the single-path ruling (master gate deleted).
     monkeypatch.setattr(settings, "chat_retrieval_fast_path_enabled", retrieval, raising=False)
     monkeypatch.setattr(settings, "chat_direct_fast_path_enabled", direct, raising=False)
     monkeypatch.setattr(settings, "chat_viewer_fast_path_enabled", viewer, raising=False)
