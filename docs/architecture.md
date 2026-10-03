@@ -124,6 +124,12 @@
   - [27.4 Candidate Cardinality Routing](#274-candidate-cardinality-routing)
   - [27.5 Laya Responsibility Boundary](#275-laya-responsibility-boundary)
   - [27.6 End-to-End Evaluation](#276-end-to-end-evaluation)
+- [28. Argument Acquisition](#28-argument-acquisition)
+  - [28.1 Contract — ownership and source](#281-contract--ownership-and-source)
+  - [28.2 Strategy vocabulary (model-agnostic)](#282-strategy-vocabulary-model-agnostic)
+  - [28.3 Production acquisition inputs](#283-production-acquisition-inputs)
+  - [28.4 The extractor](#284-the-extractor)
+  - [28.5 Fail-closed exits](#285-fail-closed-exits)
 
 [↑ Back to top](#table-of-contents)
 
@@ -143,12 +149,12 @@
 | Retrieval | config-driven node pipeline (query rewrite → recall → RRF → rerank, plus optional parent-expand / CRAG nodes; CJK + contextual + parent-child indexing); `in_process` default, gRPC service available (`AuthGuard` token gate / per-peer rate limit / tenant binding); admin RAG console + golden-set eval (Recall@k / Precision@k / MRR); Redis **query cache** (keyed by query/filters/top_k + config + corpus version); **retrieval-feedback loop** — grounded answers get a persistent per-message 👍/👎 source rating: the turn's `rag_search` hits are extracted server-side from the tool trace and snapshotted into `messages.meta.retrieval` (JSONB in the canonical schema; rides the done frame + `GET /sessions/{id}`), the chat bubble's rate panel posts the `POST /rag/feedback` golden-set recorder — [§10.12](#1012-query-cache--retrieval-feedback) |
 | RAG node pipeline config | the whole retrieval chain is runtime-configured from admin **RAG → Nodes**: add / remove / reorder / enable / disable stages and edit params, persisted in `app_settings.rag`, applied live — no code, no restart; ingest side likewise (chunk strategy `fixed` / `paragraph` / `sentence` / `semantic` + contextual / parent-child / CJK-jieba toggles, with a Chunking preview) — [§10.6](#106-nodes), [§10.7](#107-ingest-side-runtime-configured-chunking), [§10.10](#1010-admin-console) |
 | Query repository | unified multi-source corpus: cloud-drive files (`source_type='file'`) + Learning-Platform sentences/articles (`'learning'`) + chat Q&A pairs / LLM-grouped whole-session imports (`'chat'`) + boot-seeded built-in product manual (`'manual'`, owner-NULL, public to every tenant and guests); `chunks.asset_id` nullable + `source_type`/`source_id`, source-aware recall (both recallers `LEFT JOIN assets`); PDF tool chain (body text + tables rendered to PNG → vision LLM, per-table skip on failure); admin RAG → **Repository** tab lists non-file chunks with delete |
-| Model services | TEI embedding (BGE-M3), Kokoro TTS, FunASR SenseVoice STT, LiteLLM gateway (all Docker) |
+| Model services | TEI embedding (BGE-M3), Kokoro TTS, FunASR SenseVoice STT, the **`cap_router`** capability-selector service (current model: LayaChoice v2), the local **tool-intent / argument-extractor** service (current model: `qwen3-tools:q5_k_m`), LiteLLM gateway (all Docker) |
 | Edge gateway | **Traefik** as the single public entrypoint: `:80` strips `/api` onto the host-run FastAPI and also fronts the web console (`/admin` + `/audio` `/images` `/avatars` static mounts); retrieval gRPC rides its own entryPoint (`:15052` → `h2c://retrieval:50051`); the host API is reached by **explicit IPv4** (`192.168.65.254:8300` — `host.docker.internal` also yields a ULA IPv6 the host never answers, which hangs Go's dialer); file-provider config in `deploy/traefik/`, LAN-IP published — [§13](#13-multi-tenancy-and-deployment-strategy) |
 | Async enrichment | gateway + arq worker split; `jobs` table is the source of truth; frontend polls `GET /jobs/{id}`; daily `session_events` retention cron in `WorkerSettings.cron_jobs`; `run_agent_turn` job reuses the shared `AgentKernel` composition (`apps/api/agent_factory.py`) for scheduled background turns; `toolkit_generate` runs the 5-stage toolkit pipeline (file mode → workspace output; session / cloud-file modes → caller's Cloud Drive, with a custom `prompt` + `name`) |
 | Session memory | PG-backed `sessions` / `messages` / `session_events`; **client Live State (summary + tail) is the normal-turn context source — zero SQL reads on hot turns**; threshold compaction folds raw rows into one 5-section structured summary behind a dual persistence barrier (`sessions.compaction` JSONB = durable checkpoint, revision CAS); per-session async write queue (one batch INSERT/turn); deferred finalize = incremental embed + first-time-only sidebar summary/title; trigger-gated proactive recall (Lane-1 brief always on) + RRF recency weighting + importance-weighted file recall + supersede-in-place user directives + 30-day audit-event retention — see [§22](#22-chat-session-memory-v2--client-live-state-authority--zero-read-turns) |
 | Migrations | single canonical init script `migrations/0001_init.sql` (final schema + reference seeds) applied once by the asyncpg runner (replaces Alembic); dev-time incremental migrations deliberately squashed |
-| Chat | agent loop with tool use, SSE streaming; over a pure control plane — `TurnOrchestrator` resolves every turn to one `ExecutionPlan` (DIRECT / VIEWER / LOCAL_RAG / ACTION / COMPOSITE / AGENT): the L0 lexical pass, then the nodeized **Intent Funnel** single-hop chain (Matcher → Recall → ToolIntentModel → Binder, §25) over the LIVE capability Registry, then policy mapping. Single formal path (ruling): the funnel chain is always-live and a certified ACTION turn dispatches on certification alone; the four experimental L0 lanes each ride their own lane switch (all default-off, dark); every fallback is byte-identical to the Agent — [§24](#24-chat-control-plane--plan-resolution-fast-paths--intent-routing), [§25](#25-chat-intent-funnel--nodeized-routing-toolintentmodel--shared-tool-runtime) |
+| Chat | agent loop with tool use, SSE streaming; over a pure control plane — `TurnOrchestrator` resolves every turn to one `ExecutionPlan` (DIRECT / VIEWER / LOCAL_RAG / ACTION / COMPOSITE / AGENT): the L0 lexical pass, then the nodeized **Intent Funnel** chain over the LIVE capability Registry — Matcher → Recall → Capability Aggregation → `cap_router` selection (`SELECTED` / `REJECT` / `NONE`) → Argument Acquisition → Binder (§25–§28); a non-selected turn (REJECT / NONE / K<3) falls open to the Agent — then policy mapping. Single formal path (ruling): the funnel chain is always-live and a certified ACTION turn dispatches on certification alone; the four experimental L0 lanes each ride their own lane switch (all default-off, dark); every fallback is byte-identical to the Agent — [§24](#24-chat-control-plane--plan-resolution-fast-paths--intent-routing), [§25](#25-chat-intent-funnel--nodeized-routing-toolintentmodel--shared-tool-runtime) |
 | Viewer context | chat answers about the **open viewer**: focus chip (file · page / playhead), ±20 s media-time subtitle window with video-only FOCUS / FULL / NONE classification and honest `too_large` / `unavailable` short-circuit, pinned selections / ROI / frames as explicit P0 context (image blocks carry the captured asset's id and ship a REQUIRED `vision` directive), clickable `[Vn]` citations; **documents are never intent-matched server-side** — every followed document reaches the model as a trusted **Viewer Access Context** stub (geometry-resolved current page) routing it to `read_document` page-scoped reads (`pages` spec, ACL-before-storage, ≤16 pages) with a post-turn `viewer.reads` trace incl. failed calls — zero changes to RAG / agent runtime / memory ([§23](#23-viewer-context-provider--the-open-document-as-reference-context), features.md *Desktop Workbench*) |
 | Research OS | tasks created atomically from the desktop chat (**＋ Research**): a cloud task folder under a picked My Drive parent — `materials/` / `outputs/` / `temp/` all guaranteed at creation — with live `task_spec.json` / `session_history.json` mirrors over authoritative scratch state; session isolation (research sessions bound 1:1 to a task, DB-marked `sessions.type=1`, hidden from the Sessions sidebar); 409-guarded cascade delete (RUNNING / RAG-INDEXED blocked, cloud folder → Trash, scratch hard-removed, bound type-1 sessions deleted); **server-owned runs** (`begin_run`/`end_run` mutex with stale-window crash recovery — a client disconnect no longer cancels a research turn) with `is_running` surfaced in every task view; `POST /research/tasks` + `GET/DELETE /research/tasks/{id}` + artifact read/promote API; **deterministic execution engine** — Python owns control flow through a 10-stage contract pipeline (`DISCOVER → FRAME → EVIDENCE → DESIGN → EXECUTE → EXPLAIN → WRITE → REVIEW → REPRODUCE → PUBLISH`) with repair-once bounded attempts, per-stage declared LLM call budgets + run-level turn/cost/no-progress caps, and guard gates at the transition fence: **strict** mode (default) parks a failed gate on a PENDING human override with zero rework on resume, lenient mode records it and continues; structural violations halt terminally (`BLOCKED`); lease-based crash recovery makes interrupted runs resumable; publication finality is the `PROMOTED` record (report + compiled PDF, optional slides via toolkit); desktop Research tab + two-layer chat header; web console read-only mirror — see [§17](#17-research-os-module), [§20](#20-research-execution-from-agent-driven-control-flow-to-a-deterministic-pipeline) |
 | Workflow core (`packages/workflow`) | domain-free run engine behind Research OS: declarative `workflow_spec` (transitions / activities / cap dimensions / hooks) + state machine with lease contest, crash recovery, retry, loop-cap grading and definition-drift detection; adapter pattern (ports + ledger/lease persistence supplied by the plugin) — [§19](#19-workflow-core-packagesworkflow) |
@@ -5471,6 +5477,15 @@ point**. Four principles:
                                    Binder (validate) → Runtime → Tool
 ```
 
+> **Two selection lanes share this prefix.** The diagram above is the **fused**
+> lane (`chat_cap_router_backend = off`, the compatibility/rollback path): ONE
+> `ToolIntentModel` hop performs capability selection AND argument extraction
+> together. The **production** lane splits that hop in two — capability selection
+> is `cap_router` (§26) and argument acquisition is its own stage (§28) that runs
+> the extractor only AFTER a capability is selected. Matcher / Recall /
+> Aggregation are identical on both lanes; only the node that consumes the
+> candidate set differs.
+
 Both lanes converge on the SAME ToolIntentModel hop: an exact HIT is not an
 execution permit (chain ruling) — it still rides the one model call
 because the hop owns **argument extraction**. What an exact HIT wins is
@@ -5630,6 +5645,22 @@ CapabilityEntry:                          # hydrated from the LIVE rows (0014)
     enabled / status / replacement_capability_id    # lifecycle (§8.6, no hard delete)
     row_version: int                # optimistic concurrency — silent overwrite impossible
 ```
+
+**Parameter-schema intake normalization (the ONE shape boundary).** The live
+`capabilities.parameters` column is stored in one of TWO shapes: the canonical
+flat `{slot: {type, description, required, max_len?}}`, or a raw JSON-Schema
+`{type: "object", required: [...], properties: {...}}` seeded for a few
+tool-bound rows. Only the flat shape is defined by the Candidate-Card / ARP /
+Binder contract, so `CapabilityEntry.__post_init__` normalizes at construction —
+the single Registry intake boundary — through `registry/parameter_schema.py`
+(pure, lossless, idempotent: unknown per-slot keys such as `enum` are preserved
+and the JSON-Schema `maxLength` keyword is folded onto the contract's `max_len`).
+Detection is **structural**, not name-based — the schema wrapper is the only
+shape whose top-level values are not all per-slot dicts — so a canonical flat map
+is never misread as a schema. Every downstream consumer (Candidate Card, Binder,
+ARP, declaration bridge, extractor) then sees one contract and never branches on
+the stored shape, and the `from_rows` / `from_payload` / `dataclasses.replace`
+round-trips stay safe.
 
 Live-table write discipline (`registry/store.py` + `registry/queries.py` +
 `registry/snapshot.py` + `migrations/0014_live_table_corpus.sql`):
@@ -6006,6 +6037,7 @@ packages/core/application/chat/
     ├── registry/
     │   ├── entry.py                #   CapabilityEntry + QueryRecord + RegistryLiveView
     │   │                           #   + kinds + derive_language (frozen language rule)
+    │   ├── parameter_schema.py     #   the two-shape (flat | JSON-Schema) intake normalizer
     │   ├── store.py                #   fingerprint-cached live view + capability-row edits
     │   ├── queries.py              #   corpus writes: embed-then-write atomicity, per row
     │   ├── catalog.py              #   Action Catalog store (admin-editable action rows)
@@ -6014,7 +6046,22 @@ packages/core/application/chat/
     │                               #   DIRECT_TOOLS; the DAG leaf of the funnel
     ├── matcher/__init__.py         # Node 1 — exact-only over intent_corpus
     ├── recall/__init__.py          # Node 2 — dual vector search, quality gate, provenance
-    ├── tool_intent/                # Node 3 (the Judge slot of the brief, post chain ruling)
+    ├── cap_router/                 # selection node (§26) — the split-out selector
+    │   ├── base.py                 #   CapabilitySelector seam + route (SELECTED | NONE | REJECT)
+    │   ├── card_renderer.py        #   B_noprov cards + the frozen REJECT card (4 option slots)
+    │   └── backends/               #   off | stub | cap_router (deployed service)
+    ├── argument_acquisition/       # the acquisition stage (§28), post-selection
+    │   ├── contract.py             #   ownership / source / strategy vocabulary + SlotDecl
+    │   ├── path_router.py          #   the ARP: declaration + inputs -> strategy label
+    │   ├── declaration.py          #   Registry arg_slots -> SlotDecl bridge (frozen slot table)
+    │   ├── evidence.py             #   deterministic {slot: source} signal (query evidence)
+    │   ├── context_values.py       #   settled SYSTEM_BINDER values from the turn facts
+    │   ├── provider.py             #   production AcquisitionInputProvider (per turn)
+    │   ├── extractor.py            #   MODEL-slot extractor adapter (extraction-only; Qwen)
+    │   ├── context_bundle.py       #   the sanctioned bundle (query, or query + last 5 turns)
+    │   ├── merge.py                #   MIXED system + MODEL merge
+    │   └── inputs.py               #   AcquisitionInputs
+    ├── tool_intent/                # the FUSED lane (§25.6, backend=off): select + extract in ONE hop
     │   ├── __init__.py             #   ladder + verdict gate
     │   ├── base.py                 #   card payload + ToolIntentUnavailable
     │   ├── stub.py / local.py / online.py
@@ -6140,11 +6187,16 @@ chat_tool_intent_backend="stub"    chat_tool_intent_min_confidence=0.75
 chat_tool_intent_local_url=""      chat_tool_intent_local_model="qwen3-tools:q5_k_m"
 chat_tool_intent_local_mode="prompt_json"
 chat_tool_intent_online_model/_base_url/_api_key=""   chat_tool_intent_timeout_seconds=4.0
+chat_cap_router_backend="off"      ("off" | "stub" | "cap_router" — the §26 selection node)
+chat_cap_router_url=""             chat_cap_router_timeout_seconds=5.0
 ```
 
 `chat_funnel_min_score` is the Recall **quality gate** — every hit ≥ it reaches
 the model (no width cap; `chat_funnel_top_k` is deleted, ruling) — and
-an EMPTY model-facing set short-circuits to `NO_CANDIDATE` before any hop. The
+an EMPTY model-facing set short-circuits to `NO_CANDIDATE` before any hop.
+`chat_cap_router_url` points the §26 selection node at the deployed `cap_router`
+service (backend value `cap_router`); `chat_tool_intent_local_*` is shared by the
+legacy fused lane (§25.6) and the standalone extractor (§28). The
 retired QIR lane's `chat_qir_*` set no longer exists
 (migration 0014) — this table is the whole routing knob surface, tuned on its own
 merits.
@@ -6178,6 +6230,14 @@ and the short list of candidate capabilities the Intent Funnel (§25) has alread
 matched, it decides *which one* to dispatch. It is **not** a general chat model —
 it never converses, never authors tool arguments, and never sees the open-world
 request; it ranks a closed candidate set that the funnel handed it.
+
+**Naming.** `cap_router` is the stable name of the **service and the stage** —
+the backend ladder value, the config keys (`chat_cap_router_backend` /
+`chat_cap_router_url` / `chat_cap_router_timeout_seconds`), the
+`CapabilitySelector` seam and the Compose service (`cap-router`) all carry it.
+`Laya` / `LayaChoice` name only the **current model implementation** behind that
+service, and `Qwen` the current extractor implementation (§28); swapping either
+model must not rename the service, the stage or a config key.
 
 ### 26.1 Position in the funnel
 
@@ -6468,10 +6528,11 @@ After threshold admission and candidate aggregation / normalization, let `K` be 
 | :----: | :------ |
 | `K = 0` | No candidate survives → **Agent** fallback. |
 | `K = 1` | Capability is already uniquely determined → enter the **Argument Path** directly; **Laya is not invoked**. |
-| `K = 2–3` | All candidates are passed to **Laya** for capability discrimination. |
+| `K = 2` | **V2-ineligible** → **Agent** fallback. The 4-slot contract is a hard invariant: a two-candidate set is never padded with a fabricated third capability and never sent as a three-slot question (§26.2). |
+| `K = 3` | All three candidates are passed to **Laya** for capability discrimination (3 capability cards + `REJECT` = 4 option slots). |
 | `K >= 4` | Apply **normalization / Top-3** first, then pass the Top-3 candidates to **Laya**. |
 
-If Laya fails — unavailable, times out, returns malformed output, or selects a capability outside the provided candidate set — the request falls back to **Agent**.
+If Laya fails — unavailable, times out, returns malformed output, or selects a capability outside the provided candidate set — the request falls back to **Agent**. A `REJECT` answer is a normal fourth decision, not a failure: it routes to the same **Agent** path, never to the argument chain.
 
 `K` always denotes the candidate capability count **after** threshold admission and aggregation / normalization, never the size of the raw ranking.
 
@@ -6503,5 +6564,135 @@ Stated as a division of labour:
 A Recall coverage failure is therefore not a Laya failure, and a Laya failure is not a Recall coverage failure; the two must not be conflated.
 
 ### 27.6 End-to-End Evaluation
+
+The funnel's end-to-end rate is measured on the real request path with exactly
+ONE substitution: the final `run_tool` is a **Mock Executor** that validates the
+execution contract (the tool exists in the runtime registry, every required arg
+is present, schema/type is valid, and the bound args satisfy the tool contract)
+and performs no side effect. Every other stage is production code — real
+`chat_router` → real Intent Funnel → real `cap_router` client → the deployed
+service → the real selector → real Argument Acquisition → real extractor → real
+Binder → Mock Executor. There is no bypass, no test-only node, no hand-built
+`bound_args` and no gold-argument shortcut.
+
+**Gold isolation.** `gold_tool` / `gold_arguments` are read ONLY by the final
+scorer — never by the funnel, the selector, the acquisition provider, the
+extractor, the Binder or the Executor. The only legal data flow is predicted
+arguments → Binder → bound args → Mock Executor.
+
+**`primary_failure_stage`** is the FIRST failing stage under a fixed priority —
+`TOOL_SELECTION → ARGUMENT_ACQUISITION → ARGUMENT_EXTRACTION → BINDING →
+EXECUTION` — so the funnel loss ladder (`All → Tool Correct → Args Acquired →
+Args Correct → Binding Valid → Execution Success → TRUE E2E`) is strictly
+interpretable and each level's loss has one owner.
+
+**Metric populations.** Every metric reports numerator / denominator over an
+explicit eligibility population: Tool Selection over eligible turns, Argument
+Exact Match over argument-eligible turns, Schema Validity and Binding Success
+over turns reaching binding, Execution Success over turns reaching the executor,
+and TRUE E2E over all eligible cases. `REJECT` / Non-tool metrics require a gold
+population; with none they are reported **N/A**, never a fabricated `0`, and a
+`REJECT` turn routed to the Agent is never counted as a Tool Execution Success.
+
+---
+
+## 28. Argument Acquisition
+
+Capability selection (§26) and argument acquisition are SEPARATE concerns. Once
+the Matcher (exact HIT) or `cap_router` (`SELECTED`) has pinned the capability,
+the **Argument Path Router** (ARP) decides HOW that capability's arguments are
+acquired. The capability is never re-selected here, and the extractor never picks
+a capability. A `REJECT` / `NONE` decision never enters this stage at all — it
+goes straight to the Agent.
+
+### 28.1 Contract — ownership and source
+
+Two ORTHOGONAL dimensions, kept apart on purpose:
+
+- **ownership** — WHO may produce a slot value: `MODEL` (extracted from the
+  user's own words), `SYSTEM_BINDER` (filled by the Binder from settled turn
+  facts), `TOOL_DEFAULT` (a runtime default owned by the tool), `UNAVAILABLE`
+  (never produced on this path).
+- **source** — WHERE a value actually came from: `QUERY`, `UI_CONTEXT`,
+  `CONVERSATION_5_USER_TURNS`, `CALLBACK_CONTEXT`, `RESOLVER`, `DEFAULT`.
+
+`Registry.parameters` (required / type / enum / description) stays the ONLY
+schema truth; a `SlotDecl` carries acquisition METADATA only (`ownership` /
+`allowed_sources` / `escalation`) and never overrides or duplicates the schema.
+`allowed_sources` is constrained to the sources its ownership may legitimately
+draw from (one table, no drift). Opt-in stays explicit: a capability that
+declares no acquisition keeps legacy semantics untouched.
+
+### 28.2 Strategy vocabulary (model-agnostic)
+
+The ARP's output is ONE strategy label. The names are **model-agnostic** — they
+name WHERE a MODEL-owned value comes from, never WHICH model extracts it:
+
+| Strategy | Meaning |
+|---|---|
+| `CONTEXT_DIRECT` | every required slot is already a settled system value; the existing Binder / certified handoff runs with no model call |
+| `QUERY_TO_EXTRACTOR` | a MODEL-owned slot must come from the user's current sentence |
+| `QUERY_PLUS_5TURNS_TO_EXTRACTOR` | a MODEL-owned slot needs the query plus the last five user turns |
+| `MIXED` | both a system side and a MODEL side contribute; the system value wins any collision and the merged draft is validated by the SAME Binder |
+| `MISSING` | no legal value for a required slot → Agent |
+
+The extractor implementation is recorded separately in telemetry (currently
+`Qwen`); swapping it must not rename a strategy.
+
+### 28.3 Production acquisition inputs
+
+The cascade builds the production `AcquisitionInputProvider` ONCE per turn
+(`argument_acquisition/provider.py::for_turn`), composing three deterministic,
+non-LLM producers:
+
+- **`declaration.py`** — the capability's `{slot: SlotDecl}`. Ownership is a
+  property of the SLOT NAME via a frozen table (default `MODEL`), reconciled with
+  the legacy `arg_slots` source when present — an explicit declaration always wins
+  over the name heuristic. The legacy `{slot: {source}}` / `{slot: str}` shape is
+  the ONLY thing bridged: no DB row, no admin schema and no public Registry API
+  changes.
+- **`evidence.py`** — the deterministic `{slot: source}` signal: every MODEL-owned
+  slot carries `QUERY` evidence when the query is non-empty, and nothing is
+  emitted otherwise. A model deciding its own acquisition need would be a circular
+  signal, so evidence is never model-produced.
+- **`context_values.py`** — the settled `SYSTEM_BINDER` values from the turn
+  facts, REUSING the Binder's own context-slot table (no second copy to drift).
+  `TOOL_DEFAULT` slots have no Registry-side value and stay empty — a required one
+  honestly lands `MISSING` and the Agent owns the clarification.
+
+A test may inject its own `acquisition_inputs`; the production provider is built
+only when the seam supplies none.
+
+### 28.4 The extractor
+
+`argument_acquisition/extractor.py` is **extraction-only**. Given ONE
+already-decided capability and the MODEL-owned slots the ARP says must be
+acquired, it fills ONLY those slots from the sanctioned context bundle (the query
+alone, or the query plus the last five user turns — assembled by
+`context_bundle`, never widened here). It never selects a capability and never
+calls the legacy fused `select_and_extract`: the capability is already pinned
+upstream, so a selection here would be a second, competing decision. The Binder
+stays the final gate.
+
+The extractor is a DEPLOYMENT, not part of the contract: endpoint / model /
+timeout come from the local tool-intent config (`chat_tool_intent_local_*`), and
+the current implementation is `Qwen` (recorded as `EXTRACTOR_NAME`). Decoding is
+pinned for reproducibility (temperature 0, `top_p` 1.0, seed 42,
+`reasoning_effort="none"`, `max_tokens` 256). A transport or malformed-reply
+failure raises `ExtractionUnavailable`, which the caller maps to the Agent — the
+MODEL slots are never fabricated; an EMPTY but well-formed reply is a normal
+empty extraction (the Binder then lands `MISSING`). The adapter is wired as a
+turn-independent seam (`ChatDeps.argument_extractor`) in
+`apps/api/routers/chat.py`.
+
+### 28.5 Fail-closed exits
+
+A `CONTEXT_DIRECT` decision reuses the existing Binder / certified handoff
+unchanged. The two `*_TO_EXTRACTOR` strategies certify the extracted values
+directly; `MIXED` merges the system and MODEL sides and certifies the merge.
+Every other outcome — no declaration (`ACQUISITION_UNDECLARED`), no legal value
+(`ACQUISITION_MISSING`), an unavailable extractor (`ACQUISITION_MODEL_PENDING`),
+or a non-COMPLETE Binder (`BIND_*`) — exits to the Agent byte-identically.
+Acquisition never invents a value and never re-selects a capability.
 
 [↑ Back to top](#table-of-contents)
