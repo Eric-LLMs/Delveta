@@ -18,7 +18,7 @@ fact table nor to any parser:
   ``{slot: source}`` deciding whether an OPTIONAL MODEL slot has a real
   acquisition need (Gate 2, §E).
 
-Nothing here calls Qwen, reads a Registry field, or touches the Binder.
+Nothing here calls the extractor, reads a Registry field, or touches the Binder.
 """
 from __future__ import annotations
 
@@ -37,8 +37,8 @@ from .contract import (
     STRATEGY_CONTEXT_DIRECT,
     STRATEGY_MISSING,
     STRATEGY_MIXED,
-    STRATEGY_QUERY_PLUS_5_USER_TURNS,
-    STRATEGY_QUERY_TO_QWEN,
+    STRATEGY_QUERY_PLUS_5TURNS_TO_EXTRACTOR,
+    STRATEGY_QUERY_TO_EXTRACTOR,
     Readiness,
     SlotDecl,
 )
@@ -61,8 +61,8 @@ class RouteDecision:
       extractor; it exits to the Agent (acquisition-undeclared, §G).
     * ``strategy`` — one of the five STRATEGIES, or ``None`` when undeclared.
     * ``readiness`` — the double-gate result (§D).
-    * ``model_slots`` — the MODEL-owned slots to acquire (the Qwen schema set);
-      empty for CONTEXT_DIRECT / MISSING.
+    * ``model_slots`` — the MODEL-owned slots to acquire (the extractor schema
+      set); empty for CONTEXT_DIRECT / MISSING.
     * ``system_slots`` — the system-owned slots that are actually filled (the
       non-MODEL side of a MIXED merge).
     * ``bundle_source`` — the context_bundle source the contextual strategies
@@ -219,9 +219,9 @@ def route(parameters: Mapping, declaration: Mapping[str, SlotDecl], *,
         # A MODEL acquisition AND filled system-owned slots -> merge both sides.
         strategy = STRATEGY_MIXED
     elif bundle_source == SOURCE_CONVERSATION_5_USER_TURNS:
-        strategy = STRATEGY_QUERY_PLUS_5_USER_TURNS
+        strategy = STRATEGY_QUERY_PLUS_5TURNS_TO_EXTRACTOR
     else:
-        strategy = STRATEGY_QUERY_TO_QWEN
+        strategy = STRATEGY_QUERY_TO_EXTRACTOR
     return RouteDecision(
         declared=True, strategy=strategy, readiness=rd,
         model_slots=tuple(needed), system_slots=filled,

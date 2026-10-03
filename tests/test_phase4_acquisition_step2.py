@@ -10,9 +10,9 @@ Drives the REAL cascade (``funnel.route`` -> orchestrator) on the new lane
   supplied through the injected ``acquisition_inputs`` seam;
 * an acquisition-undeclared capability, and a MISSING (no legal source) one,
   each exit to the Agent;
-* a MODEL acquisition need (QUERY_TO_QWEN / QUERY_PLUS_5_USER_TURNS / MIXED)
-  requires Qwen, which this step does not wire -> it exits to the Agent and the
-  legacy ``select_and_extract`` is never called.
+* a MODEL acquisition need (QUERY_TO_EXTRACTOR / QUERY_PLUS_5TURNS_TO_EXTRACTOR
+  / MIXED) requires an extractor, which these fixtures do not inject -> it exits
+  to the Agent and the legacy ``select_and_extract`` is never called.
 
 Test data is REAL: the asset id is a real upload blob (``data/objects/uploads/
 <uuid>/chunk_0``, ``%PDF`` magic). A fake-DB drive fixture establishes the
@@ -266,12 +266,12 @@ async def test_undeclared_capability_exits_to_agent(monkeypatch, caplog, real_pd
     assert not rec.legacy
 
 
-async def test_no_provider_at_all_is_undeclared(monkeypatch, caplog, real_pdf):
-    # production default: acquisition_inputs absent -> undeclared -> Agent
+async def test_parameterless_capability_is_undeclared(monkeypatch, caplog, real_pdf):
+    # production default: no test provider is injected, so the per-turn provider
+    # IS built — but a capability with NO parameters declares no acquisition
+    # (empty declaration) -> undeclared -> Agent (§G). Nothing is invented.
     cid, _ = real_pdf
-    entry = _entry("cap-open-pdf", {
-        "asset_id": {"type": "string", "required": True, "description": "the PDF"},
-    })
+    entry = _entry("cap-open-pdf", {})
     out, req, rec, _ = await _run(
         monkeypatch, caplog, entry=entry,
         ctx=_ctx("打开这个文件", open_asset_id=cid), inputs=None)
@@ -308,8 +308,8 @@ async def test_query_evidence_model_need_is_not_yet_executable(monkeypatch, capl
     entry = _entry("cap-open-pdf", {
         "pages": {"type": "string", "required": True, "description": "page range"},
     })
-    # query evidence present -> QUERY_TO_QWEN (a legal MODEL strategy) — but the
-    # Qwen extractor is not wired in Step 2, so the turn exits to the Agent.
+    # query evidence present -> QUERY_TO_EXTRACTOR (a legal MODEL strategy) — but
+    # no extractor is injected here, so the turn exits to the Agent.
     inputs = {"cap-open-pdf": AcquisitionInputs(
         declaration={"pages": SlotDecl(
             OWNERSHIP_MODEL,

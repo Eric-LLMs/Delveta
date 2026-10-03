@@ -5132,7 +5132,7 @@ ToolIntentModel never invents a verdict out of its own outage.
 
 The final ruling is therefore to keep the fine-tuned Q5_K_M model. The two base-model variants used only for benchmarking were subsequently removed from the Ollama store. Historical intermediate benchmark results must not be treated as the final model-selection ruling.
 
-**Deployment note.** The shipped default configuration keys still point to the former base-model tag and `prompt_json`. Until `chat_tool_intent_local_model` / `chat_tool_intent_local_mode` are explicitly switched to `qwen3-tools:q5_k_m` / `tools`, the local arm does not resolve the designated model and falls through the configured ladder (online → stub). This is a pending configuration change and requires its own approval; the architecture decision itself is already final.
+**Deployment note.** `chat_tool_intent_local_model` now ships the designated tag `qwen3-tools:q5_k_m` (config default, host `.env`, and the compose `OLLAMA_MODEL` pull-tag all agree). `chat_tool_intent_local_mode` still ships `prompt_json`; until it is switched to `tools`, the local arm does not resolve the designated model's native wire and falls through the configured ladder (online → stub). That mode switch is a pending configuration change and requires its own approval; the architecture decision itself is already final.
 
 ### 25.4 Intent Model Optimization Iteration 1 — Capability Description Enhancement
 
@@ -6137,7 +6137,7 @@ chat_funnel_hidden_capabilities="cap-edit-file"  (chat-plane routing-view hiding
                                     default stays "" because the factory is shared with the
                                     worker; the API startup scripts inject it on chat lanes)
 chat_tool_intent_backend="stub"    chat_tool_intent_min_confidence=0.75
-chat_tool_intent_local_url=""      chat_tool_intent_local_model="qwen3:0.6b-q4_K_M"
+chat_tool_intent_local_url=""      chat_tool_intent_local_model="qwen3-tools:q5_k_m"
 chat_tool_intent_local_mode="prompt_json"
 chat_tool_intent_online_model/_base_url/_api_key=""   chat_tool_intent_timeout_seconds=4.0
 ```
@@ -6196,8 +6196,8 @@ invoked — the model only ever receives an already-normalized list:
 |---|---|
 | `K = 0` | the row never enters LayaChoice (no candidates — funnel short-circuits) |
 | `K = 1` | the business layer executes directly; LayaChoice is not consulted |
-| `K = 2` | LayaChoice |
-| `K = 3` | LayaChoice |
+| `K = 2` | **V2-ineligible** — LayaChoice is not consulted (see the 4-slot invariant) |
+| `K = 3` | LayaChoice (3 capability cards + `REJECT` = 4 option slots) |
 | `K >= 4` | the business layer truncates to the top-3 first, then LayaChoice |
 
 The benchmark and training data are fixed at **K = 3 capability candidates plus one
@@ -6205,6 +6205,14 @@ The benchmark and training data are fixed at **K = 3 capability candidates plus 
 threshold and not a post-hoc rule — carried on every row, so the decision head always
 scores exactly four options. The `K >= 4` truncation is the business layer's job, not
 the model's.
+
+**4-slot hard invariant.** The v2 selector is consulted **only** for a three-capability
+candidate set — three capability cards plus the frozen `REJECT` card, exactly the four
+option slots it was trained and measured at. A `K = 2` set is **never** padded with a
+fabricated third capability and **never** sent as a three-slot question: it is a
+degradation case that exits the funnel (recorded as an ineligible turn), never a model
+call. `K < 3` is a degradation metric only; it never alters the frozen training
+distribution.
 
 **Rendering requirement.** A LayaChoice call MUST render the `REJECT` card as one of the
 criteria. A caller that renders only the capability cards (a 3-option question) does not
@@ -6223,11 +6231,11 @@ meaningful.
 - **Superseded**: **Delveta LayaChoice v1** (3-way, no `REJECT`) is the previously
   shipped checkpoint, retained as a frozen archive. v2 is the current model.
 
-> **Integration status.** The production `cap_router` card renderer and the `deploy/laya`
-> sidecar still render the 3-option v1 question and do **not** emit a `REJECT` criteria;
-> v2 is therefore **not yet wired into production**. Migrating to v2 requires the renderer
-> to add the `REJECT` option (see the rendering requirement in §26.2) and the sidecar to
-> load the v2 checkpoint. Until that lands, the deployed model remains v1.
+> **Integration status.** The `cap_router` card renderer emits the `REJECT` criterion
+> (§26.2), the `deploy/laya` sidecar loads the v2 checkpoint, and the `cap_router` service
+> backend maps a `REJECT` answer to a normal fourth decision that routes to the Agent.
+> The `REJECT` card, the selector, and the service are served as the `cap-router` Compose
+> service (`CHAT_CAP_ROUTER_BACKEND=cap_router`).
 
 ### 26.4 Input configuration
 

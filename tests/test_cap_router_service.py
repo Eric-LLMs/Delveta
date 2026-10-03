@@ -1,15 +1,19 @@
-"""cap_router laya backend — LayaSelector + the B_noprov card renderer.
+"""cap_router service backend — CapRouterSelector + the B_noprov card renderer.
 
-LayaChoice is served OUT OF PROCESS by the ``deploy/laya`` sidecar. This module
-pins the client side of that seam:
+The cap_router service is served OUT OF PROCESS by the ``deploy/laya`` sidecar
+(the current model implementation is LayaChoice; the backend itself is
+model-agnostic). This module pins the client side of that seam:
 
 * the card renderer reproduces the FROZEN ``B_noprov`` bytes byte-for-byte (the
   golden anchor is the shipped test bundle), and carries NO query examples,
   NO provenance/``evidence:`` line, NO ``matched_example:`` line;
-* a valid choice becomes ``ROUTE_SELECTED`` with the model's probability;
+* the frozen REJECT card rides as the 4th criterion (the V2 4-slot contract);
+* a valid capability choice becomes ``ROUTE_SELECTED`` with the model's
+  probability; the REJECT label becomes ``ROUTE_REJECT``;
 * EVERY other outcome — no endpoint, timeout, transport error, HTTP status,
   malformed body, missing answer, non-choice answer, off-candidate label —
-  raises ``CapabilityRouterUnavailable`` (never a silent NONE, never Qwen).
+  raises ``CapabilityRouterUnavailable`` (never a silent NONE, never another
+  model).
 """
 from __future__ import annotations
 
@@ -21,16 +25,19 @@ from pathlib import Path
 import httpx
 import pytest
 from core.application.chat.intent_funnel.cap_router import (
-    BACKEND_LAYA,
+    BACKEND_CAP_ROUTER,
+    ROUTE_REJECT,
     ROUTE_SELECTED,
     CapabilityRouterUnavailable,
 )
-from core.application.chat.intent_funnel.cap_router.backends.laya import (
+from core.application.chat.intent_funnel.cap_router.backends.service import (
     QID,
-    LayaSelector,
+    CapRouterSelector,
 )
 from core.application.chat.intent_funnel.cap_router.card_renderer import (
     INSTRUCTIONS,
+    REJECT_CARD,
+    REJECT_LABEL,
     render_card,
     render_choice_question,
 )
@@ -106,11 +113,11 @@ def _ok_body(choice, probs=None):
 
 async def _select(monkeypatch, client=None, *, candidates=None, entries=None,
                   url=URL):
-    from core.application.chat.intent_funnel.cap_router.backends import laya as laya_mod
-    monkeypatch.setattr(settings, "chat_cap_router_laya_url", url)
+    from core.application.chat.intent_funnel.cap_router.backends import service as service_mod
+    monkeypatch.setattr(settings, "chat_cap_router_url", url)
     if client is not None:
-        monkeypatch.setattr(laya_mod.httpx, "AsyncClient", lambda **kw: client)
-    return await LayaSelector().select(
+        monkeypatch.setattr(service_mod.httpx, "AsyncClient", lambda **kw: client)
+    return await CapRouterSelector().select(
         "q", candidates if candidates is not None else [_c("cap-a")],
         entries_by_id=entries if entries is not None else {})
 
@@ -118,9 +125,9 @@ async def _select(monkeypatch, client=None, *, candidates=None, entries=None,
 # ── the factory resolves the real backend ────────────────────────────────────────
 
 
-def test_factory_resolves_laya():
+def test_factory_resolves_cap_router():
     from core.application.chat.intent_funnel.cap_router.backends import selector_for
-    assert isinstance(selector_for(BACKEND_LAYA), LayaSelector)
+    assert isinstance(selector_for(BACKEND_CAP_ROUTER), CapRouterSelector)
 
 
 # ── failure contract: everything unusable -> CapabilityRouterUnavailable ─────────
@@ -198,7 +205,9 @@ async def test_valid_choice_selects_with_the_model_probability(monkeypatch):
     assert client.seen["url"] == URL + "/v1/systemone"
     q = client.seen["payload"]["questions"][QID]
     assert q["type"] == "choice" and q["instructions"] == INSTRUCTIONS
-    assert set(q["criteria"]) == {"cap-a"}      # only the candidate with a card
+    # the candidate with a card + the frozen REJECT card (the 4-slot contract)
+    assert set(q["criteria"]) == {"cap-a", REJECT_LABEL}
+    assert q["criteria"][REJECT_LABEL] == REJECT_CARD
     assert client.seen["payload"]["state"] == "q"
 
 
@@ -213,6 +222,25 @@ async def test_missing_probabilities_yields_no_fabricated_confidence(monkeypatch
     route = await _select(monkeypatch, _Client(_Resp(200, body)))
     assert route.selected and route.capability_id == "cap-a"
     assert route.confidence is None
+
+
+# ── the REJECT answer rides as ROUTE_REJECT (never Unavailable) ───────────────────
+
+
+async def test_reject_answer_becomes_route_reject(monkeypatch):
+    body = _ok_body(REJECT_LABEL, {REJECT_LABEL: 0.42})
+    route = await _select(monkeypatch, _Client(_Resp(200, body)))
+    assert route.decision == ROUTE_REJECT and route.rejected
+    assert not route.selected and route.capability_id is None
+    assert route.confidence == 0.42
+    assert route.provenance == f"cap_router choice={REJECT_LABEL} p=0.42"
+
+
+async def test_reject_is_not_treated_as_off_candidate(monkeypatch):
+    # REJECT is a legal label even though it is not in the candidate set.
+    route = await _select(monkeypatch, _Client(_Resp(200, _ok_body(REJECT_LABEL))),
+                          candidates=[_c("cap-a")])
+    assert route.rejected
 
 
 # ── the card renderer: golden vs the frozen B_noprov bundle ───────────────────────
@@ -281,5 +309,6 @@ def test_card_with_no_negatives_or_params_uses_the_none_lines():
 def test_choice_question_skips_candidates_without_a_live_entry():
     entries = {"cap-a": _entry("cap-a")}
     q = render_choice_question([_c("cap-a"), _c("cap-gone")], entries)
-    assert set(q["criteria"]) == {"cap-a"}
+    assert set(q["criteria"]) == {"cap-a", REJECT_LABEL}   # REJECT is always present
     assert q["criteria"]["cap-a"] == render_card(entries["cap-a"])
+    assert q["criteria"][REJECT_LABEL] == REJECT_CARD

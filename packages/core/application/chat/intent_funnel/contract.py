@@ -89,19 +89,31 @@ REASON_TOOL_INTENT_UNCERTAIN = "TOOL_INTENT_UNCERTAIN"
 REASON_TOOL_INTENT_TIMEOUT = "TOOL_INTENT_TIMEOUT"
 # cap_router lane (Phase 3, 2026-10-01) — kept DISTINCT from the TOOL_INTENT_*
 # codes on purpose: the selection node that produced these is cap_router (stub |
-# laya), not the legacy single-call ToolIntentModel, so a trace can always tell
-# the two lanes apart (Active/Deprecated must stay distinguishable, rule 8).
+# cap_router), not the legacy single-call ToolIntentModel, so a trace can always
+# tell the two lanes apart (Active/Deprecated must stay distinguishable, rule 8).
 REASON_CAP_ROUTER_NONE = "CAP_ROUTER_NONE"                 # selector answered NONE
 REASON_CAP_ROUTER_UNAVAILABLE = "CAP_ROUTER_UNAVAILABLE"   # backend could not serve
 REASON_CAP_ROUTER_TIMEOUT = "CAP_ROUTER_TIMEOUT"           # selector exceeded the budget
+# REJECT is the NORMAL 4th V2 decision (3 capability + REJECT): the selector
+# answered the frozen REJECT label, so the turn routes to the system's REAL
+# no-capability path (Agent) — never a fake tool, never the argument chain.
+REASON_CAP_ROUTER_REJECT = "CAP_ROUTER_REJECT"             # selector answered REJECT
+# The V2 4-slot contract is a HARD invariant: the selector may only be called on
+# exactly 3 capability candidates (+REJECT = 4 slots). A K<3 turn is V2-
+# INELIGIBLE (never padded with a fake 3rd capability, never sent as a 3-slot
+# payload); it is a DEGRADATION only and exits to the Agent like an unavailable
+# service. Distinct from UNAVAILABLE: this is a business-layer eligibility rule,
+# not a service fault, so the two must never be conflated in the loss ladder.
+REASON_CAP_ROUTER_INELIGIBLE = "CAP_ROUTER_INELIGIBLE"     # K<3: V2 not eligible
 # Phase 4 argument-acquisition lane (2026-10-01) — the Argument Path Router's
-# downward exits on the new lane (backend=stub|laya). Kept DISTINCT from the
-# Binder's BIND_* codes: the node that produced these is the ARP, not the Binder.
+# downward exits on the new lane (backend=stub|cap_router). Kept DISTINCT from
+# the Binder's BIND_* codes: the node that produced these is the ARP, not the Binder.
 REASON_ACQUISITION_UNDECLARED = "ACQUISITION_UNDECLARED"   # §G: no declaration opt-in -> Agent
 REASON_ACQUISITION_MISSING = "ACQUISITION_MISSING"         # §D: no legal value for a required slot
-# Phase 4 Step 2 transitional limit: a MODEL acquisition need (QUERY_TO_QWEN /
-# QUERY_PLUS_5_USER_TURNS / MIXED) requires the Qwen extractor, which this step
-# does not yet wire, so the turn exits to the Agent. Replaced when Qwen lands.
+# Phase 4 Step 2 transitional limit: a MODEL acquisition need (QUERY_TO_EXTRACTOR
+# / QUERY_PLUS_5TURNS_TO_EXTRACTOR / MIXED) requires an extractor, which the
+# backend=off lane does not wire, so the turn exits to the Agent. Kept for the
+# lane where no extractor is injected (the production lane provides one).
 REASON_ACQUISITION_MODEL_PENDING = "ACQUISITION_MODEL_PENDING"
 REASON_REGISTRY_UNAVAILABLE = "REGISTRY_UNAVAILABLE"
 REASON_VERSION_MISMATCH = "REGISTRY_VERSION_MISMATCH"

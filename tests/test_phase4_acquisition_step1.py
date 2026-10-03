@@ -55,27 +55,27 @@ def test_context_direct_when_required_ready_and_no_model_need():
     assert out.readiness.needs_acquisition is False
 
 
-# ── 2. QUERY_TO_QWEN ──────────────────────────────────────────────────────────
+# ── 2. QUERY_TO_EXTRACTOR ─────────────────────────────────────────────────────
 
 
-def test_query_to_qwen_when_query_alone_evidences_a_model_slot():
+def test_query_to_extractor_when_query_alone_evidences_a_model_slot():
     out = pr.route(
         _params(pages=True),
         {"pages": _PAGES_Q},
         evidence={"pages": ac.SOURCE_QUERY},
     )
-    assert out.strategy == ac.STRATEGY_QUERY_TO_QWEN
+    assert out.strategy == ac.STRATEGY_QUERY_TO_EXTRACTOR
     assert out.model_slots == ("pages",)
     assert out.bundle_source == ac.SOURCE_QUERY
 
 
-# ── 3. QUERY_PLUS_5_USER_TURNS ────────────────────────────────────────────────
+# ── 3. QUERY_PLUS_5TURNS_TO_EXTRACTOR ─────────────────────────────────────────
 
 
 def test_query_plus_5_when_acquisition_depends_on_recent_user_turns():
     out = pr.route(_params(pages=True), {"pages": _PAGES_H},
                    evidence={"pages": ac.SOURCE_CONVERSATION_5_USER_TURNS})
-    assert out.strategy == ac.STRATEGY_QUERY_PLUS_5_USER_TURNS
+    assert out.strategy == ac.STRATEGY_QUERY_PLUS_5TURNS_TO_EXTRACTOR
     assert out.bundle_source == ac.SOURCE_CONVERSATION_5_USER_TURNS
 
 

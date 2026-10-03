@@ -14,13 +14,15 @@ Drives the REAL cascade (``run_nodes``) on the new lane
 * ``asset_id`` (SYSTEM_BINDER) is NOT authoritative here: the Binder still
   resolves it from TurnFacts, so a divergent seam value loses to the fact truth
   (decision 2026-10-01, option (a));
-* no Qwen, no legacy ``select_and_extract`` on the new lane; QUERY_TO_QWEN /
-  QUERY_PLUS_5_USER_TURNS still exit ``ACQUISITION_MODEL_PENDING``;
+* no legacy ``select_and_extract`` on the new lane; the MODEL strategies use the
+  injected ``argument_extractor`` (or the test seam's ``model_values``), and a
+  MODEL need with neither exits ``ACQUISITION_MODEL_PENDING`` to the Agent;
 * ``backend=off`` keeps the legacy lane byte-for-byte.
 
 Test data is REAL where a real asset id matters: the id is a real upload blob
 (``data/objects/uploads/<uuid>/chunk_0``, ``%PDF`` magic), READ-ONLY. The MODEL
-side is per-test injected through the acquisition seam (no Qwen is wired).
+side is per-test injected through the acquisition seam; the extractor is a
+turn-independent seam the tests inject (the production extractor is Qwen).
 """
 from __future__ import annotations
 
@@ -44,8 +46,8 @@ from core.application.chat.intent_funnel.argument_acquisition.contract import (
     SOURCE_UI_CONTEXT,
     STRATEGY_CONTEXT_DIRECT,
     STRATEGY_MIXED,
-    STRATEGY_QUERY_PLUS_5_USER_TURNS,
-    STRATEGY_QUERY_TO_QWEN,
+    STRATEGY_QUERY_PLUS_5TURNS_TO_EXTRACTOR,
+    STRATEGY_QUERY_TO_EXTRACTOR,
     ArgumentProvenance,
 )
 from core.application.chat.intent_funnel.argument_acquisition.merge import merge
@@ -163,13 +165,13 @@ def test_merge_unprovenanced_system_value_not_merged():
 # ── B. cascade wiring (HIT -> ARP -> MIXED -> merge -> Binder -> certified) ───────
 
 
-def _ctx(message: str, *, open_asset_id: str = ""):
+def _ctx(message: str, *, open_asset_id: str = "", history=None):
     viewer = (types.SimpleNamespace(asset_id=open_asset_id, page=None, selections=[])
               if open_asset_id else None)
     return types.SimpleNamespace(
         body=types.SimpleNamespace(message=message, attach=None, viewer=viewer),
         owned_asset_id=None, path_asset_id=open_asset_id, research_turn=False,
-        effective_handoff=None, session_id="s1", history=[],
+        effective_handoff=None, session_id="s1", history=list(history or []),
     )
 
 
@@ -216,19 +218,20 @@ def _wire(monkeypatch, entry: CapabilityEntry, *, backend: str,
     return rec
 
 
-def _deps(provider):
+def _deps(provider, extractor=None):
     return types.SimpleNamespace(
         session_factory=None, embedder=lambda: object(), llm=object(),
-        acquisition_inputs=provider)
+        acquisition_inputs=provider, argument_extractor=extractor)
 
 
-async def _run(monkeypatch, *, entry, ctx, inputs, backend="stub"):
+async def _run(monkeypatch, *, entry, ctx, inputs, backend="stub", extractor=None):
     rec = _wire(monkeypatch, entry, backend=backend)
     provider = (lambda cid: inputs.get(cid)) if inputs is not None else None
     req = TurnRequirements()
     trace = new_trace()
     capture: dict = {}
-    out = await orch_mod.run_nodes(ctx, _deps(provider), req, trace, capture=capture)
+    out = await orch_mod.run_nodes(ctx, _deps(provider, extractor), req, trace,
+                                   capture=capture)
     return out, req, rec, trace, capture
 
 
@@ -301,22 +304,22 @@ async def test_mixed_asset_id_final_authority_is_turn_facts(monkeypatch, real_pd
 
 
 async def test_query_to_qwen_still_model_pending(monkeypatch, real_pdf):
+    # A MODEL need with NO injected value and NO extractor exits to the Agent.
     cid, _ = real_pdf
     entry = _entry("cap-open-pdf", {
         "pages": {"type": "string", "required": True, "description": "page range"}})
     inputs = {"cap-open-pdf": AcquisitionInputs(
         declaration={"pages": SlotDecl(OWNERSHIP_MODEL, allowed_sources=(SOURCE_QUERY,))},
-        evidence={"pages": SOURCE_QUERY},
-        model_values={"pages": "3"}, model_source=SOURCE_QUERY)}
+        evidence={"pages": SOURCE_QUERY})}
     out, req, rec, trace, capture = await _run(
         monkeypatch, entry=entry, ctx=_ctx("打开这个文件第3页", open_asset_id=cid),
         inputs=inputs)
-    assert trace["acquisition"] == STRATEGY_QUERY_TO_QWEN
+    assert trace["acquisition"] == STRATEGY_QUERY_TO_EXTRACTOR
     assert out is None and trace["fallback"] == REASON_ACQUISITION_MODEL_PENDING
     assert not rec.legacy
 
 
-async def test_query_plus_5_user_turns_still_model_pending(monkeypatch, real_pdf):
+async def test_query_to_qwen_still_model_pending_history(monkeypatch, real_pdf):
     cid, _ = real_pdf
     entry = _entry("cap-open-pdf", {
         "pages": {"type": "string", "required": True, "description": "page range"}})
@@ -324,12 +327,93 @@ async def test_query_plus_5_user_turns_still_model_pending(monkeypatch, real_pdf
         declaration={"pages": SlotDecl(
             OWNERSHIP_MODEL,
             allowed_sources=(SOURCE_QUERY, SOURCE_CONVERSATION_5_USER_TURNS))},
-        evidence={"pages": SOURCE_CONVERSATION_5_USER_TURNS},
-        model_values={"pages": "3"}, model_source=SOURCE_CONVERSATION_5_USER_TURNS)}
+        evidence={"pages": SOURCE_CONVERSATION_5_USER_TURNS})}
     out, req, rec, trace, capture = await _run(
         monkeypatch, entry=entry, ctx=_ctx("打开这个文件第3页", open_asset_id=cid),
         inputs=inputs)
-    assert trace["acquisition"] == STRATEGY_QUERY_PLUS_5_USER_TURNS
+    assert trace["acquisition"] == STRATEGY_QUERY_PLUS_5TURNS_TO_EXTRACTOR
+    assert out is None and trace["fallback"] == REASON_ACQUISITION_MODEL_PENDING
+    assert not rec.legacy
+
+
+async def test_extractor_participates_for_query_strategy(monkeypatch, real_pdf):
+    # The injected extractor IS called (no legacy hop) and its values ARE the
+    # draft the Binder validates -> a CERTIFIED turn. The extractor's recorded
+    # name rides telemetry (model-agnostic strategy, named implementation).
+    cid, _ = real_pdf
+    entry = _entry("cap-open-pdf", {
+        "pages": {"type": "string", "required": True, "description": "page range"}})
+    inputs = {"cap-open-pdf": AcquisitionInputs(
+        declaration={"pages": SlotDecl(OWNERSHIP_MODEL, allowed_sources=(SOURCE_QUERY,))},
+        evidence={"pages": SOURCE_QUERY})}
+    seen: dict = {}
+
+    async def fake_extract(*, query, entry, model_slots, bundle):
+        seen["query"] = query
+        seen["slots"] = tuple(model_slots)
+        seen["source"] = bundle.source
+        return {"pages": "3"}, bundle.source
+
+    out, req, rec, trace, capture = await _run(
+        monkeypatch, entry=entry, ctx=_ctx("打开这个文件第3页", open_asset_id=cid),
+        inputs=inputs, extractor=fake_extract)
+    assert trace["acquisition"] == STRATEGY_QUERY_TO_EXTRACTOR
+    assert out is not req and out.requested_action["args"] == {"pages": "3"}
+    assert seen["slots"] == ("pages",) and seen["source"] == SOURCE_QUERY
+    assert capture["acquisition"]["extractor"] == "Qwen"
+    assert not rec.legacy
+
+
+async def test_extractor_receives_last5_user_turns_for_history_strategy(monkeypatch, real_pdf):
+    # QUERY_PLUS_5TURNS_TO_EXTRACTOR: the extractor's bundle carries ONLY the
+    # last-5 USER turns (never assistant/system), read from ctx.history.
+    cid, _ = real_pdf
+    entry = _entry("cap-open-pdf", {
+        "pages": {"type": "string", "required": True, "description": "page range"}})
+    inputs = {"cap-open-pdf": AcquisitionInputs(
+        declaration={"pages": SlotDecl(
+            OWNERSHIP_MODEL,
+            allowed_sources=(SOURCE_QUERY, SOURCE_CONVERSATION_5_USER_TURNS))},
+        evidence={"pages": SOURCE_CONVERSATION_5_USER_TURNS})}
+    history = [{"role": "user", "content": f"u{i}"} for i in range(7)]
+    history += [{"role": "assistant", "content": "ASSISTANT-MUST-NOT-RIDE"}]
+    seen: dict = {}
+
+    async def fake_extract(*, query, entry, model_slots, bundle):
+        seen["turns"] = tuple(bundle.user_turns)
+        seen["source"] = bundle.source
+        return {"pages": "3"}, bundle.source
+
+    out, req, rec, trace, capture = await _run(
+        monkeypatch, entry=entry, ctx=_ctx("打开这个文件第3页", open_asset_id=cid,
+                                           history=history),
+        inputs=inputs, extractor=fake_extract)
+    assert trace["acquisition"] == STRATEGY_QUERY_PLUS_5TURNS_TO_EXTRACTOR
+    assert seen["source"] == SOURCE_CONVERSATION_5_USER_TURNS
+    assert seen["turns"] == ("u2", "u3", "u4", "u5", "u6")   # last 5 USER turns only
+    assert out is not req
+
+
+async def test_extractor_failure_fails_closed_to_agent(monkeypatch, real_pdf):
+    # The extractor's transport failure never fabricates a value: the turn exits
+    # to the Agent (ACQUISITION_MODEL_PENDING).
+    from core.application.chat.intent_funnel.argument_acquisition.extractor import (
+        ExtractionUnavailable,
+    )
+
+    cid, _ = real_pdf
+    entry = _entry("cap-open-pdf", {
+        "pages": {"type": "string", "required": True, "description": "page range"}})
+    inputs = {"cap-open-pdf": AcquisitionInputs(
+        declaration={"pages": SlotDecl(OWNERSHIP_MODEL, allowed_sources=(SOURCE_QUERY,))},
+        evidence={"pages": SOURCE_QUERY})}
+
+    async def boom(**kw):
+        raise ExtractionUnavailable("endpoint down")
+
+    out, req, rec, trace, capture = await _run(
+        monkeypatch, entry=entry, ctx=_ctx("打开这个文件第3页", open_asset_id=cid),
+        inputs=inputs, extractor=boom)
     assert out is None and trace["fallback"] == REASON_ACQUISITION_MODEL_PENDING
     assert not rec.legacy
 

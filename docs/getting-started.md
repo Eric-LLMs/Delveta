@@ -39,7 +39,7 @@ pip install -e ".[rag]"     # optional: RAG semantic search (pulls torch / sente
 ## 6. Start infrastructure (data + model services)
 
 ```bash
-docker compose up -d postgres redis embedding tts llm-gateway worker
+docker compose up -d postgres redis embedding tts llm-gateway worker cap-router
 ```
 
 The first start downloads the models (BGE-M3, Kokoro-82M) into Docker volumes — allow a few minutes. The LLM gateway routes the virtual model `delveta-chat` to `LLM_UPSTREAM_MODEL` using `LLM_UPSTREAM_KEY`.
@@ -135,8 +135,8 @@ First run on a fresh machine also installs Docker and the Python/Node deps autom
 
 | Environment | Script | What it does |
 |---|---|---|
-| **Windows desktop** (local PC client) | `bash scripts/start_desktop.sh` | Auto-installs Docker Desktop if missing → starts **all** dependency services (postgres, redis, embedding, tts, llm-gateway, worker) → ensures the Python venv → starts the backend (boot seeds `admin`/`pwd@Admin`) → opens the Electron workbench. |
-| **Linux server** (browser access) | `bash scripts/start_server.sh` | Auto-installs Docker Engine if missing → starts **all** dependency services (postgres, redis, embedding, tts, llm-gateway, worker) → ensures the Python venv → starts the backend (boot seeds `admin`/`pwd@Admin`) → builds and serves the React web UI at `http://<server-ip>:5273`. |
+| **Windows desktop** (local PC client) | `bash scripts/start_desktop.sh` | Auto-installs Docker Desktop if missing → starts **all** dependency services (postgres, redis, embedding, tts, llm-gateway, worker, cap-router) → ensures the Python venv → starts the backend (boot seeds `admin`/`pwd@Admin`) → opens the Electron workbench. |
+| **Linux server** (browser access) | `bash scripts/start_server.sh` | Auto-installs Docker Engine if missing → starts **all** dependency services (postgres, redis, embedding, tts, llm-gateway, worker, cap-router) → ensures the Python venv → starts the backend (boot seeds `admin`/`pwd@Admin`) → builds and serves the React web UI at `http://<server-ip>:5273`. |
 
 The default `admin` / `pwd@Admin` account is seeded on first boot and ready to sign in from the start.
 

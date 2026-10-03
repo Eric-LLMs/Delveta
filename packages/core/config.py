@@ -167,10 +167,11 @@ class Settings(BaseSettings):
     # "not deployed -> ToolIntentUnavailable -> fall through the ladder" semantics.
     chat_tool_intent_local_url: str = ""               # deployed local tool-intent model endpoint ("" = none)
     # Provider config (NOT business logic): which concrete model the local
-    # service serves. Current default = Qwen3-0.6B at Q4_K_M — Ollama encodes
-    # the quantization in the tag; swap provider/model via this key +
+    # service serves. Current default = the tool-tuned Qwen3 checkpoint the
+    # deployed ``tool-intent`` service serves (Q5_K_M) — Ollama encodes the
+    # quantization in the tag; swap provider/model via this key +
     # TOOL_INTENT_OLLAMA_MODEL (compose), never by touching the chain.
-    chat_tool_intent_local_model: str = "qwen3:0.6b-q4_K_M"
+    chat_tool_intent_local_model: str = "qwen3-tools:q5_k_m"
     # Output discipline of the LOCAL provider (Adapter-layer, NOT chain logic):
     #   "prompt_json" — the original card contract: SYSTEM asks for a JSON reply
     #                   and the adapter brace-parses it (what a base instruct model
@@ -194,25 +195,28 @@ class Settings(BaseSettings):
 
     # ── cap_router lane (Phase 2, 2026-10-01) ────────────────────────────────────
     # Capability SELECTION node backend. The new split chain
-    # (Recall -> Aggregation -> cap_router -> Argument Path Router -> Qwen extract)
+    # (Recall -> Aggregation -> cap_router -> Argument Path Router -> extractor)
     # is OPT-IN: "off" keeps the existing single-call select_and_extract hop
     # BYTE-IDENTICAL (rollback / compatibility lane). "stub" = deterministic
-    # selector (wiring tests only); "laya" = the real LayaChoice model. The new
+    # selector (wiring tests only); "cap_router" = the deployed cap_router service
+    # (current capability-selection model implementation: LayaChoice). The new
     # lane is dev/test/shadow ONLY until a separate ruling opens it.
-    chat_cap_router_backend: str = "off"               # "off" | "stub" | "laya"
-    # LayaChoice = Delveta's capability-selection decision model, served OUT OF
+    chat_cap_router_backend: str = "off"               # "off" | "stub" | "cap_router"
+    # cap_router = Delveta's stable capability-selection SERVICE, served OUT OF
     # PROCESS by the `deploy/laya` sidecar (`POST /v1/systemone`, one choice
-    # question per turn). This is a BASE url such as http://localhost:18092;
-    # "" keeps the honest "not deployed -> CapabilityRouterUnavailable -> Agent"
-    # semantics (ruling 2026-10-01: a laya failure NEVER falls back to Qwen or
-    # the legacy ToolIntentModel). The model directory is supplied to the
-    # SERVICE via LAYA_CHOICE_MODEL_DIR (a read-only bind mount) — it is never
-    # referenced in this process and never baked into the image.
-    chat_cap_router_laya_url: str = ""                 # deployed LayaChoice endpoint ("" = none)
+    # question per turn). The current model implementation behind it is LayaChoice;
+    # swapping that model must not change this contract. This is a BASE url such as
+    # http://localhost:18092; "" keeps the honest "not deployed ->
+    # CapabilityRouterUnavailable -> Agent" semantics (ruling 2026-10-01: a
+    # cap_router failure NEVER falls back to the extractor or the legacy
+    # ToolIntentModel). The model directory is supplied to the SERVICE via
+    # LAYA_CHOICE_MODEL_DIR (a read-only bind mount) — it is never referenced in
+    # this process and never baked into the image.
+    chat_cap_router_url: str = ""                      # deployed cap_router endpoint ("" = none)
     # Per-call guardrail. The sidecar preloads/warms the model at startup, so the
     # first load is NOT counted against this budget; a local endpoint slower than
     # the guardrail is an UNAVAILABLE -> Agent, never a hang.
-    chat_cap_router_laya_timeout_seconds: float = 5.0
+    chat_cap_router_timeout_seconds: float = 5.0
 
     # ── Web search (agent web_search tool) ──
     # provider is free text: aggregate/keyless (no key) | duckduckgo (no key) | tavily |

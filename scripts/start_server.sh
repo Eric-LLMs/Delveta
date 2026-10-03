@@ -6,7 +6,7 @@
 #   [1] Backend already up?             -> skip straight to the web UI
 #   [2] Docker Engine installed?        -> auto-install via get.docker.com
 #   [3] Docker daemon ready?            -> systemctl enable --now docker, wait
-#   [4] All dependency services up      -> postgres/redis/embedding/tts/litellm/worker
+#   [4] All dependency services up      -> postgres/redis/embedding/tts/llm-gateway/worker/cap-router
 #   [5] Python venv + pip deps ensured  -> create .venv, pip install -e ".[dev]"
 #   [6] Backend started + admin verified-> uvicorn boot seeds admin/pwd@Admin
 #   [7] React web UI built + served     -> vite preview at :5273 (proxies /api etc.)
@@ -29,7 +29,11 @@ LOG_DIR="data"
 UVICORN_LOG="$LOG_DIR/uvicorn.log"
 PID_FILE="$LOG_DIR/uvicorn.pid"
 WEB_LOG="$LOG_DIR/web.log"
-COMPOSE_SERVICES="postgres redis embedding tts llm-gateway worker"
+COMPOSE_SERVICES="postgres redis embedding tts llm-gateway worker cap-router"
+# cap_router lane (capability selection): points the API process at the local
+# cap_router service. Process-scoped on purpose (NOT in .env) so the test suite
+# keeps its own default. The container binds loopback :18092 -> model :8000.
+CAP_ROUTER_URL="http://127.0.0.1:18092"
 DOCKER="docker"
 
 # ── progress helpers ───────────────────────────────────────────────────────────
@@ -46,6 +50,19 @@ backend_up() { curl -fsS --max-time 2 "$BACKEND_HEALTH" >/dev/null 2>&1; }
 # True when something is listening on localhost:$1 (ss preferred, netstat fallback).
 port_open() {
   ss -ltn 2>/dev/null | grep -Eq ":$1\s" || netstat -an 2>/dev/null | grep -Eq ":$1\s.*LISTEN"
+}
+
+# Informational (never blocking): report the cap_router service state. The model
+# checkpoint takes ~3 min to load onto CPU, so a launch right after `up` reports
+# "still loading" — that is honest, and turns simply fall back to the Agent until
+# /health says ok. Readiness is judged by the SERVICE answering, never by the
+# container merely existing.
+cap_router_state() {
+  if curl -fsS --max-time 2 "$CAP_ROUTER_URL/health" 2>/dev/null | grep -q '"status"[: ]*"ok"'; then
+    ok "cap_router service ready at $CAP_ROUTER_URL."
+  else
+    warn "cap_router service still loading at $CAP_ROUTER_URL (turns use the Agent until ready)."
+  fi
 }
 
 # True when the Docker daemon answers `docker info`.
@@ -159,6 +176,8 @@ start_backend() {
   # shared with the worker, so the default lives HERE, not in core config.
   # The worker service (compose) never sets it and keeps full edit_file.
   AGENT_HIDDEN_TOOLS="${AGENT_HIDDEN_TOOLS-edit_file}" \
+    CHAT_CAP_ROUTER_BACKEND="${CHAT_CAP_ROUTER_BACKEND-cap_router}" \
+    CHAT_CAP_ROUTER_URL="${CHAT_CAP_ROUTER_URL-$CAP_ROUTER_URL}" \
     "$PYTHON_BIN" -m uvicorn apps.api.main:app --host 0.0.0.0 --port 8300 >>"$UVICORN_LOG" 2>&1 &
   echo $! > "$PID_FILE"
   printf '      Waiting for the backend to become healthy'
@@ -226,6 +245,7 @@ else
   start_backend || true
   if backend_up; then
     verify_admin_login || true
+    cap_router_state || true
   fi
 fi
 

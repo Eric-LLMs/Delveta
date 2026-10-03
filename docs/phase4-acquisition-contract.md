@@ -33,7 +33,7 @@ evidence constraints) are now **RESOLVED** — see the rulings inline in §B, §
    (`{slot: "user_input" | "plugin:<name>" | ...}`) and MUST NOT be interpreted by a
    `SlotDecl`. The acquisition declaration describes **ownership / allowed_sources /
    escalation only** — never required/type/enum/description.
-3. **Opt-in is explicit.** On the new lane (`backend=stub|laya`):
+3. **Opt-in is explicit.** On the new lane (`backend=stub|cap_router`):
    - a capability **with** an `acquisition` declaration MAY enter the Argument Path Router;
    - a capability **without** one MUST NOT fall back to legacy
      `ToolIntentModel.select_and_extract`; the safe result is **Agent** with an
@@ -73,13 +73,13 @@ Determination:
 | Required readiness | Acquisition need (dimension B) | Strategy |
 |---|---|---|
 | all `required` deterministically ready (SYSTEM_BINDER/TOOL_DEFAULT) | none | **CONTEXT_DIRECT** |
-| — | MODEL need, and the current query alone provides the needed MODEL evidence | **QUERY_TO_QWEN** |
-| — | MODEL need, and the needed info depends on the last-5 user turns | **QUERY_PLUS_5_USER_TURNS** |
+| — | MODEL need, and the current query alone provides the needed MODEL evidence | **QUERY_TO_EXTRACTOR** |
+| — | MODEL need, and the needed info depends on the last-5 user turns | **QUERY_PLUS_5TURNS_TO_EXTRACTOR** |
 | — | system-sourced params AND a MODEL acquisition both present | **MIXED** |
 | `required` args cannot be legally obtained from the allowed sources | — | **MISSING / INVALID** |
 
 No linear precedence such as `MISSING > CONTEXT_DIRECT > MIXED > …` is defined. Ordering
-between QUERY_TO_QWEN and QUERY_PLUS_5_USER_TURNS is not a precedence ladder — it is the
+between QUERY_TO_EXTRACTOR and QUERY_PLUS_5TURNS_TO_EXTRACTOR is not a precedence ladder — it is the
 `escalation`/evidence determination (§E, §I).
 
 **Model-slot source is evidence-driven — never inferred from `allowed_sources`.**
@@ -87,9 +87,9 @@ For every MODEL-owned slot that must be acquired, WHERE its value comes from is 
 the presence of the **actual** evidence signal, never by what the declaration merely
 *allows*:
 
-- query evidence present (source `QUERY`, allowed) → **QUERY_TO_QWEN**;
+- query evidence present (source `QUERY`, allowed) → **QUERY_TO_EXTRACTOR**;
 - history evidence present (source `CONVERSATION_5_USER_TURNS`, allowed) →
-  **QUERY_PLUS_5_USER_TURNS**;
+  **QUERY_PLUS_5TURNS_TO_EXTRACTOR**;
 - neither evidence present → the slot's source cannot be legally determined →
   **MISSING / INVALID** (§D); never a guess, never a legacy fallback.
 
@@ -114,8 +114,8 @@ query, recent-5-user-turns)`.
 | Strategy | Input (precondition) | Output | Forbidden |
 |---|---|---|---|
 | **CONTEXT_DIRECT** | All `required` slots are deterministically satisfied (SYSTEM_BINDER/TOOL_DEFAULT) **and** no MODEL acquisition need | A fully-determined args draft → existing `certified()` / execution handoff | **Any Qwen call (Qwen call = 0)**; any Recall/aggregation/selection |
-| **QUERY_TO_QWEN** | MODEL acquisition need satisfiable from the **current query alone**; no system-sourced slots to merge | Qwen returns MODEL-owned args → **Binder validates** → certified | Sending non-MODEL slots to Qwen; sending history; >1 Qwen call by default |
-| **QUERY_PLUS_5_USER_TURNS** | MODEL acquisition need requires recent conversation context | Qwen input = **exactly** current query + last **5** `role=="user"` messages → Binder → certified | Sending assistant/system/Agent history; sending the full transcript; >1 Qwen call by default |
+| **QUERY_TO_EXTRACTOR** | MODEL acquisition need satisfiable from the **current query alone**; no system-sourced slots to merge | Qwen returns MODEL-owned args → **Binder validates** → certified | Sending non-MODEL slots to Qwen; sending history; >1 Qwen call by default |
+| **QUERY_PLUS_5TURNS_TO_EXTRACTOR** | MODEL acquisition need requires recent conversation context | Qwen input = **exactly** current query + last **5** `role=="user"` messages → Binder → certified | Sending assistant/system/Agent history; sending the full transcript; >1 Qwen call by default |
 | **MIXED** | MODEL acquisition need **and** ≥1 non-MODEL slot filled by a system source (SYSTEM_BINDER/TOOL_DEFAULT) | **merge** system values + Qwen values → Binder/validate → certified, **provenance preserved per slot** | Binder before merge; dropping provenance; letting Qwen author a system-sourced slot |
 | **MISSING / INVALID** | No legal value obtainable from query / last-5 user turns / UI-context / resolver / callback / default | **Agent / follow-up** (exit) | **Guessing / fabrication**; a partial certified action |
 
@@ -163,6 +163,25 @@ INVALID** → Agent / follow-up (§D). It is **never** resolved by falling back 
 `select_and_extract`, and never guessed. This is **not** an additional “incomplete
 declaration” reason: no separate status is introduced — the outcome is the ordinary
 `MISSING` path.
+
+### Transitional bridge — legacy `arg_slots` → `acquisition` (approved adapter)
+
+Live Registry entries still carry the **legacy** `arg_slots` shape (`{slot: {"source": str}}`
+or `{slot: str}`), which §A.2 forbids reusing as the contract. Until the Registry itself
+exposes the new `acquisition` entry, a **narrow adapter** (`argument_acquisition/declaration.py`)
+synthesizes the declaration so a decided capability can enter the router:
+
+- **ownership from the slot NAME** via a frozen RULES table (mirrors the validated
+  `logs/_argbench/ownership.py`), default `MODEL`;
+- **reconciled with the legacy `arg_slots` source** when present (`user_input`→MODEL,
+  `attachment`/`viewer.*`/`turn_context`→SYSTEM_BINDER, `fixed`→TOOL_DEFAULT, `plugin:*`→MODEL);
+- the legacy source string is **never** exposed as a `SlotDecl` and never used as an
+  `allowed_sources` value — it only selects an ownership, which is what the declaration
+  already encodes. `SlotDecl` still carries ownership/allowed_sources/escalation only.
+
+This adapter is **transitional** and lives entirely on the acquisition side; it changes no
+DB row, no admin surface and no public schema. It disappears once the Registry serves an
+`acquisition` entry directly.
 
 ### Ownership derivations (approved)
 
@@ -323,8 +342,8 @@ them are external inputs wired in **Step 2** — Step 1 implements neither.
 
 **Future test checklist (Step 1+) — to be written only when the modules exist.** Recorded
 here as a list on purpose; **not** implemented as `skip`ped pytest tests in Step 0:
-- Argument Path Router selection per strategy (CONTEXT_DIRECT / QUERY_TO_QWEN /
-  QUERY_PLUS_5_USER_TURNS / MIXED / MISSING);
+- Argument Path Router selection per strategy (CONTEXT_DIRECT / QUERY_TO_EXTRACTOR /
+  QUERY_PLUS_5TURNS_TO_EXTRACTOR / MIXED / MISSING);
 - the Readiness double gate (Gate 1 required readiness; Gate 2 acquisition need);
 - optional-MODEL evidence vs. mere schema presence;
 - the Qwen schema boundary (only MODEL-owned slots; `asset_id` excluded);

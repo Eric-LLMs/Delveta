@@ -55,14 +55,18 @@ SOURCES_OF: dict[str, frozenset[str]] = {
 }
 
 # ── acquisition strategies (the Path Router's OUTPUT label) ────────────────────────
+# Strategy names are MODEL-AGNOSTIC: they name WHERE a MODEL-owned value comes
+# from (the query, or the query plus the last 5 user turns), never WHICH model
+# extracts it. The extractor implementation is recorded separately in telemetry
+# (currently Qwen); swapping it must not rename a strategy.
 STRATEGY_CONTEXT_DIRECT = "CONTEXT_DIRECT"
-STRATEGY_QUERY_TO_QWEN = "QUERY_TO_QWEN"
-STRATEGY_QUERY_PLUS_5_USER_TURNS = "QUERY_PLUS_5_USER_TURNS"
+STRATEGY_QUERY_TO_EXTRACTOR = "QUERY_TO_EXTRACTOR"
+STRATEGY_QUERY_PLUS_5TURNS_TO_EXTRACTOR = "QUERY_PLUS_5TURNS_TO_EXTRACTOR"
 STRATEGY_MIXED = "MIXED"
 STRATEGY_MISSING = "MISSING"
 STRATEGIES = frozenset({
-    STRATEGY_CONTEXT_DIRECT, STRATEGY_QUERY_TO_QWEN,
-    STRATEGY_QUERY_PLUS_5_USER_TURNS, STRATEGY_MIXED, STRATEGY_MISSING,
+    STRATEGY_CONTEXT_DIRECT, STRATEGY_QUERY_TO_EXTRACTOR,
+    STRATEGY_QUERY_PLUS_5TURNS_TO_EXTRACTOR, STRATEGY_MIXED, STRATEGY_MISSING,
 })
 
 

@@ -60,6 +60,9 @@ from core.application.chat.context import (
     viewer_abort as _viewer_abort,  # noqa: F401
 )
 from core.application.chat.executors.base import ChatDeps, ViewerDeps
+from core.application.chat.intent_funnel.argument_acquisition.extractor import (
+    extract as _extract_arguments,
+)
 from core.application.chat.lifecycle import (
     extract_retrieval as _extract_retrieval,  # noqa: F401
 )
@@ -333,6 +336,11 @@ def _build_chat_deps(queue: TaskQueue, drive: DriveService) -> ChatDeps:
         retriever=get_retriever(),
         # Phase 5A ACTION branch dispatches registered tools through the SAME runtime.
         run_tool=_run_tool,
+        # Phase 4 MODEL acquisition: the argument extractor for a decided capability
+        # (current implementation: Qwen over the local tool-intent endpoint). The
+        # acquisition provider is NOT wired here — the cascade builds the production
+        # one per turn from the live Registry (it needs the turn's ctx/facts).
+        argument_extractor=_extract_arguments,
     )
 
 

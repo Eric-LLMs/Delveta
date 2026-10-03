@@ -80,10 +80,19 @@ class ChatDeps:
     # Phase 4 acquisition seam: resolve the Argument Path Router's inputs for ONE
     # decided capability (declaration / evidence / system values+sources), i.e. an
     # ``argument_acquisition.inputs.AcquisitionInputs`` per capability id. None =
-    # not wired → the capability is acquisition-undeclared → the turn exits to the
-    # Agent (funnel §G). The cascade reads it duck-typed, so legacy deps objects
-    # (and deps=None) keep working unchanged. No production producer is wired yet.
+    # the cascade builds the PRODUCTION provider per turn from the live Registry
+    # (``argument_acquisition.provider.for_turn``); a non-None value (tests) wins.
+    # The cascade reads it duck-typed, so legacy deps objects (and deps=None) keep
+    # working unchanged.
     acquisition_inputs: Any = None
+    # Phase 4 extraction seam: ``await extract(*, query, entry, model_slots,
+    # bundle) -> (values, source)`` — the MODEL-owned argument extractor for one
+    # already-decided capability (current implementation: Qwen, wired in
+    # ``apps/api/routers/chat.py``). None = not wired → a MODEL acquisition need
+    # exits ``ACQUISITION_MODEL_PENDING`` to the Agent (keeps stub/legacy deps and
+    # existing tests green). It is turn-independent: the cascade calls it at the
+    # acquisition hop with the turn's context bundle.
+    argument_extractor: Any = None
 
 
 class EscalateToAgent(Exception):

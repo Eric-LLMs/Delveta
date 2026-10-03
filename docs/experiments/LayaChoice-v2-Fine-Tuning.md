@@ -4,11 +4,10 @@
 > This document is the record of that experiment; the stable architectural facts distilled
 > from it live in [architecture.md §26](../architecture.md#26-layachoice-capability-selection).
 >
-> **Production integration status.** The production `cap_router` card renderer and the
-> `deploy/laya` sidecar still render the 3-option **v1** question and do **not** emit a
-> `REJECT` criteria. v2 therefore is **not yet wired into production**; deploying it
-> requires the renderer to add the `REJECT` option (§6) and the sidecar to load the v2
-> checkpoint. Until then the deployed model remains v1.
+> **Production integration status.** v2 is wired into production: the `cap_router` card
+> renderer emits the `REJECT` criterion (§6), the `deploy/laya` sidecar loads the v2
+> checkpoint, and the service backend maps a `REJECT` answer to a normal fourth decision
+> routed to the Agent. It runs as the `cap-router` Compose service.
 >
 > Everything below is derived from the run artifacts (`scripts/laya_finetune/V2/` and the
 > frozen bundle `scripts/laya_finetune/V2/data/`), not from recollection.

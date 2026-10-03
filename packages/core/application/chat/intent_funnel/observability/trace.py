@@ -16,7 +16,14 @@ def new_trace() -> dict:
 
 def trace_json(capture: dict | None, ctx) -> dict | None:
     """The observability blob (never the full prompt): what the model saw and
-    what it decided, rebuilt from the capture seam. None = capture off."""
+    what it decided, rebuilt from the capture seam. None = capture off.
+
+    ``cap_router`` carries the selection decision (decision / capability_id /
+    confidence / option_slots / v2_ineligible_reason) and ``acquisition`` the
+    Argument Path Router's outcome (declared / strategy / model_slots /
+    system_slots / bundle_source / readiness). ``timings`` carries the
+    per-stage milliseconds the funnel measured. The row shape is a JSONB blob,
+    so a new stage adds a key here, never a column."""
     if capture is None:
         return None
     return {
@@ -24,6 +31,9 @@ def trace_json(capture: dict | None, ctx) -> dict | None:
         "matcher": capture.get("matcher"),
         "candidates": capture.get("candidates", []),
         "model_verdict": capture.get("tool_intent"),
+        "cap_router": capture.get("cap_router"),
+        "acquisition": capture.get("acquisition"),
         "entry": capture.get("entry"),
         "binder_state": capture.get("binder"),
+        "timings": capture.get("timings", {}),
     }

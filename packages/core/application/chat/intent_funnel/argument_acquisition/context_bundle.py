@@ -1,10 +1,10 @@
-"""Context bundle — the deterministic Qwen-context assembly (Phase 4 Step 1).
+"""Context bundle — the deterministic extractor-context assembly (Phase 4 Step 1).
 
 The contract §F/§B: a MODEL acquisition is fed EITHER the current query alone,
 OR the current query plus the last ``5`` ``role == "user"`` messages. Never the
 assistant/system/Agent history, never the full transcript, never a callback.
 
-When the strategy does not need history (CONTEXT_DIRECT, QUERY_TO_QWEN), the
+When the strategy does not need history (CONTEXT_DIRECT, QUERY_TO_EXTRACTOR), the
 history argument is not read at all — no full transcript is ever constructed.
 """
 from __future__ import annotations

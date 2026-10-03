@@ -32,7 +32,7 @@ from core.config import settings
 
 
 def test_backend_enum_and_default_off():
-    assert cap_router.BACKENDS == ("off", "stub", "laya")
+    assert cap_router.BACKENDS == ("off", "stub", "cap_router")
     assert settings.chat_cap_router_backend == "off"
 
 
@@ -66,4 +66,8 @@ def test_slotdecl_ownership_is_required():
 
 def test_strategy_vocabulary():
     assert STRATEGY_CONTEXT_DIRECT in STRATEGIES
-    assert {"CONTEXT_DIRECT", "QUERY_TO_QWEN", "QUERY_PLUS_5_USER_TURNS", "MIXED", "MISSING"} == STRATEGIES
+    # Strategy names are MODEL-AGNOSTIC (the extractor implementation is recorded
+    # separately in telemetry): they name WHERE a value comes from, never WHO
+    # extracts it. QUERY_TO_QWEN / QUERY_PLUS_5_USER_TURNS are retired names.
+    assert {"CONTEXT_DIRECT", "QUERY_TO_EXTRACTOR", "QUERY_PLUS_5TURNS_TO_EXTRACTOR",
+            "MIXED", "MISSING"} == STRATEGIES

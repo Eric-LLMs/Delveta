@@ -143,8 +143,9 @@ tool-intent routing。当前模型为 **v2** —— 一个 4-way 决策：要么
 （[architecture.md §26](docs/architecture.md#26-layachoice-capability-selection)）。
 生产模型 artifact 与 Delveta 源码仓库分开托管。
 
-> **集成状态。** 生产 `cap_router` 与 `deploy/laya` sidecar 仍渲染 3-option 的 v1
-> 问题、不输出 `REJECT` 选项，因此 v2 **尚未接入生产**。
+> **集成状态。** v2 已接入：`cap_router` card renderer 输出 `REJECT` criterion，
+> `deploy/laya` sidecar 加载 v2 checkpoint，服务后端把 `REJECT` 应答映射为正常的第四种
+> 决策并路由到 Agent。以 `cap-router` Compose 服务运行。
 
 ---
 

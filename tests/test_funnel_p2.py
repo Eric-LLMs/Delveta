@@ -502,11 +502,12 @@ def test_local_model_speaks_openai_wire_or_raises_unavailable(monkeypatch):
         assert seen["url"] == "http://j/v1/chat/completions"     # base + wire
         assert seen["payload"]["messages"][0]["role"] == "system"
         assert seen["payload"]["temperature"] == 0.0
-        # provider config: the DEPLOYED default is Qwen3-0.6B at Q4_K_M (the
-        # quantization rides the Ollama tag); it appears in config/compose ONLY.
+        # provider config: the DEPLOYED default is the tool-tuned Qwen3 Q5_K_M
+        # checkpoint (the quantization rides the Ollama tag); it appears in
+        # config/compose ONLY.
         from core.config import settings
-        assert settings.chat_tool_intent_local_model == "qwen3:0.6b-q4_K_M"
-        assert seen["payload"]["model"] == "qwen3:0.6b-q4_K_M"
+        assert settings.chat_tool_intent_local_model == "qwen3-tools:q5_k_m"
+        assert seen["payload"]["model"] == "qwen3-tools:q5_k_m"
         # an explicit "" falls back to the server's own default model
         monkeypatch.setattr(settings, "chat_tool_intent_local_model", "")
         await local_mod.model_reply("q", (), {}, url="http://j/v1")

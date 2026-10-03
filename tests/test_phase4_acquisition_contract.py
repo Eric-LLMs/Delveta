@@ -45,8 +45,8 @@ from core.application.chat.intent_funnel.argument_acquisition import (
     STRATEGY_CONTEXT_DIRECT,
     STRATEGY_MISSING,
     STRATEGY_MIXED,
-    STRATEGY_QUERY_PLUS_5_USER_TURNS,
-    STRATEGY_QUERY_TO_QWEN,
+    STRATEGY_QUERY_PLUS_5TURNS_TO_EXTRACTOR,
+    STRATEGY_QUERY_TO_EXTRACTOR,
     ArgumentProvenance,
     Readiness,
     SlotDecl,
@@ -66,8 +66,8 @@ def test_ownerships_are_exactly_the_four_locked_values():
 
 def test_strategies_are_exactly_the_five_locked_values():
     assert STRATEGIES == frozenset({
-        STRATEGY_CONTEXT_DIRECT, STRATEGY_QUERY_TO_QWEN,
-        STRATEGY_QUERY_PLUS_5_USER_TURNS, STRATEGY_MIXED, STRATEGY_MISSING,
+        STRATEGY_CONTEXT_DIRECT, STRATEGY_QUERY_TO_EXTRACTOR,
+        STRATEGY_QUERY_PLUS_5TURNS_TO_EXTRACTOR, STRATEGY_MIXED, STRATEGY_MISSING,
     })
 
 
@@ -148,8 +148,8 @@ def test_spec_locks_system_binder_never_reaches_qwen_and_asset_id():
 
 def test_spec_locks_the_five_strategies_and_the_double_gate():
     text = SPEC.read_text(encoding="utf-8").lower()
-    for s in ("context_direct", "query_to_qwen", "query_plus_5_user_turns",
-              "mixed", "missing"):
+    for s in ("context_direct", "query_to_extractor",
+              "query_plus_5turns_to_extractor", "mixed", "missing"):
         assert s in text
     assert "double gate" in text
     assert "required readiness" in text

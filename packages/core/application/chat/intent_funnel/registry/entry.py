@@ -20,6 +20,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+from .parameter_schema import normalize_parameters
+
 # Lifecycle states for a capability (docs/temp.md 8.6 — no hard delete).
 STATUS_ACTIVE = "active"
 STATUS_DISABLED = "disabled"
@@ -119,6 +121,17 @@ class CapabilityEntry:
     replacement_capability_id: str | None = None
     # Optimistic-concurrency token: a write must present the row_version it read.
     row_version: int = 0
+
+    def __post_init__(self) -> None:
+        # The live row / snapshot payload / admin request may carry the
+        # parameter schema in EITHER the canonical flat form or a raw
+        # JSON-Schema wrapper. The in-code type is the single boundary where the
+        # stored shape ends: normalize to the canonical flat ``{slot: spec}`` so
+        # the Binder, ARP, declaration bridge and extractor all see one contract
+        # (see :mod:`.parameter_schema`). Idempotent, so ``from_rows`` /
+        # ``from_payload`` / ``dataclasses.replace`` round-trips are safe.
+        object.__setattr__(
+            self, "parameters", normalize_parameters(self.parameters))
 
     @property
     def intent_corpus(self) -> tuple[str, ...]:

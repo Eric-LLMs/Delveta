@@ -4,7 +4,7 @@ Responsibilities are separated and this module holds NONE of them:
 
 * the selector CONTRACT (``CapabilitySelector``) lives in :mod:`..base`;
 * backend resolution (:func:`selector_for`) lives in :mod:`.factory`;
-* each concrete backend lives in its own module (:mod:`.stub`, ``laya`` later).
+* each concrete backend lives in its own module (:mod:`.stub`, :mod:`.service`).
 
 The re-exports below preserve the historic import surface
 (``from ..cap_router.backends import CapabilitySelector, selector_for``).

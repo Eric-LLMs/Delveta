@@ -1,6 +1,6 @@
 """Delveta-LayaChoice inference sidecar — a thin localhost HTTP wrapper.
 
-The Intent Funnel's ``cap_router`` lane (``chat_cap_router_backend="laya"``)
+The Intent Funnel's ``cap_router`` lane (``chat_cap_router_backend="cap_router"``)
 selects a capability by asking this service ONE choice question per turn. The
 service owns a single responsibility: load the fine-tuned LayaChoice checkpoint
 once at startup and answer ``/v1/systemone`` requests from it. It contains NO

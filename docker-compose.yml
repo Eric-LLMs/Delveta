@@ -140,18 +140,18 @@ services:
   # BOTH ends of the provider seam are config, never code:
   #   provider       = ollama (today; vLLM / llama.cpp server are drop-ins —
   #                  same OpenAI wire, zero business-logic change)
-  #   model          = qwen3:0.6b      — swap via TOOL_INTENT_OLLAMA_MODEL
-  #   quantization   = Q4_K_M (default; NOT Q8_0) — Ollama encodes it in the
-  #                  tag, so the full default tag is qwen3:0.6b-q4_K_M
+  #   model          = qwen3-tools  — swap via TOOL_INTENT_OLLAMA_MODEL
+  #   quantization   = Q5_K_M (current; Ollama encodes it in the tag, so the
+  #                  full current tag is qwen3-tools:q5_k_m)
   # Weight/config live in the named volume only; the app never references a
   # model name in business logic (config.py chat_tool_intent_local_model +
   # this env var are the ONLY places the tag appears). Host wiring (app .env,
   # gitignored):
   #   CHAT_TOOL_INTENT_BACKEND=auto
   #   CHAT_TOOL_INTENT_LOCAL_URL=http://localhost:18091/v1
-  #   CHAT_TOOL_INTENT_LOCAL_MODEL=qwen3:0.6b-q4_K_M   (config default; set only to deviate)
+  #   CHAT_TOOL_INTENT_LOCAL_MODEL=qwen3-tools:q5_k_m   (config default; set only to deviate)
   # One-time after first boot:
-  #   docker exec delveta-tool-intent ollama pull qwen3:0.6b-q4_K_M
+  #   docker exec delveta-tool-intent ollama pull qwen3-tools:q5_k_m
   tool-intent:
     image: ollama/ollama:latest
     container_name: delveta-tool-intent
@@ -163,7 +163,7 @@ services:
       - toolintent-cache:/root/.ollama
     environment:
       OLLAMA_KEEP_ALIVE: "24h"     # ms-level first hop needs a warm model in RAM
-      OLLAMA_MODEL: ${TOOL_INTENT_OLLAMA_MODEL:-qwen3:0.6b-q4_K_M}   # pull-tag documentation only
+      OLLAMA_MODEL: ${TOOL_INTENT_OLLAMA_MODEL:-qwen3-tools:q5_k_m}   # pull-tag documentation only
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "ollama", "list"]
@@ -172,27 +172,31 @@ services:
       retries: 12
       start_period: 30s
 
-  # ── LayaChoice (cap_router lane's capability-selection model) ────────────────
+  # ── cap_router (capability-selection model service) ──────────────────────────
   # Built locally from deploy/laya; speaks the TypeSafe Jev POST /v1/systemone
-  # wire (one choice question per turn). The fine-tuned checkpoint (1.3 GB) is
-  # NOT baked into the image — it is bind-mounted READ-ONLY from the host and
-  # pointed at by LAYA_CHOICE_MODEL_DIR. Host port is bound to loopback only,
-  # the same doctrine as stt/tool-intent: the host-run API reaches it at
-  # http://localhost:18092. Host wiring (app .env, gitignored):
-  #   CHAT_CAP_ROUTER_BACKEND=laya
-  #   CHAT_CAP_ROUTER_LAYA_URL=http://localhost:18092
+  # wire (one choice question per turn). The current model implementation is
+  # LayaChoice-v2 (4-slot contract: 3 capability cards + the REJECT card). The
+  # fine-tuned checkpoint (~1.3 GB) is NOT baked into the image — it is
+  # bind-mounted READ-ONLY from the host and pointed at by LAYA_CHOICE_MODEL_DIR.
+  # Host port is bound to loopback only, the same doctrine as stt/tool-intent:
+  # the host-run API reaches it at http://localhost:18092. Host wiring (app .env,
+  # gitignored):
+  #   CHAT_CAP_ROUTER_BACKEND=cap_router
+  #   CHAT_CAP_ROUTER_URL=http://localhost:18092
+  # LAYA_CHOICE_MODEL_DIR is the host path to the checkpoint dir (V2 by default);
+  # override it in .env to point at a different release.
   # start_period is generous: the FP32 checkpoint loads onto CPU at startup and
   # the service warms it with one forward pass before it is ready.
-  laya-choice:
+  cap-router:
     build: ./deploy/laya
-    image: delveta-laya-choice:latest
-    container_name: delveta-laya-choice
+    image: delveta-cap-router:latest
+    container_name: delveta-cap-router
     ports:
       - "127.0.0.1:18092:8000"
     volumes:
-      - ${LAYA_CHOICE_MODEL_DIR:-./scripts/laya_finetune/V1/out/release_repro/model}:/models/layachoice-v1:ro
+      - ${LAYA_CHOICE_MODEL_DIR:-F:/WorkSpace/Delveta/.tmp/laya_v2_eval_20261003/model}:/models/layachoice:ro
     environment:
-      LAYA_CHOICE_MODEL_DIR: /models/layachoice-v1
+      LAYA_CHOICE_MODEL_DIR: /models/layachoice
       LAYA_DEVICE: cpu
     restart: unless-stopped
     healthcheck:

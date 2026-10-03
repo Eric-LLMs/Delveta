@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 from core.application.chat.intent_funnel.cap_router import (
-    BACKEND_LAYA,
+    BACKEND_CAP_ROUTER,
     BACKEND_OFF,
     BACKEND_STUB,
     ROUTE_NONE,
@@ -19,7 +19,7 @@ from core.application.chat.intent_funnel.cap_router.backends import (
     CapabilitySelector,
     selector_for,
 )
-from core.application.chat.intent_funnel.cap_router.backends.laya import LayaSelector
+from core.application.chat.intent_funnel.cap_router.backends.service import CapRouterSelector
 from core.application.chat.intent_funnel.cap_router.backends.stub import StubSelector
 from core.application.chat.intent_funnel.contract import Candidate
 
@@ -31,16 +31,16 @@ def _c(cid, score, origin="recall", **kw):
 # ── the factory resolves only the shipped backend ────────────────────────────────
 
 
-def test_factory_returns_stub_and_laya_else_none():
+def test_factory_returns_stub_and_cap_router_else_none():
     s = selector_for(BACKEND_STUB)
     assert isinstance(s, StubSelector)
     assert isinstance(s, CapabilitySelector)  # honors the protocol
-    # "laya" resolves UNCONDITIONALLY (endpoint resolution and availability are
-    # separate concerns, ruling 2026-10-01): a missing endpoint surfaces as
+    # "cap_router" resolves UNCONDITIONALLY (endpoint resolution and availability
+    # are separate concerns, ruling 2026-10-01): a missing endpoint surfaces as
     # CapabilityRouterUnavailable from select(), NOT as a None selector here.
-    la = selector_for(BACKEND_LAYA)
-    assert isinstance(la, LayaSelector)
-    assert isinstance(la, CapabilitySelector)  # honors the protocol
+    cr = selector_for(BACKEND_CAP_ROUTER)
+    assert isinstance(cr, CapRouterSelector)
+    assert isinstance(cr, CapabilitySelector)  # honors the protocol
     # off / unknown -> None (the caller maps Agent)
     assert selector_for(BACKEND_OFF) is None
     assert selector_for("wat") is None

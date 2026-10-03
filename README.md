@@ -141,9 +141,10 @@ The model is used by the local Intent Funnel as a capability-selection model
 ([architecture.md §26](docs/architecture.md#26-layachoice-capability-selection)). The
 production model artifact is hosted separately from the Delveta source repository.
 
-> **Integration status.** The production `cap_router` and the `deploy/laya` sidecar still
-> render the 3-option v1 question and emit no `REJECT` option; v2 is therefore **not yet
-> wired into production**.
+> **Integration status.** v2 is wired: the `cap_router` card renderer emits the `REJECT`
+> criterion, the `deploy/laya` sidecar loads the v2 checkpoint, and the service backend
+> maps a `REJECT` answer to a normal fourth decision routed to the Agent. It runs as the
+> `cap-router` Compose service.
 
 ---
 
