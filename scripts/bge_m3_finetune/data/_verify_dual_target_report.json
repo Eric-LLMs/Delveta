@@ -1,0 +1,384 @@
+{
+  "files_after": {
+    "bge_m3_test.jsonl": {
+      "sha256": "22b1bfc791944ebe5900d202523bf0436d1771c9fef99653b87b75e8bf0df39b",
+      "lines": 14400
+    },
+    "bge_m3_test_desc.jsonl": {
+      "sha256": "2ea3a013896e208ec6c445d57428c3c1f12d254541ff6a85f8a24a53622a9caa",
+      "lines": 7200
+    },
+    "bge_m3_test_desc_manifest.jsonl": {
+      "sha256": "b0f5a3618e6fd4f12f10698e542266870a03445f6eecdb67c9b2a052e2d2bedb",
+      "lines": 7200
+    },
+    "bge_m3_test_manifest.jsonl": {
+      "sha256": "8fb48be848fb8f43bb5a1a9459507014e6eae6d7940e6997ce355260128f6b65",
+      "lines": 14400
+    },
+    "bge_m3_test_query.jsonl": {
+      "sha256": "032e0ac476c3b2de0a7956001e89083907a57152cf88b88ac8fef8f9971ba5b5",
+      "lines": 7200
+    },
+    "bge_m3_test_query_manifest.jsonl": {
+      "sha256": "9fb7d4bcceb35fa209f170381e0a6787bbc6f2dce26a0370a5f41ed938437edc",
+      "lines": 7200
+    },
+    "bge_m3_train.jsonl": {
+      "sha256": "163b181f4980e0fc4e0d47e9140e554f147a38a160e7a3a310e511e750fe99b8",
+      "lines": 16216
+    },
+    "bge_m3_train_desc.jsonl": {
+      "sha256": "0b5b794f849d1966066e1616ecd934a91c208ca7f938acc120eb85f925d7f5d0",
+      "lines": 8108
+    },
+    "bge_m3_train_desc_manifest.jsonl": {
+      "sha256": "f98b969a87c17114ad7fe4359035e124ffd40718531ae443249bd1c49b28dbe2",
+      "lines": 8108
+    },
+    "bge_m3_train_manifest.jsonl": {
+      "sha256": "57a0fb79d7c0238c73ab704b67928c876aaaf6f434a0975b1ae9ff095cc3a33d",
+      "lines": 16216
+    },
+    "bge_m3_train_query.jsonl": {
+      "sha256": "1e9b4759007e040bebe16217cb3a5779aefa4c56f2487e1f4bd646979947d8c4",
+      "lines": 8108
+    },
+    "bge_m3_train_query_manifest.jsonl": {
+      "sha256": "19f1c656f196c5894430ca80c5619b2989bdf7007b85d3fa00e8d2514e30d41e",
+      "lines": 8108
+    },
+    "bge_m3_dataset_generation_audit.md": {
+      "sha256": "983fdad29cea7bc43bd8dcfb317149114d1a9715f8a67c8cfce8d3f38e204052",
+      "lines": null
+    }
+  },
+  "files_backup": {
+    "bge_m3_dataset_generation_audit.md": {
+      "sha256": "983fdad29cea7bc43bd8dcfb317149114d1a9715f8a67c8cfce8d3f38e204052",
+      "lines": null
+    },
+    "bge_m3_test.jsonl": {
+      "sha256": "032e0ac476c3b2de0a7956001e89083907a57152cf88b88ac8fef8f9971ba5b5",
+      "lines": 7200
+    },
+    "bge_m3_test_manifest.jsonl": {
+      "sha256": "c4a0429ad7e440afa14610b4076707a66b2af6e5b87cffc17feadc625b524a58",
+      "lines": 7200
+    },
+    "bge_m3_train.jsonl": {
+      "sha256": "1e9b4759007e040bebe16217cb3a5779aefa4c56f2487e1f4bd646979947d8c4",
+      "lines": 8108
+    },
+    "bge_m3_train_manifest.jsonl": {
+      "sha256": "95b61c5f68ae61f3256a81319eedc5257e135bbd30aa9056e6850253ca07c6d2",
+      "lines": 8108
+    },
+    "SHA256SUMS.txt": {
+      "sha256": "c3a60a8ae1b52759fdc8057613c94308d59fe9554b60eaed30dd6d0f7fe19cb5",
+      "lines": null
+    }
+  },
+  "coverage_matrix": {
+    "cap-add-term": {
+      "desc_train": 450,
+      "desc_test": 400,
+      "query_train": 450,
+      "query_test": 400
+    },
+    "cap-artifact": {
+      "desc_train": 451,
+      "desc_test": 400,
+      "query_train": 451,
+      "query_test": 400
+    },
+    "cap-bash": {
+      "desc_train": 450,
+      "desc_test": 400,
+      "query_train": 450,
+      "query_test": 400
+    },
+    "cap-create-folder": {
+      "desc_train": 452,
+      "desc_test": 400,
+      "query_train": 452,
+      "query_test": 400
+    },
+    "cap-edit-file": {
+      "desc_train": 451,
+      "desc_test": 400,
+      "query_train": 451,
+      "query_test": 400
+    },
+    "cap-mindmap": {
+      "desc_train": 448,
+      "desc_test": 400,
+      "query_train": 448,
+      "query_test": 400
+    },
+    "cap-pdf-extract-text": {
+      "desc_train": 447,
+      "desc_test": 400,
+      "query_train": 447,
+      "query_test": 400
+    },
+    "cap-pdf-table-to-text": {
+      "desc_train": 448,
+      "desc_test": 400,
+      "query_train": 448,
+      "query_test": 400
+    },
+    "cap-rag-search": {
+      "desc_train": 451,
+      "desc_test": 400,
+      "query_train": 451,
+      "query_test": 400
+    },
+    "cap-read-document": {
+      "desc_train": 452,
+      "desc_test": 400,
+      "query_train": 452,
+      "query_test": 400
+    },
+    "cap-read-file": {
+      "desc_train": 452,
+      "desc_test": 400,
+      "query_train": 452,
+      "query_test": 400
+    },
+    "cap-research": {
+      "desc_train": 452,
+      "desc_test": 400,
+      "query_train": 452,
+      "query_test": 400
+    },
+    "cap-slides": {
+      "desc_train": 449,
+      "desc_test": 400,
+      "query_train": 449,
+      "query_test": 400
+    },
+    "cap-social-search": {
+      "desc_train": 454,
+      "desc_test": 400,
+      "query_train": 454,
+      "query_test": 400
+    },
+    "cap-summary": {
+      "desc_train": 448,
+      "desc_test": 400,
+      "query_train": 448,
+      "query_test": 400
+    },
+    "cap-translate": {
+      "desc_train": 449,
+      "desc_test": 400,
+      "query_train": 449,
+      "query_test": 400
+    },
+    "cap-vision": {
+      "desc_train": 455,
+      "desc_test": 400,
+      "query_train": 455,
+      "query_test": 400
+    },
+    "cap-web-search": {
+      "desc_train": 449,
+      "desc_test": 400,
+      "query_train": 449,
+      "query_test": 400
+    }
+  },
+  "counts": {
+    "train": {
+      "task_desc": 8108,
+      "task_query": 8108,
+      "merged": 16216
+    },
+    "test": {
+      "task_desc": 7200,
+      "task_query": 7200,
+      "merged": 14400
+    }
+  },
+  "language_profile": {
+    "train": {
+      "query": {
+        "en": 4040,
+        "zh": 3002,
+        "mixed": 1066
+      },
+      "desc": {
+        "en": 4040,
+        "zh": 3002,
+        "mixed": 1066
+      }
+    },
+    "test": {
+      "query": {
+        "mixed": 3529,
+        "zh": 2071,
+        "en": 1600
+      },
+      "desc": {
+        "mixed": 3529,
+        "zh": 2071,
+        "en": 1600
+      }
+    }
+  },
+  "declared_lang": {
+    "train": {
+      "en": 4040,
+      "zh": 4068
+    },
+    "test": {
+      "zh": 3600,
+      "en": 3600
+    }
+  },
+  "manifest_keys": {
+    "train": [
+      "declared_lang",
+      "gold_capability_id",
+      "language_profile",
+      "negative_capabilities",
+      "negative_provenance",
+      "positive_anchor",
+      "query_sha256",
+      "seed_family",
+      "source",
+      "split",
+      "task"
+    ],
+    "test": [
+      "declared_lang",
+      "gold_capability_id",
+      "language_profile",
+      "negative_capabilities",
+      "negative_provenance",
+      "positive_anchor",
+      "query_sha256",
+      "seed_family",
+      "source",
+      "split",
+      "task"
+    ]
+  },
+  "leakage": {
+    "query": {
+      "exact": 0,
+      "normalized": 0
+    },
+    "desc": {
+      "exact": 0,
+      "normalized": 0
+    },
+    "pos_train_eq_test_desc": 18,
+    "pos_train_eq_test_query": 784
+  },
+  "query_eq_pos": {
+    "query": {
+      "train": 0,
+      "test": 0
+    },
+    "desc": {
+      "train": 0,
+      "test": 0
+    }
+  },
+  "taskA_integrity_violations": {
+    "desc_neg_is_gold_desc": 0,
+    "desc_neg_cap_is_gold": 0,
+    "desc_pos_is_gold_desc": 0
+  },
+  "negative_provenance": {
+    "train": {
+      "curated_confusable": 7656,
+      "random_cross_capability": 452
+    },
+    "test": {
+      "curated_confusable": 6800,
+      "random_cross_capability": 400
+    }
+  },
+  "random_neg_caps": {
+    "train": {
+      "cap-add-term": 50,
+      "cap-artifact": 59,
+      "cap-bash": 34,
+      "cap-create-folder": 57,
+      "cap-edit-file": 44,
+      "cap-mindmap": 68,
+      "cap-pdf-extract-text": 44,
+      "cap-pdf-table-to-text": 51,
+      "cap-rag-search": 49,
+      "cap-read-document": 41,
+      "cap-read-file": 63,
+      "cap-slides": 66,
+      "cap-social-search": 57,
+      "cap-summary": 47,
+      "cap-translate": 64,
+      "cap-vision": 54,
+      "cap-web-search": 56
+    },
+    "test": {
+      "cap-add-term": 39,
+      "cap-artifact": 60,
+      "cap-bash": 54,
+      "cap-create-folder": 49,
+      "cap-edit-file": 46,
+      "cap-mindmap": 29,
+      "cap-pdf-extract-text": 48,
+      "cap-pdf-table-to-text": 45,
+      "cap-rag-search": 43,
+      "cap-read-document": 47,
+      "cap-read-file": 54,
+      "cap-slides": 47,
+      "cap-social-search": 47,
+      "cap-summary": 41,
+      "cap-translate": 49,
+      "cap-vision": 52,
+      "cap-web-search": 50
+    }
+  },
+  "rows_mixing_A_and_B_positives": 0,
+  "cap_rag_search": {
+    "train": {
+      "query_rows": 451,
+      "desc_rows": 451,
+      "pos_anchor_not_in_rag_corpus": 0,
+      "neg_owner_set": [
+        "cap-social-search",
+        "cap-web-search"
+      ],
+      "neg_caps_declared": [
+        "cap-social-search",
+        "cap-web-search"
+      ]
+    },
+    "test": {
+      "query_rows": 400,
+      "desc_rows": 400,
+      "pos_anchor_not_in_rag_corpus": 0,
+      "neg_owner_set": [
+        "cap-social-search",
+        "cap-web-search"
+      ],
+      "neg_caps_declared": [
+        "cap-social-search",
+        "cap-web-search"
+      ]
+    }
+  },
+  "retention": {
+    "cap_research_desc_train": 452,
+    "cap_research_desc_test": 400,
+    "cap_research_query_train": 452,
+    "cap_research_query_test": 400,
+    "cap_research_zh_description_present": false,
+    "rows_deleted": 0,
+    "rows_modified": 0,
+    "rows_added_taskA": 15308
+  }
+}

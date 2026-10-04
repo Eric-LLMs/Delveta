@@ -1,0 +1,156 @@
+{
+  "registry_capabilities": 18,
+  "cap_research_intent_kind": "research",
+  "cap_research_has_zh_description": false,
+  "description_chars": {
+    "cap-add-term": 353,
+    "cap-artifact": 315,
+    "cap-bash": 295,
+    "cap-create-folder": 318,
+    "cap-edit-file": 342,
+    "cap-mindmap": 323,
+    "cap-pdf-extract-text": 336,
+    "cap-pdf-table-to-text": 306,
+    "cap-rag-search": 300,
+    "cap-read-document": 394,
+    "cap-read-file": 279,
+    "cap-slides": 330,
+    "cap-social-search": 365,
+    "cap-summary": 368,
+    "cap-translate": 302,
+    "cap-vision": 309,
+    "cap-web-search": 384,
+    "cap-research": 47
+  },
+  "backup_dir": "_backup_20261004_pre_dual_target",
+  "train": {
+    "input_rows": 8108,
+    "task_query_rows": 8108,
+    "task_desc_rows": 8108,
+    "merged_rows": 16216,
+    "gold_capabilities": 18,
+    "declared_lang": {
+      "en": 4040,
+      "zh": 4068
+    },
+    "language_profile_query": {
+      "en": 4040,
+      "zh": 3002,
+      "mixed": 1066
+    },
+    "language_profile_desc": {
+      "en": 4040,
+      "zh": 3002,
+      "mixed": 1066
+    },
+    "negative_provenance": {
+      "curated_confusable": 7656,
+      "random_cross_capability": 452
+    },
+    "per_capability_query": {
+      "cap-add-term": 450,
+      "cap-artifact": 451,
+      "cap-bash": 450,
+      "cap-create-folder": 452,
+      "cap-edit-file": 451,
+      "cap-mindmap": 448,
+      "cap-pdf-extract-text": 447,
+      "cap-pdf-table-to-text": 448,
+      "cap-rag-search": 451,
+      "cap-read-document": 452,
+      "cap-read-file": 452,
+      "cap-research": 452,
+      "cap-slides": 449,
+      "cap-social-search": 454,
+      "cap-summary": 448,
+      "cap-translate": 449,
+      "cap-vision": 455,
+      "cap-web-search": 449
+    },
+    "per_capability_desc": {
+      "cap-add-term": 450,
+      "cap-artifact": 451,
+      "cap-bash": 450,
+      "cap-create-folder": 452,
+      "cap-edit-file": 451,
+      "cap-mindmap": 448,
+      "cap-pdf-extract-text": 447,
+      "cap-pdf-table-to-text": 448,
+      "cap-rag-search": 451,
+      "cap-read-document": 452,
+      "cap-read-file": 452,
+      "cap-research": 452,
+      "cap-slides": 449,
+      "cap-social-search": 454,
+      "cap-summary": 448,
+      "cap-translate": 449,
+      "cap-vision": 455,
+      "cap-web-search": 449
+    }
+  },
+  "test": {
+    "input_rows": 7200,
+    "task_query_rows": 7200,
+    "task_desc_rows": 7200,
+    "merged_rows": 14400,
+    "gold_capabilities": 18,
+    "declared_lang": {
+      "zh": 3600,
+      "en": 3600
+    },
+    "language_profile_query": {
+      "mixed": 3529,
+      "zh": 2071,
+      "en": 1600
+    },
+    "language_profile_desc": {
+      "mixed": 3529,
+      "zh": 2071,
+      "en": 1600
+    },
+    "negative_provenance": {
+      "curated_confusable": 6800,
+      "random_cross_capability": 400
+    },
+    "per_capability_query": {
+      "cap-add-term": 400,
+      "cap-artifact": 400,
+      "cap-bash": 400,
+      "cap-create-folder": 400,
+      "cap-edit-file": 400,
+      "cap-mindmap": 400,
+      "cap-pdf-extract-text": 400,
+      "cap-pdf-table-to-text": 400,
+      "cap-rag-search": 400,
+      "cap-read-document": 400,
+      "cap-read-file": 400,
+      "cap-research": 400,
+      "cap-slides": 400,
+      "cap-social-search": 400,
+      "cap-summary": 400,
+      "cap-translate": 400,
+      "cap-vision": 400,
+      "cap-web-search": 400
+    },
+    "per_capability_desc": {
+      "cap-add-term": 400,
+      "cap-artifact": 400,
+      "cap-bash": 400,
+      "cap-create-folder": 400,
+      "cap-edit-file": 400,
+      "cap-mindmap": 400,
+      "cap-pdf-extract-text": 400,
+      "cap-pdf-table-to-text": 400,
+      "cap-rag-search": 400,
+      "cap-read-document": 400,
+      "cap-read-file": 400,
+      "cap-research": 400,
+      "cap-slides": 400,
+      "cap-social-search": 400,
+      "cap-summary": 400,
+      "cap-translate": 400,
+      "cap-vision": 400,
+      "cap-web-search": 400
+    }
+  }
+}

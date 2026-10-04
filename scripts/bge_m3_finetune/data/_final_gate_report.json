@@ -1,0 +1,262 @@
+{
+  "taskB_byte_identity": {
+    "train": {
+      "query_file_sha": "1e9b4759007e040bebe16217cb3a5779aefa4c56f2487e1f4bd646979947d8c4",
+      "original_sha": "1e9b4759007e040bebe16217cb3a5779aefa4c56f2487e1f4bd646979947d8c4",
+      "identical": true,
+      "merged_head_sha": "1e9b4759007e040bebe16217cb3a5779aefa4c56f2487e1f4bd646979947d8c4",
+      "merged_head_matches": true,
+      "n": 8108
+    },
+    "test": {
+      "query_file_sha": "032e0ac476c3b2de0a7956001e89083907a57152cf88b88ac8fef8f9971ba5b5",
+      "original_sha": "032e0ac476c3b2de0a7956001e89083907a57152cf88b88ac8fef8f9971ba5b5",
+      "identical": true,
+      "merged_head_sha": "032e0ac476c3b2de0a7956001e89083907a57152cf88b88ac8fef8f9971ba5b5",
+      "merged_head_matches": true,
+      "n": 7200
+    }
+  },
+  "desc_query_set_overlap": 0,
+  "taskA_schema": {
+    "train": {
+      "rows": 8108,
+      "bad_struct": 0,
+      "pos_positions_not_equal_gold_desc": 0,
+      "pos_targets_not_in_desc_set": 0,
+      "neg_targets_not_in_desc_set": 0,
+      "pos_targets_that_are_corpus_queries": 0,
+      "neg_targets_that_are_corpus_queries": 0,
+      "distinct_neg_descriptions": 17,
+      "neg_slots": 16216
+    },
+    "test": {
+      "rows": 7200,
+      "bad_struct": 0,
+      "pos_positions_not_equal_gold_desc": 0,
+      "pos_targets_not_in_desc_set": 0,
+      "neg_targets_not_in_desc_set": 0,
+      "pos_targets_that_are_corpus_queries": 0,
+      "neg_targets_that_are_corpus_queries": 0,
+      "distinct_neg_descriptions": 17,
+      "neg_slots": 14400
+    }
+  },
+  "taskA_sample": [
+    {
+      "query": "去我上传过的资料中查找这个答案",
+      "pos_head": "Search the user's own imported materials or document library. Use it w",
+      "neg_heads": [
+        "Search social platforms such as Reddit for di",
+        "Search the public web for external informatio"
+      ]
+    },
+    {
+      "query": "帮我研究报告已经改完了，重新编译最终 PDF",
+      "pos_head": "Compile a research artifact into a formally published PDF. Use it when",
+      "neg_heads": [
+        "Create a slide deck with a canonical 16:9 PDF",
+        "Generate a grounded Markdown research summary"
+      ]
+    },
+    {
+      "query": "I need this action right now: Make a folder to keep these files in.",
+      "pos_head": "Create a new folder with an explicit name in the workspace. Use it whe",
+      "neg_heads": [
+        "Add a word, term, or expression to a named vo",
+        "Execute a command or script in the workspace "
+      ]
+    },
+    {
+      "query": "这件事交给你：帮我找找相关的论坛帖子",
+      "pos_head": "Search social platforms such as Reddit for discussions, recommendation",
+      "neg_heads": [
+        "Search the user's own imported materials or d",
+        "Search the public web for external informatio"
+      ]
+    }
+  ],
+  "coverage": {
+    "cap-add-term": {
+      "A_tr": 450,
+      "A_te": 400,
+      "B_tr": 450,
+      "B_te": 400
+    },
+    "cap-artifact": {
+      "A_tr": 451,
+      "A_te": 400,
+      "B_tr": 451,
+      "B_te": 400
+    },
+    "cap-bash": {
+      "A_tr": 450,
+      "A_te": 400,
+      "B_tr": 450,
+      "B_te": 400
+    },
+    "cap-create-folder": {
+      "A_tr": 452,
+      "A_te": 400,
+      "B_tr": 452,
+      "B_te": 400
+    },
+    "cap-edit-file": {
+      "A_tr": 451,
+      "A_te": 400,
+      "B_tr": 451,
+      "B_te": 400
+    },
+    "cap-mindmap": {
+      "A_tr": 448,
+      "A_te": 400,
+      "B_tr": 448,
+      "B_te": 400
+    },
+    "cap-pdf-extract-text": {
+      "A_tr": 447,
+      "A_te": 400,
+      "B_tr": 447,
+      "B_te": 400
+    },
+    "cap-pdf-table-to-text": {
+      "A_tr": 448,
+      "A_te": 400,
+      "B_tr": 448,
+      "B_te": 400
+    },
+    "cap-rag-search": {
+      "A_tr": 451,
+      "A_te": 400,
+      "B_tr": 451,
+      "B_te": 400
+    },
+    "cap-read-document": {
+      "A_tr": 452,
+      "A_te": 400,
+      "B_tr": 452,
+      "B_te": 400
+    },
+    "cap-read-file": {
+      "A_tr": 452,
+      "A_te": 400,
+      "B_tr": 452,
+      "B_te": 400
+    },
+    "cap-research": {
+      "A_tr": 452,
+      "A_te": 400,
+      "B_tr": 452,
+      "B_te": 400
+    },
+    "cap-slides": {
+      "A_tr": 449,
+      "A_te": 400,
+      "B_tr": 449,
+      "B_te": 400
+    },
+    "cap-social-search": {
+      "A_tr": 454,
+      "A_te": 400,
+      "B_tr": 454,
+      "B_te": 400
+    },
+    "cap-summary": {
+      "A_tr": 448,
+      "A_te": 400,
+      "B_tr": 448,
+      "B_te": 400
+    },
+    "cap-translate": {
+      "A_tr": 449,
+      "A_te": 400,
+      "B_tr": 449,
+      "B_te": 400
+    },
+    "cap-vision": {
+      "A_tr": 455,
+      "A_te": 400,
+      "B_tr": 455,
+      "B_te": 400
+    },
+    "cap-web-search": {
+      "A_tr": 449,
+      "A_te": 400,
+      "B_tr": 449,
+      "B_te": 400
+    }
+  },
+  "taskB_contains_cap_research": true,
+  "production_pool": {
+    "predicate": "recall/index.py:25  c.intent_kind <> 'research'",
+    "production_capabilities": 17,
+    "training_capabilities": 18,
+    "mismatch": "18-cap training vs 17-cap production (cap-research must be filterable at inference)",
+    "cap_research_in_taskB": {
+      "train": 452,
+      "test": 400
+    }
+  },
+  "negative_quality": {
+    "provenance_by_task": {
+      "A": {
+        "curated_confusable": 14456,
+        "random_cross_capability": 852
+      },
+      "gold_in_neg": {
+        "A": 0,
+        "B": 0
+      },
+      "B": {
+        "curated_confusable": 14456,
+        "random_cross_capability": 852
+      }
+    },
+    "cap_research_random": {
+      "train": {
+        "rows": 452,
+        "neg_slots": 904,
+        "all_gold_cap_research": true
+      },
+      "test": {
+        "rows": 400,
+        "neg_slots": 800,
+        "all_gold_cap_research": true
+      }
+    },
+    "random_neg_total_slots": 1704
+  },
+  "batch_risk": {
+    "merged_files": {
+      "train": {
+        "rows": 16216,
+        "tasks": {
+          "query": 8108,
+          "desc": 8108
+        },
+        "A_B_pairs": 8108,
+        "identical_pos_list_across_A_B": 8108
+      },
+      "test": {
+        "rows": 14400,
+        "tasks": {
+          "query": 7200,
+          "desc": 7200
+        },
+        "A_B_pairs": 7200,
+        "identical_pos_list_across_A_B": 7200
+      }
+    },
+    "pattern": "Task B block (lines 1..N) then Task A block (lines N+1..2N) — A and B ARE mixed in one file",
+    "default_loss": "in-batch negatives (AbsModeling._compute_in_batch_neg_loss), one positive per record",
+    "same_cap_rows_train": 16216,
+    "same_cap_rows_test": 14400,
+    "expected_caps_per_batch": {
+      "8": 6.61,
+      "16": 10.79,
+      "32": 15.11,
+      "64": 17.54
+    },
+    "verdict": "A/B of one query and any two same-capability rows share a gold capability; co-batching them makes one record's positive another's in-batch negative (false negative). Requires a capability-unique / task-aware sampler."
+  }
+}
