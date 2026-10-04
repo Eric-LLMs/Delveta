@@ -22,6 +22,9 @@ Training is dense-only (``unified_finetuning=False``): the model produces and
 trains only the dense embedding. The M3 sparse / ColBERT heads and their losses
 are not built and not used.
 
+Mixed precision is opt-in via ``--bf16`` (default off / fp32). It only turns on
+bf16 autocast; the objective, sampler, in-batch negatives, and loss are unchanged.
+
 Startup order (fail-fast):
 
   1. hard gate: ``train_data`` must be a single JSONL file (never a directory,
@@ -91,6 +94,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--num_train_epochs", type=float, default=1.0)
     parser.add_argument("--query_max_len", type=int, default=512)
     parser.add_argument("--passage_max_len", type=int, default=512)
+    parser.add_argument(
+        "--bf16",
+        action="store_true",
+        help="train with bf16 mixed precision (default: off / fp32). "
+        "Requires a bf16-capable GPU.",
+    )
     return parser
 
 
@@ -124,6 +133,10 @@ def build_training_arguments(ns) -> "EncoderOnlyEmbedderM3TrainingArguments":
     ``unified_finetuning`` is set explicitly: the M3 model constructor defaults it
     to ``True`` while the official M3 ``TrainingArguments`` default is ``False``.
     The dense-only recipe is pinned here instead of relying on either default.
+
+    ``bf16`` is passed to the constructor (not mutated afterwards): the derived
+    ``mixed_precision`` field is computed in ``__post_init__``, so only a
+    construction-time value reaches the accelerator. Default is ``False``.
     """
     from FlagEmbedding.finetune.embedder.encoder_only.m3 import (
         EncoderOnlyEmbedderM3TrainingArguments,
@@ -141,6 +154,8 @@ def build_training_arguments(ns) -> "EncoderOnlyEmbedderM3TrainingArguments":
         train_sampling_strategy="random",
         # Dense-only contrastive training: no sparse / ColBERT heads or losses.
         unified_finetuning=False,
+        # Opt-in bf16 mixed precision (mixed_precision is derived from this).
+        bf16=bool(ns.bf16),
     )
 
 

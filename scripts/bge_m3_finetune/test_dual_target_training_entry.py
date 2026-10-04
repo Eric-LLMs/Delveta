@@ -282,6 +282,13 @@ class TestOfflineComponents(unittest.TestCase):
             with self.assertRaises(AlignmentError):
                 validate(TRAIN_DATA, trimmed)
 
+    # ---- --bf16 is a real parser flag (no FlagEmbedding needed) --------------
+    def test_bf16_flag_parsed_without_flagembedding(self):
+        ns = entry.build_arg_parser().parse_args(["--output_dir", "x"])
+        self.assertFalse(ns.bf16)                                   # default off
+        ns2 = entry.build_arg_parser().parse_args(["--output_dir", "x", "--bf16"])
+        self.assertTrue(ns2.bf16)
+
     # ---- 10. default in-batch negatives stay ENABLED -------------------------
     def test_in_batch_negatives_enabled(self):
         # The frozen file has no `.no_in_batch_neg` suffix -> FlagEmbedding keeps
@@ -465,6 +472,53 @@ class TestM3RuntimeContract(unittest.TestCase):
         spy_x.assert_not_called()
         spy_s.assert_not_called()     # dense-only: no sparse head used
         spy_c.assert_not_called()     # dense-only: no colbert head used
+
+    # --bf16: parsed, propagated to the M3 arguments, dense-only untouched
+    @unittest.skipUnless(HAVE_ACCELERATE, "accelerate unavailable")
+    def test_bf16_flag_parsed_and_propagated(self):
+        # default: off (no behavior change for existing callers)
+        ns_off = entry.build_arg_parser().parse_args(["--output_dir", str(self.tmp / "bf16_off")])
+        self.assertFalse(ns_off.bf16)
+        # opt-in: parsed True
+        ns_on = entry.build_arg_parser().parse_args(
+            ["--output_dir", str(self.tmp / "bf16_on"), "--bf16"]
+        )
+        self.assertTrue(ns_on.bf16)
+
+        # Propagation into the M3 TrainingArguments constructor. Capture the kwargs
+        # instead of constructing for real: real construction validates bf16 vs the
+        # host GPU and would fail on a CPU-only box. This asserts the contract the
+        # entry owns -- that bf16 reaches the constructor at construction time
+        # (mutating it afterwards would NOT re-derive mixed_precision).
+        target = (
+            "FlagEmbedding.finetune.embedder.encoder_only.m3"
+            ".EncoderOnlyEmbedderM3TrainingArguments"
+        )
+        with patch(target) as ctor:
+            entry.build_training_arguments(ns_off)
+            kw_off = dict(ctor.call_args.kwargs)
+            entry.build_training_arguments(ns_on)
+            kw_on = dict(ctor.call_args.kwargs)
+
+        self.assertFalse(kw_off["bf16"])
+        self.assertTrue(kw_on["bf16"])
+        # dense-only / batch semantics must be untouched by the bf16 switch
+        self.assertFalse(kw_on["unified_finetuning"])
+        self.assertEqual(kw_on["per_device_train_batch_size"], ns_on.per_device_train_batch_size)
+
+    # --bf16 real construction (only where bf16 GPUs exist, e.g. the A30)
+    @unittest.skipUnless(
+        torch.cuda.is_available() and torch.cuda.is_bf16_supported(),
+        "bf16-capable GPU required",
+    )
+    def test_bf16_real_training_arguments_mixed_precision(self):
+        ns = entry.build_arg_parser().parse_args(
+            ["--output_dir", str(self.tmp / "bf16_real"), "--bf16"]
+        )
+        ta = entry.build_training_arguments(ns)
+        self.assertTrue(ta.bf16)
+        self.assertEqual(ta.mixed_precision, "bf16")   # derived in __post_init__
+        self.assertFalse(ta.unified_finetuning)
 
     # 3 + 7. the loss path takes no task input
     def test_forward_signature_has_no_task(self):
