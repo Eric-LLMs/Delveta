@@ -97,6 +97,8 @@
 - [25. Chat Intent Funnel — Nodeized Routing, ToolIntentModel & Shared Tool Runtime](#25-chat-intent-funnel--nodeized-routing-toolintentmodel--shared-tool-runtime)
   - [25.1 Intent Recognition Iteration](#251-intent-recognition-iteration)
   - [25.2 Iterative Recall Optimization](#252-iterative-recall-optimization)
+    - [25.2.1 Method 1 — Query Corpus Expansion](#2521-method-1--query-corpus-expansion)
+    - [25.2.2 Method 2 — Embedding Model Fine-tuning](#2522-method-2--embedding-model-fine-tuning)
   - [25.3 ToolIntentModel — Backends, Wire Discipline & Output Adapters](#253-toolintentmodel--backends-wire-discipline--output-adapters)
   - [25.4 Intent Model Optimization Iteration 1 — Capability Description Enhancement](#254-intent-model-optimization-iteration-1--capability-description-enhancement)
   - [25.5 Goals & Principles](#255-goals--principles)
@@ -135,7 +137,8 @@
   - [29.2 Training design](#292-training-design)
   - [29.3 Model variants](#293-model-variants)
   - [29.4 Evaluation status](#294-evaluation-status)
-  - [29.5 Artifacts](#295-artifacts)
+  - [29.5 Formal-500 Frozen Blind Evaluation](#295-formal-500-frozen-blind-evaluation)
+  - [29.6 Artifacts](#296-artifacts)
 
 [↑ Back to top](#table-of-contents)
 
@@ -4836,7 +4839,18 @@ The Recall threshold is intentionally kept relatively conservative. The
 system does not continuously lower the threshold simply to increase Action
 Recall.
 
-Instead, Recall is improved by continuously expanding the Query Corpus.
+Recall is improved through two complementary avenues, both at a fixed threshold:
+
+- **Method 1 — Query Corpus expansion.** Add real-world query diversity so more
+  genuine Actions fall inside the existing similarity geometry.
+- **Method 2 — Embedding model fine-tuning.** Re-shape the query↔corpus similarity
+  geometry by fine-tuning the embedding model — see
+  [§29](#29-bge-m3-embedding-fine-tuning).
+
+Method 1 is developed below; Method 2 is covered in
+[§29 BGE-M3 Embedding Fine-tuning](#29-bge-m3-embedding-fine-tuning).
+
+#### 25.2.1 Method 1 — Query Corpus Expansion
 
 The iteration loop is:
 
@@ -4926,7 +4940,7 @@ This forms a continuous production optimization loop:
 > Tool decisions on the local lightweight path → reduce expensive Agent /
 > online LLM inference.**
 
-#### Recall Evaluation Baseline
+##### Recall Evaluation Baseline
 
 This section records the Recall baseline for the first initialized Similar
 Query collection. It is the reference point every future expansion iteration
@@ -5044,6 +5058,20 @@ threshold:
 5. Re-embed the corpus.
 6. Re-run the same 144-query evaluation and the same 0.01 threshold sweep.
 7. Compare the new results against this baseline.
+
+#### 25.2.2 Method 2 — Embedding Model Fine-tuning
+
+Method 1 raises coverage by adding corpus rows; Method 2 raises retrieval quality
+over the existing corpus by re-shaping the query↔corpus similarity geometry, so the
+same corpus is scored more discriminatively. The two are complementary rather than
+substitutes, and both keep the threshold stable.
+
+For the BGE-M3 fine-tuning methodology and the Formal-500 frozen blind-test results
+(retrieval / threshold layer), see
+[§29 BGE-M3 Embedding Fine-tuning](#29-bge-m3-embedding-fine-tuning). Those results
+cover the retrieval / threshold layer only; the end-to-end tool-selection layer was
+not re-evaluated and the results do not by themselves authorize switching the
+production model.
 
 ### 25.3 ToolIntentModel — Backends, Wire Discipline & Output Adapters
 
@@ -6811,14 +6839,15 @@ path are untouched).
 ### 29.3 Model variants
 
 The fine-tuned model is published as **three parallel variants inside one
-Hugging Face repository** — not three repositories, and with **no model copy at the
-repository root**:
+Hugging Face repository**
+([`Delveta-BGE-M3-v1`](https://huggingface.co/eric-ml-nlp/Delveta-BGE-M3-v1)) — not
+three repositories, and with **no model copy at the repository root**:
 
-| Variant | Path | Format | File size (bytes) | SHA256 |
+| Variant | Path | Format | File size | SHA256 |
 |---|---|---|---|---|
-| FP32 (master / reference) | `FP32/` | safetensors, float32 | 2,271,064,456 | `2e7ef22274798217832200d8666d94f6ba0bdf18107a6dc321ad5ccfa5c2aac6` |
-| FP16 (derived) | `FP16/` | safetensors, float16 | 1,135,554,312 | `a57cab2edb389ef43467103e46cd0825cf1244fbb236ff442c5134b2eaa08db7` |
-| INT8 (derived, CPU) | `INT8/` | ONNX, dynamic int8 | 568,511,234 | `0e0ada7fec9367bca6d816b86953e4f9fe8531ebd4e8251f6de0721c0d2b1f0d` |
+| FP32 (master / reference) | `FP32/` | safetensors, float32 | 2.27 GB | `2e7ef22274798217832200d8666d94f6ba0bdf18107a6dc321ad5ccfa5c2aac6` |
+| FP16 (derived) | `FP16/` | safetensors, float16 | 1.14 GB | `a57cab2edb389ef43467103e46cd0825cf1244fbb236ff442c5134b2eaa08db7` |
+| INT8 (derived, CPU) | `INT8/` | ONNX, dynamic int8 | 568.51 MB | `0e0ada7fec9367bca6d816b86953e4f9fe8531ebd4e8251f6de0721c0d2b1f0d` |
 
 - **FP32** is the reference master and is **byte-identical to `checkpoint-2027`**.
 - **FP16** is a dtype cast of the FP32 master.
@@ -6829,7 +6858,8 @@ repository root**:
 
 The SHA256/size/environment figures above are taken from the verified variant
 reports; the conversion tooling and measured CPU figures live in each variant's own
-README.
+README. The training data is the frozen Dataset V1, published as
+[`Delveta-BGE-M3-v1-Data`](https://huggingface.co/datasets/eric-ml-nlp/Delveta-BGE-M3-v1-Data).
 
 ### 29.4 Evaluation status
 
@@ -6839,21 +6869,149 @@ Four distinct measurements are kept apart and must never be conflated:
 |---|---|
 | Training loss | recorded (final 0.8835; see [BGE-M3 Fine-Tuning](experiments/bge-m3-finetuning.md)) |
 | Embedding numerical consistency (FP32 / FP16 / INT8) | recorded on a 12-query sample (FP16 ≈ 1.0; INT8 min 0.988 / mean 0.991) |
-| Retrieval effectiveness (Recall@k, MRR) | **NOT YET COMPLETED** |
+| Retrieval effectiveness (Recall@k, MRR) | **recorded for the INT8 variant, retrieval / threshold layer only — see §29.5** |
 | Runtime performance (CPU latency / memory) | recorded for this machine's CPU (INT8 vs FP32) |
+| End-to-end tool-selection accuracy (fine-tuned) | **not evaluated — see §29.5** |
 
-Embedding cosine similarity is **not** a retrieval-effectiveness metric. There is
-currently no validated post-finetuning retrieval evaluation harness, so no
-Recall@k / MRR / capability-recall number is reported.
+Embedding cosine similarity is **not** a retrieval-effectiveness metric. A standalone
+offline evaluation adapter now scores the INT8 variant through the same encode → rank →
+gate path used by recall (§29.5); the FP32 / FP16 variants remain unmeasured for retrieval,
+and the end-to-end selection layer was not re-run.
 
 > Training loss decreased, but this alone does not establish retrieval improvement.
 
-> Post-finetuning retrieval evaluation: NOT YET COMPLETED.
+> Post-finetuning retrieval evaluation (INT8, retrieval / threshold layer): COMPLETED — §29.5.
+> Post-finetuning end-to-end tool-selection evaluation: still NOT YET COMPLETED.
 
-INT8 retrieval effectiveness is additionally **BLOCKED** — the current evaluation
-harness does not support the ONNX Runtime path. No retrieval number is fabricated.
+INT8 retrieval effectiveness was previously **BLOCKED** (the harness had no ONNX Runtime
+path); it is now evaluated at the retrieval / threshold layer through a standalone evaluation
+script (§29.5). That adapter is an offline artifact and is **not** a production path.
 
-### 29.5 Artifacts
+### 29.5 Formal-500 Frozen Blind Evaluation
+
+**Nature and scope.** This is a **retrieval- and threshold-layer** blind evaluation of the
+fine-tuned INT8 variant — it is **not** a full end-to-end blind test. Only the fine-tuned INT8
+model was run; the base `BAAI/bge-m3` columns come from the historical frozen E2E record and its
+replay artifacts (§25.2, §27.4) and were **not** re-run. The final tool-selection layer (Laya
+`cap_router`, Qwen extractor, binder, executor) was **not** re-evaluated; its accuracy is reported
+as `N/A` and is never substituted with a retrieval number.
+
+**Test set.** Formal-500 — `logs/_argbench/dataset_formal500.jsonl`, **500 frozen samples**. SHA256
+`85935f8430e3b507cc17cbefc230fbd02d999979fc055884fb8e59b5c5188e66`. `logs/` is not tracked in Git,
+so the set carries **no source commit**; its frozen identity is the file SHA256. The set was used
+as-is: no resampling, regeneration, or relabelling.
+
+**Denominators (why 454, not 500).** All 500 samples are defined, but the retrieval metrics use a
+**454-sample** comparable denominator:
+
+- 44 of the 500 never reached the funnel (L0 certified-action / agent fast path), so the recall lane
+  did not run for them — they are outside the recall comparison.
+- Of the 456 that reached the funnel, 2 are matcher-`HIT` turns where recall is skipped by design.
+- 454 = 456 − 2 is the comparable denominator.
+
+The 454-sample retrieval figures must **not** be presented as "all 500".
+
+**Model and reproducibility.**
+
+- HF repo `eric-ml-nlp/Delveta-BGE-M3-v1`, pinned revision `625d25d3749076cee90abcd1904da3a6e7ce4c9b`.
+- `INT8/model.onnx`, 568,511,234 bytes, SHA256
+  `0e0ada7fec9367bca6d816b86953e4f9fe8531ebd4e8251f6de0721c0d2b1f0d` — identical to the published
+  variant record (§29.3).
+- Smoke test PASSED: input/output signature, 1024-dim output, finite values, L2 ≈ 1.
+- Baseline source: base `BAAI/bge-m3` via production TEI; frozen record `cases.jsonl` (SHA256
+  `202ec70dc12e9bbf8b473fceb4ff90f4e261c49d60a78c7342a3bf7c0648e124`) and replay
+  `recall_replay_validation.jsonl` (SHA256
+  `cd4f3b83e7979f75c64f54c6c00bebeaf84cfbed399e4aef2a52a99b837d7f20`).
+
+**Protocol.** Corpus = the live routable corpus (856 rows: 34 standard + 822 similar), the same pool
+as the frozen run. Lane = top-64 per path → cosine → gate `chat_funnel_min_score` 0.60 → keep the
+highest-scoring row per capability. Fine-tuned encodings: batch = 1 (no padding), truncation 64,
+CLS pooling + L2 normalization inside the exported ONNX graph. The base baseline was produced by TEI
+(batched / padded) — see Limitations for the recorded protocol difference.
+
+**Retrieval and threshold results (denominator 454).**
+
+| Metric | Base `BAAI/bge-m3` (frozen) | Fine-tuned BGE-M3 INT8 | Δ |
+|---|---:|---:|---:|
+| Recall@1 | 72.91% | 89.43% | +16.52 pp |
+| Recall@3 | 79.96% | 95.37% | +15.42 pp |
+| Recall@5 | 80.84% | 97.14% | +16.30 pp |
+| Recall@10 | 81.28% | 99.34% | +18.06 pp |
+| MRR | 0.7639 | 0.9305 | +0.1666 |
+| Gold Top-3 hit rate | 79.96% | 95.37% | +15.42 pp |
+| Pass at similarity threshold 0.60 | 370/454 (81.50%) | 454/454 (100.00%) | +18.50 pp |
+
+**84 Gold Tool threshold-miss cases.** The historical root-cause file is `recall_rootcause.jsonl`
+(SHA256 `3f80c9b0b9c94d9673125b2a4450522472b3f465bd71a83e4ce60b3d5428f85e`; 86 rows = the 84 target
+cases + 2 matcher-`HIT` rows). Against the 84 target cases:
+
+| Outcome | Count |
+|---|---:|
+| Fixed | 84 / 84 |
+| Not fixed | 0 |
+| Degraded | 0 |
+
+Fine-tuned Gold Top-1 hit: 58; Gold Top-3 hit: 68. **"Fixed"** means the baseline Gold score was
+below 0.60 and the fine-tuned INT8 Gold score is ≥ 0.60 — a rise in score or rank alone is not a fix.
+Per-case detail: `cases84_compare.md`.
+
+**Retrieval-layer regression.** Over the 454 comparable samples:
+
+| Transition | Count |
+|---|---:|
+| Baseline-correct and still correct | 370 |
+| Correct → incorrect | 0 |
+| Incorrect → correct | 84 |
+| Both incorrect | 0 |
+
+Of the 370 still-correct cases: rank unchanged 327, improved 31, worse but still in the candidate list
+12. **Scope limit:** this is a **retrieval-layer** comparison only. It does **not** establish that no
+regression exists in the Laya `cap_router` selection, Qwen argument extraction, or later execution
+stages — those were not re-run.
+
+**Candidate-count and threshold risk.** The mean number of candidates passing the 0.60 gate rose from
+≈ 3.4/query to ≈ 14.7/query, and **all 454 comparable samples now pass 0.60**. The 0.60 gate therefore
+has substantially **less filtering power** on this sample. More candidates may add noise for the
+downstream Laya `cap_router` / Qwen, and there is **no end-to-end evidence** that the extra candidates
+improve the final tool selection. The production threshold must **not** be changed on the strength of
+this run; any threshold change is a separate experiment against an independent validation set, not a
+Formal-500 tuning exercise.
+
+**Limitations.**
+
+1. **Overlap with the training-side pools is measured (blindness).** Formal-500 shares only **3 exact**
+   and **9 normalized (1.8%)** queries with the training-side pools — the `similar` query corpus, the
+   `standard` query corpus, the standard-query expansions, and the BGE-M3 test set; the 9 are all very
+   short, generic phrasings (e.g. `提取全文`). Thus, 491/500 queries (98.2%) are textually novel
+   relative to the audited pools, supporting a held-out evaluation of generalization to unseen query
+   phrasings. Overlap with the BGE-M3 test-set queries is 0.
+2. **INT8 retrieval layer only.** The FP32 fine-tuned model was not evaluated.
+3. **Final tool-selection layer not evaluated.** Laya `cap_router` and Qwen were not re-run, and no
+   fine-tuned end-to-end accuracy was computed.
+4. **Runtime-protocol difference.** The base baseline is production TEI (batched / padded); the
+   fine-tuned INT8 encodings are standalone ONNX, batch = 1 (no padding). The evaluation artifacts
+   record this padding difference and a re-computation; a padding-variant recompute reproduced 84/84
+   fixes and 0 regressions, but the run conditions are **not** fully identical.
+5. This is the **first reproducible** fine-tuned-INT8 retrieval-layer evaluation; it does not by itself
+   authorize switching the production model.
+
+> On the 454 comparable Formal-500 retrieval samples, the fine-tuned BGE-M3 INT8 scores higher than the
+> historical base model on Recall@1/3/5/10 and MRR; all 84 historical Gold Tool threshold-miss cases now
+> pass the 0.60 gate, and no previously-correct case regressed at the retrieval layer. But the fine-tuned
+> model pushes **all** comparable samples past the threshold, the candidate count rises substantially, and
+> the final tool-selection layer is not evaluated. These results therefore support a retrieval-layer
+> improvement, but are not sufficient to demonstrate an end-to-end accuracy gain, and not sufficient to
+> switch the production model.
+
+**Evaluation artifacts.** The full per-sample data, embeddings, and scripts are kept in a **local**
+evaluation workspace `F:\WorkSpace\Delveta\.tmp\bge_int8_formal500_eval\` (a local path, not guaranteed
+on every environment; `.tmp/` and `logs/` are not tracked in Git). Key files: `report.md`,
+`comparison_table.md`, `comparison.jsonl` (per-sample, 500 rows), `metrics.json`, `cases84_compare.md` /
+`.jsonl`, `regression.jsonl`, `corpus_emb.npy`, `queries_emb.npy`, `SHA256SUMS.txt`, and the evaluation
+scripts. This section keeps the key metrics, sources, hashes, and the reproduction entry point; it does
+not copy the per-sample JSONL into the document.
+
+### 29.6 Artifacts
 
 | Artifact | Home |
 |---|---|
