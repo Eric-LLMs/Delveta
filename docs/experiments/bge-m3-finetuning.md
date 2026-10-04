@@ -209,6 +209,41 @@ cannot live inside the production `.venv`.
 
 ## 11. Training Procedure
 
+### 11.1 One-command entry (recommended)
+
+[`run.sh`](../../scripts/bge_m3_finetune/run.sh) is the recommended entry. It calls the real
+training script with the pinned formal recipe and adds environment/dependency checks, a
+Dataset V1 row-alignment check, and an output-directory guard. It never edits the frozen
+dataset, the capability-unique sampler, the loss, or any hyper-parameter.
+
+Linux usage (from a repo clone):
+
+```bash
+cd scripts/bge_m3_finetune
+PYTHON=../../.venv-bge-train/bin/python bash run.sh   # formal training
+bash run.sh --smoke                                  # CPU plumbing check, no training
+bash run.sh --help
+```
+
+Requirements for the formal run:
+
+| Requirement | Detail |
+|---|---|
+| Python env | a venv with FlagEmbedding 1.4.2 + transformers 5.17.0 + torch 2.14.0 + accelerate + datasets (the repo venv `.venv-bge-train`). Interpreter resolution: `--python` > `$PYTHON` > `<repo>/.venv-bge-train/bin/python` > `python3` |
+| GPU / bf16 | a CUDA device; the recorded recipe is **bf16**, so a bf16-capable GPU is required unless `--no-bf16` is passed (which deviates from the formal run) |
+| Data | Dataset V1 must be present at `data/bge_m3_train.jsonl` + `data/bge_m3_train_manifest.jsonl` (frozen, tracked in the repo); `run.sh` re-verifies row alignment before training |
+| Output dir | defaults to `scripts/bge_m3_finetune/out/`; `run.sh` refuses to write into an existing non-empty directory unless `--allow-existing-output` is given |
+
+With no flags, `run.sh` runs the formal recipe. `--smoke` performs **only** the CPU checks
+above (environment, dependencies, Dataset V1 integrity) and prints the exact command without
+training — it does not require a GPU and is **not** a substitute for the formal run.
+
+> **No resume.** [`train_bge_m3_dual_target.py`](../../scripts/bge_m3_finetune/train_bge_m3_dual_target.py)
+> exposes no checkpoint-resume flag: every run starts from the base model. `run.sh` therefore
+> offers no resume option either.
+
+### 11.2 Advanced: direct Python entry
+
 Entry: [`train_bge_m3_dual_target.py`](../../scripts/bge_m3_finetune/train_bge_m3_dual_target.py).
 Flags (verified via `--help`):
 
@@ -418,7 +453,10 @@ encode → rank → score path used for the PyTorch variants.
 Stages, in order:
 
 ```bash
-# GPU host
+# GPU host -- one-command form (same recipe; adds env + Dataset V1 alignment checks)
+PYTHON=../../.venv-bge-train/bin/python bash run.sh --output-dir /workspace/_bge_formal_out
+
+# Equivalent direct invocation
 python train_bge_m3_dual_target.py \
   --train_data data/bge_m3_train.jsonl --train_manifest data/bge_m3_train_manifest.jsonl \
   --model_name_or_path BAAI/bge-m3 --local_files_only \
@@ -477,6 +515,7 @@ verified against them after upload.
 
 ## 23. Reference Links
 
+- One-command entry: [`run.sh`](../../scripts/bge_m3_finetune/run.sh)
 - Training entry: [`train_bge_m3_dual_target.py`](../../scripts/bge_m3_finetune/train_bge_m3_dual_target.py)
 - Capability-unique sampler: [`capability_unique_sampler.py`](../../scripts/bge_m3_finetune/capability_unique_sampler.py)
 - Trainer mixin: [`capability_unique_trainer.py`](../../scripts/bge_m3_finetune/capability_unique_trainer.py)
