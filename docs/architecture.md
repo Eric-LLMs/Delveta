@@ -6837,7 +6837,7 @@ Four distinct measurements are kept apart and must never be conflated:
 
 | Measurement | Status |
 |---|---|
-| Training loss | recorded (final 0.8835; see [evaluation doc](bge-m3-evaluation.md)) |
+| Training loss | recorded (final 0.8835; see [BGE-M3 Fine-Tuning](experiments/bge-m3-finetuning.md)) |
 | Embedding numerical consistency (FP32 / FP16 / INT8) | recorded on a 12-query sample (FP16 ≈ 1.0; INT8 min 0.988 / mean 0.991) |
 | Retrieval effectiveness (Recall@k, MRR) | **NOT YET COMPLETED** |
 | Runtime performance (CPU latency / memory) | recorded for this machine's CPU (INT8 vs FP32) |
@@ -6866,9 +6866,9 @@ harness does not support the ONNX Runtime path. No retrieval number is fabricate
 | Model (FP32 / FP16 / INT8) | [Delveta-BGE-M3-v1](https://huggingface.co/eric-ml-nlp/Delveta-BGE-M3-v1) |
 | Training archive (log / summary) | [Delveta-BGE-M3-v1-checkpoints](https://huggingface.co/eric-ml-nlp/Delveta-BGE-M3-v1-checkpoints) |
 
-The reproducible training procedure lives in
-[BGE-M3 Fine-Tuning](bge-m3-finetuning.md); the four measurement families live in
-[BGE-M3 Evaluation](bge-m3-evaluation.md). This section records only the stable
-architectural facts.
+The reproducible training procedure, the model-variant generation/verification, and
+the four measurement families all live in
+[BGE-M3 Fine-Tuning](experiments/bge-m3-finetuning.md). This section records only
+the stable architectural facts.
 
 [↑ Back to top](#table-of-contents)

@@ -156,8 +156,7 @@ INT8 — inside one Hugging Face repository (no root model copy).
 - Dataset: [Delveta-BGE-M3-v1-Data](https://huggingface.co/datasets/eric-ml-nlp/Delveta-BGE-M3-v1-Data) · [`scripts/bge_m3_finetune/data/`](scripts/bge_m3_finetune/data/)
 - Training code: [`scripts/bge_m3_finetune/`](scripts/bge_m3_finetune/)
 - Training archive: [Delveta-BGE-M3-v1-checkpoints](https://huggingface.co/eric-ml-nlp/Delveta-BGE-M3-v1-checkpoints)
-- Process record: [BGE-M3 Fine-Tuning](docs/bge-m3-finetuning.md)
-- Evaluation record: [BGE-M3 Evaluation](docs/bge-m3-evaluation.md)
+- Experiment record (training + variants + evaluation): [BGE-M3 Fine-Tuning](docs/experiments/bge-m3-finetuning.md)
 
 The model is the dense retriever behind the retrieval pipeline
 ([architecture.md §29](docs/architecture.md#29-bge-m3-embedding-fine-tuning)).
