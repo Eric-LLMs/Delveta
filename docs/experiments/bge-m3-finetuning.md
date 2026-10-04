@@ -297,7 +297,89 @@ Code-level smoke tests run offline (no GPU required), from `scripts/bge_m3_finet
 
 ## 12. Training Process and Loss
 
-Logged sampling points (`run_summary.json`):
+### Objective Function and Loss
+
+The training objective is the **dense** contrastive loss of FlagEmbedding 1.4.2, computed by the
+official `EncoderOnlyEmbedderM3Model`. The frozen formal configuration is
+`unified_finetuning=False` (dense-only), so the sparse and ColBERT projections are set to `None`
+and the `if self.unified_finetuning:` branch — which would add the sparse, ColBERT, and ensemble
+terms — is never entered. Only the dense term below is evaluated. There is **no** Task-A/Task-B
+dual loss and **no** per-capability classification loss; `task` is metadata only.
+
+Source of truth (FlagEmbedding 1.4.2, as installed in `.venv-bge-train`):
+
+- `FlagEmbedding/abc/finetune/embedder/AbsModeling.py` — `_compute_in_batch_neg_loss` (the branch
+  selected here).
+- `FlagEmbedding/finetune/embedder/encoder_only/m3/modeling.py` — `EncoderOnlyEmbedderM3Model.forward`
+  (dispatches the loss), `compute_dense_score` (temperature + shape), `_compute_similarity`
+  (inner product), `compute_loss`, and the model's `torch.nn.CrossEntropyLoss(reduction='mean')`.
+
+For one batch of `B` queries with group size `G = train_group_size`, the loss is
+
+```
+q̂_i = normalize( hidden_i )            # CLS token, L2-normalised  (sentence_pooling_method='cls',
+p̂_j = normalize( hidden_j )            #                              normalize_embeddings=True)
+s_ij = ( q̂_i · p̂_j ) / τ               # τ = temperature = 0.02  → row logits over B*G candidates
+L    = (1/B) · Σ_i CE( s_i , y_i )     # y_i = i·G   (the positive column of query i's group)
+```
+
+`CE` is `torch.nn.CrossEntropyLoss(reduction='mean')`, taken over the `B·G` columns of row `s_i`.
+Each row's positive slot is column `y_i = i·G`; the other `B·G − 1` columns act as negatives.
+
+| Symbol | Meaning |
+|---|---|
+| `B` | `per_device_train_batch_size` = 8 |
+| `G` | `train_group_size` = 8 → each query owns one group of 8 candidate passages |
+| `q̂_i`, `p̂_j` | L2-normalised dense embeddings (CLS pool of the final hidden state, dim 1024) |
+| `s_ij` | logit = inner product `q̂·p̂ᵀ` (`_compute_similarity` = `matmul(q, p.transpose(0,1))`) divided by `τ`; unit-norm inputs ⇒ `s_ij ∈ [−1/τ, 1/τ] = [−50, 50]` |
+| `y_i` | index of the positive column, `i·G` (offset of group `i`'s first slot) |
+| reduction | `'mean'` — the batch loss is the mean over the `B` query rows |
+
+**How positives, explicit negatives, and in-batch negatives participate.**
+
+- *Positive* — exactly one passage per query. `AbsEmbedderTrainDataset.__getitem__` places one
+  randomly chosen positive at `passages[0]` of the group, and `y_i = i·G` selects that first slot.
+  Dataset V1 carries no `pos_scores`/`neg_scores`, so `knowledge_distillation` is off,
+  `teacher_targets is None`, and the plain (non-distillation) branch of the loss runs.
+- *Explicit negatives* — the remaining `G − 1 = 7` slots of the group, drawn from the row's `neg`
+  field. Dataset V1 has 2 negatives per row; the dataset resamples them with replacement up to
+  `G − 1` (`num = ceil((G-1)/len(neg))`).
+- *In-batch negatives* — every passage of every **other** query in the batch. The softmax
+  denominator spans all `B·G = 64` columns, so the other 7 groups are negatives too. The collator
+  keeps `no_in_batch_neg_flag = False` (no `.no_in_batch_neg` suffix on the data path), and
+  `negatives_cross_device = False` (default) means there is **no** cross-device gathering —
+  `in_batch_negatives=true` is recorded in `run_summary.json`.
+
+**`train_group_size`, the sampler, and in-batch negatives.**
+
+- `train_group_size=8` sets only how many candidate passages a query occupies in the batch; it is
+  the `G` above.
+- `CapabilityUniqueBatchSampler` is a **batch-construction** mechanism, **not** part of the loss.
+  It assembles each batch so that no two rows share a `gold_capability_id` (≤ 1 record per
+  capability per batch). `gold_capability_id` is **sampling metadata only** — it is never passed to
+  the loss. The sampler's purpose is to keep in-batch negatives from being *false* negatives (rows
+  of the same capability are near-duplicates); the loss function itself is unchanged by the
+  sampler.
+
+**Statistical口径 of the logged numbers.**
+
+- Each per-`step` value is the trainer's `logs["loss"]` = the **mean training loss over the
+  preceding logging interval** (the last `logging_steps = 500` optimizer steps), not a single
+  step's instantaneous loss. (transformers `Trainer`: `tr_loss` accumulates across the interval and
+  is divided by the number of steps since the previous log.)
+- The **Final** value `0.8835` is the trainer's `train_loss` = the **epoch-level average** training
+  loss. It is a different statistic from the interval means above; the two must not be read as one
+  series.
+- Every value is the same dense cross-entropy above — none is an accuracy, a ranking metric, or a
+  margin quantity.
+
+**Post-finetuning retrieval evaluation is NOT YET COMPLETED.** These loss values are training
+diagnostics only and do **not** by themselves establish any retrieval improvement; no Recall/MRR is
+reported here.
+
+### Logged Training Loss
+
+Logged sampling points (`run_summary.json`; values verified byte-for-byte against the HF backup):
 
 | Step | Train loss | Learning rate | Gradient norm |
 |---:|---:|---:|---:|
@@ -314,10 +396,10 @@ Logged sampling points (`run_summary.json`):
 | Peak GPU memory | 11 459.1 MB allocated / 13 558.0 MB reserved |
 | NaN / Inf | none observed — all logged losses finite |
 
-> **Statistical caveat.** The value labelled *Final* (0.8835) is the **epoch-level average
-> training loss**, which is **not** the same statistic as any single logged sampling point above
-> (those are per-step sampling losses around the logged step). The two must not be read as one
-> series.
+> **Statistical caveat.** As detailed above, the per-`step` values are **interval means** (each the
+> average over the preceding `logging_steps = 500` optimizer steps), while the value labelled
+> *Final* (0.8835) is the **epoch-level average** training loss. They are different statistics and
+> must not be read as one series.
 
 Training loss decreased, but this alone does not establish retrieval improvement.
 
