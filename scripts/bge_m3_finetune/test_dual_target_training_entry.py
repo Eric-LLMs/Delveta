@@ -21,13 +21,16 @@ Run:  .venv-laya/Scripts/python.exe -m unittest test_dual_target_training_entry 
 from __future__ import annotations
 
 import glob
+import inspect
 import json
 import os
 import random
+import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
@@ -74,6 +77,7 @@ def _ensure_accelerate() -> bool:
 
 HAVE_ACCELERATE = _ensure_accelerate()
 
+import torch  # noqa: E402
 import torch.nn as nn  # noqa: E402
 from torch.utils.data import DataLoader, Dataset  # noqa: E402
 
@@ -288,9 +292,233 @@ class TestOfflineComponents(unittest.TestCase):
 
     # ---- entry remains importable without FlagEmbedding ----------------------
     def test_entry_imports_without_flagembedding(self):
-        self.assertTrue(hasattr(entry, "main"))
-        self.assertTrue(hasattr(entry, "build_trainer_class"))
-        self.assertNotIn("FlagEmbedding", sys.modules)  # never imported at module load
+        # Proven in a clean interpreter: other tests DO import FlagEmbedding, so an
+        # in-process sys.modules check would be order-dependent. This asserts the
+        # real property -- the module loads with FlagEmbedding absent.
+        code = (
+            "import sys;"
+            f"sys.path.insert(0, r'{HERE}');"
+            "import train_bge_m3_dual_target as e;"
+            "print('HAS_MAIN', hasattr(e, 'main'));"
+            "print('HAS_BTC', hasattr(e, 'build_trainer_class'));"
+            "print('FLAG_IMPORTED', 'FlagEmbedding' in sys.modules)"
+        )
+        proc = subprocess.run(
+            [sys.executable, "-c", code], capture_output=True, text=True, cwd=str(HERE)
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("HAS_MAIN True", proc.stdout)
+        self.assertIn("HAS_BTC True", proc.stdout)
+        self.assertIn("FLAG_IMPORTED False", proc.stdout)
+
+
+# --------------------------------------------------------------------------- #
+# Tiny in-memory model + stub tokenizer for the FlagEmbedding 1.4.2 contract
+# tests. No BGE-M3 weights are loaded and nothing is downloaded.
+# --------------------------------------------------------------------------- #
+def _fake_batch(bs, seq=5, vocab=64):
+    return {
+        "input_ids": torch.randint(0, vocab, (bs, seq)),
+        "attention_mask": torch.ones(bs, seq, dtype=torch.long),
+    }
+
+
+def _tiny_dense_m3():
+    """A dense-only ``EncoderOnlyEmbedderM3Model`` on a tiny random XLM-R encoder."""
+    from transformers import XLMRobertaConfig, XLMRobertaModel
+    from FlagEmbedding.finetune.embedder.encoder_only.m3.modeling import (
+        EncoderOnlyEmbedderM3Model,
+    )
+
+    cfg = XLMRobertaConfig(
+        vocab_size=64,
+        hidden_size=16,
+        num_hidden_layers=2,
+        num_attention_heads=2,
+        intermediate_size=32,
+        max_position_embeddings=64,
+    )
+    base_model = {"model": XLMRobertaModel(cfg)}
+    return EncoderOnlyEmbedderM3Model(
+        base_model=base_model,
+        tokenizer=None,
+        negatives_cross_device=False,
+        temperature=1.0,
+        sub_batch_size=-1,
+        kd_loss_type="kl_div",
+        sentence_pooling_method="cls",
+        normalize_embeddings=False,
+        unified_finetuning=False,
+        use_self_distill=False,
+        self_distill_start_step=-1,
+    )
+
+
+class _StubTokenizer:
+    """Minimal tokenizer surface consumed by ``AbsEmbedderCollator.__call__``."""
+
+    padding_side = "right"
+
+    def __call__(self, texts, truncation=True, max_length=None, return_tensors=None):
+        return {
+            "input_ids": [[1, 2, 3] for _ in texts],
+            "attention_mask": [[1, 1, 1] for _ in texts],
+        }
+
+    def pad(self, features, padding=True, max_length=None, pad_to_multiple_of=None, return_tensors="pt"):
+        ids, am = features["input_ids"], features["attention_mask"]
+        width = max(len(row) for row in ids)
+        pad_row = lambda row: row + [0] * (width - len(row))  # noqa: E731
+        return {
+            "input_ids": torch.tensor([pad_row(r) for r in ids]),
+            "attention_mask": torch.tensor([pad_row(r) for r in am]),
+        }
+
+
+class TestM3RuntimeContract(unittest.TestCase):
+    """STEP-2B contract: the entry must wire the official FlagEmbedding 1.4.2 M3
+    runtime (Runner -> Model -> Trainer -> TrainingArguments), dense-only."""
+
+    @classmethod
+    def setUpClass(cls):
+        TMP_BASE.mkdir(parents=True, exist_ok=True)
+        cls.tmp = Path(tempfile.mkdtemp(dir=str(TMP_BASE), prefix="bge_m3contract_"))
+
+    @classmethod
+    def tearDownClass(cls):
+        import shutil
+
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    # 1 + 5. trainer inheritance, MRO, sampler-hook resolution
+    def test_trainer_class_inheritance_and_mro(self):
+        from FlagEmbedding.finetune.embedder.encoder_only.m3.trainer import (
+            EncoderOnlyEmbedderM3Trainer,
+        )
+        from FlagEmbedding.abc.finetune.embedder import AbsEmbedderTrainer
+
+        cls = entry.build_trainer_class()
+        self.assertTrue(issubclass(cls, EncoderOnlyEmbedderM3Trainer))
+        self.assertTrue(issubclass(cls, AbsEmbedderTrainer))
+        names = [c.__name__ for c in cls.__mro__]
+        self.assertEqual(names[0], "M3DualTargetTrainer")
+        self.assertEqual(names[1], "CapabilityUniqueSamplerMixin")
+        self.assertEqual(names[2], "EncoderOnlyEmbedderM3Trainer")
+        self.assertIn("AbsEmbedderTrainer", names)
+        self.assertIn("Trainer", names)
+        # the sampler hook must resolve to the mixin, never to the base Trainer
+        self.assertTrue(
+            cls._get_train_sampler.__qualname__.startswith("CapabilityUniqueSamplerMixin")
+        )
+
+    # 2. model-construction contract (the STEP-2 blocker)
+    def test_model_has_no_from_pretrained_and_entry_uses_official_ctor(self):
+        from FlagEmbedding.finetune.embedder.encoder_only.m3.modeling import (
+            EncoderOnlyEmbedderM3Model,
+        )
+
+        # the unavailable API the old entry wrongly assumed
+        self.assertFalse(hasattr(EncoderOnlyEmbedderM3Model, "from_pretrained"))
+        # the entry wires the official constructor path instead
+        self.assertTrue(callable(entry.build_model_and_tokenizer))
+        self.assertTrue(callable(entry.build_training_arguments))
+
+    # 4. M3 TrainingArguments, dense-only
+    @unittest.skipUnless(HAVE_ACCELERATE, "accelerate unavailable")
+    def test_training_arguments_are_m3_and_dense_only(self):
+        from FlagEmbedding.finetune.embedder.encoder_only.m3 import (
+            EncoderOnlyEmbedderM3TrainingArguments,
+        )
+
+        ns = entry.build_arg_parser().parse_args(["--output_dir", str(self.tmp / "ta")])
+        ta = entry.build_training_arguments(ns)
+        self.assertIsInstance(ta, EncoderOnlyEmbedderM3TrainingArguments)
+        self.assertFalse(ta.unified_finetuning)          # model default is True -> pinned False
+        self.assertFalse(ta.negatives_cross_device)
+
+    # 3 + 7. dense-only forward + default in-batch negatives path
+    def test_dense_only_forward_uses_in_batch_negatives(self):
+        model = _tiny_dense_m3()
+        self.assertIsNone(model.colbert_linear)  # dense-only: head discarded
+        self.assertIsNone(model.sparse_linear)   # dense-only: head discarded
+        model.train()
+
+        with (
+            patch.object(
+                model, "_compute_in_batch_neg_loss", wraps=model._compute_in_batch_neg_loss
+            ) as spy_in,
+            patch.object(
+                model, "_compute_no_in_batch_neg_loss", wraps=model._compute_no_in_batch_neg_loss
+            ) as spy_no,
+            patch.object(
+                model, "_compute_cross_device_neg_loss", wraps=model._compute_cross_device_neg_loss
+            ) as spy_x,
+            patch.object(model, "_sparse_embedding", wraps=model._sparse_embedding) as spy_s,
+            patch.object(model, "_colbert_embedding", wraps=model._colbert_embedding) as spy_c,
+        ):
+            out = model(queries=_fake_batch(2), passages=_fake_batch(4), no_in_batch_neg_flag=False)
+
+        self.assertEqual(out.loss.ndim, 0)
+        self.assertTrue(torch.isfinite(out.loss))
+        spy_in.assert_called_once()   # default in-batch negatives path taken
+        spy_no.assert_not_called()
+        spy_x.assert_not_called()
+        spy_s.assert_not_called()     # dense-only: no sparse head used
+        spy_c.assert_not_called()     # dense-only: no colbert head used
+
+    # 3 + 7. the loss path takes no task input
+    def test_forward_signature_has_no_task(self):
+        from FlagEmbedding.finetune.embedder.encoder_only.m3.modeling import (
+            EncoderOnlyEmbedderM3Model,
+        )
+
+        params = set(inspect.signature(EncoderOnlyEmbedderM3Model.forward).parameters)
+        self.assertNotIn("task", params)
+        self.assertEqual(
+            params,
+            {"self", "queries", "passages", "teacher_scores", "no_in_batch_neg_flag"},
+        )
+
+    # 6. the training path never consumes a `task` column
+    def test_dataset_output_independent_of_task_column(self):
+        from FlagEmbedding.abc.finetune.embedder import (
+            AbsEmbedderDataArguments,
+            AbsEmbedderTrainDataset,
+        )
+
+        base = {"query": "q", "pos": ["p"], "neg": ["n1"]}  # single neg -> deterministic
+        plain = self.tmp / "no_task.jsonl"
+        tagged = self.tmp / "with_task.jsonl"
+        plain.write_text(json.dumps(base) + "\n", encoding="utf-8")
+        tagged.write_text(json.dumps(dict(base, task="A")) + "\n", encoding="utf-8")
+
+        item_plain = AbsEmbedderTrainDataset(
+            args=AbsEmbedderDataArguments(
+                train_data=[str(plain)], train_group_size=2, cache_path=str(self.tmp)
+            ),
+            tokenizer=None,
+        )[0]
+        item_tagged = AbsEmbedderTrainDataset(
+            args=AbsEmbedderDataArguments(
+                train_data=[str(tagged)], train_group_size=2, cache_path=str(self.tmp)
+            ),
+            tokenizer=None,
+        )[0]
+
+        self.assertEqual(len(item_plain), 3)          # (query, passages, teacher_scores)
+        self.assertEqual(item_plain, item_tagged)     # `task` changes nothing
+        self.assertEqual(item_plain[0], "q")
+
+    # 7. in-batch negatives stay ENABLED at the collator boundary
+    def test_collator_sets_no_in_batch_neg_flag_false(self):
+        from FlagEmbedding.abc.finetune.embedder import AbsEmbedderCollator
+
+        collator = AbsEmbedderCollator(
+            tokenizer=_StubTokenizer(), query_max_len=8, passage_max_len=8
+        )
+        batch = collator([("q", ["p"], None)])
+        self.assertIn("no_in_batch_neg_flag", batch)
+        self.assertFalse(batch["no_in_batch_neg_flag"])
 
 
 if __name__ == "__main__":

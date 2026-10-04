@@ -4,7 +4,7 @@
 A BGE-M3 / FlagEmbedding trainer is given the capability-unique sampler by
 mixing this in *before* its base trainer::
 
-    class M3DualTargetTrainer(CapabilityUniqueSamplerMixin, AbsEmbedderTrainer):
+    class M3DualTargetTrainer(CapabilityUniqueSamplerMixin, EncoderOnlyEmbedderM3Trainer):
         ...
 
 The mixin's whole job is to override ``_get_train_sampler`` -- the single hook

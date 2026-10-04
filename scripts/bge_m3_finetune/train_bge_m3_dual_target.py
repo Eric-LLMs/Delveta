@@ -18,6 +18,10 @@ solely to keep at most one record per capability in each batch via
 training file is a plain ``.jsonl`` with no ``.no_in_batch_neg`` suffix, so the
 FlagEmbedding collator keeps ``no_in_batch_neg_flag=False``.
 
+Training is dense-only (``unified_finetuning=False``): the model produces and
+trains only the dense embedding. The M3 sparse / ColBERT heads and their losses
+are not built and not used.
+
 Startup order (fail-fast):
 
   1. hard gate: ``train_data`` must be a single JSONL file (never a directory,
@@ -45,10 +49,12 @@ from capability_unique_sampler import capabilities_from_manifest
 from capability_unique_trainer import CapabilityUniqueSamplerMixin
 from dual_target_alignment import validate
 
-# FlagEmbedding module paths for the abc-level building blocks. These follow the
-# current FlagEmbedding layout; adjust here if a different version is installed.
-_ABC_MODULE = "FlagEmbedding.abc.finetune.embedder"
-_M3_MODEL_MODULE = "FlagEmbedding.finetune.embedder.encoder_only.m3.modeling"
+# FlagEmbedding 1.4.2 module paths. The M3 fine-tuning runtime is imported
+# lazily; the model class has no ``from_pretrained`` (see
+# ``build_model_and_tokenizer``), so the entry assembles it from an ``AutoModel``
+# plus the M3 heads via the official runner helper.
+_M3_PACKAGE = "FlagEmbedding.finetune.embedder.encoder_only.m3"
+_M3_TRAINER_MODULE = f"{_M3_PACKAGE}.trainer"
 
 
 def uses_in_batch_negatives(data_path) -> bool:
@@ -73,6 +79,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="row-aligned manifest for --train_data",
     )
     parser.add_argument("--model_name_or_path", default="BAAI/bge-m3")
+    parser.add_argument(
+        "--local_files_only",
+        action="store_true",
+        help="load the tokenizer/model from the local HF cache only (no network)",
+    )
     parser.add_argument("--output_dir", required=True)
     parser.add_argument("--per_device_train_batch_size", type=int, default=8)
     parser.add_argument("--train_group_size", type=int, default=8)
@@ -84,22 +95,95 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
 
 def build_trainer_class():
-    """Return ``M3DualTargetTrainer`` = capability-unique mixin + FlagEmbedder trainer."""
+    """Return ``M3DualTargetTrainer`` = capability-unique mixin + official M3 trainer.
+
+    The mixin stays left-most so its ``_get_train_sampler`` override wins and the
+    vendored ``Trainer._get_dataloader`` routes the sampler through
+    ``batch_sampler=``. The loss and the checkpoint layout come from the official
+    ``EncoderOnlyEmbedderM3Trainer`` and are never re-implemented here.
+    """
     try:
-        from FlagEmbedding.abc.finetune.embedder import AbsEmbedderTrainer
+        from FlagEmbedding.finetune.embedder.encoder_only.m3.trainer import (
+            EncoderOnlyEmbedderM3Trainer,
+        )
     except ImportError as exc:  # pragma: no cover - requires FlagEmbedding
         raise RuntimeError(
             "FlagEmbedding is required to run training. Install it and re-run "
-            f"(could not import {_ABC_MODULE}.AbsEmbedderTrainer)."
+            f"(could not import {_M3_TRAINER_MODULE}.EncoderOnlyEmbedderM3Trainer)."
         ) from exc
 
-    class M3DualTargetTrainer(CapabilityUniqueSamplerMixin, AbsEmbedderTrainer):
-        def _save(self, output_dir=None, state_dict=None):
-            output_dir = output_dir or self.args.output_dir
-            self.save_model(output_dir)
-            self._save_processing_class(output_dir)
+    class M3DualTargetTrainer(CapabilityUniqueSamplerMixin, EncoderOnlyEmbedderM3Trainer):
+        """Capability-unique batched training on the official M3 loss/save path."""
 
     return M3DualTargetTrainer
+
+
+def build_training_arguments(ns) -> "EncoderOnlyEmbedderM3TrainingArguments":
+    """Build the M3 training arguments, explicitly dense-only.
+
+    ``unified_finetuning`` is set explicitly: the M3 model constructor defaults it
+    to ``True`` while the official M3 ``TrainingArguments`` default is ``False``.
+    The dense-only recipe is pinned here instead of relying on either default.
+    """
+    from FlagEmbedding.finetune.embedder.encoder_only.m3 import (
+        EncoderOnlyEmbedderM3TrainingArguments,
+    )
+
+    return EncoderOnlyEmbedderM3TrainingArguments(
+        output_dir=ns.output_dir,
+        per_device_train_batch_size=ns.per_device_train_batch_size,
+        learning_rate=ns.learning_rate,
+        num_train_epochs=ns.num_train_epochs,
+        # The dataset yields tuples (query, passages, teacher_scores); column
+        # removal is a no-op for tuples, kept off for clarity.
+        remove_unused_columns=False,
+        # Default training sampler is irrelevant -- the mixin replaces it.
+        train_sampling_strategy="random",
+        # Dense-only contrastive training: no sparse / ColBERT heads or losses.
+        unified_finetuning=False,
+    )
+
+
+def build_model_and_tokenizer(model_name_or_path, train_args, local_files_only=False):
+    """Assemble the BGE-M3 embedder through the official FlagEmbedding 1.4.2 runtime.
+
+    FlagEmbedding 1.4.2 exposes no ``EncoderOnlyEmbedderM3Model.from_pretrained``:
+    the model is built from a ``base_model`` dict produced by the official
+    ``EncoderOnlyEmbedderM3Runner.get_model`` (an ``AutoModel`` plus the M3 heads).
+    With ``unified_finetuning=False`` the constructor discards the two heads, so
+    only the dense encoder is trained.
+    """
+    from transformers import AutoTokenizer
+    from FlagEmbedding.finetune.embedder.encoder_only.m3.runner import (
+        EncoderOnlyEmbedderM3Runner,
+    )
+    from FlagEmbedding.finetune.embedder.encoder_only.m3.modeling import (
+        EncoderOnlyEmbedderM3Model,
+    )
+
+    source = str(model_name_or_path)
+    if local_files_only and not Path(source).exists():
+        # Resolve a hub id to its cached snapshot so nothing touches the network.
+        from huggingface_hub import snapshot_download
+
+        source = snapshot_download(repo_id=source, local_files_only=True)
+
+    tokenizer = AutoTokenizer.from_pretrained(source, local_files_only=local_files_only)
+    base_model = EncoderOnlyEmbedderM3Runner.get_model(source)
+    model = EncoderOnlyEmbedderM3Model(
+        base_model=base_model,
+        tokenizer=tokenizer,
+        negatives_cross_device=train_args.negatives_cross_device,
+        temperature=train_args.temperature,
+        sub_batch_size=train_args.sub_batch_size,
+        kd_loss_type=train_args.kd_loss_type,
+        sentence_pooling_method=train_args.sentence_pooling_method,
+        normalize_embeddings=train_args.normalize_embeddings,
+        unified_finetuning=train_args.unified_finetuning,
+        use_self_distill=train_args.use_self_distill,
+        self_distill_start_step=train_args.self_distill_start_step,
+    )
+    return tokenizer, model
 
 
 def main(argv: list[str] | None = None) -> int:  # pragma: no cover - requires FlagEmbedding
@@ -137,12 +221,12 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover - requires F
         AbsEmbedderCollator,
         AbsEmbedderDataArguments,
         AbsEmbedderTrainDataset,
-        AbsEmbedderTrainingArguments,
     )
-    from transformers import AutoTokenizer
 
-    m3_model_module = __import__(_M3_MODEL_MODULE, fromlist=["EncoderOnlyEmbedderM3Model"])
-    EncoderOnlyEmbedderM3Model = m3_model_module.EncoderOnlyEmbedderM3Model
+    train_args = build_training_arguments(args)
+    tokenizer, model = build_model_and_tokenizer(
+        args.model_name_or_path, train_args, local_files_only=args.local_files_only
+    )
 
     data_args = AbsEmbedderDataArguments(
         train_data=[str(data_path)],
@@ -150,25 +234,12 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover - requires F
         query_max_len=args.query_max_len,
         passage_max_len=args.passage_max_len,
     )
-    train_args = AbsEmbedderTrainingArguments(
-        output_dir=args.output_dir,
-        per_device_train_batch_size=args.per_device_train_batch_size,
-        learning_rate=args.learning_rate,
-        num_train_epochs=args.num_train_epochs,
-        # The dataset yields tuples (query, passages, teacher_scores); column
-        # removal is a no-op for tuples, kept off for clarity.
-        remove_unused_columns=False,
-        # Default training sampler is irrelevant -- the mixin replaces it.
-        train_sampling_strategy="random",
-    )
-
-    tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path)
-    model = EncoderOnlyEmbedderM3Model.from_pretrained(args.model_name_or_path)
     train_dataset = AbsEmbedderTrainDataset(args=data_args, tokenizer=tokenizer)
     data_collator = AbsEmbedderCollator(
         tokenizer=tokenizer,
         query_max_len=args.query_max_len,
         passage_max_len=args.passage_max_len,
+        sub_batch_size=train_args.sub_batch_size,
     )
 
     TrainerClass = build_trainer_class()
@@ -183,7 +254,7 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover - requires F
 
     print(
         f"[dual-target] aligned rows={report['rows']} capabilities={n_caps} "
-        f"in_batch_negatives={uses_in_batch_negatives(data_path)} "
+        f"in_batch_negatives={uses_in_batch_negatives(data_path)} dense_only=True "
         f"per_device_batch={args.per_device_train_batch_size}",
         flush=True,
     )
