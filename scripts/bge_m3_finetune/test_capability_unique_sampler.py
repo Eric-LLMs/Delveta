@@ -9,7 +9,7 @@ the batch-level invariant on the ``gold_capability_id`` the model actually sees:
 Also covers multi-epoch, distriuted (world_size 1/2) partitioning, the tail
 batch, and a read-only smoke test over the frozen train manifest.
 
-Run:  .venv-laya/Scripts/python.exe -m unittest test_capability_unique_sampler -v
+Run:  .venv-bge-train/Scripts/python.exe -m unittest test_capability_unique_sampler -v
 """
 from __future__ import annotations
 

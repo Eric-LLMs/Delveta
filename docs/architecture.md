@@ -130,6 +130,12 @@
   - [28.3 Production acquisition inputs](#283-production-acquisition-inputs)
   - [28.4 The extractor](#284-the-extractor)
   - [28.5 Fail-closed exits](#285-fail-closed-exits)
+- [29. BGE-M3 Embedding Fine-tuning](#29-bge-m3-embedding-fine-tuning)
+  - [29.1 Data flow](#291-data-flow)
+  - [29.2 Training design](#292-training-design)
+  - [29.3 Model variants](#293-model-variants)
+  - [29.4 Evaluation status](#294-evaluation-status)
+  - [29.5 Artifacts](#295-artifacts)
 
 [↑ Back to top](#table-of-contents)
 
@@ -6733,5 +6739,136 @@ Every other outcome — no declaration (`ACQUISITION_UNDECLARED`), no legal valu
 (`ACQUISITION_MISSING`), an unavailable extractor (`ACQUISITION_MODEL_PENDING`),
 or a non-COMPLETE Binder (`BIND_*`) — exits to the Agent byte-identically.
 Acquisition never invents a value and never re-selects a capability.
+
+## 29. BGE-M3 Embedding Fine-tuning
+
+Delveta's embedding model is a **dense-only fine-tune of `BAAI/bge-m3`**
+(XLM-RoBERTa-large, 1024-dim) that serves the retrieval pipeline (§9, §10). The
+serving unit is unchanged: the embedding service (§2, §8) is a TEI container that
+loads the fine-tuned weights; retrieval, reranking (§10.6 `cross_encoder`) and the
+Intent Funnel (§25) are downstream consumers and are **not** reshaped by this
+fine-tune.
+
+This is **one contrastive embedder, not a classifier and not a multi-task model**.
+There is a single objective, a single head (the dense embedding), and no
+"Task A / Task B" split: a positive target is either a capability's description or
+a standard/similar corpus query, and both are the *same* contrastive task.
+
+### 29.1 Data flow
+
+```
+Dataset V1
+  -> manifest alignment            (dual_target_alignment.validate)
+  -> capability-unique batching    (CapabilityUniqueBatchSampler)
+  -> BGE-M3 dense embedding
+  -> unified contrastive objective
+  -> backward / optimizer step
+  -> final checkpoint              (checkpoint-2027)
+  -> FP32 / FP16 / INT8 inference variants
+```
+
+> This diagram is the **training and model-artifact** flow. It is **not** a claim
+> that online retrieval performance has been validated — see §29.4.
+
+### 29.2 Training design
+
+| Setting | Value |
+|---|---|
+| Base model | `BAAI/bge-m3` |
+| Base revision | `5617a9f61b028005a4858fdac845db406aefb181` |
+| Fine-tuning mode | dense-only (`unified_finetuning=False`) |
+| Mixed precision | `bf16=True` (opt-in `--bf16` flag on the entry) |
+| per-device batch size | 8 |
+| `train_group_size` | 8 |
+| query / passage max length | 64 / 64 |
+| Epochs | 1 |
+| Optimizer steps | 2027 |
+| Training rows | 16216 |
+| Capabilities | 18 |
+| In-batch negatives | enabled (default) |
+| Batch sampling | capability-unique |
+| Framework | FlagEmbedding 1.4.2 |
+
+- **`task` is provenance metadata, not a label.** It never enters the loss and
+  never selects a training branch; the entry never reads it.
+- **`gold_capability_id` is used only for batch sampling** (capability-unique
+  batching); it is not a classification label and never enters the loss.
+- **Default in-batch negatives stay ON.** The training file is a plain `.jsonl`
+  with no `.no_in_batch_neg` suffix, so FlagEmbedding's collator keeps
+  `no_in_batch_neg_flag=False`.
+
+**Why capability-unique batching.** With default in-batch negatives, any batch
+that carries two records of one capability turns one record's positive text into
+another record's in-batch *negative* — a false negative that directly corrupts the
+contrastive signal. The dual-target set gives both of a query's targets the **same**
+`gold_capability_id`, so this collision is likely by default.
+`CapabilityUniqueBatchSampler` guarantees, at the DataLoader level, that every batch
+carries **at most one record per `gold_capability_id`**, which removes that class of
+false negative without changing the loss. The sampler is injected through
+`CapabilityUniqueSamplerMixin._get_train_sampler` (the official M3 loss and save
+path are untouched).
+
+### 29.3 Model variants
+
+The fine-tuned model is published as **three parallel variants inside one
+Hugging Face repository** — not three repositories, and with **no model copy at the
+repository root**:
+
+| Variant | Path | Format | File size (bytes) | SHA256 |
+|---|---|---|---|---|
+| FP32 (master / reference) | `FP32/` | safetensors, float32 | 2,271,064,456 | `2e7ef22274798217832200d8666d94f6ba0bdf18107a6dc321ad5ccfa5c2aac6` |
+| FP16 (derived) | `FP16/` | safetensors, float16 | 1,135,554,312 | `a57cab2edb389ef43467103e46cd0825cf1244fbb236ff442c5134b2eaa08db7` |
+| INT8 (derived, CPU) | `INT8/` | ONNX, dynamic int8 | 568,511,234 | `0e0ada7fec9367bca6d816b86953e4f9fe8531ebd4e8251f6de0721c0d2b1f0d` |
+
+- **FP32** is the reference master and is **byte-identical to `checkpoint-2027`**.
+- **FP16** is a dtype cast of the FP32 master.
+- **INT8** is an ONNX export of the FP32 master, then dynamically quantized to int8
+  for CPU inference.
+- All three share one embedding semantic: `normalize(last_hidden_state[:, 0])`
+  (CLS pooling + L2 normalization).
+
+The SHA256/size/environment figures above are taken from the verified variant
+reports; the conversion tooling and measured CPU figures live in each variant's own
+README.
+
+### 29.4 Evaluation status
+
+Four distinct measurements are kept apart and must never be conflated:
+
+| Measurement | Status |
+|---|---|
+| Training loss | recorded (final 0.8835; see [evaluation doc](bge-m3-evaluation.md)) |
+| Embedding numerical consistency (FP32 / FP16 / INT8) | recorded on a 12-query sample (FP16 ≈ 1.0; INT8 min 0.988 / mean 0.991) |
+| Retrieval effectiveness (Recall@k, MRR) | **NOT YET COMPLETED** |
+| Runtime performance (CPU latency / memory) | recorded for this machine's CPU (INT8 vs FP32) |
+
+Embedding cosine similarity is **not** a retrieval-effectiveness metric. There is
+currently no validated post-finetuning retrieval evaluation harness, so no
+Recall@k / MRR / capability-recall number is reported.
+
+> Training loss decreased, but this alone does not establish retrieval improvement.
+
+> Post-finetuning retrieval evaluation: NOT YET COMPLETED.
+
+INT8 retrieval effectiveness is additionally **BLOCKED** — the current evaluation
+harness does not support the ONNX Runtime path. No retrieval number is fabricated.
+
+### 29.5 Artifacts
+
+| Artifact | Home |
+|---|---|
+| Training entry | [`scripts/bge_m3_finetune/train_bge_m3_dual_target.py`](https://github.com/Eric-LLMs/Delveta/blob/main/scripts/bge_m3_finetune/train_bge_m3_dual_target.py) |
+| Capability-unique sampler | [`scripts/bge_m3_finetune/capability_unique_sampler.py`](https://github.com/Eric-LLMs/Delveta/blob/main/scripts/bge_m3_finetune/capability_unique_sampler.py) |
+| Trainer mixin | [`scripts/bge_m3_finetune/capability_unique_trainer.py`](https://github.com/Eric-LLMs/Delveta/blob/main/scripts/bge_m3_finetune/capability_unique_trainer.py) |
+| Row-alignment check | [`scripts/bge_m3_finetune/dual_target_alignment.py`](https://github.com/Eric-LLMs/Delveta/blob/main/scripts/bge_m3_finetune/dual_target_alignment.py) |
+| Tests | [`scripts/bge_m3_finetune/test_capability_unique_sampler.py`](https://github.com/Eric-LLMs/Delveta/blob/main/scripts/bge_m3_finetune/test_capability_unique_sampler.py) · [`test_dual_target_training_entry.py`](https://github.com/Eric-LLMs/Delveta/blob/main/scripts/bge_m3_finetune/test_dual_target_training_entry.py) |
+| Frozen Dataset V1 | [`scripts/bge_m3_finetune/data/`](https://github.com/Eric-LLMs/Delveta/tree/main/scripts/bge_m3_finetune/data) · [Delveta-BGE-M3-v1-Data](https://huggingface.co/datasets/eric-ml-nlp/Delveta-BGE-M3-v1-Data) |
+| Model (FP32 / FP16 / INT8) | [Delveta-BGE-M3-v1](https://huggingface.co/eric-ml-nlp/Delveta-BGE-M3-v1) |
+| Training archive (log / summary) | [Delveta-BGE-M3-v1-checkpoints](https://huggingface.co/eric-ml-nlp/Delveta-BGE-M3-v1-checkpoints) |
+
+The reproducible training procedure lives in
+[BGE-M3 Fine-Tuning](bge-m3-finetuning.md); the four measurement families live in
+[BGE-M3 Evaluation](bge-m3-evaluation.md). This section records only the stable
+architectural facts.
 
 [↑ Back to top](#table-of-contents)

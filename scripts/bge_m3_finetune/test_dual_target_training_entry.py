@@ -16,7 +16,7 @@ first tries to import it; if absent it looks for a cached copy (uv archive) and
 prepends it to ``sys.path``; if it is still unavailable the Trainer-based tests
 skip with an explicit message (they never silently pass).
 
-Run:  .venv-laya/Scripts/python.exe -m unittest test_dual_target_training_entry -v
+Run:  .venv-bge-train/Scripts/python.exe -m unittest test_dual_target_training_entry -v
 """
 from __future__ import annotations
 
