@@ -480,6 +480,30 @@ async def _acquisition_hop(requirements, deps, entry, *, query, facts, view, tra
 
     import time
 
+    from .cap_handler import handler_for
+
+    # ── Per-capability parameter handler (cap_handler) ───────────────────────────
+    # A capability wired to a CapabilityHandler owns its own argument acquisition
+    # end to end: the handler returns the standard args directly, bypassing the
+    # generic acquisition chain (declaration / evidence / context_values /
+    # provider / path_router / Qwen). Its draft still passes through the SAME
+    # _certify -> Binder -> ActionExecutor -> ToolRuntime handoff below. A
+    # capability with no handler (the default) is untouched — byte-identical.
+    handler = handler_for(entry.capability_id)
+    if handler is not None:
+        args = await handler.acquire(query=query, facts=facts)
+        if args is None:
+            trace["fallback"] = REASON_ACQUISITION_MISSING
+            return None
+        trace["acquisition"] = "CAP_HANDLER"
+        if capture is not None:
+            capture["acquisition"] = {
+                "declared": True, "strategy": "CAP_HANDLER",
+                "handler": type(handler).__name__, "args": dict(args),
+            }
+        return _certify(requirements, entry, args, facts=facts,
+                        view=view, trace=trace, capture=capture)
+
     inputs = provider(entry.capability_id) if callable(provider) else None
     declaration = dict(inputs.declaration) if inputs else {}
     evidence = dict(inputs.evidence) if inputs else {}
