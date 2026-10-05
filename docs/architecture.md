@@ -112,6 +112,7 @@
   - [25.13 The Five Adjudications](#2513-the-five-adjudications)
   - [25.14 Configuration (`core/config.py`, post single-path ruling)](#2514-configuration-coreconfigpy-post-single-path-ruling)
   - [25.15 Test Doctrine](#2515-test-doctrine)
+  - [25.16 Capability-Specific Acquisition Handlers (Phase 1)](#2516-capability-specific-acquisition-handlers-phase-1)
 - [26. LayaChoice Capability Selection](#26-layachoice-capability-selection)
   - [26.1 Position in the funnel](#261-position-in-the-funnel)
   - [26.2 Candidate contract](#262-candidate-contract)
@@ -5515,20 +5516,46 @@ point**. Four principles:
 > lane (`chat_cap_router_backend = off`, the compatibility/rollback path): ONE
 > `ToolIntentModel` hop performs capability selection AND argument extraction
 > together. The **production** lane splits that hop in two — capability selection
-> is `cap_router` (§26) and argument acquisition is its own stage (§28) that runs
-> the extractor only AFTER a capability is selected. Matcher / Recall /
+> is `cap_router` (§26) and argument acquisition is its own stage (§25.16
+> capability-specific handlers, §28 generic chain) that runs only AFTER a
+> capability is selected. Matcher / Recall /
 > Aggregation are identical on both lanes; only the node that consumes the
 > candidate set differs.
 
 On the **split** lane the two outcomes diverge at the convergence point. An
 exact HIT has already fixed the capability (chain ruling: a HIT is not itself an
-execution permit, but it needs no re-selection) — it enters
-**ARGUMENT_ACQUISITION** (§28) directly and never touches `Recall` or the
+execution permit, but it needs no re-selection) — it enters **argument
+acquisition** directly and never touches `Recall` or the
 `cap_router` selector. MISS / AMBIGUOUS instead goes `Recall → Aggregation →
 cap_router` (§26) to *choose* the capability, and only a `SELECTED` route then
-enters **ARGUMENT_ACQUISITION**. What an exact HIT wins on BOTH lanes is
+enters **argument acquisition**. What an exact HIT wins on BOTH lanes is
 independence from Recall: it never calls `recall.load_index()` and cannot be
 vetoed by an unembedded or faulting corpus (final-semantics ruling).
+
+**Two acquisition paths.** Once the capability is pinned (an exact HIT, or a
+`SELECTED` from `cap_router`), **argument acquisition** dispatches on the
+capability itself:
+
+```
+              capability pinned (HIT / SELECTED)
+                          ↓
+            ┌─────────────┴──────────────┐
+        handler registered?            no handler
+            ↓ yes                        ↓
+   cap_handler.acquire            generic acquisition
+   (§25.16, deterministic)        (§28, ARP → Qwen)
+            └─────────────┬──────────────┘
+                          ↓
+   _certify → Binder → certified action → ActionExecutor → Runtime → Tool
+```
+
+A capability with a registered **capability-specific handler** (§25.16) is served
+by that deterministic handler, which returns the standard arguments directly;
+every other capability runs the generic ARGUMENT_ACQUISITION chain (§28). Both
+paths converge on the SAME `_certify` → Binder → certified `requested_action` →
+ActionExecutor → ToolRuntime tail, so the executor never sees which path produced
+the draft. The dispatch is one capability-agnostic branch in
+`orchestrator.py::_acquisition_hop`.
 
 The funnel's one orchestrator entry is `funnel.route(ctx, deps, requirements)`,
 called by the turn orchestrator inside plan resolution (§25) — on **every** turn
@@ -5601,8 +5628,9 @@ Cascade body (`_run_nodes`, one wall-clock budget `chat_funnel_timeout_seconds`)
    instead; see the lane note above).
 6. **ToolIntentModel** (Node 3, `tool_intent/`): on the **fused** lane this is
    the ONE model call of the turn — the split lane replaces it with the
-   `cap_router` selection hop (§26) feeding a separate ARGUMENT_ACQUISITION
-   stage (§28). Its inputs are the **User Original Query** plus, per capability-level
+   `cap_router` selection hop (§26) feeding a separate argument-acquisition stage
+   (a capability-specific handler, §25.16, or the generic ARGUMENT_ACQUISITION
+   chain, §28). Its inputs are the **User Original Query** plus, per capability-level
    candidate, the capability's action information — bound tool
    (`tool_binding`), capability/tool description, the canonical parameter
    schema, curated query examples and negatives — and the Recall
@@ -6123,6 +6151,14 @@ packages/core/application/chat/
     │   ├── context_bundle.py       #   the sanctioned bundle (query, or query + last 5 turns)
     │   ├── merge.py                #   MIXED system + MODEL merge
     │   └── inputs.py               #   AcquisitionInputs
+    ├── cap_handler/               # capability-specific acquisition handlers (§25.16, Phase 1)
+    │   ├── __init__.py            #   package facade — public re-exports only
+    │   ├── roster.py              #   the ONE capability_id → handler wiring point
+    │   ├── rag_search_handler.py  #   cap-rag-search    — query (verbatim)
+    │   ├── web_search_handler.py  #   cap-web-search    — query (verbatim)
+    │   ├── social_search_handler.py # cap-social-search — query + platform (+ subreddit)
+    │   ├── vision_handler.py      #   cap-vision        — asset_id (TurnFacts) + question
+    │   └── read_document_handler.py # cap-read-document — asset_id + pages (explicit only)
     ├── tool_intent/                # the FUSED lane (§25.6, backend=off): select + extract in ONE hop
     │   ├── __init__.py             #   ladder + verdict gate
     │   ├── base.py                 #   the backend-independent seam + card payload
@@ -6295,6 +6331,189 @@ ZERO model hops (`NO_CANDIDATE` short-circuit), a Recall fault always reports
 `RECALL_UNAVAILABLE` — never a fake-empty `NO_CANDIDATE` — and the executor's
 tool-existence truth is the live `ToolRuntime.schemas()` roster, and fail-open returns the
 *same object* (identity assertion).
+
+### 25.16 Capability-Specific Acquisition Handlers (Phase 1)
+
+**Architecture ruling.** Capability selection and argument acquisition are
+separate concerns (§28). For a first cohort of five chat-plane capabilities the
+generic acquisition chain (declaration → evidence → context values → provider →
+path router → Qwen extractor → merge) is replaced by a **per-capability
+parameter handler**: a small deterministic object that owns its capability's
+argument acquisition end to end and returns the standard argument dictionary
+directly. The two acquisition paths **coexist**, and both feed the SAME tail —
+`_certify` → Binder → certified `requested_action` → ActionExecutor →
+ToolRuntime — so execution, auth, schema validation and tool dispatch are
+untouched. §28 remains the acquisition path for **every capability without a
+registered handler**; it is NOT deprecated.
+
+Scope (Phase 1): `cap-rag-search`, `cap-web-search`, `cap-social-search`,
+`cap-vision`, `cap-read-document`.
+
+#### 25.16.1 Where the branch lives (`orchestrator.py`)
+
+`intent_funnel/orchestrator.py` keeps its single responsibility — cascade
+control flow — and gains exactly ONE capability-agnostic dispatch branch inside
+`_acquisition_hop`, at the point where the generic provider would otherwise be
+built. The branch:
+
+1. resolves `handler_for(entry.capability_id)`;
+2. if a handler owns the capability, calls `await handler.acquire(query, facts)`
+   and, when it returns a draft, records `acquisition="CAP_HANDLER"` in the
+   capture and hands the draft to the SAME `_certify(...)` the generic chain
+   uses;
+3. if the handler returns `None`, exits the turn to the Agent with
+   `REASON_ACQUISITION_MISSING` (fail-closed, identical to a generic MISSING);
+4. if NO handler is registered, falls through to the generic chain byte-for-byte.
+
+The branch is written once and is capability-agnostic: it names no capability,
+no tool and no slot. Adding a capability handler is a roster edit (below), never
+an edit to `orchestrator.py`.
+
+#### 25.16.2 The package (`intent_funnel/cap_handler/`)
+
+```
+intent_funnel/cap_handler/
+├── __init__.py                  # package facade — public re-exports only
+├── roster.py                    # the ONE capability_id → handler wiring point
+├── rag_search_handler.py        # RagSearchHandler    (cap-rag-search)
+├── web_search_handler.py        # WebSearchHandler    (cap-web-search)
+├── social_search_handler.py     # SocialSearchHandler (cap-social-search)
+├── vision_handler.py            # VisionHandler       (cap-vision)
+└── read_document_handler.py     # ReadDocumentHandler (cap-read-document)
+```
+
+`roster.py` is the sole wiring surface: `HANDLERS: dict[str, CapabilityHandler]`
+maps a `capability_id` to its handler instance, and `handler_for(capability_id)`
+is the lookup the orchestrator branch uses. The `CapabilityHandler` protocol is a
+`runtime_checkable` `Protocol` declaring `capability_id: str` and
+`async def acquire(*, query, facts) -> dict | None`. There are **no base classes**
+and no shared acquisition implementation: each handler is an independent,
+deterministic module with one responsibility.
+
+#### 25.16.3 The handler contract
+
+Every capability handler obeys the same boundary:
+
+- it acquires **arguments only** — it is a *parameter acquisition boundary*;
+- it **never executes a tool**, never loads business data (no image bytes, no
+  document stream, no network fetch), and never re-implements a tool body;
+- it **never** bypasses the ActionExecutor / ToolRuntime path: its output is a
+  plain argument draft that still passes `_certify` → Binder;
+- it returns only schema-legal slots for its capability (the Binder is the final
+  gate; an unknown slot lands `BIND_INVALID`);
+- it is **fail-closed**: when it cannot produce a legal draft it returns `None`,
+  which the branch maps to `REASON_ACQUISITION_MISSING` → Agent;
+- it is **deterministic and Qwen-free** (§25.16.9).
+
+#### 25.16.4 The five handlers
+
+| Capability | Handler | Args produced | Args deliberately omitted |
+|---|---|---|---|
+| `cap-rag-search` | `RagSearchHandler` | `query` (verbatim sentence) | `top_k`, `domain` |
+| `cap-web-search` | `WebSearchHandler` | `query` (verbatim sentence) | `top_k`, `scope`, `domain`, `engine` |
+| `cap-social-search` | `SocialSearchHandler` | `query` (verbatim), `platform`, `subreddit` (reddit only) | `limit` |
+| `cap-vision` | `VisionHandler` | `asset_id` (TurnFacts), `question` (verbatim) | — |
+| `cap-read-document` | `ReadDocumentHandler` | `asset_id` (TurnFacts), `pages` (explicit only) | `query`, `question` |
+
+#### 25.16.5 `cap-rag-search` and `cap-web-search`
+
+Both copy the turn's sentence **verbatim** (only surrounding whitespace stripped)
+into `query`. Neither calls any model — the sentence *is* the query. Both omit
+`top_k`, leaving the tool's own default in force (`rag_search` and `web_search`
+each default `top_k` to 5). No invented slots: web emits no `scope` / `domain` /
+`engine`; rag emits no `domain`. A blank / whitespace-only `query` returns `None`
+(fail-closed).
+
+#### 25.16.6 `cap-social-search`
+
+`query` is the verbatim sentence and `limit` is omitted (the tool's default 10
+applies). `platform` is resolved **deterministically** over the tool's real enum
+`{reddit, x, zhihu, auto}`:
+
+- exactly one platform named in the sentence → that platform;
+- none named → `auto`;
+- two or more named → `auto` (a set is not one enum value).
+
+The bare token `x` is **never** read as the X platform (only `twitter` / `推特` /
+`x.com` match). `subreddit` is emitted **only** when `platform == reddit` and an
+explicit `r/<community>` is present. Emitting nothing for `platform` was
+rejected: the tool's own default is `reddit`, so omission would silently narrow
+an unspecified turn to reddit — `auto` is the explicit "whole platform" choice.
+A blank query returns `None`.
+
+#### 25.16.7 `cap-vision` and `cap-read-document`
+
+Both resolve `asset_id` **solely from `TurnFacts`**, in the Binder's own
+precedence — `attachment_asset_id` → `path_asset_id` → `viewer_asset_id` — so
+the handler and the Binder are **idempotent** (the Binder would set the same
+value). No asset id present in any fact → `None` (fail-closed); a guessed id or
+a fabricated path is never produced. Neither handler loads an image's bytes:
+`vision`'s `question` is the verbatim sentence (omitted when empty, letting the
+tool's default analysis prompt run), and `read_document` emits `pages` **only**
+on an explicit page reference normalized to a spec
+`read_document_tool._parse_pages_spec` accepts (`第3页`, `3-5页`, `p.3`,
+`page 4`, …) while never mis-reading a year / standard / product number
+(`2024 年`, `ISO 9001`, `GPT-4`) as a page. The `read_document` capability has
+**no `query` / `question` slot** in its schema, so the handler emits none —
+inventing one would land `BIND_INVALID` and the capability could never certify.
+(A free-text `query` slot for this capability is a separate future architecture
+question, not a Phase 1 defect.)
+
+#### 25.16.8 TurnFacts is the only context source
+
+Handlers read structured context **exclusively** from `TurnFacts`
+(`contract.py`): `attachment_asset_id`, `path_asset_id`, `viewer_asset_id`,
+`viewer_current_page`, etc. They never re-parse conversation history, never read
+the raw request body, and never query the database for context. `TurnFacts`
+stays the single, already-resolved representation of the turn — the same object
+the Matcher consumes.
+
+#### 25.16.9 Relationship to §28 (Argument Acquisition) and Qwen
+
+The generic chain in §28 is **not deprecated and not deleted**. It remains the
+default acquisition path for every capability that has no registered handler,
+and it is exercised by the same Binder / certified-handoff tail. The two paths
+are distinguished only by the dispatch branch in `_acquisition_hop`.
+
+Phase 1's five handlers are all **deterministic**, so Qwen is not on their path
+at all — the branch returns before the extractor is considered. The handlers
+deliberately share **no** `Qwen` abstraction: Qwen 0.6B is a plain callable, and
+a *future* capability whose handler genuinely needs model extraction decides for
+itself when (and whether) to call it. There is no "universal Qwen extractor"
+that every handler is forced through.
+
+#### 25.16.10 Execution safety boundary (unchanged)
+
+A handler has **no execution authority**. It produces a plain
+`dict[str, object]`; `_certify` runs the kind gate, the Binder validates against
+the live Registry schema, and the certified `requested_action` slip carries only
+`{tool, args, capability_id, funnel_registry_version, funnel_stage, funnel_kind}`
+— exactly the shape the generic chain produces (§25.11). Execution stays on the
+ActionExecutor → `run_tool` → `ToolRuntime.execute` waterfall, byte-identical to
+every other capability.
+
+#### 25.16.11 Design constraints (what a handler must NOT do)
+
+- No `NEED_USER_INPUT` / clarification state — that is the Agent's job; a handler
+  either produces a legal draft or returns `None`.
+- No new Executor, no new Agent, no `Handler → Agent → Tool` shortcut, no direct
+  tool invocation.
+- No image / document binary loading and no tool-body re-implementation.
+- No `query` slot on `read_document`; no `subreddit` outside reddit; no
+  `platform` defaulting to the tool's `reddit` when unspecified.
+- No Qwen call inside any of the five Phase 1 handlers.
+- No shared `BaseHandler`; each handler is an independent deterministic module.
+- No deletion of `argument_acquisition/`; §28 stays live for unwired capabilities.
+- Asset facts must follow `attachment → path → viewer`, matching the Binder.
+
+#### 25.16.12 Implementation status
+
+**Implemented.** All five handlers ship with the roster wiring and the single
+capability-agnostic dispatch branch in `orchestrator.py::_acquisition_hop`.
+Tests: `tests/test_cap_handler_rag_search.py`,
+`test_cap_handler_web_search.py`, `test_cap_handler_social_search.py`,
+`test_cap_handler_vision.py`, `test_cap_handler_read_document.py` (+83 tests;
+suite green at 2599 passed / 2 skipped / 2 xfailed / 0 failed).
 
 ## 26. LayaChoice Capability Selection
 
@@ -6677,6 +6896,14 @@ the **Argument Path Router** (ARP) decides HOW that capability's arguments are
 acquired. The capability is never re-selected here, and the extractor never picks
 a capability. A `REJECT` / `NONE` decision never enters this stage at all — it
 goes straight to the Agent.
+
+> **Capability-specific handlers take precedence.** For the five Phase 1
+> capabilities that ship a registered parameter handler (§25.16),
+> argument acquisition is owned by that handler and this section's chain is
+> **not** entered. This section is the acquisition path for **every capability
+> without a registered handler** — it is the default, not a legacy remnant, and
+> it is neither deprecated nor deleted. Both paths share the same Binder /
+> certified-handoff tail.
 
 ### 28.1 Contract — ownership and source
 
