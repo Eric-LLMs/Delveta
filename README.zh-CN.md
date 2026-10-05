@@ -147,6 +147,22 @@ tool-intent routing。当前模型为 **v2** —— 一个 4-way 决策：要么
 > `deploy/laya` sidecar 加载 v2 checkpoint，服务后端把 `REJECT` 应答映射为正常的第四种
 > 决策并路由到 Agent。以 `cap-router` Compose 服务运行。
 
+### Delveta BGE-M3 Embedding
+
+Delveta 的 embedding 模型是对 **`BAAI/bge-m3` 的 dense-only 微调**，采用单一统一对比目标
+（unified contrastive objective）。以 **FP32 / FP16 / INT8** 三个并行变体托管在同一个
+Hugging Face 仓库中（根目录不存模型副本）。
+
+* 模型（FP32 / FP16 / INT8）：[Delveta-BGE-M3-v1](https://huggingface.co/eric-ml-nlp/Delveta-BGE-M3-v1)
+* 下载：`hf download eric-ml-nlp/Delveta-BGE-M3-v1 --local-dir <dir>`
+* 数据集：[Delveta-BGE-M3-v1-Data](https://huggingface.co/datasets/eric-ml-nlp/Delveta-BGE-M3-v1-Data) · [`scripts/bge_m3_finetune/data/`](scripts/bge_m3_finetune/data/)
+* 训练代码：[`scripts/bge_m3_finetune/`](scripts/bge_m3_finetune/)
+* 训练档案：[Delveta-BGE-M3-v1-checkpoints](https://huggingface.co/eric-ml-nlp/Delveta-BGE-M3-v1-checkpoints)
+* 实验记录（训练 + 变体 + 评测）：[BGE-M3 Fine-Tuning](docs/experiments/bge-m3-finetuning.md)
+
+该模型是检索管线背后的 dense retriever
+（[architecture.md §29](docs/architecture.md#29-bge-m3-embedding-fine-tuning)）。
+
 ---
 
 ## 🚀 快速开始

@@ -535,9 +535,9 @@ metrics within normal run-to-run noise, not the bytes.
 
 | Artifact | Location |
 |---|---|
-| Model (FP32 / FP16 / INT8) | [Delveta-BGE-M3-v1](https://huggingface.co/eric-ml-nlp/Delveta-BGE-M3-v1) (private) |
-| Frozen dataset | [Delveta-BGE-M3-v1-Data](https://huggingface.co/datasets/eric-ml-nlp/Delveta-BGE-M3-v1-Data) · [`scripts/bge_m3_finetune/data/`](../../scripts/bge_m3_finetune/data) (private) |
-| Training archive (log / summary) | [Delveta-BGE-M3-v1-checkpoints](https://huggingface.co/eric-ml-nlp/Delveta-BGE-M3-v1-checkpoints) (private) |
+| Model (FP32 / FP16 / INT8) | [Delveta-BGE-M3-v1](https://huggingface.co/eric-ml-nlp/Delveta-BGE-M3-v1) (public) |
+| Frozen dataset | [Delveta-BGE-M3-v1-Data](https://huggingface.co/datasets/eric-ml-nlp/Delveta-BGE-M3-v1-Data) · [`scripts/bge_m3_finetune/data/`](../../scripts/bge_m3_finetune/data) (public) |
+| Training archive (log / summary) | [Delveta-BGE-M3-v1-checkpoints](https://huggingface.co/eric-ml-nlp/Delveta-BGE-M3-v1-checkpoints) (public) |
 | Training / evaluation code | [`scripts/bge_m3_finetune/`](../../scripts/bge_m3_finetune) |
 
 The SHA256 values in §15 are the authority for every published copy; uploaded weights were
