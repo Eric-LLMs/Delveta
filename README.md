@@ -123,7 +123,7 @@ See [docs/architecture.md §Implementation Status](docs/architecture.md#implemen
 
 ---
 
-## 🤗 Models & Artifacts
+## 🗂️ Models & Artifacts
 
 ### Delveta LayaChoice
 
