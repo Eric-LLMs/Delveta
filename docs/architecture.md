@@ -701,6 +701,18 @@ tools/result         (serial observer)
 - `ToolExecutionResult = ToolExecutionSuccess(value, content, meta) | ToolExecutionFailure(error, content)`.
 - `EventBus` provides `waterfall` (middleware chain, short-circuit by not calling `next()`),
   `serial`/`emit` (read-only observers), all with disposer-based `on`/`observe`.
+- **Fault containment (fail-closed).** Every decision stage runs inside its own `try`, so a raising
+  hook can never escape the loop and never lets a tool run unchecked: a raising pre-execute chain
+  **denies**, a raising execute chain is a **failure** (never a fabricated success), a raising
+  post-execute chain **blocks**, and a raising **guard** denies. A raising **approval** resolution
+  degrades to a decided **deny** with a fixed, non-leaking reason — the approval runs *before* the
+  body, so any failure in its chain (sink / broker register / unregister) proves no side effect; the
+  traceback is logged, never surfaced to the user.
+- **Per-tool body deadline.** `ToolDefinition.timeout_s` (falling back to the runtime default; `None`
+  opts out; a non-positive value is a configuration error, never a silent bypass) bounds one tool
+  body via `asyncio.wait_for`. An overrun returns `ToolExecutionFailure(info={"name": "tool_timeout"})`.
+  A tool's *own* `TimeoutError` (e.g. the bash command budget) is re-wrapped so it keeps the ordinary
+  `tool_error` channel and is never mistaken for the runtime deadline.
 
 ### 6.3 Plugins
 
@@ -6378,6 +6390,15 @@ ZERO model hops (`NO_CANDIDATE` short-circuit), a Recall fault always reports
 tool-existence truth is the live `ToolRuntime.schemas()` roster, and fail-open returns the
 *same object* (identity assertion).
 
+The **Phase 4 — Verification & Hardening** layer (§25.17) adds an independent real-chain
+family on top of the node-independent suites: `tests/e2e/` drives a certified ACTION through
+the REAL control plane into a real tool body with only the OUTER world faked — an
+eleven-capability matrix (`test_action_matrix_e2e.py`, 9 pass / 2 skip) plus boundary fault
+injection (`test_boundary_faults.py`, approval-chain / body-timeout / render / guard faults)
+and the executor fail-closed pins (`test_executor_boundary.py`). The live twin rides the same
+chain over a real uvicorn API + real PostgreSQL (`@pytest.mark.live`, skip-gated on
+`DELVETA_LIVE_TEST=1` and a reachable database). Neither family asserts latency (§25.13(d)).
+
 ### 25.16 Capability-Specific Acquisition Handlers
 
 **Architecture ruling.** Capability selection and argument acquisition are
@@ -6783,6 +6804,40 @@ capability).
 
 **Matrix.** 18 = **11** deterministic handlers + **3** deferred toolkit + **4**
 specialized.
+
+### 25.17 Phase 4 — Verification & Hardening (closed)
+
+**Naming.** This is the *verification & hardening* Phase 4. It is **distinct** from the unrelated
+"Phase 4" that names `docs/phase4-acquisition-contract.md` (the Argument-Acquisition Contract) and
+the Staged-RAG "Phase 4" reference in `docs/chat_refactor_pre_implementation.md`; those documents
+are unaffected by this section.
+
+**Phase 4 is closed.** It was a verification-and-hardening program over the shipped routing /
+action / runtime code — no new capability, no routing-semantics change. It closed one gap: **no
+committed test drove a certified action end-to-end through the REAL control plane into a provable
+effect** — every prior proof faked the last mile (a substituted dispatch seam, a fake DB, or a
+recorder-only count). The program ran in five waves:
+
+| Wave | Deliverable | Anchor |
+|---|---|---|
+| **A-1** | In-process real-chain E2E harness `tests/e2e/` — REAL orchestrator → funnel → matcher/acquisition → Binder → ActionExecutor → `chat._run_tool` → `ToolRuntime` → real tool body; only the OUTER world is faked (Registry read, LLM, DB, service seams). Eleven-capability matrix (9 pass / 2 skip) with deterministic-effect verification observed at the runtime's `tools/result` boundary. | `6fc4487` |
+| **4-B** | Boundary fault injection `tests/e2e/test_boundary_faults.py` (approval-chain, body-timeout, render, guard) plus the executor fail-closed pins. | with 4-BC |
+| **4-C** | Runtime hardening (§6.2): a raising approval chain → decided deny; a per-tool body deadline (`ToolDefinition.timeout_s` + `asyncio.wait_for`) with the `tool_timeout` classification and the mutating / read split; an explicit gRPC retriever timeout; TTS `except` logging. | `52fa01f` |
+| **4-D** | Live real-stack physical-row verification: `scripts/e2e_live_action.py` + the pytest twin `tests/e2e/test_action_live.py` — a real uvicorn API over real PostgreSQL; `create_folder` (root, `workspace_id` NULL) and `add_term` asserted as a COMMITTED row by direct `asyncpg` query, not a recorder, with deterministic teardown. | `984f802` |
+| **4-E** | Performance baseline, **record only**: in-process per-stage latency (Routing / Acquisition / Binding / Execution) and the live network + PostgreSQL-commit cost, reported as evidence with **no threshold and no gate** (§25.13(d)). | `logs/_p4e_baseline.py` (scratch) |
+
+**Architecture facts pinned.** `create_folder` and `add_term` are L0 `DIRECT_TOOLS`: the L0
+extractor certifies the turn *before* the funnel and `intent_funnel.route` returns it unchanged, so
+the live A-2 path reaches Execution + database persistence **without entering the cascade** —
+acquisition and binding are exercised only on the A-1 cascade lane. The real-chain families are kept
+physically separate from the hermetic `logs/` scratch runners (the large-scale runner's executor
+double is deliberately **not** retired).
+
+**Red lines observed.** Zero production-code change except the sanctioned 4-C hardening;
+`tests/p5_validation/**` consumed read-only; blockers are `@pytest.mark.skip`, never `xfail`;
+latency is recorded, never asserted.
+
+**Anchor.** Tag `v1.0.0-phase4-hardened` → `984f802` (the 4-D close commit), on `main`.
 
 ## 26. LayaChoice Capability Selection
 
