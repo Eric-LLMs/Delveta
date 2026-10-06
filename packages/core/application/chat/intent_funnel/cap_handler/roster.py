@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
+from .add_term_handler import AddTermHandler
 from .create_folder_handler import CreateFolderHandler
 from .pdf_extract_text_handler import PdfExtractTextHandler
 from .pdf_table_to_text_handler import PdfTableToTextHandler
@@ -38,6 +39,7 @@ class CapabilityHandler(Protocol):
 # The wiring: only capabilities whose parameter acquisition is owned by a handler
 # appear here. Everything else falls through to the generic acquisition chain.
 HANDLERS: dict[str, CapabilityHandler] = {
+    "cap-add-term": AddTermHandler(),
     "cap-create-folder": CreateFolderHandler(),
     "cap-rag-search": RagSearchHandler(),
     "cap-web-search": WebSearchHandler(),

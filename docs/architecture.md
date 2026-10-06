@@ -6381,7 +6381,7 @@ tool-existence truth is the live `ToolRuntime.schemas()` roster, and fail-open r
 ### 25.16 Capability-Specific Acquisition Handlers
 
 **Architecture ruling.** Capability selection and argument acquisition are
-separate concerns (§28). For a cohort of nine chat-plane capabilities the
+separate concerns (§28). For a cohort of ten chat-plane capabilities the
 generic acquisition chain (declaration → evidence → context values → provider →
 path router → Qwen extractor → merge) is replaced by a **per-capability
 parameter handler**: a small deterministic object that owns its capability's
@@ -6394,7 +6394,7 @@ registered handler**; it is NOT deprecated.
 
 Scope: `cap-rag-search`, `cap-web-search`, `cap-social-search`, `cap-vision`,
 `cap-read-document`, `cap-pdf-extract-text`, `cap-pdf-table-to-text`,
-`cap-read-file`, `cap-create-folder`.
+`cap-read-file`, `cap-create-folder`, `cap-add-term`.
 
 #### 25.16.1 Where the branch lives (`orchestrator.py`)
 
@@ -6431,7 +6431,8 @@ intent_funnel/cap_handler/
 ├── pdf_extract_text_handler.py       # PdfExtractTextHandler   (cap-pdf-extract-text)
 ├── pdf_table_to_text_handler.py      # PdfTableToTextHandler   (cap-pdf-table-to-text)
 ├── read_file_handler.py              # ReadFileHandler         (cap-read-file)
-└── create_folder_handler.py          # CreateFolderHandler     (cap-create-folder)
+├── create_folder_handler.py          # CreateFolderHandler     (cap-create-folder)
+└── add_term_handler.py               # AddTermHandler          (cap-add-term)
 ```
 
 `roster.py` is the sole wiring surface: `HANDLERS: dict[str, CapabilityHandler]`
@@ -6460,7 +6461,7 @@ Every capability handler obeys the same boundary:
   which the branch maps to `REASON_ACQUISITION_MISSING` → Agent;
 - it is **deterministic and Qwen-free** (§25.16.11).
 
-#### 25.16.4 The nine handlers
+#### 25.16.4 The ten handlers
 
 | Capability | Handler | Args produced | Args deliberately omitted |
 |---|---|---|---|
@@ -6473,6 +6474,7 @@ Every capability handler obeys the same boundary:
 | `cap-pdf-table-to-text` | `PdfTableToTextHandler` | `asset_id` (TurnFacts), `pages` (viewer facts) | `query`, `question` |
 | `cap-read-file` | `ReadFileHandler` | `path` (verbatim literal) | `max_chars` |
 | `cap-create-folder` | `CreateFolderHandler` | `name` (verbatim literal) | `parent_path` |
+| `cap-add-term` | `AddTermHandler` | `term` (verbatim literal), `domain` (verbatim literal, omitted when unnamed) | `definition` |
 
 #### 25.16.5 `cap-rag-search` and `cap-web-search`
 
@@ -6586,7 +6588,65 @@ the substring `"path"` in a parameter name (`parent_path`) — a rename would ha
 silently downgraded the tool to READ and bypassed the sandbox's ASK/DENY gate.
 The permission is now independent of any parameter name.
 
-#### 25.16.10 TurnFacts is the only context source
+#### 25.16.10 `cap-add-term` — the deterministic term/domain handler & policy β
+
+`cap-add-term` (tool binding `add_term`) owns TWO slots — `term` and `domain`,
+both resolved **deterministically** (zero-LLM / zero-Qwen). The capability
+inserts a word into a vocabulary domain addressed **by name**; the tool resolves
+the domain by an exact case-insensitive name match over the caller's visible
+domains, so the `domain` value must be the user's **literal** domain name —
+copied, never translated or slugified.
+
+`term` comes from a literal span, first hit wins: (1) a **quoted** span (ASCII
+`"…"` / `'…'`, full-width `“…”` / `‘…’` / `「…」` / `『…』`, quotes dropped,
+inside copied verbatim and edge-trimmed); (2) an unquoted Chinese term — the
+token between `把` / `将` and the trailing insert verb; (3) an unquoted English
+term — the single token after an insert verb (`add` / `put` / `record` / `save` /
+`insert`) and before `to` / `in` / `into`. A deictic reference with no antecedent
+(`这个词` / `this word`) is **not** a term: no literal span ⇒ the term is MISSING.
+
+`domain` is located by structure and copied **verbatim**: the Chinese `在 X 里加入`
+clause, the Chinese verb-trailing clause, or the English `… to|in|into
+[determiner] X` clause. The region must carry a vocabulary indicator (`词库` /
+`词汇库` / `术语表` / `glossary` / `vocabulary` / `terms` …); an indicator-less
+region names no domain. Normalization is **minimal**: strip a leading determiner
+(`my` / `the` / `我的` …), a trailing bare `词库` token, and a trailing bare
+English `domain` word. **Domain suffix strip rule** — a whitespace-separated
+`词库` is the generic carrier and is **dropped**, leaving the modifier
+(`信息论 词库` → `信息论`, `金融 词库` → `金融`), while `词汇库` / `词汇本` /
+`术语库` / `术语表` / `生词本` (and the English `glossary` / `vocabulary` /
+`terms` with a modifier present) are kept **whole** as the domain name
+(`金融 词汇库` → `金融 词汇库`; `machine learning vocabulary` keeps its
+spaces). Translation and slugification are defects: a Chinese domain is never
+rewritten to an English slug, and a multi-token domain is never truncated at
+whitespace.
+
+**Policy β — honest extraction, the Binder owns completeness.** The handler does
+not decide whether the turn is *complete*; it reports exactly what the sentence
+yields and never invents a value. The draft contract is therefore **tri-state**:
+
+- `term` present AND `domain` present → `{"term": …, "domain": …}` (certifies);
+- `term` present AND `domain` absent → the **partial** draft `{"term": …}` — the
+  downstream Binder sees the required `domain` slot missing and yields
+  `BIND_MISSING`, which **blocks certify** and escalates the turn to the Agent to
+  clarify (the tool is never dispatched);
+- `term` absent (with or without a domain) → `None` → `REASON_ACQUISITION_MISSING`
+  → Agent.
+
+`definition` is **never** emitted (tool-owned, optional, no producer — an emitted
+value would be a fabrication). `facts` is accepted for the common handler
+contract but ignored ON PURPOSE.
+
+**Explicit WRITE permission.** `add_term_tool` declares
+`permission={ToolPermission.WRITE}` on its `define_tool(...)`. This closes a gap
+**worse** than the create-folder one: `add_term` inserts into the user's
+vocabulary, but its parameters (`term` / `domain` / `definition`) carry **no**
+write hint, so `classify_permissions` defaulted the tool to **READ** and it
+mutated **without** the sandbox's ASK/DENY gate. The permission is now explicit
+and independent of any parameter name; the phrasing test asserts the ASK is now
+surfaced.
+
+#### 25.16.11 TurnFacts is the only context source
 
 Handlers read structured context **exclusively** from `TurnFacts`
 (`contract.py`): `attachment_asset_id`, `path_asset_id`, `viewer_asset_id`,
@@ -6595,21 +6655,21 @@ the raw request body, and never query the database for context. `TurnFacts`
 stays the single, already-resolved representation of the turn — the same object
 the Matcher consumes.
 
-#### 25.16.11 Relationship to §28 (Argument Acquisition) and Qwen
+#### 25.16.12 Relationship to §28 (Argument Acquisition) and Qwen
 
 The generic chain in §28 is **not deprecated and not deleted**. It remains the
 default acquisition path for every capability that has no registered handler,
 and it is exercised by the same Binder / certified-handoff tail. The two paths
 are distinguished only by the dispatch branch in `_acquisition_hop`.
 
-The nine handlers are all **deterministic**, so Qwen is not on their path
+The ten handlers are all **deterministic**, so Qwen is not on their path
 at all — the branch returns before the extractor is considered. The handlers
 deliberately share **no** `Qwen` abstraction: Qwen 0.6B is a plain callable, and
 a *future* capability whose handler genuinely needs model extraction decides for
 itself when (and whether) to call it. There is no "universal Qwen extractor"
 that every handler is forced through.
 
-#### 25.16.12 Execution safety boundary (unchanged)
+#### 25.16.13 Execution safety boundary (unchanged)
 
 A handler has **no execution authority**. It produces a plain
 `dict[str, object]`; `_certify` runs the kind gate, the Binder validates against
@@ -6619,7 +6679,7 @@ the live Registry schema, and the certified `requested_action` slip carries only
 ActionExecutor → `run_tool` → `ToolRuntime.execute` waterfall, byte-identical to
 every other capability.
 
-#### 25.16.13 Design constraints (what a handler must NOT do)
+#### 25.16.14 Design constraints (what a handler must NOT do)
 
 - No `NEED_USER_INPUT` / clarification state — that is the Agent's job; a handler
   either produces a legal draft or returns `None`.
@@ -6628,7 +6688,7 @@ every other capability.
 - No image / document binary loading and no tool-body re-implementation.
 - No `query` slot on `read_document` / the two PDF capabilities; no `subreddit`
   outside reddit; no `platform` defaulting to the tool's `reddit` when unspecified.
-- No Qwen call inside any of the nine handlers.
+- No Qwen call inside any of the ten handlers.
 - No shared `BaseHandler`; each handler is an independent deterministic module.
   The three file-content handlers share only the **stateless** `scope.py`
   helper, not a base class.
@@ -6638,17 +6698,21 @@ every other capability.
   only `name`), and no slash-bearing name accepted — a path-shaped candidate
   fails closed.
 - No deletion of `argument_acquisition/`; §28 stays live for unwired capabilities.
+- No fabricated slot values: a handler emits only slots the sentence actually names.
+  `AddTermHandler` never emits `definition` (tool-owned, optional, no producer), and
+  when `domain` is unnamed it returns the honest partial draft `{"term"}` rather than
+  inventing a domain — the Binder owns the required-slot gate (policy β, §25.16.10).
 - Asset facts must follow `attachment → path → viewer`, matching the Binder.
 
-#### 25.16.14 Implementation status
+#### 25.16.15 Implementation status
 
-**Implemented.** All nine handlers ship with the roster wiring and the single
+**Implemented.** All ten handlers ship with the roster wiring and the single
 capability-agnostic dispatch branch in `orchestrator.py::_acquisition_hop`.
 Tests: `tests/test_cap_handler_rag_search.py`,
 `test_cap_handler_web_search.py`, `test_cap_handler_social_search.py`,
 `test_cap_handler_vision.py`, `test_cap_handler_read_document.py`,
 `test_cap_handler_pdf.py`, `test_cap_handler_read_file.py`,
-`test_cap_handler_create_folder.py`.
+`test_cap_handler_create_folder.py`, `test_cap_handler_add_term.py`.
 
 ## 26. LayaChoice Capability Selection
 

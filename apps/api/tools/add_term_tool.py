@@ -18,6 +18,7 @@ uniqueness contract BEFORE any write:
 from __future__ import annotations
 
 from agent import Context, ToolExecution, ToolOutput, ToolRuntime, define_tool, text_block
+from agent.tools.tool_permissions import ToolPermission
 from core.application.services import VocabError, VocabularyService
 from core.infrastructure.images import ImageScraper
 from core.infrastructure.repositories import (
@@ -102,5 +103,11 @@ def register(runtime: ToolRuntime, ctx: Context, llm) -> None:
                 schema={"type": "string"}, render=lambda args, value: [text_block(value)]
             ),
             execute=add_term,
+            # The capability's ONLY effect is a vocabulary INSERT (``svc.add_term``):
+            # declare WRITE explicitly so the sandbox's ASK/DENY gate never depends
+            # on the auto-classifier, whose name/description heuristics carry no
+            # write hint here (``term``/``domain``/``definition``) and would default
+            # this mutating tool to READ.
+            permission={ToolPermission.WRITE},
         )
     )

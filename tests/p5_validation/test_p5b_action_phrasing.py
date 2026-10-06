@@ -76,8 +76,8 @@ async def test_add_term_each_phrase(monkeypatch, msg, term):
     assert len(spy.terms_added) == 1 and spy.terms_added[0][1] == term
 
 
-# ── the ASK-vs-not asymmetry is recorded: create_folder (WRITE) ASKS, add_term does not ─
-async def test_add_term_read_classified_no_ask(monkeypatch):
+# ── add_term now declares WRITE explicitly ⇒ it ASKS, exactly like create_folder ──────
+async def test_add_term_write_classified_asks(monkeypatch):
     port = ScriptedPort(steps=[STEP]); spy = Spy()
     kernel, _, _, broker = build_kernel(
         monkeypatch, port, spy, broker_mode="allow", domains=domains_named("Science"),
@@ -86,5 +86,7 @@ async def test_add_term_read_classified_no_ask(monkeypatch):
     app = build_app(monkeypatch, port, FakeSeam([]), kernel, broker)
     res = await sse(app, 'add "boson" to my science vocab')
     assert len(spy.terms_added) == 1
-    assert res.approvals == []   # FINDING: add_term is READ-classified (no write-hint arg),
-                                 # so it mutates WITHOUT approval, unlike create_folder.
+    # add_term inserts into the user's vocabulary: with the explicit WRITE declaration
+    # the sandbox surfaces an ASK (the old code relied on the auto-classifier, whose
+    # term/domain/definition args carry no write hint and defaulted it to READ → no ask).
+    assert res.approvals and res.approvals[0]["name"] == "add_term"
