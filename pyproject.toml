@@ -113,6 +113,10 @@ extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "fastapi.Path", "f
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+# `pytest` is invoked bare in CI: rootdir recursion would otherwise also collect
+# script-local tests (e.g. scripts/bge_m3_finetune/, which import torch) on an
+# environment without the optional heavy extras. Scope collection to the suite.
+testpaths = ["tests"]
 # Always importable regardless of how pytest is launched (`pytest` vs
 # `python -m pytest`): lets tests do `from tests._drive_fakes import ...`.
 pythonpath = ["."]
