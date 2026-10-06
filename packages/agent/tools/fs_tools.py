@@ -38,7 +38,13 @@ if TYPE_CHECKING:  # runtime injection only — the kernel never imports the ser
 
 # "My Drive/scope.md" / "我的云盘/notes/a.md" — explicit personal-drive root only,
 # the same shape the chat turn-facts recognizer uses (context._PATH_TOKEN).
-_DRIVE_PATH_RE = re.compile(r"^\s*(?:My Drive|我的云盘)\s*[／/]\s*(\S.*)$")
+# The prefix is matched CASE-INSENSITIVELY (My Drive / my drive / MY DRIVE), but a
+# match never rewrites the path: the captured remainder is the caller's original
+# literal (its casing and spaces are preserved) — comparison is case-insensitive,
+# the value is exact.
+_DRIVE_PATH_RE = re.compile(
+    r"^\s*(?:My Drive|我的云盘)\s*[／/]\s*(\S.*)$", re.IGNORECASE,
+)
 
 
 async def _drive_asset(drive: "DriveService", raw_path: str) -> tuple[UUID, UUID]:

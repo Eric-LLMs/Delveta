@@ -12,6 +12,7 @@ from .pdf_extract_text_handler import PdfExtractTextHandler
 from .pdf_table_to_text_handler import PdfTableToTextHandler
 from .rag_search_handler import RagSearchHandler
 from .read_document_handler import ReadDocumentHandler
+from .read_file_handler import ReadFileHandler
 from .social_search_handler import SocialSearchHandler
 from .translate_handler import TranslateHandler
 from .vision_handler import VisionHandler
@@ -41,6 +42,7 @@ HANDLERS: dict[str, CapabilityHandler] = {
     "cap-social-search": SocialSearchHandler(),
     "cap-vision": VisionHandler(),
     "cap-read-document": ReadDocumentHandler(),
+    "cap-read-file": ReadFileHandler(),
     "cap-pdf-extract-text": PdfExtractTextHandler(),
     "cap-pdf-table-to-text": PdfTableToTextHandler(),
     "cap-translate": TranslateHandler(),
