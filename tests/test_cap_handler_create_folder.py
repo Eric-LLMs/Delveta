@@ -29,6 +29,7 @@ from __future__ import annotations
 import logging
 import re
 import types
+from pathlib import Path
 
 import pytest
 from agent.tools.definition import classify_permissions
@@ -60,6 +61,10 @@ from core.config import settings
 FUNNEL_LOGGER = "core.application.chat.intent_funnel.funnel"
 
 GOLD_PATH = "logs/_argbench/dataset_formal500.jsonl"
+
+# The frozen arg benchmark lives in the untracked ``logs/`` scratch tree; the
+# byte-for-byte reconciliation below is a local-only guard, skipped when absent.
+_GOLD_PRESENT = Path(GOLD_PATH).exists()
 
 
 # ── Layer 0: the Formal-500 gold spans (20 cases) ────────────────────────────────
@@ -97,11 +102,14 @@ async def test_formal500_gold_spans(message, expected):
     assert await handler.acquire(query=message, facts=None) == expected
 
 
+@pytest.mark.skipif(
+    not _GOLD_PRESENT,
+    reason="frozen arg benchmark logs/_argbench/dataset_formal500.jsonl not present",
+)
 def test_gold_matches_the_frozen_dataset():
     """The embedded gold mirrors ``dataset_formal500.jsonl`` byte for byte — a
     literal reconciliation against the benchmark rather than a paraphrase."""
     import json
-    from pathlib import Path
 
     rows = [
         json.loads(line)

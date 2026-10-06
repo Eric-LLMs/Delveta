@@ -18,6 +18,13 @@ ROOT = Path(__file__).resolve().parents[1]
 INGEST = ROOT / "logs" / "_laya_ds_ingest.py"
 VAL_V3_RAW = ROOT / "data" / "LayaChoice_v1_validation_raw_v3.jsonl"
 
+# The ingest script and the frozen validation-v3 raw file both live in local-only
+# scratch trees (``logs/`` and ``data/``); skip the whole module where absent.
+pytestmark = pytest.mark.skipif(
+    not (INGEST.exists() and VAL_V3_RAW.exists()),
+    reason="LayaChoice ingest script / frozen validation_v3 not present (scratch artifacts)",
+)
+
 
 def _load_ingest():
     spec = importlib.util.spec_from_file_location("_laya_ds_ingest_under_test", INGEST)
