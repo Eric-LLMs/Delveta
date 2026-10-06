@@ -6381,7 +6381,7 @@ tool-existence truth is the live `ToolRuntime.schemas()` roster, and fail-open r
 ### 25.16 Capability-Specific Acquisition Handlers
 
 **Architecture ruling.** Capability selection and argument acquisition are
-separate concerns (§28). For a cohort of seven chat-plane capabilities the
+separate concerns (§28). For a cohort of nine chat-plane capabilities the
 generic acquisition chain (declaration → evidence → context values → provider →
 path router → Qwen extractor → merge) is replaced by a **per-capability
 parameter handler**: a small deterministic object that owns its capability's
@@ -6393,7 +6393,8 @@ untouched. §28 remains the acquisition path for **every capability without a
 registered handler**; it is NOT deprecated.
 
 Scope: `cap-rag-search`, `cap-web-search`, `cap-social-search`, `cap-vision`,
-`cap-read-document`, `cap-pdf-extract-text`, `cap-pdf-table-to-text`.
+`cap-read-document`, `cap-pdf-extract-text`, `cap-pdf-table-to-text`,
+`cap-read-file`, `cap-create-folder`.
 
 #### 25.16.1 Where the branch lives (`orchestrator.py`)
 
@@ -6428,7 +6429,9 @@ intent_funnel/cap_handler/
 ├── vision_handler.py                 # VisionHandler           (cap-vision)
 ├── read_document_handler.py          # ReadDocumentHandler     (cap-read-document)
 ├── pdf_extract_text_handler.py       # PdfExtractTextHandler   (cap-pdf-extract-text)
-└── pdf_table_to_text_handler.py      # PdfTableToTextHandler   (cap-pdf-table-to-text)
+├── pdf_table_to_text_handler.py      # PdfTableToTextHandler   (cap-pdf-table-to-text)
+├── read_file_handler.py              # ReadFileHandler         (cap-read-file)
+└── create_folder_handler.py          # CreateFolderHandler     (cap-create-folder)
 ```
 
 `roster.py` is the sole wiring surface: `HANDLERS: dict[str, CapabilityHandler]`
@@ -6455,9 +6458,9 @@ Every capability handler obeys the same boundary:
   gate; an unknown slot lands `BIND_INVALID`);
 - it is **fail-closed**: when it cannot produce a legal draft it returns `None`,
   which the branch maps to `REASON_ACQUISITION_MISSING` → Agent;
-- it is **deterministic and Qwen-free** (§25.16.9).
+- it is **deterministic and Qwen-free** (§25.16.11).
 
-#### 25.16.4 The seven handlers
+#### 25.16.4 The nine handlers
 
 | Capability | Handler | Args produced | Args deliberately omitted |
 |---|---|---|---|
@@ -6468,6 +6471,8 @@ Every capability handler obeys the same boundary:
 | `cap-read-document` | `ReadDocumentHandler` | `asset_id` (TurnFacts), `pages` (viewer facts) | `query`, `question` |
 | `cap-pdf-extract-text` | `PdfExtractTextHandler` | `asset_id` (TurnFacts), `pages` (viewer facts) | `query`, `question` |
 | `cap-pdf-table-to-text` | `PdfTableToTextHandler` | `asset_id` (TurnFacts), `pages` (viewer facts) | `query`, `question` |
+| `cap-read-file` | `ReadFileHandler` | `path` (verbatim literal) | `max_chars` |
+| `cap-create-folder` | `CreateFolderHandler` | `name` (verbatim literal) | `parent_path` |
 
 #### 25.16.5 `cap-rag-search` and `cap-web-search`
 
@@ -6526,7 +6531,62 @@ the handlers emit none — inventing one would land `BIND_INVALID` and the
 capability could never certify. (A free-text `query` slot for these capabilities
 is a separate future architecture question, not a handler defect.)
 
-#### 25.16.8 TurnFacts is the only context source
+#### 25.16.8 `cap-read-file` — the dual-plane path handler
+
+`cap-read-file` (tool binding `read_file`) owns ONE slot, `path`, resolved
+**deterministically** (no model, no Qwen) from a literal path token in the
+sentence. It addresses a file across **two planes** — a workspace-relative path
+(`./data/train.csv`, `src/main/java/App.java`, `报告.docx`) or a drive path under
+`My Drive/` / `我的云盘/` — and the runtime dispatches on the path shape
+(`fs_tools._DRIVE_PATH_RE`, matched **case-insensitively** while the captured
+value stays **exact**: `my drive/x` / `My Drive/x` / `MY DRIVE/x` all take the
+Drive branch without lowercasing the caller's literal). The value is copied
+**verbatim** — casing and spaces survive, a `./` prefix is not stripped, and CJK
+filenames are never transliterated. Six prohibitions hold: no asset / viewer /
+attachment field is ever injected as `path` (facts are ignored ON PURPOSE), no
+Qwen, no translation, no case normalization, no prefix stripping, and no
+`max_chars` (only `path` is emitted, so the tool's own default governs). A
+pronoun referent (`读取这个文档` / `read this file`), a vague sentence with no
+literal path, or a blank query fails closed (`None` → Agent).
+
+#### 25.16.9 `cap-create-folder` — the deterministic name handler & explicit WRITE
+
+`cap-create-folder` (tool binding `create_folder`) owns ONE slot, `name`,
+resolved **deterministically** (zero-LLM / zero-Qwen) by a four-tier extraction
+ladder, first hit wins:
+
+1. a **quoted** span — ASCII `"…"` / `'…'` or the full-width `“…”` / `‘…’` /
+   `「…」` / `『…』` pairs (quotes dropped, inside copied verbatim);
+2. an explicit **naming lead** — `叫 X` / `命名为 X` / `named X` / `called X` —
+   captured up to the trailing delimiter (`的文件夹` / `文件夹` / `的` / end);
+3. the English **`for the X`** clause;
+4. the Chinese modifier **`X 文件夹`** / **`X 的文件夹`**.
+
+The name is copied **verbatim** — original spaces and casing survive, and a
+multi-token name is **never truncated at whitespace**: `2026-Q1 报表` stays whole
+(the legacy model extraction cut it to `2026-Q1`). Two hard defences make the
+handler **fail closed** (`None` → Agent): a **slash** in the candidate (`/` `\` /
+`／` `＼`) means the sentence carried a path, not a single folder name; and a
+candidate that is only a generic stop word (`folder` / `文件夹` / `一个` /
+`please` …) is not a name. A verb-only request (`帮我建个文件夹` / `make a new
+folder` / `new folder please`) or a blank query also returns `None`.
+
+**`parent_path` contract boundary.** `parent_path` exists in the underlying Tool
+implementation but is **intentionally not part of the current public capability
+contract**. The Public Contract exposes **only the `name` single slot**, so the
+handler's draft is always exactly `{"name": <literal>}`; keeping the parent path
+off the contract avoids the extra ambiguity and security complexity of parent
+resolution. Acquisition-side, `parent_path` is tool-owned — `declaration.py`
+maps the slot to `TOOL_DEFAULT` — and the tool body defaults it to the drive root.
+
+**Explicit WRITE permission.** `create_folder_tool` declares
+`permission={ToolPermission.WRITE}` on its `define_tool(...)`. This removes the
+former fragility where WRITE was **inferred** by `classify_permissions` matching
+the substring `"path"` in a parameter name (`parent_path`) — a rename would have
+silently downgraded the tool to READ and bypassed the sandbox's ASK/DENY gate.
+The permission is now independent of any parameter name.
+
+#### 25.16.10 TurnFacts is the only context source
 
 Handlers read structured context **exclusively** from `TurnFacts`
 (`contract.py`): `attachment_asset_id`, `path_asset_id`, `viewer_asset_id`,
@@ -6535,21 +6595,21 @@ the raw request body, and never query the database for context. `TurnFacts`
 stays the single, already-resolved representation of the turn — the same object
 the Matcher consumes.
 
-#### 25.16.9 Relationship to §28 (Argument Acquisition) and Qwen
+#### 25.16.11 Relationship to §28 (Argument Acquisition) and Qwen
 
 The generic chain in §28 is **not deprecated and not deleted**. It remains the
 default acquisition path for every capability that has no registered handler,
 and it is exercised by the same Binder / certified-handoff tail. The two paths
 are distinguished only by the dispatch branch in `_acquisition_hop`.
 
-The seven handlers are all **deterministic**, so Qwen is not on their path
+The nine handlers are all **deterministic**, so Qwen is not on their path
 at all — the branch returns before the extractor is considered. The handlers
 deliberately share **no** `Qwen` abstraction: Qwen 0.6B is a plain callable, and
 a *future* capability whose handler genuinely needs model extraction decides for
 itself when (and whether) to call it. There is no "universal Qwen extractor"
 that every handler is forced through.
 
-#### 25.16.10 Execution safety boundary (unchanged)
+#### 25.16.12 Execution safety boundary (unchanged)
 
 A handler has **no execution authority**. It produces a plain
 `dict[str, object]`; `_certify` runs the kind gate, the Binder validates against
@@ -6559,7 +6619,7 @@ the live Registry schema, and the certified `requested_action` slip carries only
 ActionExecutor → `run_tool` → `ToolRuntime.execute` waterfall, byte-identical to
 every other capability.
 
-#### 25.16.11 Design constraints (what a handler must NOT do)
+#### 25.16.13 Design constraints (what a handler must NOT do)
 
 - No `NEED_USER_INPUT` / clarification state — that is the Agent's job; a handler
   either produces a legal draft or returns `None`.
@@ -6568,24 +6628,27 @@ every other capability.
 - No image / document binary loading and no tool-body re-implementation.
 - No `query` slot on `read_document` / the two PDF capabilities; no `subreddit`
   outside reddit; no `platform` defaulting to the tool's `reddit` when unspecified.
-- No Qwen call inside any of the seven handlers.
+- No Qwen call inside any of the nine handlers.
 - No shared `BaseHandler`; each handler is an independent deterministic module.
   The three file-content handlers share only the **stateless** `scope.py`
   helper, not a base class.
 - No page number parsed from the sentence and no `pages` widening: a half-open /
   reversed viewer range fails closed (→ Agent), never a whole-document read.
+- No `parent_path` emitted by `CreateFolderHandler` (the public contract exposes
+  only `name`), and no slash-bearing name accepted — a path-shaped candidate
+  fails closed.
 - No deletion of `argument_acquisition/`; §28 stays live for unwired capabilities.
 - Asset facts must follow `attachment → path → viewer`, matching the Binder.
 
-#### 25.16.12 Implementation status
+#### 25.16.14 Implementation status
 
-**Implemented.** All seven handlers ship with the roster wiring and the single
+**Implemented.** All nine handlers ship with the roster wiring and the single
 capability-agnostic dispatch branch in `orchestrator.py::_acquisition_hop`.
 Tests: `tests/test_cap_handler_rag_search.py`,
 `test_cap_handler_web_search.py`, `test_cap_handler_social_search.py`,
 `test_cap_handler_vision.py`, `test_cap_handler_read_document.py`,
-`test_cap_handler_pdf.py` (suite green at 2665 passed / 8 skipped / 2 xfailed /
-0 failed).
+`test_cap_handler_pdf.py`, `test_cap_handler_read_file.py`,
+`test_cap_handler_create_folder.py`.
 
 ## 26. LayaChoice Capability Selection
 

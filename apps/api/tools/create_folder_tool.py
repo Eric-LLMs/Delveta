@@ -10,7 +10,15 @@ escalate".
 """
 from __future__ import annotations
 
-from agent import Context, ToolExecution, ToolOutput, ToolRuntime, define_tool, text_block
+from agent import (
+    Context,
+    ToolExecution,
+    ToolOutput,
+    ToolPermission,
+    ToolRuntime,
+    define_tool,
+    text_block,
+)
 from core.application.drive_service import DriveError, DriveService
 from core.infrastructure.request_context import get_request_user_id
 
@@ -55,5 +63,10 @@ def register(runtime: ToolRuntime, ctx: Context, llm) -> None:
                 schema={"type": "string"}, render=lambda args, value: [text_block(value)]
             ),
             execute=create_folder,
+            # Explicit WRITE: this tool mutates the cloud drive. Declared here so the
+            # sandbox's ASK/DENY gate never depends on an inference from a parameter
+            # name happening to contain "path" (e.g. `parent_path`) — a rename would
+            # otherwise silently downgrade the tool to READ and bypass approval.
+            permission={ToolPermission.WRITE},
         )
     )
