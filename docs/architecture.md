@@ -6432,7 +6432,8 @@ intent_funnel/cap_handler/
 ├── pdf_table_to_text_handler.py      # PdfTableToTextHandler   (cap-pdf-table-to-text)
 ├── read_file_handler.py              # ReadFileHandler         (cap-read-file)
 ├── create_folder_handler.py          # CreateFolderHandler     (cap-create-folder)
-└── add_term_handler.py               # AddTermHandler          (cap-add-term)
+├── add_term_handler.py               # AddTermHandler          (cap-add-term)
+└── translate_handler.py              # TranslateHandler        (cap-translate)
 ```
 
 `roster.py` is the sole wiring surface: `HANDLERS: dict[str, CapabilityHandler]`
@@ -6461,13 +6462,14 @@ Every capability handler obeys the same boundary:
   which the branch maps to `REASON_ACQUISITION_MISSING` → Agent;
 - it is **deterministic and Qwen-free** (§25.16.11).
 
-#### 25.16.4 The ten handlers
+#### 25.16.4 The eleven handlers
 
 | Capability | Handler | Args produced | Args deliberately omitted |
 |---|---|---|---|
 | `cap-rag-search` | `RagSearchHandler` | `query` (verbatim sentence) | `top_k`, `domain` |
 | `cap-web-search` | `WebSearchHandler` | `query` (verbatim sentence) | `top_k`, `scope`, `domain`, `engine` |
 | `cap-social-search` | `SocialSearchHandler` | `query` (verbatim), `platform`, `subreddit` (reddit only) | `limit` |
+| `cap-translate` | `TranslateHandler` | `text` (verbatim: a quoted / code-block span, or a lead-in colon payload) | (the instruction frame and any target-language directive) |
 | `cap-vision` | `VisionHandler` | `asset_id` (TurnFacts), `question` (verbatim) | — |
 | `cap-read-document` | `ReadDocumentHandler` | `asset_id` (TurnFacts), `pages` (viewer facts) | `query`, `question` |
 | `cap-pdf-extract-text` | `PdfExtractTextHandler` | `asset_id` (TurnFacts), `pages` (viewer facts) | `query`, `question` |
@@ -6662,7 +6664,7 @@ default acquisition path for every capability that has no registered handler,
 and it is exercised by the same Binder / certified-handoff tail. The two paths
 are distinguished only by the dispatch branch in `_acquisition_hop`.
 
-The ten handlers are all **deterministic**, so Qwen is not on their path
+The eleven handlers are all **deterministic**, so Qwen is not on their path
 at all — the branch returns before the extractor is considered. The handlers
 deliberately share **no** `Qwen` abstraction: Qwen 0.6B is a plain callable, and
 a *future* capability whose handler genuinely needs model extraction decides for
@@ -6688,7 +6690,7 @@ every other capability.
 - No image / document binary loading and no tool-body re-implementation.
 - No `query` slot on `read_document` / the two PDF capabilities; no `subreddit`
   outside reddit; no `platform` defaulting to the tool's `reddit` when unspecified.
-- No Qwen call inside any of the ten handlers.
+- No Qwen call inside any of the eleven handlers.
 - No shared `BaseHandler`; each handler is an independent deterministic module.
   The three file-content handlers share only the **stateless** `scope.py`
   helper, not a base class.
@@ -6706,13 +6708,81 @@ every other capability.
 
 #### 25.16.15 Implementation status
 
-**Implemented.** All ten handlers ship with the roster wiring and the single
+**Implemented.** All eleven handlers ship with the roster wiring and the single
 capability-agnostic dispatch branch in `orchestrator.py::_acquisition_hop`.
 Tests: `tests/test_cap_handler_rag_search.py`,
 `test_cap_handler_web_search.py`, `test_cap_handler_social_search.py`,
-`test_cap_handler_vision.py`, `test_cap_handler_read_document.py`,
-`test_cap_handler_pdf.py`, `test_cap_handler_read_file.py`,
-`test_cap_handler_create_folder.py`, `test_cap_handler_add_term.py`.
+`test_cap_handler_translate.py`, `test_cap_handler_vision.py`,
+`test_cap_handler_read_document.py`, `test_cap_handler_pdf.py`,
+`test_cap_handler_read_file.py`, `test_cap_handler_create_folder.py`,
+`test_cap_handler_add_term.py`.
+
+#### 25.16.16 Phase 3 capability matrix & the deferred toolkit trio
+
+**Phase 3 is closed.** All eighteen Registry capabilities are classified below.
+The Chat fast path acquires arguments for **eleven** of them with zero model
+calls; the other seven are owned by the Agent or a separate lane. Because every
+non-hidden, enabled candidate either has a deterministic handler or is an
+undeclared capability that exits to the Agent, the acquisition stage **never
+reaches the §28 generic chain** — argument acquisition on the fast path is now
+100% model-free (no Qwen call anywhere in the stage).
+
+**Deterministic, zero-LLM handlers (11)** — modules in
+`intent_funnel/cap_handler/`, wired only by `roster.py`:
+
+| Capability | Handler |
+|---|---|
+| `cap-rag-search` | `RagSearchHandler` |
+| `cap-web-search` | `WebSearchHandler` |
+| `cap-social-search` | `SocialSearchHandler` |
+| `cap-translate` | `TranslateHandler` |
+| `cap-vision` | `VisionHandler` |
+| `cap-read-document` | `ReadDocumentHandler` |
+| `cap-pdf-extract-text` | `PdfExtractTextHandler` |
+| `cap-pdf-table-to-text` | `PdfTableToTextHandler` |
+| `cap-read-file` | `ReadFileHandler` |
+| `cap-create-folder` | `CreateFolderHandler` |
+| `cap-add-term` | `AddTermHandler` |
+
+**Agent-only / Deferred Contract — the toolkit trio (3)**: `cap-summary`,
+`cap-mindmap`, `cap-slides`.
+
+These bind the toolkit pipeline tools (`summary_gen` / `mindmap_gen` /
+`slides_gen`, `apps/api/tools/toolkit/`) and are **deliberately left without a
+handler**. The reason is structural, not extractor quality:
+
+- **Contract rupture.** The Registry declares an EMPTY parameter set for all
+  three, while the live runtime schema requires a workspace file list
+  `paths: list[str]` (`required: ["paths"]`; `slides_gen` additionally declares an
+  optional integer `count`, 3–20). `declaration_for()` therefore returns `{}`, the
+  acquisition hop reports `declared=False`, and every turn exits
+  `ACQUISITION_UNDECLARED → Agent`.
+- **No legal `paths` producer.** `paths` is `OWNERSHIP_UNAVAILABLE` — the runtime
+  schema demands it, but the funnel has no selected-files resolver that writes
+  it. `count` is a genuine model-ownable slot, yet exposing it alone yields an
+  **empty-shell handler**: the required `paths` slot stays unsatisfiable and the
+  Executor's final gate (`validate_action`) rejects any non-`str` slot outright —
+  so neither the array `paths` nor the integer `count` can clear the gate. A
+  `count`-only draft would fail at the Binder (`BIND_MISSING`) or the Executor
+  (`slot not a string`) regardless.
+- **Decision.** Rather than ship a handler that can never complete, the trio
+  stays Agent-owned — exactly as `cap-summary` and `cap-mindmap` were adjudicated
+  in the Phase-3 capability audit; the toolkit family is isomorphic here. A fast
+  path is created only when a capability's contract, slot ownership **and**
+  producer chain all close; determinism is not pursued for its own sake.
+
+If deterministic toolkit generation is ever wanted, it is a **toolkit-suite
+program**, not a single-capability handler: project the toolkit schemas into the
+Registry, add a selected-files → `paths` producer, and extend the Executor gate
+to admit non-string slots per the runtime JSON schema.
+
+**Specialized / controlled capabilities (4)**: `cap-artifact` and `cap-bash`
+(Agent-only; both in the chat-plane hidden set), `cap-edit-file` (chat-plane
+hidden), and `cap-research` (the separate Research lane, §17 — not a Chat
+capability).
+
+**Matrix.** 18 = **11** deterministic handlers + **3** deferred toolkit + **4**
+specialized.
 
 ## 26. LayaChoice Capability Selection
 
