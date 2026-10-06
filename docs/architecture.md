@@ -4711,6 +4711,25 @@ Worker/Research behavior are structurally untouched; the Registry row stays
 mutate an EXISTING persistent file/Drive asset — file CREATION in the scratch/workspace via the
 still-registered `bash` is unchanged (§14.2).
 
+**Control-plane separation — Chat vs Agent exposure (ruling).** The Chat plane and the Agent
+plane are independent exposure surfaces: one capability may be hidden from Chat while staying
+fully live on the Agent. The shipped default hides `cap-edit-file`, `cap-artifact` and
+`cap-bash` from the **Chat** funnel only:
+
+| capability | Chat plane | Agent / Worker / Research plane |
+|---|---|---|
+| `cap-artifact` | hidden ❌ | registered & callable ✅ |
+| `cap-bash` | hidden ❌ | registered & callable ✅ (`destructive=True`, `{WRITE, NETWORK}` untouched) |
+| `cap-edit-file` | hidden ❌ | governed by the pre-existing roster gate `agent_hidden_tools` (§5/§16.6) |
+
+Two principles hold throughout. **Chat-hidden ≠ Tool-deleted**: no Registry row, ToolDefinition,
+ToolRuntime registration, Binder or Runtime authorization is touched — the row stays
+`enabled=true, status=active`, and page/PC/worker/research/admin never consult the chat-plane
+predicate. **Chat-hidden ≠ Agent-hidden**: `artifact` and `bash` remain in `agent_hidden_tools`'s
+complement, so the Agent still registers them, the roster/prompt catalog still lists them, and
+`bash`'s `destructive=True` marker plus its destructive deny/guard and approval chain are
+byte-identical. A hidden capability simply fails open to an ordinary Agent turn.
+
 **Commit Point.** The first user-visible content delta locks the channel. `EscalateToAgent` is
 legal only before it; after it an error can only terminate the stream with a standardized event —
 an executor is never swapped mid-flight. Escalation is **zero-pollution** except for the two
@@ -4754,7 +4773,8 @@ unconditionally. The four experimental lanes each keep one dark gate, default `F
 `chat_direct_fast_path_enabled` · `chat_viewer_fast_path_enabled` ·
 `chat_retrieval_fast_path_enabled` · `chat_composite_fast_path_enabled` (plus lane sizing:
 `chat_direct_max_chars` / `chat_retrieval_top_k`). The chat-plane routing-view hide
-`chat_funnel_hidden_capabilities` ships `cap-edit-file` (consumed only by the Chat plane, §24/§25.7).
+`chat_funnel_hidden_capabilities` ships `cap-edit-file,cap-artifact,cap-bash` (consumed only by
+the Chat plane, §24/§25.7).
 The intent-routing stage brings its own quality/timeout knobs — see §25.14. Corpus maintenance is
 an ops entry point: `scripts/embed_corpus.py` re-embeds the live query tables against the pinned
 embedding profile (`app_settings.embedding_profile`).
@@ -4777,8 +4797,12 @@ Contract suites: `test_chat_control_plane.py` (dark launch, per-kind gating, reg
 `test_chat_action_executor.py` / `test_chat_source_policy.py` (side-effect-boundary trichotomy,
 fencing semantics), `test_chat_direct_e2e / viewer / retrieval / composite` per branch,
 `test_chat_exposure_edit_file` (chat-plane hiding: unseen/unsearchable/unmountable/un-routable,
-worker posture unchanged, shipped-default regression: `chat_funnel_hidden_capabilities="cap-edit-file"`,
-`agent_hidden_tools=""`).
+worker posture unchanged, shipped-default regression: `chat_funnel_hidden_capabilities="cap-edit-file,cap-artifact,cap-bash"`,
+`agent_hidden_tools=""`), `test_chat_exposure_artifact_bash` (the artifact/bash exposure ruling:
+predicate + matcher-index exclusion, the single-point Recall closure — a hidden hit is dropped
+before aggregation while the no-hide control keeps it, a forged Matcher HIT on a hidden
+capability refuses certification with `VERSION_MISMATCH` — and the Agent-plane invariance:
+`bash` stays registered with `destructive=True` + `{WRITE, NETWORK}`).
 
 [↑ Back to top](#table-of-contents)
 
@@ -5758,9 +5782,7 @@ a negative that deterministically collides with the corpus. A kind flip (`enable
 `status`, per-kind switch) is the only emergency stop — routing abstains, an ordinary
 Agent turn, no deploy.
 
-**Chat-plane candidate predicate (`registry/entry.py::chat_plane_candidate`, ruling).** Chat/files routing membership is ONE predicate with FOUR consumers —
-the Matcher index build, the Recall corpus filter, the funnel's `entries_by_id`, and the
-shadow/preview lanes that share them:
+**Chat-plane candidate predicate (`registry/entry.py::chat_plane_candidate`, ruling).** Chat/files routing membership is ONE predicate with these consumers — the Matcher exact-index build, the funnel's `entries_by_id` (which owns Candidate-Card construction and certification), the shadow/preview lanes that share them, and the funnel's single-point **Recall-results closure** in `orchestrator.py`:
 
 ```
 chat_plane_candidate(e) = e.enabled
@@ -5770,13 +5792,28 @@ chat_plane_candidate(e) = e.enabled
 ```
 
 The hidden set is parsed per process from `settings.chat_funnel_hidden_capabilities`
-(comma list, EMPTY = the historical predicate, zero behavior change). **Hidden ≠
-disabled**: the live row stays `enabled=true, status=active` — page/PC, admin, worker
-and research lanes never consult this predicate (worker/research never read the
-capabilities table; page editing is the HTTP `DriveService`) — while every chat funnel
-consumer drops the capability: no Matcher exact hit, no Recall candidate, no Candidate
-Card, no certification, so the turn fails open to an ordinary Agent turn (§24). Hiding
-`edit_file` also requires the roster gate (§5/§16.6): routing-view absence alone would
+(comma list; the shipped default is `cap-edit-file,cap-artifact,cap-bash`; EMPTY = the
+historical predicate, zero behavior change). **Hidden ≠ disabled**: the live row stays
+`enabled=true, status=active` — page/PC, admin, worker and research lanes never consult this
+predicate (worker/research never read the capabilities table; page editing is the HTTP
+`DriveService`) — while every chat funnel consumer drops the capability: no Matcher exact hit,
+no Candidate Card, no certification, so the turn fails open to an ordinary Agent turn (§24).
+
+**The Recall-results closure (single point; no Recall SQL change).** The Matcher exact index
+and `entries_by_id` are built THROUGH the predicate, but the Recall corpus is loaded straight
+from the LIVE query tables, whose SQL carries NO chat-plane predicate — so without a guard a
+hidden capability could still surface from `recall` and pollute the candidate pool, Top-K and
+the `cap_router` list. The orchestrator therefore filters the Recall result at one point. To
+keep the index/table-divergence signal alive, the drop is scoped to a row the live table STILL
+carries:
+
+| Recall hit's capability | action | rationale |
+|---|---|---|
+| row present, predicate **refuses** | drop | the hidden-capability closure |
+| row present, predicate **allows** | keep | ordinary visible candidate |
+| row **absent** (index ahead of the table) | **keep** | must reach the verdict so the pre-existing `entries_by_id.get() is None` guard raises `VERSION_MISMATCH` — the anomaly is never silently demoted to `NO_CANDIDATE` |
+
+Hiding `edit_file` also requires the roster gate (§5/§16.6): routing-view absence alone would
 still let a stale/other-layer route reach a tool missing from the runtime — C2 terminal.
 
 #### 25.7.1 Live-table schema reference (migration 0014)
@@ -6296,10 +6333,11 @@ default:
 ```
 chat_funnel_timeout_seconds=5.0    chat_funnel_min_score=0.82   chat_funnel_margin=0.06
 chat_funnel_trace_capture=False    (Phase-6 observability: per-event trace_json on demand)
-chat_funnel_hidden_capabilities="cap-edit-file"  (chat-plane routing-view hiding, §24/§25.7;
-                                    pairs with `agent_hidden_tools` §16.8 — the tools-side
-                                    default stays "" because the factory is shared with the
-                                    worker; the API startup scripts inject it on chat lanes)
+chat_funnel_hidden_capabilities="cap-edit-file,cap-artifact,cap-bash"
+                                    (chat-plane routing-view hiding, §24/§25.7; pairs with
+                                    `agent_hidden_tools` §16.8 — the tools-side default stays
+                                    "" because the factory is shared with the worker; the API
+                                    startup scripts inject it on chat lanes)
 chat_tool_intent_backend="stub"    chat_tool_intent_min_confidence=0.75
 chat_tool_intent_local_url=""      chat_tool_intent_local_model="qwen3-tools:q5_k_m"
 chat_tool_intent_local_mode="prompt_json"

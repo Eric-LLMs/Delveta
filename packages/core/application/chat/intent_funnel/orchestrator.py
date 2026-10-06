@@ -248,6 +248,25 @@ async def run_nodes(ctx, deps, requirements, trace, *,
             min_score=(settings.chat_funnel_min_score if recall_min_score is None
                        else recall_min_score),
         )
+        # Exposure ruling (single closure point): the Recall corpus is loaded
+        # straight from the LIVE query tables, which — unlike the Matcher exact
+        # index and ``entries_by_id`` — carry NO chat-plane predicate, so a
+        # capability hidden by ``chat_funnel_hidden_capabilities`` can still
+        # surface here. Drop any hit whose capability is a row the live table
+        # STILL carries but the chat-plane predicate refuses (i.e. a hidden
+        # capability), so it never enters the candidate pool, aggregation, the
+        # cap_router candidate list, or certification. A capability ABSENT from
+        # the live table (the index running ahead of the table) is deliberately
+        # NOT dropped here: it must reach the verdict so the existing
+        # index/table-divergence guard still raises VERSION_MISMATCH. No Recall
+        # SQL change: this business-layer filter is the one place that closes the
+        # gap for every recall source at once.
+        table_rows = {e.capability_id: e for e in view.entries}
+        recall_hits = [
+            c for c in rres.candidates
+            if (row := table_rows.get(c.capability_id)) is None
+            or chat_plane_candidate(row)
+        ]
         if capture is not None:
             # the RAW lane: every candidate recall scored, pre any floor AND pre
             # aggregation — the offline threshold sweep recomputes buckets from
@@ -257,9 +276,9 @@ async def run_nodes(ctx, deps, requirements, trace, *,
                  "origin": c.origin, "matched_example": c.matched_example,
                  "query_kind": c.query_kind, "language": c.language,
                  "query_id": c.query_id}
-                for c in rres.candidates
+                for c in recall_hits
             ]
-        candidates.extend(rres.candidates)
+        candidates.extend(recall_hits)
     trace["recall_count"] = len(candidates)
     if candidates:
         top = max(candidates, key=lambda c: c.score)

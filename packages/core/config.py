@@ -150,10 +150,12 @@ class Settings(BaseSettings):
     # Funnel routing VIEW only (never the Registry row's enabled/status — the live
     # table is left intact for page/PC/worker/admin). A hidden capability can no
     # longer be matched/recalled-as-routable/certified, so its turns fail open to
-    # the Agent. DEFAULT hides cap-edit-file from Chat (exposure ruling):
-    # persistent file edits are user-initiated from page/PC; this consumer is
-    # chat-plane-only, so Worker/Research keep full edit_file capability.
-    chat_funnel_hidden_capabilities: str = "cap-edit-file"
+    # the Agent. DEFAULT hides cap-edit-file (persistent file edits are
+    # user-initiated from page/PC), cap-artifact (research publish/compile), and
+    # cap-bash (raw shell) from Chat: none is a chat-plane user action, and all
+    # three stay fully registered and callable on the Agent/Worker/Research planes
+    # with their destructive/permission/sandbox/approval chain untouched.
+    chat_funnel_hidden_capabilities: str = "cap-edit-file,cap-artifact,cap-bash"
     # ToolIntentModel backend ladder (8.17 + chain ruling):
     # "stub" | "local" | "online" | "auto" (local→online→stub). ToolIntentModel is a
     # swappable PROVIDER: the funnel only speaks the OpenAI-compatible card

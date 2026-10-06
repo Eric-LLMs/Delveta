@@ -160,11 +160,14 @@ def test_hidden_capability_cannot_be_certified(monkeypatch):
 
 def test_settings_keys_default_posture(monkeypatch):
     """Shipped defaults (single-path ruling): the chat-plane funnel
-    hides cap-edit-file out of the box; agent_hidden_tools stays empty because the
-    agent factory is shared with the worker — the API process injects edit_file
-    hiding via AGENT_HIDDEN_TOOLS at startup (start_server.sh / start_desktop.sh)."""
+    hides cap-edit-file (and, per the artifact/bash exposure ruling,
+    cap-artifact + cap-bash) out of the box; agent_hidden_tools stays empty
+    because the agent factory is shared with the worker — the API process
+    injects edit_file hiding via AGENT_HIDDEN_TOOLS at startup
+    (start_server.sh / start_desktop.sh)."""
     assert settings.agent_hidden_tools == ""
-    assert settings.chat_funnel_hidden_capabilities == "cap-edit-file"
+    assert settings.chat_funnel_hidden_capabilities == (
+        "cap-edit-file,cap-artifact,cap-bash")
 
 
 # ── 3. registration gate parsing (chat composition posture) ──────────────────
