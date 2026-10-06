@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
+from .pdf_extract_text_handler import PdfExtractTextHandler
+from .pdf_table_to_text_handler import PdfTableToTextHandler
 from .rag_search_handler import RagSearchHandler
 from .read_document_handler import ReadDocumentHandler
 from .social_search_handler import SocialSearchHandler
@@ -38,6 +40,8 @@ HANDLERS: dict[str, CapabilityHandler] = {
     "cap-social-search": SocialSearchHandler(),
     "cap-vision": VisionHandler(),
     "cap-read-document": ReadDocumentHandler(),
+    "cap-pdf-extract-text": PdfExtractTextHandler(),
+    "cap-pdf-table-to-text": PdfTableToTextHandler(),
 }
 
 

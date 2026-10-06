@@ -116,6 +116,9 @@ FROZEN_PARAMETERS: dict[str, dict] = {
         "asset_id": {"type": "string", "max_len": 64, "required": True,
                      "description": "asset id of the attached/opened document "
                                     "(from turn facts, not the sentence)"},
+        "pages": {"type": "string", "required": False,
+                  "description": 'optional page spec like "2" or "1-3" from the '
+                                 "viewer context; omitted = whole document"},
     },
     "cap-rag-search": {
         "query": {"type": "string", "required": True,
@@ -165,6 +168,9 @@ FROZEN_PARAMETERS: dict[str, dict] = {
         "asset_id": {"type": "string", "max_len": 64, "required": True,
                      "description": "asset id of the attached/opened document "
                                     "(from turn facts, not the sentence)"},
+        "pages": {"type": "string", "required": False,
+                  "description": 'optional page spec like "2" or "1-3" from the '
+                                 "viewer context; omitted = whole document"},
     },
 }
 

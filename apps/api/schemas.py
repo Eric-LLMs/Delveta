@@ -173,6 +173,11 @@ class ViewerPayload(BaseModel):
     name: str
     kind: str = "text"                 # pdf|video|image|text|markdown|office
     page: int | None = None
+    # Optional explicit page RANGE (documents): the low/high bound of what the viewer
+    # shows. A client that only has a single current page leaves these unset and the
+    # turn-facts assembly normalizes ``page`` into a degenerate range (from == to).
+    page_from: int | None = None
+    page_to: int | None = None
     t_ms: int | None = None
     focus_text: str | None = None      # current-page text (documents) — FOCUS payload
     cues: list[dict] | None = None    # video: [{start_ms,end_ms,text}] full list; the server computes the window
@@ -196,6 +201,15 @@ class ViewerPayload(BaseModel):
             raise ValueError("viewer.focus_text too long (max 12000 chars)")
         if self.page is not None and not 1 <= self.page <= 10000:
             raise ValueError("viewer.page out of range")
+        for label, bound in (("page_from", self.page_from), ("page_to", self.page_to)):
+            if bound is not None and not 1 <= bound <= 10000:
+                raise ValueError(f"viewer.{label} out of range")
+        if (
+            self.page_from is not None
+            and self.page_to is not None
+            and self.page_from > self.page_to
+        ):
+            raise ValueError("viewer.page_from must be <= viewer.page_to")
         if self.t_ms is not None and self.t_ms < 0:
             raise ValueError("viewer.t_ms must be >= 0")
         if self.cues is not None:

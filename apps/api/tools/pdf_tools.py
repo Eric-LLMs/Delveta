@@ -15,6 +15,7 @@ from uuid import UUID
 from agent import Context, ToolExecution, ToolOutput, ToolRuntime, define_tool, text_block
 from core.infrastructure import pdf as pdf_lib
 from core.infrastructure.drive_repositories import SqlAssetRepository
+from core.infrastructure.pdf_pages import parse_pages_spec
 from core.infrastructure.storage import object_key
 
 log = logging.getLogger(__name__)
@@ -23,6 +24,25 @@ _TABLE_PROMPT = (
     "Transcribe the table in this image to text. Preserve rows and columns, keep numbers "
     "and values exact, and output only the transcribed text."
 )
+
+_PAGES_PARAM = {
+    "type": "string",
+    "description": "Page specification (e.g. '3', '1-3') from viewer context. "
+    "Omit to process the whole document.",
+}
+
+
+def _window(args: dict) -> list[int] | None:
+    """Parse the optional ``pages`` arg into a 1-based page list.
+
+    Absent/None -> ``None`` (the whole document). A present spec is parsed strictly: a
+    malformed or empty spec raises (fail-closed) — the call must never silently widen a
+    page-scoped request back to the whole document.
+    """
+    raw = args.get("pages")
+    if raw is not None and not isinstance(raw, str):
+        raise ValueError('pages must be a string like "3" or "1-3"')
+    return parse_pages_spec(raw) if raw is not None else None
 
 
 async def _load_asset_bytes(asset_id: str, ctx: Context) -> bytes:
@@ -39,13 +59,15 @@ async def _load_asset_bytes(asset_id: str, ctx: Context) -> bytes:
 
 def register(runtime: ToolRuntime, ctx: Context, llm) -> None:
     async def pdf_extract_text(args: dict, exec: ToolExecution) -> str:
+        pages = _window(args)
         data = await _load_asset_bytes(args["asset_id"], ctx)
         # fitz is CPU-bound; run it off the event loop.
-        return await asyncio.to_thread(pdf_lib.extract_pdf_text, data)
+        return await asyncio.to_thread(pdf_lib.extract_pdf_text, data, pages=pages)
 
     async def pdf_table_to_text(args: dict, exec: ToolExecution) -> str:
+        pages = _window(args)
         data = await _load_asset_bytes(args["asset_id"], ctx)
-        tables = await asyncio.to_thread(pdf_lib.detect_tables, data)
+        tables = await asyncio.to_thread(pdf_lib.detect_tables, data, pages=pages)
         if not tables:
             return "No tables detected in this PDF."
 
@@ -75,6 +97,7 @@ def register(runtime: ToolRuntime, ctx: Context, llm) -> None:
                         "type": "string",
                         "description": "Cloud-drive asset id of the PDF.",
                     },
+                    "pages": _PAGES_PARAM,
                 },
                 "required": ["asset_id"],
             },
@@ -97,6 +120,7 @@ def register(runtime: ToolRuntime, ctx: Context, llm) -> None:
                         "type": "string",
                         "description": "Cloud-drive asset id of the PDF.",
                     },
+                    "pages": _PAGES_PARAM,
                 },
                 "required": ["asset_id"],
             },

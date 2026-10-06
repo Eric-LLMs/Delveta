@@ -23,37 +23,63 @@ log = logging.getLogger(__name__)
 MAX_TABLES = 20
 
 
-def extract_pdf_text(content: bytes, *, page_markers: bool = False) -> str:
+def _selected_pages(page_count: int, pages: list[int] | None) -> list[int]:
+    """Resolve a 1-based page selection against ``page_count``.
+
+    ``pages=None`` means the whole document (every page, in order). A given list is used
+    as-is after bounds validation: any 1-based page outside ``1..page_count`` is a hard
+    :class:`ValueError` — a partial or out-of-range selection must never silently widen
+    back to the whole document (fail-closed, never a quiet full-document fallback).
+    """
+    if pages is None:
+        return list(range(1, page_count + 1))
+    out_of_range = [p for p in pages if p < 1 or p > page_count]
+    if out_of_range:
+        raise ValueError(
+            f"page(s) {out_of_range} out of range: this PDF has {page_count} page(s)"
+        )
+    return list(pages)
+
+
+def extract_pdf_text(
+    content: bytes, *, page_markers: bool = False, pages: list[int] | None = None
+) -> str:
     """Return the plain-text body of a PDF, pages newline-joined.
 
     With ``page_markers=True`` each page is prefixed with a ``[[PAGE:n]]`` sentinel so the
     RAG chunker can later map a chunk back to the page(s) it covers. Markers are stripped
     before a chunk is stored (see ``build_chunks(on_split=...)``); the sentinel text is
     unlikely to collide with real content and survives whitespace collapsing.
+
+    ``pages`` (1-based) restricts the read to a window of pages; ``None`` is the whole
+    document. An out-of-range page raises (never a silent full-document fallback), and the
+    sentinel carries the page's REAL number, not its position in the window.
     """
     doc = pymupdf.open(stream=content, filetype="pdf")
     try:
+        selected = _selected_pages(doc.page_count, pages)
         if page_markers:
-            return "".join(
-                f"\n[[PAGE:{i + 1}]]\n{doc[i].get_text('text')}" for i in range(doc.page_count)
-            )
-        return "\n".join(doc[i].get_text("text") for i in range(doc.page_count))
+            return "".join(f"\n[[PAGE:{p}]]\n{doc[p - 1].get_text('text')}" for p in selected)
+        return "\n".join(doc[p - 1].get_text("text") for p in selected)
     finally:
         doc.close()
 
 
-def detect_tables(content: bytes, max_tables: int = MAX_TABLES) -> list[bytes]:
+def detect_tables(
+    content: bytes, max_tables: int = MAX_TABLES, pages: list[int] | None = None
+) -> list[bytes]:
     """Render each detected table region to a PNG (bytes) for the vision LLM.
 
     A page whose table detection raises is skipped entirely (degrade, never crash); the
     total is capped at ``max_tables`` so a pathological PDF cannot fan out too many vision
-    calls.
+    calls. ``pages`` (1-based) restricts detection to a window of pages; ``None`` is the
+    whole document, and an out-of-range page raises before any page is scanned.
     """
     doc = pymupdf.open(stream=content, filetype="pdf")
     try:
         images: list[bytes] = []
-        for i in range(doc.page_count):
-            page = doc[i]
+        for p in _selected_pages(doc.page_count, pages):
+            page = doc[p - 1]
             try:
                 tables = page.find_tables()
             except Exception:  # noqa: BLE001 - detection hiccup on one page

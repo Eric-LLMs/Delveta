@@ -277,43 +277,40 @@ async def test_missing_asset_raises(monkeypatch, tmp_path):
 # ── pages: parser matrix ──
 
 def test_parse_pages_spec_dedupes_and_sorts():
-    from apps.api.tools.read_document_tool import _parse_pages_spec
+    from core.infrastructure.pdf_pages import parse_pages_spec
 
-    assert _parse_pages_spec("1,2-4,4") == [1, 2, 3, 4]
-    assert _parse_pages_spec(" 1, 3-5 , 8 ") == [1, 3, 4, 5, 8]
-    assert _parse_pages_spec("2-2") == [2]
-    assert _parse_pages_spec("3") == [3]
+    assert parse_pages_spec("1,2-4,4") == [1, 2, 3, 4]
+    assert parse_pages_spec(" 1, 3-5 , 8 ") == [1, 3, 4, 5, 8]
+    assert parse_pages_spec("2-2") == [2]
+    assert parse_pages_spec("3") == [3]
 
 
 def test_parse_pages_spec_rejects_malformed():
     import pytest
-
-    from apps.api.tools.read_document_tool import _parse_pages_spec
+    from core.infrastructure.pdf_pages import parse_pages_spec
 
     for bad in ["", "   ", "1-", "-3", "abc", "1,,3", "5-2", "0", "2-0", "1,0"]:
         with pytest.raises(ValueError):
-            _parse_pages_spec(bad)
+            parse_pages_spec(bad)
 
 
 def test_parse_pages_spec_span_checked_before_expansion():
     """A pathological range must raise WITHOUT building the expanded list."""
     import pytest
-
-    from apps.api.tools.read_document_tool import _parse_pages_spec
+    from core.infrastructure.pdf_pages import parse_pages_spec
 
     with pytest.raises(ValueError, match="spans"):
-        _parse_pages_spec("1-1000000000")
+        parse_pages_spec("1-1000000000")
 
 
 def test_parse_pages_spec_incremental_cap():
     """16 unique pages pass; the 17th raises as it is added, never after."""
     import pytest
+    from core.infrastructure.pdf_pages import parse_pages_spec
 
-    from apps.api.tools.read_document_tool import _parse_pages_spec
-
-    assert len(_parse_pages_spec("1-16")) == 16
+    assert len(parse_pages_spec("1-16")) == 16
     with pytest.raises(ValueError, match="per-call limit"):
-        _parse_pages_spec("1-16,17")
+        parse_pages_spec("1-16,17")
 
 
 # ── pages: execute-path contract ──

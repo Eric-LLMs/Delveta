@@ -178,6 +178,7 @@ def test_turn_facts_reads_structured_viewer_and_attach_only():
     f = TurnFacts.of(ctx)
     assert f == TurnFacts(
         has_viewer=True, viewer_asset_id="a-7", viewer_current_page=12,
+        viewer_page_from=12, viewer_page_to=12,  # lone page == degenerate range
         has_viewer_selection=True, has_attachment=True,
         attachment_asset_id="b-1",  #: the attach's id is a settled fact
         has_turn_context=True,
@@ -210,6 +211,7 @@ def test_turn_facts_plain_turn_is_all_empty():
     f = TurnFacts.of(_ctx("hello", session_id=None))
     assert f.has_viewer is False and f.has_attachment is False
     assert f.viewer_current_page is None and f.has_turn_context is False
+    assert f.viewer_page_from is None and f.viewer_page_to is None
 
 
 def test_matcher_contract_takes_facts_and_never_history():

@@ -32,6 +32,13 @@ class TurnFacts:
     has_viewer: bool = False
     viewer_asset_id: str = ""
     viewer_current_page: int | None = None
+    # The UI-declared page RANGE (documents), settled upstream from the ViewerPayload:
+    # ``page_from``/``page_to`` are the range the client says is in view. A lone
+    # ``viewer.page`` normalizes to a degenerate range (from == to); an explicit range
+    # the client sent wins as-is. Both None => no range (the whole document). A handler
+    # reads ONLY these — never a page number parsed from the user's sentence.
+    viewer_page_from: int | None = None
+    viewer_page_to: int | None = None
     has_viewer_selection: bool = False
     has_attachment: bool = False
     # Asset identity rides the SAME fact channel as everything else settled
@@ -64,10 +71,18 @@ class TurnFacts:
             attachment_asset_id = str(getattr(attach, "asset_id", "") or "")
         else:
             attachment_asset_id = ""
+        current_page = getattr(viewer, "page", None)
+        page_from = getattr(viewer, "page_from", None)
+        page_to = getattr(viewer, "page_to", None)
+        if page_from is None and page_to is None:
+            # A lone current page IS a one-page range; no page at all stays None/None.
+            page_from = page_to = current_page
         return cls(
             has_viewer=viewer is not None,
             viewer_asset_id=str(getattr(viewer, "asset_id", "") or ""),
-            viewer_current_page=getattr(viewer, "page", None),
+            viewer_current_page=current_page,
+            viewer_page_from=page_from,
+            viewer_page_to=page_to,
             has_viewer_selection=bool(selections),
             has_attachment=bool(attach),
             attachment_asset_id=attachment_asset_id,

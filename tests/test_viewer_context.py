@@ -500,25 +500,30 @@ def _stub(**kw):
     return s
 
 
-def test_access_context_contains_routing_and_no_vision():
+def test_access_context_routes_by_asset_id_and_never_passes_pages():
     out = render_viewer_access_context(_stub())
     assert out.startswith("## Viewer Access Context")
     assert "NOT in this" in out  # explicit: the body is NOT pre-injected — read_document it
     assert f"- Asset ID: {AID}" in out
-    assert "- Current Page: 3" in out
     assert "Routing Guidelines:" in out
-    assert "read_document" in out and "pages=" in out
+    assert f'read_document(asset_id="{AID}")' in out
+    # Phase 2-C: page scope is settled upstream (TurnFacts), so the stub carries NO
+    # page-passing instruction — the model reads by asset id only.
+    assert "pages=" not in out
+    assert "do NOT pass a `pages` argument" in out
     # the two zones stay physically exclusive; no stale vision guidance in the stub
     assert "## Viewer reference context" not in out
     assert "UNTRUSTED" not in out
     assert "vision" not in out.lower()
 
 
-def test_access_context_missing_page_renders_na_and_keeps_antifabrication():
-    out = render_viewer_access_context(_stub(page=None))
-    assert "- Current Page: N/A" in out
-    assert 'pages="<current_page>"' in out
-    assert "do NOT fabricate a page number" in out
+def test_access_context_never_routes_a_page_number_even_when_one_is_known():
+    # A known current page is NOT echoed into any page-passing guidance: the model is
+    # never told to turn a page number into a `pages` argument (no model mediation).
+    out = render_viewer_access_context(_stub(page=3))
+    assert "pages=" not in out
+    assert "Current Page" not in out
+    assert "do NOT pass a `pages` argument" in out
 
 
 def test_access_context_forges_are_fenced():
@@ -528,8 +533,8 @@ def test_access_context_forges_are_fenced():
     # the fence escalates past the embedded triple-quote, so the crafted name stays DATA:
     # it cannot close its own fence early and forge a section-level bullet.
     assert '- Asset Name: """"' in out
-    # the trusted identity lines are the only ones with the real asset id / page format
-    assert f"- Asset ID: {AID}" + nl + "- Current Page: 3" in out
+    # the trusted identity line is the only one with the real asset id
+    assert f"- Asset ID: {AID}" in out
     assert "Routing Guidelines:" in out
 async def test_section_dispatch_stub_vs_none_vs_injected():
     a_stub = build_viewer_blocks(_stub_viewer(page=3), "今天天气怎么样")

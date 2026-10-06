@@ -7,6 +7,8 @@ concrete handler. Wiring lives in ``roster.py``; handlers live in their own
 """
 from __future__ import annotations
 
+from .pdf_extract_text_handler import PdfExtractTextHandler
+from .pdf_table_to_text_handler import PdfTableToTextHandler
 from .rag_search_handler import RagSearchHandler
 from .read_document_handler import ReadDocumentHandler
 from .roster import HANDLERS, CapabilityHandler, handler_for
@@ -14,5 +16,15 @@ from .social_search_handler import SocialSearchHandler
 from .vision_handler import VisionHandler
 from .web_search_handler import WebSearchHandler
 
-__all__ = ["CapabilityHandler", "HANDLERS", "RagSearchHandler", "ReadDocumentHandler",
-           "SocialSearchHandler", "VisionHandler", "WebSearchHandler", "handler_for"]
+__all__ = [
+    "HANDLERS",
+    "CapabilityHandler",
+    "PdfExtractTextHandler",
+    "PdfTableToTextHandler",
+    "RagSearchHandler",
+    "ReadDocumentHandler",
+    "SocialSearchHandler",
+    "VisionHandler",
+    "WebSearchHandler",
+    "handler_for",
+]

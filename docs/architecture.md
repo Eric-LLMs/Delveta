@@ -112,7 +112,7 @@
   - [25.13 The Five Adjudications](#2513-the-five-adjudications)
   - [25.14 Configuration (`core/config.py`, post single-path ruling)](#2514-configuration-coreconfigpy-post-single-path-ruling)
   - [25.15 Test Doctrine](#2515-test-doctrine)
-  - [25.16 Capability-Specific Acquisition Handlers (Phase 1)](#2516-capability-specific-acquisition-handlers-phase-1)
+  - [25.16 Capability-Specific Acquisition Handlers](#2516-capability-specific-acquisition-handlers)
 - [26. LayaChoice Capability Selection](#26-layachoice-capability-selection)
   - [26.1 Position in the funnel](#261-position-in-the-funnel)
   - [26.2 Candidate contract](#262-candidate-contract)
@@ -165,7 +165,7 @@
 | Session memory | PG-backed `sessions` / `messages` / `session_events`; **client Live State (summary + tail) is the normal-turn context source — zero SQL reads on hot turns**; threshold compaction folds raw rows into one 5-section structured summary behind a dual persistence barrier (`sessions.compaction` JSONB = durable checkpoint, revision CAS); per-session async write queue (one batch INSERT/turn); deferred finalize = incremental embed + first-time-only sidebar summary/title; trigger-gated proactive recall (Lane-1 brief always on) + RRF recency weighting + importance-weighted file recall + supersede-in-place user directives + 30-day audit-event retention — see [§22](#22-chat-session-memory-v2--client-live-state-authority--zero-read-turns) |
 | Migrations | single canonical init script `migrations/0001_init.sql` (final schema + reference seeds) applied once by the asyncpg runner (replaces Alembic); dev-time incremental migrations deliberately squashed |
 | Chat | agent loop with tool use, SSE streaming; over a pure control plane — `TurnOrchestrator` resolves every turn to one `ExecutionPlan` (DIRECT / VIEWER / LOCAL_RAG / ACTION / COMPOSITE / AGENT): the L0 lexical pass, then the nodeized **Intent Funnel** chain over the LIVE capability Registry — Matcher → Recall → Capability Aggregation → `cap_router` selection (`SELECTED` / `REJECT` / `NONE`) → Argument Acquisition → Binder (§25–§28); a non-selected turn (REJECT / NONE / K<3) falls open to the Agent — then policy mapping. Single formal path (ruling): the funnel chain is always-live and a certified ACTION turn dispatches on certification alone; the four experimental L0 lanes each ride their own lane switch (all default-off, dark); every fallback is byte-identical to the Agent — [§24](#24-chat-control-plane--plan-resolution-fast-paths--intent-routing), [§25](#25-chat-intent-funnel--nodeized-routing-toolintentmodel--shared-tool-runtime) |
-| Viewer context | chat answers about the **open viewer**: focus chip (file · page / playhead), ±20 s media-time subtitle window with video-only FOCUS / FULL / NONE classification and honest `too_large` / `unavailable` short-circuit, pinned selections / ROI / frames as explicit P0 context (image blocks carry the captured asset's id and ship a REQUIRED `vision` directive), clickable `[Vn]` citations; **documents are never intent-matched server-side** — every followed document reaches the model as a trusted **Viewer Access Context** stub (geometry-resolved current page) routing it to `read_document` page-scoped reads (`pages` spec, ACL-before-storage, ≤16 pages) with a post-turn `viewer.reads` trace incl. failed calls — zero changes to RAG / agent runtime / memory ([§23](#23-viewer-context-provider--the-open-document-as-reference-context), features.md *Desktop Workbench*) |
+| Viewer context | chat answers about the **open viewer**: focus chip (file · page / playhead), ±20 s media-time subtitle window with video-only FOCUS / FULL / NONE classification and honest `too_large` / `unavailable` short-circuit, pinned selections / ROI / frames as explicit P0 context (image blocks carry the captured asset's id and ship a REQUIRED `vision` directive), clickable `[Vn]` citations; **documents are never intent-matched server-side** — every followed document reaches the model as a trusted **Viewer Access Context** stub routing it to `read_document` by asset id, with the page window settled **upstream** from the viewer context (the model never passes `pages`; `pages` spec, ACL-before-storage, ≤16 pages) and a post-turn `viewer.reads` trace incl. failed calls — zero changes to RAG / agent runtime / memory ([§23](#23-viewer-context-provider--the-open-document-as-reference-context), features.md *Desktop Workbench*) |
 | Research OS | tasks created atomically from the desktop chat (**＋ Research**): a cloud task folder under a picked My Drive parent — `materials/` / `outputs/` / `temp/` all guaranteed at creation — with live `task_spec.json` / `session_history.json` mirrors over authoritative scratch state; session isolation (research sessions bound 1:1 to a task, DB-marked `sessions.type=1`, hidden from the Sessions sidebar); 409-guarded cascade delete (RUNNING / RAG-INDEXED blocked, cloud folder → Trash, scratch hard-removed, bound type-1 sessions deleted); **server-owned runs** (`begin_run`/`end_run` mutex with stale-window crash recovery — a client disconnect no longer cancels a research turn) with `is_running` surfaced in every task view; `POST /research/tasks` + `GET/DELETE /research/tasks/{id}` + artifact read/promote API; **deterministic execution engine** — Python owns control flow through a 10-stage contract pipeline (`DISCOVER → FRAME → EVIDENCE → DESIGN → EXECUTE → EXPLAIN → WRITE → REVIEW → REPRODUCE → PUBLISH`) with repair-once bounded attempts, per-stage declared LLM call budgets + run-level turn/cost/no-progress caps, and guard gates at the transition fence: **strict** mode (default) parks a failed gate on a PENDING human override with zero rework on resume, lenient mode records it and continues; structural violations halt terminally (`BLOCKED`); lease-based crash recovery makes interrupted runs resumable; publication finality is the `PROMOTED` record (report + compiled PDF, optional slides via toolkit); desktop Research tab + two-layer chat header; web console read-only mirror — see [§17](#17-research-os-module), [§20](#20-research-execution-from-agent-driven-control-flow-to-a-deterministic-pipeline) |
 | Workflow core (`packages/workflow`) | domain-free run engine behind Research OS: declarative `workflow_spec` (transitions / activities / cap dimensions / hooks) + state machine with lease contest, crash recovery, retry, loop-cap grading and definition-drift detection; adapter pattern (ports + ledger/lease persistence supplied by the plugin) — [§19](#19-workflow-core-packagesworkflow) |
 | Image handling | two image classes: chat screenshots (📷 region-select capture → `chat/temp/` upload → `messages.attach_asset_id` owned link → inline bubble thumbnails → folder-agnostic cascade delete — the `chat/temp/` copy dies with its chat; RAG import **copies** it to `RAG/images/` keeping a separate stable copy that survives the delete) and RAG document images (PDF/DOCX/PPTX package scans and `.doc` magic-header recovery → `RAG 图片/<doc>/` via `assets.source_asset_id` + content-hash dedup, page/para state machine → chunk `meta.image_ids`, cascade delete/purge/restore with the source); attached screenshots are **inlined as a multimodal image part** when the routed chat model is vision-capable, otherwise the `vision` tool reads any attached asset by id — see [§18](#18-image-handling-screenshots--document-images) |
@@ -3560,7 +3560,11 @@ read this spreadsheet" request collapsed into a parse-failure apology. The `read
 - **Page-scoped reads (`pages`)** — the schema gains an optional string `pages` for
   page-addressable formats, and its semantics are a strict tri-state: *omitted* → the legacy
   whole-document path, byte-identical to before; *empty string* → rejected; *a spec* → only
-  the requested pages are parsed. `_parse_pages_spec` is a pure function: comma-separated
+  the requested pages are parsed. The spec is settled **upstream** from the viewer context, not
+  parsed out of the user's sentence: the per-capability acquisition handler reads it from the
+  turn facts (`viewer_page_from` / `viewer_page_to`) and the model never mediates it (§25.16.2).
+  `parse_pages_spec` (`core.infrastructure.pdf_pages`) is the ONE shared pure function, used by
+  every file-content tool (read_document and the two PDF tools): comma-separated
   1-based tokens (`"3"`, `"2,5"`, `"1-3"`), whitespace-tolerant, `a-b` ranges, deduped and
   sorted; malformed (`"1-"`, `"1,,3"`, non-numeric, `0`, negatives), inverted (`"5-2"`) and
   over-cap specs raise — the cap (`MAX_REQUESTED_PAGES = 16`) is checked **pre-expansion**
@@ -4562,12 +4566,12 @@ a **second, trusted prompt form** — the `## Viewer Access Context` control sec
 otherwise `""`; the two renderers are physically exclusive and never co-occur in one turn. The control
 section states up front that the document's content is **not** in the prompt, then carries the fenced
 asset name (escalating `_fence` — a crafted filename cannot forge a bullet line of a trusted section),
-the asset id, the current page (or `N/A`), and routing guidelines the model must follow: answer
-current-page deictics with `read_document(asset_id, pages="<current page>")` (never fabricate a page when
-it's `N/A`), honor explicit page/range specs via `pages`, omit `pages` for a whole-document ask, refuse
-page-scoped reads for formats without a page axis **instead of substituting the full document**, treat
-reading the viewer material as mandatory (web/RAG may supplement, never replace), and answer unrelated
-chatter directly without a tool call. P0 selections always outrank the stub (a surviving block means
+the asset id, and routing guidelines the model must follow: read the open document by asset id
+(`read_document(asset_id="<id>")`) — page scope is settled **upstream** by the per-capability
+acquisition handler from the viewer facts (`viewer_page_from` / `viewer_page_to`, §25.16.2), so the
+model must **not** parse a page number out of the sentence and must **not** pass a `pages` argument
+itself; treat reading the viewer material as mandatory (web/RAG may supplement, never replace), and
+answer unrelated chatter directly without a tool call. P0 selections always outrank the stub (a surviving block means
 `injected`); `too_large` / `unavailable` are unreachable for documents (they are video FULL outcomes),
 so a followed, readable document turn carries either data blocks or the stub — never silence.
 Both chat streams sink the assembly (`status in ("injected", "stub")`) and skip `_viewer_abort`. After the
@@ -4605,7 +4609,8 @@ citation validation that never rewrites; forged-asset and per-frame permission p
 the stub eligibility matrix (kind / follow / asset-readability exclusions, P0 precedence, video-FULL-
 never-degrades) and the Access-Context render contract (routing guidelines + not-injected statement
 present, no vision mention, forged
-asset names fenced, `N/A` page handling, section dispatch stub-vs-injected-vs-none); the `pages` parser
+asset names fenced, no page passed — page scope is settled upstream, never from the sentence, section
+dispatch stub-vs-injected-vs-none); the shared `pages` parser
 contract (dedupe/sort, malformed/range/over-cap/`""` rejections, bounds-checked before extraction,
 page-axis-less formats refused); ACL-before-storage on `read_document`; the stub read trace — including a
 **failed** `read_document` call captured in `viewer.reads` — asserted end-to-end on the streaming
@@ -6151,14 +6156,17 @@ packages/core/application/chat/
     │   ├── context_bundle.py       #   the sanctioned bundle (query, or query + last 5 turns)
     │   ├── merge.py                #   MIXED system + MODEL merge
     │   └── inputs.py               #   AcquisitionInputs
-    ├── cap_handler/               # capability-specific acquisition handlers (§25.16, Phase 1)
+    ├── cap_handler/               # capability-specific acquisition handlers (§25.16)
     │   ├── __init__.py            #   package facade — public re-exports only
     │   ├── roster.py              #   the ONE capability_id → handler wiring point
+    │   ├── scope.py               #   shared TurnFacts → asset_id + page-window (fail-closed)
     │   ├── rag_search_handler.py  #   cap-rag-search    — query (verbatim)
     │   ├── web_search_handler.py  #   cap-web-search    — query (verbatim)
     │   ├── social_search_handler.py # cap-social-search — query + platform (+ subreddit)
     │   ├── vision_handler.py      #   cap-vision        — asset_id (TurnFacts) + question
-    │   └── read_document_handler.py # cap-read-document — asset_id + pages (explicit only)
+    │   ├── read_document_handler.py     # cap-read-document      — asset_id + pages (viewer facts)
+    │   ├── pdf_extract_text_handler.py  # cap-pdf-extract-text   — asset_id + pages (viewer facts)
+    │   └── pdf_table_to_text_handler.py # cap-pdf-table-to-text  — asset_id + pages (viewer facts)
     ├── tool_intent/                # the FUSED lane (§25.6, backend=off): select + extract in ONE hop
     │   ├── __init__.py             #   ladder + verdict gate
     │   ├── base.py                 #   the backend-independent seam + card payload
@@ -6332,10 +6340,10 @@ ZERO model hops (`NO_CANDIDATE` short-circuit), a Recall fault always reports
 tool-existence truth is the live `ToolRuntime.schemas()` roster, and fail-open returns the
 *same object* (identity assertion).
 
-### 25.16 Capability-Specific Acquisition Handlers (Phase 1)
+### 25.16 Capability-Specific Acquisition Handlers
 
 **Architecture ruling.** Capability selection and argument acquisition are
-separate concerns (§28). For a first cohort of five chat-plane capabilities the
+separate concerns (§28). For a cohort of seven chat-plane capabilities the
 generic acquisition chain (declaration → evidence → context values → provider →
 path router → Qwen extractor → merge) is replaced by a **per-capability
 parameter handler**: a small deterministic object that owns its capability's
@@ -6346,8 +6354,8 @@ ToolRuntime — so execution, auth, schema validation and tool dispatch are
 untouched. §28 remains the acquisition path for **every capability without a
 registered handler**; it is NOT deprecated.
 
-Scope (Phase 1): `cap-rag-search`, `cap-web-search`, `cap-social-search`,
-`cap-vision`, `cap-read-document`.
+Scope: `cap-rag-search`, `cap-web-search`, `cap-social-search`, `cap-vision`,
+`cap-read-document`, `cap-pdf-extract-text`, `cap-pdf-table-to-text`.
 
 #### 25.16.1 Where the branch lives (`orchestrator.py`)
 
@@ -6373,13 +6381,16 @@ an edit to `orchestrator.py`.
 
 ```
 intent_funnel/cap_handler/
-├── __init__.py                  # package facade — public re-exports only
-├── roster.py                    # the ONE capability_id → handler wiring point
-├── rag_search_handler.py        # RagSearchHandler    (cap-rag-search)
-├── web_search_handler.py        # WebSearchHandler    (cap-web-search)
-├── social_search_handler.py     # SocialSearchHandler (cap-social-search)
-├── vision_handler.py            # VisionHandler       (cap-vision)
-└── read_document_handler.py     # ReadDocumentHandler (cap-read-document)
+├── __init__.py                       # package facade — public re-exports only
+├── roster.py                         # the ONE capability_id → handler wiring point
+├── scope.py                          # shared TurnFacts → asset_id + page-window (stateless)
+├── rag_search_handler.py             # RagSearchHandler        (cap-rag-search)
+├── web_search_handler.py             # WebSearchHandler        (cap-web-search)
+├── social_search_handler.py          # SocialSearchHandler     (cap-social-search)
+├── vision_handler.py                 # VisionHandler           (cap-vision)
+├── read_document_handler.py          # ReadDocumentHandler     (cap-read-document)
+├── pdf_extract_text_handler.py       # PdfExtractTextHandler   (cap-pdf-extract-text)
+└── pdf_table_to_text_handler.py      # PdfTableToTextHandler   (cap-pdf-table-to-text)
 ```
 
 `roster.py` is the sole wiring surface: `HANDLERS: dict[str, CapabilityHandler]`
@@ -6388,7 +6399,10 @@ is the lookup the orchestrator branch uses. The `CapabilityHandler` protocol is 
 `runtime_checkable` `Protocol` declaring `capability_id: str` and
 `async def acquire(*, query, facts) -> dict | None`. There are **no base classes**
 and no shared acquisition implementation: each handler is an independent,
-deterministic module with one responsibility.
+deterministic module with one responsibility. The three file-content handlers
+(`read_document` / the two PDF tools) share only `scope.py` — a **stateless**
+function set (`acquire_file_scope`, `resolve_asset_id`, `page_window`), not a
+base class — so their asset-precedence and page-window rules stay in lockstep.
 
 #### 25.16.3 The handler contract
 
@@ -6405,7 +6419,7 @@ Every capability handler obeys the same boundary:
   which the branch maps to `REASON_ACQUISITION_MISSING` → Agent;
 - it is **deterministic and Qwen-free** (§25.16.9).
 
-#### 25.16.4 The five handlers
+#### 25.16.4 The seven handlers
 
 | Capability | Handler | Args produced | Args deliberately omitted |
 |---|---|---|---|
@@ -6413,7 +6427,9 @@ Every capability handler obeys the same boundary:
 | `cap-web-search` | `WebSearchHandler` | `query` (verbatim sentence) | `top_k`, `scope`, `domain`, `engine` |
 | `cap-social-search` | `SocialSearchHandler` | `query` (verbatim), `platform`, `subreddit` (reddit only) | `limit` |
 | `cap-vision` | `VisionHandler` | `asset_id` (TurnFacts), `question` (verbatim) | — |
-| `cap-read-document` | `ReadDocumentHandler` | `asset_id` (TurnFacts), `pages` (explicit only) | `query`, `question` |
+| `cap-read-document` | `ReadDocumentHandler` | `asset_id` (TurnFacts), `pages` (viewer facts) | `query`, `question` |
+| `cap-pdf-extract-text` | `PdfExtractTextHandler` | `asset_id` (TurnFacts), `pages` (viewer facts) | `query`, `question` |
+| `cap-pdf-table-to-text` | `PdfTableToTextHandler` | `asset_id` (TurnFacts), `pages` (viewer facts) | `query`, `question` |
 
 #### 25.16.5 `cap-rag-search` and `cap-web-search`
 
@@ -6441,23 +6457,36 @@ rejected: the tool's own default is `reddit`, so omission would silently narrow
 an unspecified turn to reddit — `auto` is the explicit "whole platform" choice.
 A blank query returns `None`.
 
-#### 25.16.7 `cap-vision` and `cap-read-document`
+#### 25.16.7 `cap-vision` and the three file-content handlers
 
-Both resolve `asset_id` **solely from `TurnFacts`**, in the Binder's own
-precedence — `attachment_asset_id` → `path_asset_id` → `viewer_asset_id` — so
-the handler and the Binder are **idempotent** (the Binder would set the same
-value). No asset id present in any fact → `None` (fail-closed); a guessed id or
-a fabricated path is never produced. Neither handler loads an image's bytes:
-`vision`'s `question` is the verbatim sentence (omitted when empty, letting the
-tool's default analysis prompt run), and `read_document` emits `pages` **only**
-on an explicit page reference normalized to a spec
-`read_document_tool._parse_pages_spec` accepts (`第3页`, `3-5页`, `p.3`,
-`page 4`, …) while never mis-reading a year / standard / product number
-(`2024 年`, `ISO 9001`, `GPT-4`) as a page. The `read_document` capability has
-**no `query` / `question` slot** in its schema, so the handler emits none —
-inventing one would land `BIND_INVALID` and the capability could never certify.
-(A free-text `query` slot for this capability is a separate future architecture
-question, not a Phase 1 defect.)
+`cap-vision` and the three page-addressed capabilities (`cap-read-document`,
+`cap-pdf-extract-text`, `cap-pdf-table-to-text`) all resolve `asset_id`
+**solely from `TurnFacts`**, in the Binder's own precedence —
+`attachment_asset_id` → `path_asset_id` → `viewer_asset_id` — so the handler and
+the Binder are **idempotent** (the Binder would set the same value). No asset id
+present in any fact → `None` (fail-closed); a guessed id or a fabricated path is
+never produced. No handler loads any bytes: `vision`'s `question` is the verbatim
+sentence (omitted when empty, letting the tool's default analysis prompt run).
+
+The three file-content handlers share ONE scope rule
+(`cap_handler/scope.py`, `acquire_file_scope`) and source `pages` **only** from
+the viewer facts (`viewer_page_from` / `viewer_page_to`) — never from the
+sentence, never mediated by a model. The range is a strict tri-state:
+
+- both bounds `None` → the `pages` slot is **omitted** (whole document);
+- equal bounds (`3,3`) → `"3"`; an ascending range (`3,5`) → `"3-5"`;
+- a half-open (`3,None` / `None,5`) or reversed (`5,3`) range → `None`
+  (fail-closed → Agent) — a page-scoped read is **never** silently widened to
+  the whole document.
+
+The handler never parses a page number out of the user's text, so a year /
+standard / product number (`2024 年`, `ISO 9001`, `GPT-4`) can never be
+mis-read as a page; the derived spec is legal for the shared `parse_pages_spec`
+(`core.infrastructure.pdf_pages`) by construction. The `read_document` and the
+two PDF capabilities have **no `query` / `question` slot** in their schema, so
+the handlers emit none — inventing one would land `BIND_INVALID` and the
+capability could never certify. (A free-text `query` slot for these capabilities
+is a separate future architecture question, not a handler defect.)
 
 #### 25.16.8 TurnFacts is the only context source
 
@@ -6475,7 +6504,7 @@ default acquisition path for every capability that has no registered handler,
 and it is exercised by the same Binder / certified-handoff tail. The two paths
 are distinguished only by the dispatch branch in `_acquisition_hop`.
 
-Phase 1's five handlers are all **deterministic**, so Qwen is not on their path
+The seven handlers are all **deterministic**, so Qwen is not on their path
 at all — the branch returns before the extractor is considered. The handlers
 deliberately share **no** `Qwen` abstraction: Qwen 0.6B is a plain callable, and
 a *future* capability whose handler genuinely needs model extraction decides for
@@ -6499,21 +6528,26 @@ every other capability.
 - No new Executor, no new Agent, no `Handler → Agent → Tool` shortcut, no direct
   tool invocation.
 - No image / document binary loading and no tool-body re-implementation.
-- No `query` slot on `read_document`; no `subreddit` outside reddit; no
-  `platform` defaulting to the tool's `reddit` when unspecified.
-- No Qwen call inside any of the five Phase 1 handlers.
+- No `query` slot on `read_document` / the two PDF capabilities; no `subreddit`
+  outside reddit; no `platform` defaulting to the tool's `reddit` when unspecified.
+- No Qwen call inside any of the seven handlers.
 - No shared `BaseHandler`; each handler is an independent deterministic module.
+  The three file-content handlers share only the **stateless** `scope.py`
+  helper, not a base class.
+- No page number parsed from the sentence and no `pages` widening: a half-open /
+  reversed viewer range fails closed (→ Agent), never a whole-document read.
 - No deletion of `argument_acquisition/`; §28 stays live for unwired capabilities.
 - Asset facts must follow `attachment → path → viewer`, matching the Binder.
 
 #### 25.16.12 Implementation status
 
-**Implemented.** All five handlers ship with the roster wiring and the single
+**Implemented.** All seven handlers ship with the roster wiring and the single
 capability-agnostic dispatch branch in `orchestrator.py::_acquisition_hop`.
 Tests: `tests/test_cap_handler_rag_search.py`,
 `test_cap_handler_web_search.py`, `test_cap_handler_social_search.py`,
-`test_cap_handler_vision.py`, `test_cap_handler_read_document.py` (+83 tests;
-suite green at 2599 passed / 2 skipped / 2 xfailed / 0 failed).
+`test_cap_handler_vision.py`, `test_cap_handler_read_document.py`,
+`test_cap_handler_pdf.py` (suite green at 2665 passed / 8 skipped / 2 xfailed /
+0 failed).
 
 ## 26. LayaChoice Capability Selection
 
@@ -6897,8 +6931,8 @@ acquired. The capability is never re-selected here, and the extractor never pick
 a capability. A `REJECT` / `NONE` decision never enters this stage at all — it
 goes straight to the Agent.
 
-> **Capability-specific handlers take precedence.** For the five Phase 1
-> capabilities that ship a registered parameter handler (§25.16),
+> **Capability-specific handlers take precedence.** For the seven capabilities
+> that ship a registered parameter handler (§25.16),
 > argument acquisition is owned by that handler and this section's chain is
 > **not** entered. This section is the acquisition path for **every capability
 > without a registered handler** — it is the default, not a legacy remnant, and

@@ -2,10 +2,12 @@
 
 The chat router freezes what the client extracted from the open viewer into a
 :class:`ViewerPayload`; this module decides what reaches the prompt. There is **no
-server-side intent matching for documents**: what the user means (this page / pages 2-5 /
-the whole file) is the model's job, routed through the trusted ``## Viewer Access
-Context`` control section and served by the ``read_document`` tool. Only two things are
-injected as data:
+server-side intent matching for documents**: an open document's body is never injected —
+the trusted ``## Viewer Access Context`` control section points the model at the asset id
+and the ``read_document`` tool fetches it. A document's page/range scope is NOT the
+model's to choose either: it is settled upstream from the viewer context
+(``TurnFacts.viewer_page_from/-to``) by the funnel's acquisition handler, so the stub
+carries no page-passing guidance. Only two things are injected as data:
 
 - ``P0``: the user's explicit actions — pinned selections, image regions, captured video
   frames. These are actions, not inferred intent, and always ride.
@@ -377,41 +379,37 @@ def render_viewer_access_context(stub: dict) -> str:
     message or into a data block — it renders alone in the DYNAMIC_SUFFIX zone. The asset
     name is user data and gets fenced: a crafted filename must not be able to forge a
     bullet line of the trusted section.
+
+    Page scope is NOT the model's to choose: a page/range read is settled upstream from
+    the viewer context (``TurnFacts.viewer_page_from/-to``) by the acquisition handler on
+    the funnel lane. This stub therefore carries NO page-passing instruction — the model
+    reads the open document by asset id only and never parses a page number out of the
+    sentence.
     """
     aid = stub.get("asset_id")
-    page = stub.get("page")
-    page_ok = isinstance(page, int) and page > 0
-    pages_arg = f'pages="{page}"' if page_ok else 'pages="<current_page>"'
     lines = [
         "## Viewer Access Context",
         "The user currently has a document open in the viewer. Its content is NOT in this",
         "prompt — answer questions about it only after reading it with read_document.",
         f"- Asset Name: {_fence(stub.get('name') or '')}",
         f"- Asset ID: {aid}",
-        f"- Current Page: {page if page_ok else 'N/A'}",
         "",
         "Routing Guidelines:",
-        '- For page-addressable documents (e.g., PDF, PPTX), if the user\'s query refers to '
-        'the current page (e.g., "this page", "here"):',
-        f"  * Call read_document(asset_id=\"{aid}\", {pages_arg}).",
-        '  * If current_page is "N/A" or unavailable, do NOT fabricate a page number or '
-        'pass "N/A" as `pages`.',
-        '- If the user specifies particular pages or page ranges (e.g., "page 1", '
-        '"pages 2-5", "page 2 and 5"), pass them via `pages`.',
-        '- For documents without a page-addressable axis (e.g., DOCX, TXT, Markdown, CSV, '
-        "XLSX, subtitles):",
-        "  * Do NOT use `pages`; the tool will reject page-scoped requests for those formats.",
-        "  * Never replace a page-scoped request with a full-document read. If no directly "
-        "injected page/selection content is available, state that page-scoped reading is "
-        "unavailable for this format rather than pretending the full document is the "
-        "requested page.",
-        "- If the query requires the entire document, omit the `pages` parameter.",
-        "- Reading the viewer material is mandatory when the question concerns it. Web/RAG "
-        "search may supplement the answer when the task requires external knowledge, current "
-        "information, comparison, or additional research, but must never replace reading the "
-        "viewer material.",
-        "- If the user query is unrelated chatter, answer directly without calling "
-        "read_document.",
+        (
+            f'- Call read_document(asset_id="{aid}") to read the open document. Page scope is '
+            "settled by the system from the viewer context — do NOT parse a page number from "
+            "the sentence and do NOT pass a `pages` argument yourself."
+        ),
+        (
+            "- Reading the viewer material is mandatory when the question concerns it. Web/RAG "
+            "search may supplement the answer when the task requires external knowledge, current "
+            "information, comparison, or additional research, but must never replace reading the "
+            "viewer material."
+        ),
+        (
+            "- If the user query is unrelated chatter, answer directly without calling "
+            "read_document."
+        ),
     ]
     return "\n".join(lines)
 
