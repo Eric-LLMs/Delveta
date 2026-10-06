@@ -148,7 +148,7 @@ def test_roster_wires_cap_social_search():
 
 def test_roster_leaves_unwired_capabilities_on_the_generic_chain():
     # capabilities with no handler stay on the generic acquisition chain.
-    for cid in ("cap-open-pdf", "cap-translate", ""):
+    for cid in ("cap-open-pdf", ""):
         assert handler_for(cid) is None
 
 

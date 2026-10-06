@@ -150,7 +150,7 @@ def test_roster_wires_cap_read_document():
 
 
 def test_roster_leaves_unwired_capabilities_on_the_generic_chain():
-    for cid in ("cap-open-pdf", "cap-translate", ""):
+    for cid in ("cap-open-pdf", ""):
         assert handler_for(cid) is None
 
 
