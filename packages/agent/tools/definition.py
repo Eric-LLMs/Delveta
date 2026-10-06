@@ -135,6 +135,7 @@ class ToolDefinition:
     destructive: bool = False
     is_concurrency_safe: bool | None = None
     permission: set[ToolPermission] | None = None  # explicit override; None → classify
+    timeout_s: float | None = None  # per-tool body deadline; None → runtime default
 
     def schema(self) -> dict:
         """Model-visible projection (name/description/parameters only; no execute/render)."""
@@ -165,12 +166,14 @@ def define_tool(
     destructive: bool = False,
     is_concurrency_safe: bool | None = None,
     permission: set[ToolPermission] | None = None,
+    timeout_s: float | None = None,
 ) -> ToolDefinition:
     """Define a tool.
 
     - ``parameters``: JSON Schema for the tool arguments (OpenAI function-calling format).
     - ``output``: a :class:`ToolOutput` carrying the canonical value schema + a renderer.
     - ``execute``: ``async (args, exec) -> value`` — the actual body.
+    - ``timeout_s``: per-tool body deadline; ``None`` defers to the runtime default.
 
     The returned ``ToolDefinition.execute`` wraps the user body: validate args → run body →
     validate output. Validation failures are raised as :class:`ToolArgsError` /
@@ -197,4 +200,5 @@ def define_tool(
         destructive=destructive,
         is_concurrency_safe=is_concurrency_safe,
         permission=permission,
+        timeout_s=timeout_s,
     )

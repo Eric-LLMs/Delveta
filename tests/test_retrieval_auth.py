@@ -157,7 +157,7 @@ async def test_client_sends_token_on_retrieve():
     seen = {}
 
     class _FakeStub:
-        async def Retrieve(self, request, metadata=None):
+        async def Retrieve(self, request, metadata=None, timeout=None):
             seen["metadata"] = metadata
             return SimpleNamespace(hits=[])
 

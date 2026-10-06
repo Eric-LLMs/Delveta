@@ -11,11 +11,14 @@ Chinese voice (:attr:`tts_voice_zh`), anything else the default English voice. M
 read by the Chinese voice (understandable for an English-learning app with a Chinese UI).
 """
 import hashlib
+import logging
 import re
 
 from openai import AsyncOpenAI
 
 from core.config import settings
+
+logger = logging.getLogger(__name__)
 
 # CJK Unified Ideographs + Extension A + Compatibility Ideographs.
 _HAS_CJK = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
@@ -96,6 +99,7 @@ class TTSClient:
             file_path.write_bytes(resp.content)
             return str(file_path)
         except Exception:
+            logger.warning("tts synthesize failed", exc_info=True)
             return None
 
     async def synthesize_segments(self, text: str):

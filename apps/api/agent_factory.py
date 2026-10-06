@@ -124,6 +124,7 @@ def _retrieval_seam():
                 tls_ca=Path(settings.retrieval_grpc_tls_ca)
                 if settings.retrieval_grpc_tls_ca
                 else None,
+                timeout_s=settings.retrieval_grpc_timeout_s,
             )
         )
     return wrap_retriever(_retriever())
@@ -182,7 +183,10 @@ def get_agent_kernel() -> AgentKernel:
     # Bridge .env-loaded secrets (e.g. reddit OAuth) into os.environ so standalone
     # plugins discovered from disk can read them; direct env vars still win.
     export_secret_env()
-    runtime = ToolRuntime(approval=get_approval_bridge())
+    runtime = ToolRuntime(
+        approval=get_approval_bridge(),
+        body_timeout_s=settings.tool_body_timeout_seconds,
+    )
     ctx = Context()
 
     # Retrieval is a capability seam: the tool calls require("retrieval"), so the provider

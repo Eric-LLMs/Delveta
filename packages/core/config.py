@@ -289,6 +289,10 @@ class Settings(BaseSettings):
     bash_sandbox_cpus: float = 0.5              # per-container CPU budget (of one core)
     bash_sandbox_timeout: int = 30              # default per-command timeout (seconds)
 
+    # ToolRuntime body deadline: a tool body that overruns it is cancelled and reported
+    # as a timeout (a per-tool ``ToolDefinition.timeout_s`` overrides it).
+    tool_body_timeout_seconds: float = 120
+
     # Human-in-the-loop: how long an approval request waits before it is denied.
     approval_timeout_seconds: float = 120
     # Subagents: how deep child turns may nest before the loop refuses to spawn more.
@@ -306,6 +310,7 @@ class Settings(BaseSettings):
     retrieval_grpc_tls_key: str = ""           # server TLS private-key path (with the cert)
     retrieval_grpc_tls_ca: str = ""            # client-side CA bundle; empty = insecure channel
     retrieval_grpc_rate_limit: int = 0         # max Retrieve req/s per client (0 = unlimited)
+    retrieval_grpc_timeout_s: float = 30.0     # per-RPC deadline (Retrieve / Health)
 
     # ── RAG operations ──
     query_cache_ttl_seconds: int = 300         # Redis query-cache TTL (0 disables the cache)

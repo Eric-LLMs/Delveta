@@ -297,6 +297,14 @@ async def _run_tool(tool: str, args: dict, ctx) -> dict:
         # terminate honestly instead of laundering a registry fault through the
         # Agent as a recovery/retry channel.
         raise ActionIntegrityFailure(msg)
+    if name == "tool_timeout":
+        if tool in _MUTATING_DIRECT_TOOLS:
+            # A write tool entered the body then overran its deadline: the effect may or
+            # may not have landed — state UNKNOWN, and NEVER auto-retried.
+            raise RuntimeError(f"action tool timeout ({tool}): {msg}")
+        # A read tool has no write side effect; its timeout is an ordinary terminal
+        # failure (not UNKNOWN), and re-asking the Agent would only re-hang.
+        return {"ok": False, "reason": msg}
     if msg.startswith("preflight:"):
         raise ActionPreflightFailure(msg)
     if tool not in _MUTATING_DIRECT_TOOLS:

@@ -14,11 +14,16 @@ Registration is reversible: ``register`` and ``guard`` both return a disposer ca
 """
 from __future__ import annotations
 
+import asyncio
 import inspect
 import logging
 from collections.abc import Awaitable, Callable
 
 logger = logging.getLogger(__name__)
+
+# Fallback deadline for a single tool body (seconds). A tool may override it with
+# ``ToolDefinition.timeout_s``; the production factory injects the configured value.
+_DEFAULT_BODY_TIMEOUT_S = 120.0
 
 from agent.engine.decisions import (
     ContentBlock,
@@ -37,11 +42,17 @@ from agent.tools.definition import ToolArgsError, ToolDefinition, ToolOutputErro
 
 
 class ToolRuntime:
-    def __init__(self, approval: Callable[[ToolExecution, PreToolDecision], Awaitable[PreToolDecision]] | None = None) -> None:
+    def __init__(
+        self,
+        approval: Callable[[ToolExecution, PreToolDecision], Awaitable[PreToolDecision]] | None = None,
+        *,
+        body_timeout_s: float | None = _DEFAULT_BODY_TIMEOUT_S,
+    ) -> None:
         self._tools: dict[str, ToolDefinition] = {}
         self._guards: list[Guard] = []
         self.events = EventBus()
         self.approval = approval
+        self._body_timeout_s = body_timeout_s
 
     # ── registration ──
     def register(self, definition: ToolDefinition) -> Callable[[], None]:
@@ -135,7 +146,15 @@ class ToolRuntime:
     async def _resolve_ask(self, exec: ToolExecution, decision: PreToolDecision) -> PreToolDecision:
         if self.approval is None:
             return PreToolDecision.deny(decision.reason or "approval required but no approver registered")
-        return await self.approval(exec, decision)
+        try:
+            return await self.approval(exec, decision)
+        except Exception:  # a broken approval chain must fail closed, never escape the loop
+            # The approval runs BEFORE the tool body, so a failure anywhere in the chain
+            # (sink / broker register / unregister) proves no side effect: the honest and
+            # safe degradation is a decided DENIAL. The traceback is logged, but the reason
+            # surfaced to the user stays a fixed, non-leaking message.
+            logger.exception("approval resolution failed for tool %s", exec.name)
+            return PreToolDecision.deny("approval could not be resolved; operation denied")
 
     async def _guard_reason(self, exec: ToolExecution) -> str | None:
         for guard in self._guards:
@@ -154,12 +173,37 @@ class ToolRuntime:
             return ToolExecutionFailure(
                 ToolFailure(f"unknown tool: {exec.name}", info={"name": "unknown_tool"})
             )
+        # Per-tool deadline wins over the runtime default; ``None`` disables the bound
+        # (opt-out). A non-positive value is a configuration error, never a silent bypass.
+        timeout = tool.timeout_s if tool.timeout_s is not None else self._body_timeout_s
+        if timeout is not None and timeout <= 0:
+            raise ValueError(f"Tool timeout must be positive, got {timeout}")
+
+        async def _call():
+            try:
+                return await tool.execute(exec.arguments, exec)
+            except TimeoutError as exc:
+                # The tool's OWN ``TimeoutError`` (e.g. the bash command budget,
+                # fs_tools.py) is an ordinary tool error, not OUR deadline. Re-raise under a
+                # distinct type so the ``except TimeoutError`` below means ONLY "the body
+                # overran its runtime deadline" and the tool's own timeout keeps the
+                # ``tool_error`` channel it had before.
+                raise RuntimeError(str(exc)) from exc
+
         try:
-            value = await tool.execute(exec.arguments, exec)
+            if timeout is None:
+                value = await _call()
+            else:
+                value = await asyncio.wait_for(_call(), timeout)
         except ToolArgsError as exc:
             return ToolExecutionFailure(ToolFailure(str(exc), info={"name": "invalid_args"}))
         except ToolOutputError as exc:
             return ToolExecutionFailure(ToolFailure(str(exc), info={"name": "invalid_output"}))
+        except TimeoutError:
+            return ToolExecutionFailure(ToolFailure(
+                f"tool '{exec.name}' timed out after {timeout}s",
+                info={"name": "tool_timeout"},
+            ))
         except Exception as exc:  # noqa: BLE001 - tool errors become readable results fed back to the LLM
             return ToolExecutionFailure(ToolFailure(str(exc), info={"name": "tool_error"}))
 

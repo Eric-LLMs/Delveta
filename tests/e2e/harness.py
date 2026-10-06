@@ -24,6 +24,7 @@ database — that is A-2 Live's job.
 """
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from typing import Any
 from uuid import uuid4
@@ -452,3 +453,96 @@ def build_stack(
 async def sse_for(stack: Stack, message: str, **fields):
     """Drive one turn through the real /chat/stream route."""
     return await sse(stack.app, message, user=USER, **fields)
+
+
+# ── fault injection (Phase 4-B: test-only seams) ───────────────────────────────────
+# Each helper injects ONE fault at a REAL seam so a fault test can pin the safe
+# degradation. None touch production code; every one is reversible via the
+# monkeypatch fixture or the returned disposer. `_run_tool` / the funnel `certified`
+# are read through their module globals AT REQUEST TIME, so patching them here takes
+# effect for the turn `sse_for` drives.
+
+
+def stamp_certified(monkeypatch, **keys) -> None:
+    """Wrap the funnel's ``certified`` so a MATCH_HIT certification carries extra
+    routing-stage keys (``funnel_registry_version`` / ``binding_integrity``).
+
+    The routing stage owns these stamps and only sets them on an internal
+    inconsistency, so a fault test must inject them to exercise the executor's
+    boundary handling (action.py stages 0 and 0.5)."""
+    from core.application.chat.intent_funnel import orchestrator as orchestrator_mod
+
+    real = orchestrator_mod.certified
+
+    def _stamp(requirements, entry, args, registry_fp, *, stage, integrity=None):
+        req = real(requirements, entry, args, registry_fp, stage=stage, integrity=integrity)
+        req.requested_action.update(keys)
+        return req
+
+    monkeypatch.setattr(orchestrator_mod, "certified", _stamp)
+
+
+def drop_run_tool(monkeypatch) -> None:
+    """Simulate an unwired dispatch seam (``deps.run_tool is None``, action.py stage 2)."""
+    from api.routers import chat as chat_mod
+
+    monkeypatch.setattr(chat_mod, "_run_tool", None)
+
+
+def no_approver(runtime) -> None:
+    """Unbind the runtime's approval bridge — an ASK must degrade to a decided deny."""
+    runtime.approval = None
+
+
+def inject_guard(runtime, fn):
+    """Append a monotonic guard (returns a deny reason string, or raises)."""
+    return runtime.guard(fn)
+
+
+def inject_waterfall(runtime, name, handler):
+    """Append a lifecycle middleware on ``tools/pre-execute`` / ``tools/execute`` /
+    ``tools/post-execute`` (returns a disposer)."""
+    return runtime.events.on(name, handler)
+
+
+def inject_observer(runtime, name, handler):
+    """Append a read-only observer (e.g. a raising ``tools/result`` observer)."""
+    return runtime.events.observe(name, handler)
+
+
+def break_render(runtime, tool) -> None:
+    """Make a tool's output renderer raise — the post-body render contract."""
+
+    def _boom(args, value):
+        raise RuntimeError("render boom (fault injection)")
+
+    runtime.get(tool).output.render = _boom
+
+
+def hang_body(runtime, tool, *, seconds: float = 30.0, timeout_s: float = 0.05) -> None:
+    """Replace a tool body with a body that overruns its deadline — the F2 fault.
+
+    The body sleeps far longer than any sane runtime default, and the tool is stamped
+    with a small ``timeout_s`` so the runtime's OWN deadline fires well inside the
+    test-layer watchdog. Without a runtime-level deadline the body simply hangs (RED);
+    with one, the runtime cancels it and surfaces an honest terminal.
+    """
+
+    async def _hang(args, exec):
+        await asyncio.sleep(seconds)
+
+    defn = runtime.get(tool)
+    defn.execute = _hang
+    defn.timeout_s = timeout_s
+
+
+def raise_from_broker(broker) -> None:
+    """Make the approval broker's ``register`` raise — the approval-chain fault (F1).
+
+    ``ApprovalStore.request`` calls this BEFORE the tool body; a raise escapes the
+    runtime's decision stage (runtime.py:97-98 / approvals.py:227)."""
+
+    async def _boom(approval_id, future, *, user_id=None):
+        raise RuntimeError("approval broker unavailable (fault injection)")
+
+    broker.register = _boom

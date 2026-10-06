@@ -18,7 +18,8 @@ import grpc
 
 
 class GrpcRetriever:
-    def __init__(self, address: str, token: str = "", tls_ca: Path | None = None) -> None:
+    def __init__(self, address: str, token: str = "", tls_ca: Path | None = None,
+                 timeout_s: float = 30.0) -> None:
         from core.infrastructure.proto import retrieval_pb2, retrieval_pb2_grpc
 
         self._pb2 = retrieval_pb2
@@ -30,6 +31,7 @@ class GrpcRetriever:
             self._channel = grpc.aio.insecure_channel(address)
         self._stub = retrieval_pb2_grpc.RetrievalServiceStub(self._channel)
         self._token = token
+        self._timeout_s = timeout_s
 
     def _metadata(self) -> tuple:
         return (("authorization", f"Bearer {self._token}"),) if self._token else ()
@@ -50,7 +52,9 @@ class GrpcRetriever:
         request = self._pb2.RetrieveRequest(
             query=query, top_k=top_k, filters=self._stringify_filters(filters)
         )
-        response = await self._stub.Retrieve(request, metadata=self._metadata())
+        response = await self._stub.Retrieve(
+            request, metadata=self._metadata(), timeout=self._timeout_s
+        )
         return [
             {
                 "id": h.id,
@@ -62,7 +66,9 @@ class GrpcRetriever:
         ]
 
     async def health(self) -> str:
-        response = await self._stub.Health(self._pb2.HealthRequest(), metadata=self._metadata())
+        response = await self._stub.Health(
+            self._pb2.HealthRequest(), metadata=self._metadata(), timeout=self._timeout_s
+        )
         return response.status
 
     async def close(self) -> None:
