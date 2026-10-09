@@ -3,10 +3,11 @@
 Two layers are pinned here:
 
 * the HANDLER contract itself (unit): ``cap-rag-search``'s ``acquire()`` copies
-  the turn's sentence VERBATIM as ``query`` (the deterministic FALLBACK), emits
-  ``top_k`` ONLY from the shared DET count rule (never from a model; tool default
-  otherwise) and never ``domain`` (no fact source), and returns ``None`` for a
-  blank query;
+  the turn's sentence VERBATIM as ``query`` (the deterministic FALLBACK the model
+  may clean), runs NO extraction rule (the ``top_k`` count is MODEL-owned and an
+  unstated one falls to the ``rag_search`` tool's default), never emits
+  ``domain`` (the model returns the domain NAME, and the business layer resolves
+  it to a real ``assets.domain_id``), and returns ``None`` for a blank query;
 * the WIRING: a capability whose handler is registered owns its draft and its
   OPTIONAL ``slot_plan()`` authorizes the shared extractor for its MODEL slots
   (see ``test_orchestrator_slot_extraction``); the draft — with or without the
@@ -71,10 +72,14 @@ async def test_rag_never_emits_top_k_or_domain():
     assert set(draft) == {"query"}              # top_k/domain deliberately absent
 
 
-async def test_rag_stated_count_is_det_extracted():
+async def test_rag_a_stated_count_is_not_rule_extracted():
+    # no DET count rule: the count is MODEL-owned, so the raw sentence is the whole
+    # draft and the model (via slot_plan) is the one that may fill ``top_k``.
     handler = RagSearchHandler()
     draft = await handler.acquire(query="查一下注意力机制，前 5 条", facts=None)
-    assert draft == {"query": "查一下注意力机制，前 5 条", "top_k": 5}
+    assert draft == {"query": "查一下注意力机制，前 5 条"}
+    plan = handler.slot_plan(query="查一下注意力机制，前 5 条", facts=None, draft=draft)
+    assert "top_k" in plan.model_slots
 
 
 @pytest.mark.parametrize("blank", ["", "   ", "\n\t", None])
@@ -120,7 +125,7 @@ def _rag_entry() -> CapabilityEntry:
         parameters={
             "query": {"type": "string", "required": True, "description": "query"},
             "top_k": {"type": "integer", "required": False, "description": "count"},
-            "domain": {"type": "string", "required": False, "description": "domain id"},
+            "domain": {"type": "string", "required": False, "description": "domain name"},
         },
     )
 

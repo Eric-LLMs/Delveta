@@ -144,6 +144,38 @@ class VisionSeam:
         return "[vision analysis]"
 
 
+class SlotSeam:
+    """Stand-in for the local Qwen slot extractor (``argument_acquisition.extract``).
+
+    A NETWORK / outer-world seam (the same class as ``VisionSeam`` / ``ToolLLM``):
+    the model-lane capabilities (create-folder / add-term / translate) return the
+    EMPTY handler draft and rely on the shared extractor for their natural-language
+    slots, so a hermetic e2e stack needs a deterministic double. Canned values keyed
+    by capability make the certified ACTION observable at the tool boundary with
+    ZERO real LLM calls; the extraction QUALITY is benchmarked by the Formal-500 A/B
+    runs, not here.
+
+    The verbatim-query capabilities (web / rag / social) are intentionally NOT
+    canned: the seam returns an EMPTY read so the handler's verbatim ``query``
+    fallback stands (this matrix pins wiring, not query cleaning).
+    """
+
+    CANNED: dict[str, dict[str, str]] = {
+        "cap-create-folder": {"name": "gamma"},
+        "cap-add-term": {"term": "quantum", "domain": "physics terms"},
+        "cap-translate": {"text": "hello world"},
+    }
+
+    def __init__(self, overrides: dict[str, dict[str, str]] | None = None) -> None:
+        self.calls: list[dict] = []
+        self.canned = {**self.CANNED, **(overrides or {})}
+
+    async def extract(self, *, query, entry, model_slots, bundle, prompt=None):
+        cid = entry.capability_id
+        self.calls.append({"capability_id": cid, "slots": tuple(model_slots)})
+        return dict(self.canned.get(cid, {})), bundle.source
+
+
 class ReadDocSeam:
     """Stand-in for ``ingest.extract_document_text`` — records the name, no parse."""
 
@@ -319,9 +351,9 @@ def _set_gates(monkeypatch, *, backend: str = "stub") -> None:
     monkeypatch.setattr(settings, "chat_cap_router_backend", backend, raising=False)
     monkeypatch.setattr(settings, "chat_funnel_trace_capture", False, raising=False)
     # The slot extractor is a NETWORK seam (the unified handler branch and the
-    # generic MODEL strategy both reach for it). The e2e stack must stay hermetic,
-    # so pin it off ("" = not deployed, 8.17 ruling) — the handler branch then
-    # keeps its deterministic draft instead of attempting a live-model call.
+    # generic MODEL strategy both reach for it). Pin the URL off so the REAL
+    # extractor can never be reached; ``build_stack`` replaces the deps'
+    # ``argument_extractor`` with the deterministic ``SlotSeam`` double instead.
     monkeypatch.setattr(settings, "chat_tool_intent_local_url", "", raising=False)
 
 
@@ -337,6 +369,7 @@ class Stack:
     spy: Spy
     recorder: EffectRecorder
     tool_llm: ToolLLM
+    slot_seam: SlotSeam
     storage: FakeStorage
     retrieval: FakeSeam
     vision_seam: VisionSeam
@@ -364,11 +397,18 @@ def build_stack(
     grant=(),
     rules=(),
     query_overrides: dict[str, str] | None = None,
+    slot_values: dict[str, dict[str, str]] | None = None,
 ) -> Stack:
-    """Compose the in-process real-chain stack (see module docstring)."""
+    """Compose the in-process real-chain stack (see module docstring).
+
+    ``slot_values`` overrides the ``SlotSeam`` canned extraction per capability —
+    a test pins the MODEL's contribution (e.g. an omitted required slot) without
+    touching production code.
+    """
     port = ScriptedPort(steps=[dict(STEP)])
     spy = Spy()
     tool_llm = ToolLLM()
+    slot_seam = SlotSeam(slot_values)
     storage = FakeStorage()
     retrieval = FakeSeam(hits=[{"text": "learning material chunk"}])
 
@@ -443,15 +483,23 @@ def build_stack(
     # both and returns the SAME fingerprint-stable view.
     monkeypatch.setattr(registry_pkg, "active_view", _make_fake_active_view(view))
 
+    # The MODEL-lane capabilities (create-folder / add-term / translate) acquire their
+    # natural-language slots from the shared extractor seam. The e2e stack serves it
+    # with a DETERMINISTIC canned double so the whole matrix stays hermetic (no live
+    # model) while the real handler -> Binder -> tool-body chain still runs.
+    from api.routers import chat as chat_mod   # the module the app's router is built from
+
+    monkeypatch.setattr(chat_mod, "_extract_arguments", slot_seam.extract)
+
     _set_gates(monkeypatch)
     app = build_app(monkeypatch, port, retrieval, kernel, broker)
 
     return Stack(
         app=app, kernel=kernel, runtime=runtime, ctx=ctx, broker=broker, port=port,
-        spy=spy, recorder=recorder, tool_llm=tool_llm, storage=storage,
-        retrieval=retrieval, vision_seam=vision_seam, read_doc_seam=read_doc_seam,
-        pdf_seam=pdf_seam, view=view, entries=entries, image_asset=image_asset,
-        pdf_asset=pdf_asset,
+        spy=spy, recorder=recorder, tool_llm=tool_llm, slot_seam=slot_seam,
+        storage=storage, retrieval=retrieval, vision_seam=vision_seam,
+        read_doc_seam=read_doc_seam, pdf_seam=pdf_seam, view=view, entries=entries,
+        image_asset=image_asset, pdf_asset=pdf_asset,
     )
 
 

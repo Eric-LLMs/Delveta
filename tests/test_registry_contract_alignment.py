@@ -122,21 +122,32 @@ FROZEN_PARAMETERS: dict[str, dict] = {
     },
     "cap-rag-search": {
         "query": {"type": "string", "required": True,
-                  "description": "the search query, exactly as the user words it"},
+                  "description": "the search query — a clean, self-contained TOPIC "
+                                 "distilled from the user sentence (instruction frame "
+                                 "removed); the model understands the topic, it is NOT "
+                                 "copied verbatim"},
         "top_k": {"type": "integer", "required": False,
                   "description": "optional result count; only when the sentence states one"},
         "domain": {"type": "string", "required": False,
-                   "description": "optional domain id scope; only when the sentence names one"},
+                   "description": "optional domain NAME to scope the search to (resolved "
+                                  "to a real domain id by the tool); only when the sentence "
+                                  "names one"},
     },
     "cap-web-search": {
         "query": {"type": "string", "required": True,
-                  "description": "the search query, exactly as the user words it"},
+                  "description": "the search query — a clean, self-contained TOPIC "
+                                 "distilled from the user sentence (instruction frame "
+                                 "removed); the model understands the topic, it is NOT "
+                                 "copied verbatim"},
         "top_k": {"type": "integer", "required": False,
                   "description": "optional number of results; only when the sentence states one"},
     },
     "cap-social-search": {
         "query": {"type": "string", "required": True,
-                  "description": "the search query, exactly as the user words it"},
+                  "description": "the search query — a clean, self-contained TOPIC "
+                                 "distilled from the user sentence (instruction frame "
+                                 "removed); the model understands the topic, it is NOT "
+                                 "copied verbatim"},
         "platform": {"type": "string", "required": False,
                      "description": "optional platform (reddit / x / zhihu / auto); "
                                     "only when the sentence names one"},

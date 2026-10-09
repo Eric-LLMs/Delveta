@@ -1,18 +1,24 @@
 """Unified slot acquisition — the PURE contract units (no cascade, no model).
 
-Scheme A ("unified Handler orchestration") splits a handler's per-slot
-disposition out of ``acquire()``:
+The acquisition contract (docs/phase4-acquisition-contract.md) puts natural-
+language understanding on the MODEL. The search trio keeps the turn's sentence
+VERBATIM as a lossless fallback the model may clean; the three MODEL-lane
+capabilities (add-term / create-folder / translate) run NO extraction rule at
+all, so their ``acquire()`` returns the EMPTY ``{}`` and the model owns every
+slot. Nothing here re-implements natural-language extraction with regex / quotes
+/ fixed phrases — that C-class implementation had no requirement basis and is
+removed.
 
-* ``search_args.result_count`` — the shared DET rule for the optional count slot:
-  a STATED count is a rule-obtained value the handler keeps (never re-asked of a
-  model); an absent one falls to the tool's own default;
-* ``SlotPlan`` / each search handler's ``slot_plan()`` — the EXPLICIT four-state
+* ``acquire()`` — the handler draft. A search handler returns ``{"query": …}``
+  (verbatim, the model's cleaning fallback); the MODEL-lane trio returns ``{}``.
+  Only a BLANK query returns ``None`` (no input → the Agent owns the turn).
+* ``SlotPlan`` / each handler's ``slot_plan()`` — the EXPLICIT four-state
   disposition (ACQUIRED / PENDING_MODEL / DEFAULTED / MISSING) the orchestrator
-  reads INSTEAD of inferring "needs a model" from ``slot not in draft``;
+  reads INSTEAD of inferring "needs a model" from ``slot not in draft``.
 * ``slot_refine.accept_model_values`` — the fold of authorized, valid model
-  values into the deterministic draft (never an unauthorized overwrite);
+  values into the draft (never an unauthorized overwrite).
 * ``prompts.prompt_for`` — the per-capability system prompt (default
-  byte-compatible for a capability that registers none);
+  byte-compatible for a capability that registers none).
 * the extractor's ``_payload`` — the ``prompt`` override is the system message
   and an absent one is byte-identical to the frozen default.
 
@@ -55,63 +61,39 @@ from core.application.chat.intent_funnel.cap_handler import (
     VisionHandler,
     WebSearchHandler,
 )
-from core.application.chat.intent_funnel.cap_handler.search_args import (
-    result_count,
-    states_result_count,
-)
 from core.application.chat.intent_funnel.registry.entry import CapabilityEntry
 
 
-# ── search_args.states_result_count ──────────────────────────────────────────────
+# ── acquire(): the handler draft (search trio=verbatim; MODEL-lane trio={}) ──────
 
 
-@pytest.mark.parametrize("message", [
-    "帮我搜一下注意力机制，前 5 条",
-    "search for python asyncio best practices, top 3",
-    "给我 10 results",
-    "取 3 个",
-    "show me 7 items",
-    "列出 4 篇",
-])
-def test_states_result_count_true(message):
-    assert states_result_count(message) is True
+@pytest.mark.parametrize("handler_cls", [WebSearchHandler, RagSearchHandler,
+                                         SocialSearchHandler])
+async def test_search_acquire_returns_the_verbatim_query(handler_cls):
+    handler = handler_cls()
+    draft = await handler.acquire(query="  帮我搜一下注意力机制  ", facts=None)
+    assert draft == {"query": "帮我搜一下注意力机制"}    # only surrounding spaces stripped
 
 
-@pytest.mark.parametrize("message", [
-    "帮我搜一下注意力机制",              # no count at all
-    "python 3 的新特性",                # a version, not a result count
-    "2026 年的最新 AI 新闻",            # a year
-    "RTX 4090 的性能",                 # a model number, no count noun
-    "search for transformer papers",    # no count
-])
-def test_states_result_count_false(message):
-    assert states_result_count(message) is False
+@pytest.mark.parametrize("handler_cls", [AddTermHandler, CreateFolderHandler,
+                                         TranslateHandler])
+async def test_model_lane_acquire_returns_the_empty_draft_on_any_input(handler_cls):
+    handler = handler_cls()
+    # NO extraction rule runs: a rich sentence yields the SAME ``{}`` as a bare one.
+    assert await handler.acquire(query='把 "keystone" 加入我的工程词汇库', facts=None) == {}
+    assert await handler.acquire(query="帮我搜一下注意力机制", facts=None) == {}
 
 
-@pytest.mark.parametrize("message,count", [
-    ("帮我搜一下注意力机制，前 5 条", 5),
-    ("search for python asyncio best practices, top 3", 3),
-    ("给我 10 results", 10),
-    ("取 3 个", 3),
-    ("show me 7 items", 7),
-    ("列出 4 篇", 4),
-])
-def test_result_count_extracts_the_stated_integer(message, count):
-    # rule 1: a STATED count is a rule-obtained value (the model never re-derives it)
-    assert result_count(message) == count
+@pytest.mark.parametrize("handler_cls", [WebSearchHandler, RagSearchHandler,
+                                         SocialSearchHandler, AddTermHandler,
+                                         CreateFolderHandler, TranslateHandler])
+@pytest.mark.parametrize("blank", ["", "   ", "\n\t", None])
+async def test_blank_query_returns_none(handler_cls, blank):
+    handler = handler_cls()
+    assert await handler.acquire(query=blank, facts=None) is None
 
 
-@pytest.mark.parametrize("message", [
-    "帮我搜一下注意力机制",
-    "python 3 的新特性",                # a version, not a result count
-    "2026 年的最新 AI 新闻",            # a year
-    "RTX 4090 的性能",                 # a model number, no count noun
-])
-def test_result_count_none_without_a_count_cue(message):
-    assert result_count(message) is None
-
-
-# ── SlotPlan + the three search handlers' slot_plan ──────────────────────────────
+# ── SlotPlan + each handler's slot_plan ──────────────────────────────────────────
 
 
 def test_slot_plan_defaults_are_empty_and_frozen():
@@ -125,86 +107,58 @@ async def _draft(handler, message):
     return await handler.acquire(query=message, facts=types.SimpleNamespace())
 
 
-async def test_web_slot_plan_without_count_defaults_top_k():
+async def test_web_slot_plan_authorizes_query_and_the_optional_count():
     h = WebSearchHandler()
     draft = await _draft(h, "帮我搜一下注意力机制")
     plan = h.slot_plan(query="帮我搜一下注意力机制", facts=None, draft=draft)
-    assert plan.model_slots == ("query",)
-    assert plan.default_slots == ("top_k",)
+    assert plan.model_slots == ("query", "top_k")        # count is model-owned now
+    assert plan.default_slots == ("top_k",)              # unstated -> the tool default
 
 
-async def test_web_slot_plan_det_count_is_rule_obtained():
-    h = WebSearchHandler()
-    msg = "search for transformers, top 3"
-    draft = await _draft(h, msg)
-    assert draft == {"query": msg, "top_k": 3}          # DET-extracted (rule 1)
-    plan = h.slot_plan(query=msg, facts=None, draft=draft)
-    assert plan.model_slots == ("query",)               # the model never re-derives it
-    assert plan.default_slots == ()
-
-
-async def test_rag_slot_plan_without_count_authorizes_query_and_domain():
+async def test_rag_slot_plan_authorizes_query_domain_and_count():
     h = RagSearchHandler()
     draft = await _draft(h, "帮我搜一下注意力机制")
     plan = h.slot_plan(query="帮我搜一下注意力机制", facts=None, draft=draft)
-    assert plan.model_slots == ("query", "domain")
+    assert plan.model_slots == ("query", "domain", "top_k")
     assert plan.default_slots == ("top_k",)
 
 
-async def test_rag_slot_plan_det_count_is_rule_obtained():
-    h = RagSearchHandler()
-    msg = "查一下注意力机制，前 5 条"
-    draft = await _draft(h, msg)
-    assert draft == {"query": msg, "top_k": 5}          # DET-extracted (rule 1)
-    plan = h.slot_plan(query=msg, facts=None, draft=draft)
-    assert plan.model_slots == ("query", "domain")      # top_k not re-asked of a model
-    assert plan.default_slots == ()
-
-
-async def test_social_slot_plan_authorizes_platform_when_none_named():
+async def test_social_slot_plan_authorizes_query_platform_subreddit_and_count():
     h = SocialSearchHandler()
-    msg = "搜索社区里对注意力机制的讨论"
-    draft = await _draft(h, msg)
-    assert draft["platform"] == "auto"
-    plan = h.slot_plan(query=msg, facts=None, draft=draft)
-    assert plan.model_slots == ("query", "platform")   # the genuinely-needed fallback
-    assert plan.default_slots == ("limit",)
+    draft = await _draft(h, "搜索社区里对注意力机制的讨论")
+    plan = h.slot_plan(query="搜索社区里对注意力机制的讨论", facts=None, draft=draft)
+    assert plan.model_slots == ("query", "platform", "subreddit", "limit")
+    assert plan.default_slots == ("limit",)              # no platform default emitted
 
 
-async def test_social_slot_plan_skips_platform_and_model_cannot_narrow_a_set():
-    h = SocialSearchHandler()
-    msg = "reddit 和知乎上都搜一下"
-    draft = await _draft(h, msg)
-    assert draft["platform"] == "auto"                  # several named -> honest auto
-    plan = h.slot_plan(query=msg, facts=None, draft=draft)
-    assert "platform" not in plan.model_slots           # never narrowed by a model
+async def test_add_term_slot_plan_authorizes_term_and_domain():
+    h = AddTermHandler()
+    draft = await _draft(h, "帮我加个词到词库里")
+    plan = h.slot_plan(query="帮我加个词到词库里", facts=None, draft=draft)
+    assert set(plan.model_slots) == {"term", "domain"} and plan.default_slots == ()
 
 
-async def test_social_slot_plan_skips_platform_when_det_named_one():
-    h = SocialSearchHandler()
-    msg = "在 reddit 上搜一下 transformer"
-    draft = await _draft(h, msg)
-    assert draft["platform"] == "reddit"
-    plan = h.slot_plan(query=msg, facts=None, draft=draft)
-    assert "platform" not in plan.model_slots           # DET value is authoritative
+async def test_create_folder_slot_plan_authorizes_name_only():
+    h = CreateFolderHandler()
+    draft = await _draft(h, "帮我建个文件夹")
+    plan = h.slot_plan(query="帮我建个文件夹", facts=None, draft=draft)
+    assert plan.model_slots == ("name",) and plan.default_slots == ()
 
 
-async def test_social_slot_plan_det_count_is_rule_obtained():
-    h = SocialSearchHandler()
-    msg = "搜索社区讨论，取 3 条"
-    draft = await _draft(h, msg)
-    assert draft["limit"] == 3                          # DET-extracted (rule 1)
-    plan = h.slot_plan(query=msg, facts=None, draft=draft)
-    assert "limit" not in plan.model_slots             # rule-obtained, never a model value
-    assert plan.default_slots == ()
+async def test_translate_slot_plan_authorizes_text_and_target_language():
+    h = TranslateHandler()
+    draft = await _draft(h, "帮我翻译一下")
+    plan = h.slot_plan(query="帮我翻译一下", facts=None, draft=draft)
+    assert set(plan.model_slots) == {"text", "target_language"}
+    assert plan.default_slots == ()          # the English default is the EXECUTOR's
 
 
 def test_slot_planning_handlers_opt_in_pure_det_handlers_do_not():
-    # the six capabilities whose unfilled slots are semantic -> the model lane
+    # the six capabilities whose slots are semantic -> the model lane
     for h in (WebSearchHandler(), RagSearchHandler(), SocialSearchHandler(),
               AddTermHandler(), CreateFolderHandler(), TranslateHandler()):
         assert isinstance(h, SlotPlanningHandler)
-    # pure-DET handlers carry no slot_plan -> the orchestrator calls no model.
+    # asset-anchored handlers carry no slot_plan -> the orchestrator calls no model.
     for h in (VisionHandler(), ReadDocumentHandler(), ReadFileHandler(),
               PdfExtractTextHandler(), PdfTableToTextHandler()):
         assert not isinstance(h, SlotPlanningHandler)
@@ -230,7 +184,7 @@ def test_accept_never_writes_an_unauthorized_slot():
     out = accept_model_values({"query": "raw", "platform": "reddit"},
                               {"query": "clean", "platform": "zhihu"},
                               model_slots=("query",), parameters=_PARAMS)
-    assert out == {"query": "clean", "platform": "reddit"}  # DET value kept
+    assert out == {"query": "clean", "platform": "reddit"}  # existing value kept
 
 
 def test_accept_drops_unknown_slot():

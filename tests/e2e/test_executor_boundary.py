@@ -57,14 +57,15 @@ async def test_decided_denial_is_terminal_no_effect(monkeypatch):
 
 
 async def test_binder_block_never_reaches_the_seam(monkeypatch):
-    """A required slot the handler cannot source ⇒ Binder blocks, Agent clarifies.
+    """A required slot no source fills ⇒ Binder blocks, Agent clarifies.
 
-    The fixture phrase names a GENERIC carrier ("glossary") that resolves to no
-    domain, so ``add_term``'s draft is ``{"term": "quantum"}`` — the required
-    ``domain`` slot is missing and the Binder yields BIND_MISSING.
+    The model fills only ``term`` (``domain`` is omitted — the sentence names no
+    resolvable domain), so ``add_term``'s certified draft leaves the required
+    ``domain`` MISSING and the Binder yields BIND_MISSING.
     """
     stack = build_stack(
         monkeypatch, query_overrides={"cap-add-term": "add quantum to the glossary"},
+        slot_values={"cap-add-term": {"term": "quantum"}},   # the model omits domain
     )
 
     res = await sse_for(stack, "add quantum to the glossary")

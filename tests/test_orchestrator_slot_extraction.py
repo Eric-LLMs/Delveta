@@ -6,21 +6,20 @@ model" from ``slot not in draft``:
 
 * an authorized plan runs the extractor ONCE, over the query bundle, with the
   capability's Prompt; valid, authorized values are folded into the draft;
-* a STATED count is a RULE-obtained value (``top_k`` / ``limit`` extracted by the
-  shared DET rule in ``acquire()``), so it is never authorized for the model; an
-  unstated count stays the tool's default;
-* an EMPTY / INVALID / UNAVAILABLE reply leaves the handler draft (the verbatim
-  query + DET values) intact — the original request is never lost, and the SAME
-  Binder remains the final gate (a required slot no one filled still lands
-  MISSING -> the Agent);
+* the search trio keeps the turn's sentence VERBATIM as a lossless fallback the
+  model may clean (the ``query`` slot), and the count slot (``top_k`` / ``limit``)
+  is MODEL-owned — an unstated one stays the tool's default;
+* the three MODEL-lane capabilities (add-term / create-folder / translate) run NO
+  extraction rule: their ``acquire()`` is the EMPTY ``{}`` and the model fills
+  every slot;
+* an EMPTY / INVALID / UNAVAILABLE reply leaves the handler draft intact — the
+  original request is never lost, and the SAME Binder remains the final gate (a
+  required slot no one filled still lands MISSING -> the Agent);
 * a handler WITHOUT ``slot_plan`` (the asset-anchored handlers: vision / read /
-  pdf) calls no model — the pure-deterministic flow is byte-identical to before;
-* the six MODEL-ASSISTED handlers (search trio + add-term / create-folder /
-  translate) run the same seam: a DET-sufficient draft calls no model, a DET gap
-  is authorized by the plan, and a DET-obtained value is never overwritten.
+  pdf) calls no model — the pure-deterministic flow is byte-identical to before.
 
 The extractor here is a MOCK seam: the real Docker Qwen call is exercised by the
-integration test at the bottom, which SKIPS when the endpoint is not deployed
+integration tests at the bottom, which SKIP when the endpoint is not deployed
 (the funnel tests never require a live model).
 """
 from __future__ import annotations
@@ -78,7 +77,7 @@ def _rag_entry(*, domain_required: bool = False) -> CapabilityEntry:
     return _entry("cap-rag-search", "rag_search", {
         "query": {"type": "string", "required": True, "description": "query"},
         "top_k": {"type": "integer", "required": False, "description": "count"},
-        "domain": {"type": "string", "required": domain_required, "description": "d"},
+        "domain": {"type": "string", "required": domain_required, "description": "name"},
     })
 
 
@@ -153,23 +152,22 @@ async def test_web_query_is_replaced_by_the_cleaned_topic():
     assert out is not None
     assert out.requested_action["args"] == {"query": "注意力机制的最新进展"}
     assert seen["query"] == msg                      # the model saw the raw sentence
-    assert seen["slots"] == ("query",)               # no count stated -> query only
+    assert set(seen["slots"]) == {"query", "top_k"}  # both slots model-owned
     assert seen["prompt"] == SEARCH_QUERY_PROMPT     # per-capability prompt
     assert capture["acquisition"]["extractor"] == "Qwen"
     assert capture["acquisition"]["slot_plan"] == {
-        "model_slots": ["query"], "default_slots": ["top_k"]}
+        "model_slots": ["query", "top_k"], "default_slots": ["top_k"]}
 
 
-async def test_web_stated_count_is_det_extracted_and_certified():
+async def test_web_stated_count_is_understood_by_the_model():
     msg = "search for transformers, top 3"
     seen: dict = {}
     out, trace, capture = await _hop(
         _web_entry(), query=msg,
         extractor=_mock({"query": "transformers", "top_k": 3}, seen=seen))
 
-    # rule 1: the stated count is a DET-obtained value, never authorized for the model.
-    assert seen["slots"] == ("query",)
-    # top_k comes from the DET rule (not the model); the Binder normalizes to str.
+    assert set(seen["slots"]) == {"query", "top_k"}   # the count is model-owned now
+    # the model's count is folded; the Binder normalizes it to str.
     assert out.requested_action["args"] == {"query": "transformers", "top_k": "3"}
 
 
@@ -208,25 +206,32 @@ async def test_model_unavailable_keeps_the_draft_and_still_certifies():
 
 
 async def test_unauthorized_slot_from_the_model_is_never_written():
-    msg = "帮我搜一下注意力机制"                       # no count -> top_k not authorized
+    # platform is not authorized for the web cap -> a stray value is dropped.
+    msg = "帮我搜一下注意力机制"
     out, trace, capture = await _hop(
-        _web_entry(), query=msg, extractor=_mock({"query": "注意力机制", "top_k": 9}))
+        _web_entry(), query=msg, extractor=_mock({"query": "注意力机制", "platform": "x"}))
     assert out.requested_action["args"] == {"query": "注意力机制"}
-    assert "top_k" not in out.requested_action["args"]
+    assert "platform" not in out.requested_action["args"]
 
 
-async def test_platform_fallback_value_is_accepted_only_when_none_named():
-    msg = "搜索社区里对注意力机制的讨论"                # DET -> auto, model authorized
+# ── social: query + platform + subreddit are all MODEL-owned ─────────────────────
+
+
+async def test_social_query_and_named_platform_come_from_the_model():
+    msg = "在 reddit 上搜一下 transformer"
+    seen: dict = {}
     out, trace, capture = await _hop(
-        _social_entry(), query=msg, extractor=_mock({"query": "注意力机制讨论", "platform": "x"}))
-    assert out.requested_action["args"] == {"query": "注意力机制讨论", "platform": "x"}
-
-
-async def test_det_platform_survives_a_divergent_model_value():
-    msg = "在 reddit 上搜一下 transformer"              # DET -> reddit, not authorized
-    out, trace, capture = await _hop(
-        _social_entry(), query=msg, extractor=_mock({"query": "transformer", "platform": "zhihu"}))
+        _social_entry(), query=msg,
+        extractor=_mock({"query": "transformer", "platform": "reddit"}, seen=seen))
+    assert set(seen["slots"]) == {"query", "platform", "subreddit", "limit"}
     assert out.requested_action["args"] == {"query": "transformer", "platform": "reddit"}
+
+
+async def test_social_unnamed_platform_is_omitted_by_the_model():
+    msg = "搜索社区里对注意力机制的讨论"
+    out, trace, capture = await _hop(
+        _social_entry(), query=msg, extractor=_mock({"query": "注意力机制讨论"}))
+    assert out.requested_action["args"] == {"query": "注意力机制讨论"}
 
 
 # ── a required slot nobody filled still fails closed through the SAME Binder ──────
@@ -269,53 +274,33 @@ async def test_handler_with_no_extractor_keeps_the_deterministic_draft():
     assert "extractor" not in capture["acquisition"]
 
 
-# ── add-term: DET keeps what it reliably named; the model fills ONLY the gap ──────
+# ── add-term: both slots are MODEL-filled (no DET keeps anything) ─────────────────
 
 
-async def test_add_term_det_sufficient_draft_calls_no_model():
-    msg = "把 attention 加入 Tec 词库"                 # DET resolves term AND domain
-
-    async def _must_not_run(**kw):
-        raise AssertionError("a DET-sufficient add-term draft must not call the model")
-
-    out, trace, capture = await _hop(_add_term_entry(), query=msg,
-                                     extractor=_must_not_run)
-    assert out.requested_action["args"] == {"term": "attention", "domain": "Tec"}
-    assert "slot_plan" not in capture["acquisition"]   # nothing was authorized
-    assert "extractor" not in capture["acquisition"]   # no model was called
-
-
-async def test_add_term_deictic_gap_is_filled_by_the_model_and_det_value_survives():
-    msg = "帮我把这个词加入 金融 词汇库"                # deictic term -> DET misses it
+async def test_add_term_both_slots_come_from_the_model():
+    msg = "把 attention 加入 Tec 词库"
     seen: dict = {}
     out, trace, capture = await _hop(
         _add_term_entry(), query=msg,
-        extractor=_mock({"term": "entropy", "domain": "HALLUCINATED"}, seen=seen))
-
-    assert seen["slots"] == ("term",)                  # only the unfilled slot asked
+        extractor=_mock({"term": "attention", "domain": "Tec"}, seen=seen))
+    assert set(seen["slots"]) == {"term", "domain"}
     assert seen["prompt"] == ADD_TERM_PROMPT
-    args = out.requested_action["args"]
-    assert args["term"] == "entropy"                   # the model closed the gap
-    assert args["domain"] == "金融 词汇库"              # DET value is truth, never overwritten
+    assert out.requested_action["args"] == {"term": "attention", "domain": "Tec"}
+
+
+async def test_add_term_model_gap_still_exits_bind_missing():
+    msg = "帮我加个词到词库里"
+    out, trace, capture = await _hop(
+        _add_term_entry(), query=msg, extractor=_mock({}))
+    assert out is None
+    assert trace["fallback"] == REASON_BIND_MISSING
 
 
 # ── create-folder: name only — a model-fabricated path never reaches the draft ────
 
 
-async def test_create_folder_det_named_folder_calls_no_model():
-    msg = "创建一个叫 2026-Q1 报表 的文件夹"
-
-    async def _must_not_run(**kw):
-        raise AssertionError("a DET-named folder must not call the model")
-
-    out, trace, capture = await _hop(_create_folder_entry(), query=msg,
-                                     extractor=_must_not_run)
-    assert out.requested_action["args"] == {"name": "2026-Q1 报表"}
-    assert "extractor" not in capture["acquisition"]
-
-
-async def test_create_folder_generic_sentence_is_named_by_the_model():
-    msg = "帮我建个文件夹"                             # DET yields the empty draft
+async def test_create_folder_name_is_model_filled_and_path_dropped():
+    msg = "帮我建个文件夹"
     seen: dict = {}
     out, trace, capture = await _hop(
         _create_folder_entry(), query=msg,
@@ -336,25 +321,25 @@ async def test_create_folder_model_still_missing_name_exits_bind_missing():
     assert trace["fallback"] == REASON_BIND_MISSING
 
 
-# ── translate: text DET-first; the semantic target_language always rides the plan ──
+# ── translate: text + the semantic target_language both ride the plan ─────────────
 
 
-async def test_translate_det_payload_plus_model_target_language():
-    msg = '把 "machine translation" 翻译成中文'         # DET owns the quoted payload
+async def test_translate_text_and_target_language_come_from_the_model():
+    msg = '把 "machine translation" 翻译成中文'
     seen: dict = {}
     out, trace, capture = await _hop(
         _translate_entry(), query=msg,
-        extractor=_mock({"target_language": "Chinese", "text": "EVIL"}, seen=seen))
+        extractor=_mock({"text": "machine translation", "target_language": "Chinese"},
+                        seen=seen))
 
-    assert seen["slots"] == ("target_language",)       # text ACQUIRED -> never re-asked
+    assert set(seen["slots"]) == {"text", "target_language"}
     assert seen["prompt"] == TRANSLATE_PROMPT
-    args = out.requested_action["args"]
-    assert args["text"] == "machine translation"       # DET verbatim, model echo dropped
-    assert args["target_language"] == "Chinese"
+    assert out.requested_action["args"] == {"text": "machine translation",
+                                            "target_language": "Chinese"}
 
 
 async def test_translate_target_language_unstated_omits_the_slot_for_the_default():
-    msg = "translate 你好，世界"                       # bare form: DET resolves nothing
+    msg = "translate 你好，世界"
     out, trace, capture = await _hop(
         _translate_entry(), query=msg,
         extractor=_mock({"text": "你好，世界"}))        # model OMITS an unstated target
@@ -365,7 +350,7 @@ async def test_translate_target_language_unstated_omits_the_slot_for_the_default
 
 
 async def test_translate_zh_en_mixed_sentence_extracts_text_and_target():
-    msg = "注意力机制的架构用英语怎么表达"              # no delimiter -> the model reads it
+    msg = "注意力机制的架构用英语怎么表达"
     seen: dict = {}
     out, trace, capture = await _hop(
         _translate_entry(), query=msg,
@@ -377,17 +362,16 @@ async def test_translate_zh_en_mixed_sentence_extracts_text_and_target():
                                             "target_language": "English"}
 
 
-async def test_translate_model_unavailable_keeps_the_det_text():
-    msg = '把 "hello world" 翻译成中文'                # DET text; only target pending
+async def test_translate_model_unavailable_exits_bind_missing():
+    msg = '把 "hello world" 翻译成中文'                # no DET text survives now
     out, trace, capture = await _hop(_translate_entry(), query=msg,
                                      extractor=_mock(boom=True))
-    assert out is not None                             # the turn is NOT dropped
-    assert out.requested_action["args"] == {"text": "hello world"}
-    assert capture["acquisition"]["model_values"] == {}
+    assert out is None                                 # required text: nobody filled it
+    assert trace["fallback"] == REASON_BIND_MISSING
 
 
 async def test_translate_no_payload_and_no_model_value_exits_bind_missing():
-    msg = "帮我翻译一下"                               # pure instruction: DET {}
+    msg = "帮我翻译一下"
     out, trace, capture = await _hop(_translate_entry(), query=msg,
                                      extractor=_mock({}))
     assert out is None
@@ -415,16 +399,19 @@ def _extractor_endpoint_reachable() -> bool:
 
 @pytest.mark.skipif(not _extractor_endpoint_reachable(),
                     reason="local Qwen extractor endpoint not deployed")
-async def test_real_qwen_cleans_a_zh_search_topic():
-    """REAL model call: a Chinese instruction frame must be stripped to a topic,
-    and a stated count must still land top_k. Run only against the live Docker
-    service (``chat_tool_intent_local_url``); skipped when it is not deployed."""
+async def test_real_qwen_search_query_is_never_lost():
+    """REAL model call: the search ``query`` is never dropped (the verbatim
+    sentence fallback survives a model that cannot clean it), and the model is
+    asked for both slots with the per-capability prompt. The 0.6B model's cleaning
+    QUALITY (frame-stripping) is tracked in the A/B experiment report, not pinned
+    here."""
     from core.application.chat.intent_funnel.argument_acquisition.extractor import extract
 
     seen: dict = {}
 
     async def real(*, query, entry, model_slots, bundle, prompt):
         seen["prompt"] = prompt
+        seen["slots"] = tuple(model_slots)
         return await extract(query=query, entry=entry, model_slots=model_slots,
                              bundle=bundle, prompt=prompt)
 
@@ -432,16 +419,16 @@ async def test_real_qwen_cleans_a_zh_search_topic():
     out, trace, capture = await _hop(_web_entry(), query=msg, extractor=real)
     args = out.requested_action["args"]
     assert args["query"]                                   # a non-empty topic
-    assert "帮我搜一下" not in args["query"]                # the frame was stripped
     assert seen["prompt"] == SEARCH_QUERY_PROMPT
+    assert set(seen["slots"]) == {"query", "top_k"}
     assert capture["acquisition"]["extractor"] == "Qwen"
 
 
 @pytest.mark.skipif(not _extractor_endpoint_reachable(),
                     reason="local Qwen extractor endpoint not deployed")
-async def test_real_qwen_reads_the_translate_target_language_directive():
-    """REAL model call: the DET payload stays untouched and the live Qwen resolves
-    the semantic ``target_language`` from the Chinese directive."""
+async def test_real_qwen_translate_payload_is_never_lost():
+    """REAL model call: both translate slots are handed to the model; the payload
+    is never dropped (``text`` is required, so a model miss exits to the Agent)."""
     from core.application.chat.intent_funnel.argument_acquisition.extractor import extract
 
     seen: dict = {}
@@ -454,8 +441,7 @@ async def test_real_qwen_reads_the_translate_target_language_directive():
 
     msg = '把 "machine translation" 翻译成中文'
     out, trace, capture = await _hop(_translate_entry(), query=msg, extractor=real)
-    args = out.requested_action["args"]
-    assert seen["slots"] == ("target_language",)           # text ACQUIRED -> never asked
-    assert args["text"] == "machine translation"           # DET verbatim survives
-    assert args.get("target_language")                     # the model named a target
     assert seen["prompt"] == TRANSLATE_PROMPT
+    assert set(seen["slots"]) == {"text", "target_language"}
+    if out is not None:                                    # model resolved a payload
+        assert out.requested_action["args"]["text"]

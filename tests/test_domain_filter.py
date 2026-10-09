@@ -107,14 +107,28 @@ def test_mixed_query_uses_cjk_path():
     assert "什么" not in params.get("segq", "")  # segments the CJK, keeps latin tokens
 
 
-# ── rag_search tool forwards the domain arg ──
+# ── rag_search tool RESOLVES a domain NAME to a real id (U1) ──
+class _NullFactory:
+    def __call__(self):
+        return self
+
+    async def __aenter__(self):
+        return None
+
+    async def __aexit__(self, *exc):
+        return False
+
+
 class _Ctx:
-    def __init__(self, retriever):
+    def __init__(self, retriever, factory=None):
         self._retriever = retriever
+        self._factory = factory or _NullFactory()
 
     def resolve(self, key):
-        assert key == "retrieval"
-        return self._retriever
+        if key == "retrieval":
+            return self._retriever
+        assert key == "session_factory"
+        return self._factory
 
 
 class _RecordingRetriever:
@@ -126,7 +140,15 @@ class _RecordingRetriever:
         return []
 
 
-async def test_tool_forwards_domain_into_filters():
+async def test_tool_resolves_a_domain_name_into_the_real_id(monkeypatch):
+    from types import SimpleNamespace
+
+    from apps.api.tools import rag_search_tool as tool_mod
+
+    async def fake_list_all(self, user_id=None):
+        return [SimpleNamespace(id="d-1", name="工程词汇库")]
+
+    monkeypatch.setattr(tool_mod.SqlDomainRepository, "list_all", fake_list_all)
     retriever = _RecordingRetriever()
     runtime = ToolRuntime()
     register(runtime, _Ctx(retriever), None)
@@ -134,11 +156,35 @@ async def test_tool_forwards_domain_into_filters():
         ToolExecution(
             call_id="1",
             name="rag_search",
-            arguments={"query": "q", "domain": "dom-123"},
+            arguments={"query": "q", "domain": "工程词汇库"},   # a NAME, never a UUID
         )
     )
-    assert retriever.calls[0][2]["domain_id"] == "dom-123"
+    assert retriever.calls[0][2]["domain_id"] == "d-1"       # resolved to the real id
     assert "user_id" in retriever.calls[0][2]
+
+
+async def test_tool_escalates_when_a_domain_name_is_unresolvable(monkeypatch):
+    """No domain matches the name -> preflight escalation (never a scope filter on a
+    fabricated id, never a silent full-scope search)."""
+    from apps.api.tools import rag_search_tool as tool_mod
+
+    async def fake_list_all(self, user_id=None):
+        return []
+
+    monkeypatch.setattr(tool_mod.SqlDomainRepository, "list_all", fake_list_all)
+    retriever = _RecordingRetriever()
+    runtime = ToolRuntime()
+    register(runtime, _Ctx(retriever), None)
+    out = await runtime.execute(
+        ToolExecution(
+            call_id="1",
+            name="rag_search",
+            arguments={"query": "q", "domain": "不存在的域"},
+        )
+    )
+    assert out.is_error                                # escalated, not silently scoped
+    assert "preflight:" in str(out.error.message)
+    assert retriever.calls == []
 
 
 async def test_tool_without_domain_keeps_user_id_only():

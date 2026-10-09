@@ -3,15 +3,15 @@
 Two layers are pinned here:
 
 * the HANDLER contract itself (unit): ``cap-social-search``'s ``acquire()``
-  copies the turn's sentence VERBATIM as ``query`` (the deterministic FALLBACK),
-  DETERMINISTICALLY resolves ``platform`` over the tool's real enum
-  ``{reddit, x, zhihu, auto}`` (one named -> that one; none or several ->
-  ``auto``), emits ``subreddit`` only for a named reddit community, emits
-  ``limit`` ONLY from the shared DET count rule (never from a model), and returns
-  ``None`` for a blank query;
+  copies the turn's sentence VERBATIM as ``query`` (the deterministic FALLBACK
+  the model may clean) and runs NO natural-language extraction rule — the former
+  token/``r/`` detector for ``platform`` / ``subreddit`` and the count rule for
+  ``limit`` all had no requirement basis and are removed. Every natural-language
+  slot is MODEL-owned; the tool enum and name resolution stay tool-side. A blank
+  query returns ``None``.
 * the WIRING: a capability whose handler is registered owns its draft and its
   OPTIONAL ``slot_plan()`` authorizes the shared extractor (query cleanup, the
-  no-platform-named fallback, a stated ``limit`` — see
+  named platform / subreddit, a stated ``limit`` — see
   ``test_orchestrator_slot_extraction``); the draft goes through the SAME
   ``_certify`` -> Binder -> ``tool_intent`` handoff. The generic chain
   (provider / path_router) is NOT consulted for a handled capability.
@@ -62,89 +62,36 @@ MESSAGE = "搜索社区里对注意力机制的讨论"
 async def test_social_query_is_the_verbatim_sentence():
     handler = SocialSearchHandler()
     draft = await handler.acquire(query=f"  {MESSAGE}  ", facts=None)
-    assert draft["query"] == MESSAGE            # only surrounding spaces stripped
+    assert draft == {"query": MESSAGE}          # only surrounding spaces stripped
 
 
-async def test_social_never_emits_limit():
+@pytest.mark.parametrize("message", [
+    MESSAGE,                                    # no platform at all
+    "在 reddit 上搜一下 transformer 的讨论",       # a named platform is the MODEL's read
+    "r/MachineLearning 里怎么讨论的",             # a named community is the MODEL's read
+    "搜索社区讨论，取 3 条",                       # a stated count is the MODEL's read
+])
+async def test_social_acquire_emits_only_the_verbatim_query(message):
+    # NO extraction rule runs: the platform / subreddit / limit are all MODEL-owned,
+    # so ``acquire()`` never carries them and the sentence is the fallback.
     handler = SocialSearchHandler()
-    draft = await handler.acquire(query=MESSAGE, facts=None)
-    assert "limit" not in draft                 # search_social defaults it
+    draft = await handler.acquire(query=message, facts=None)
+    assert draft == {"query": message}
 
 
-async def test_social_stated_count_is_det_extracted():
+async def test_social_slot_plan_authorizes_the_model_lane():
     handler = SocialSearchHandler()
-    draft = await handler.acquire(query="搜索社区讨论，取 3 条", facts=None)
-    assert draft["limit"] == 3
+    msg = "在 reddit 上搜一下 transformer"
+    draft = await handler.acquire(query=msg, facts=None)
+    plan = handler.slot_plan(query=msg, facts=None, draft=draft)
+    assert set(plan.model_slots) == {"query", "platform", "subreddit", "limit"}
+    assert plan.default_slots == ("limit",)     # no platform default is emitted here
 
 
 @pytest.mark.parametrize("blank", ["", "   ", "\n\t", None])
 async def test_social_blank_query_returns_none(blank):
     handler = SocialSearchHandler()
     assert await handler.acquire(query=blank, facts=None) is None
-
-
-# ── platform detection: one named platform -> that platform ──────────────────────
-
-
-@pytest.mark.parametrize("message,platform", [
-    ("在 reddit 上搜一下 transformer 的讨论", "reddit"),
-    ("reddit 社区怎么评价 codellama", "reddit"),
-    ("twitter 上大家怎么看这个模型", "x"),
-    ("推特上有没有相关的讨论", "x"),
-    ("x.com 上关于 AI 的帖子", "x"),
-    ("zhihu 上有没有相关的回答", "zhihu"),
-    ("知乎上怎么评价新的推理框架", "zhihu"),
-])
-async def test_social_platform_named(message, platform):
-    handler = SocialSearchHandler()
-    draft = await handler.acquire(query=message, facts=None)
-    assert draft["platform"] == platform
-    assert draft["query"] == message
-
-
-# ── platform detection: none / several named -> auto (never a guess) ─────────────
-
-
-@pytest.mark.parametrize("message", [
-    MESSAGE,                                    # no platform at all
-    "社区里对 attention 的看法",                  # no platform
-    "reddit 和知乎上都搜一下",                     # two platforms -> a set -> auto
-    "twitter 和 zhihu 的讨论",                    # two platforms -> auto
-    # bare "x" false-positive bait: must NOT be read as the X platform
-    "RTX 4090 的性能怎么样",
-    "X-ray 图像处理的最新进展",
-    "X战警 系列电影的讨论",
-    "解方程 x^2 的方法",
-])
-async def test_social_platform_unspecified_or_ambiguous_is_auto(message):
-    handler = SocialSearchHandler()
-    draft = await handler.acquire(query=message, facts=None)
-    assert draft["platform"] == "auto"
-
-
-# ── subreddit: emitted only for a named reddit community ─────────────────────────
-
-
-async def test_social_subreddit_from_r_slash_token():
-    handler = SocialSearchHandler()
-    draft = await handler.acquire(query="r/MachineLearning 里怎么讨论的", facts=None)
-    assert draft["platform"] == "reddit"
-    assert draft["subreddit"] == "MachineLearning"
-
-
-async def test_social_subreddit_omitted_without_a_community():
-    handler = SocialSearchHandler()
-    draft = await handler.acquire(query="在 reddit 上搜一下 transformer", facts=None)
-    assert draft["platform"] == "reddit"
-    assert "subreddit" not in draft
-
-
-async def test_social_subreddit_omitted_for_non_reddit_platform():
-    handler = SocialSearchHandler()
-    draft = await handler.acquire(query="知乎上 r/whatever 是什么", facts=None)
-    # zhihu named + a stray r/ token -> two platforms -> auto; no subreddit carried
-    assert draft["platform"] == "auto"
-    assert "subreddit" not in draft
 
 
 # ── Layer 2: the roster wiring ───────────────────────────────────────────────────
@@ -230,7 +177,7 @@ async def _route(ctx, deps, req):
     return await funnel.route(ctx, deps=deps, requirements=req)
 
 
-async def test_social_turn_certifies_detected_platform_via_handler(monkeypatch, caplog):
+async def test_social_turn_certifies_verbatim_query_via_handler(monkeypatch, caplog):
     caplog.set_level(logging.INFO, logger=FUNNEL_LOGGER)
     entry = _social_entry()
     rec, view = _wire(monkeypatch, entry)
@@ -241,22 +188,23 @@ async def test_social_turn_certifies_detected_platform_via_handler(monkeypatch, 
     act = out.requested_action
     assert act["tool"] == "search_social"
     assert act["capability_id"] == "cap-social-search"
-    assert act["args"] == {"query": MESSAGE, "platform": "auto"}
+    assert act["args"] == {"query": MESSAGE}           # verbatim; no platform/limit
     assert act["funnel_stage"] == "tool_intent"        # the EXISTING handoff shape
     assert act["funnel_registry_version"] == view.fingerprint
     assert not rec.legacy                              # no legacy hop
 
 
-async def test_social_turn_with_named_platform_and_subreddit(monkeypatch, caplog):
+async def test_social_named_platform_is_left_to_the_model(monkeypatch, caplog):
+    """A sentence naming a platform certifies with the VERBATIM query only — the
+    handler no longer detokenizes it; the model (via slot_plan) owns ``platform``."""
     caplog.set_level(logging.INFO, logger=FUNNEL_LOGGER)
     entry = _social_entry()
     rec, view = _wire(monkeypatch, entry)
-    msg = "r/MachineLearning 里怎么讨论 transformer"
+    msg = "在 reddit 上搜一下 transformer"
     req = TurnRequirements()
     out = await _route(_ctx(msg), _deps(None), req)
 
-    assert out.requested_action["args"] == {
-        "query": msg, "platform": "reddit", "subreddit": "MachineLearning"}
+    assert out.requested_action["args"] == {"query": msg}
 
 
 async def test_handler_bypasses_a_populated_generic_chain(monkeypatch, caplog):
@@ -272,7 +220,7 @@ async def test_handler_bypasses_a_populated_generic_chain(monkeypatch, caplog):
     out = await _route(_ctx(MESSAGE), _deps(lambda cid: poisoned.get(cid)), req)
 
     assert out is not req
-    assert out.requested_action["args"] == {"query": MESSAGE, "platform": "auto"}
+    assert out.requested_action["args"] == {"query": MESSAGE}
     assert not rec.legacy
 
 

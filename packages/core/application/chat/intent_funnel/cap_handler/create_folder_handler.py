@@ -6,127 +6,33 @@ Owns ONLY this capability's required schema slot, ``name``. ``cap-create-folder`
 supplied). There is no asset model and no path plane on this capability: the
 value is a single folder NAME, never a filesystem path.
 
-The name is resolved DET-FIRST (the rule ladder below), and a name the rules do
-NOT reliably obtain is authorized to the unified local-Qwen slot extractor via
-``slot_plan()`` — a DET miss never bails to the Agent before the model runs. The
-model is authorized for ``name`` ONLY: it must NEVER guess a root or a path (the
-optional ``parent_path`` stays tool-owned, defaulted to the drive root), and its
-value is folded only after ``_certify``'s SAME kind gate + Binder validate.
+Per the acquisition contract, ``name`` is a MODEL-owned natural-language slot and
+this handler runs NO extraction rule (no quoted / ``叫`` / ``named`` / ``for the
+X`` / ``X 文件夹`` regex ladder — that was implementation with no requirement
+basis):
 
-The DET name may come ONLY from a literal folder name in the user's own sentence,
-found by a priority ladder (first hit wins), never echoed from the whole sentence:
+* the MODEL extracts the literal folder name from the user's sentence (quotes
+  dropped, casing and spaces kept). A name the model does not resolve honestly
+  lands MISSING — the Binder gate owns it; the model is never allowed to
+  fabricate a name.
 
-1. a QUOTED span — ASCII ``"…"`` / ``'…'`` or the full-width ``“…”`` / ``‘…’`` /
-   ``「…」`` / ``『…』`` pairs (the enclosing quotes are dropped, the inside copied
-   verbatim, so ``"2026 年度计划"`` keeps its space);
-2. an explicit naming lead — ``叫 X`` / ``命名为 X`` / ``named X`` / ``called X``
-   — captured up to the trailing delimiter (``的文件夹`` / ``文件夹`` / ``的`` /
-   punctuation / end); a multi-token name is NEVER truncated at whitespace
-   (``2026-Q1 报表`` stays whole, unlike the legacy model extraction);
-3. the English ``for the X`` clause — the trailing noun phrase to end of sentence;
-4. a Chinese modifier before the folder word — ``X 文件夹`` / ``X 的文件夹``.
-
-The extracted value is copied VERBATIM — original casing and spaces survive
-(``Release Notes`` keeps its space, nothing is lowercased or translated).
-
-A DET name that is only intent/stop words (``folder`` / ``文件夹`` / ``一个`` /
-``please`` …) or carries a slash (``/`` / ``\\``) is REJECTED by the rules — a
-slash means the sentence carried a PATH, not a single folder name. When no rule
-produces a legal name, ``acquire()`` returns the EMPTY ``{}`` draft (not ``None``),
-so the model is authorized to extract ``name``; only a BLANK query (no input)
-returns ``None``. A name neither the rules nor the model resolves honestly lands
-MISSING — the Binder gate owns it; the model is never allowed to fabricate a name.
+``acquire()`` returns the EMPTY ``{}`` draft (never ``None`` unless the query is
+blank) so the model is authorized to extract ``name``. The model is authorized
+for ``name`` ONLY: it must NEVER guess a root or a path (the optional
+``parent_path`` stays tool-owned, defaulted to the drive root), and its value is
+folded only after ``_certify``'s SAME kind gate + Binder validate.
 
 ``parent_path`` is NEVER emitted and NEVER asked of the model: the public
 capability contract is the single ``name`` slot (``create_folder``'s optional
 ``parent_path`` is tool-owned, so the folder is created under the drive root — the
-system default), so the draft is always exactly ``{"name": <literal>}`` or ``{}``.
+system default), so the draft is always exactly ``{}``.
 
 ``facts`` is accepted for the common handler contract but ignored ON PURPOSE — the
 name comes from the sentence, never from the turn's asset context.
 """
 from __future__ import annotations
 
-import re
-
 from .slot_plan import SlotPlan
-
-# ── rule 1: quoted spans — the quotes are dropped, the inside copied verbatim ─────
-_QUOTED_PAIRS = (
-    ('"', '"'),
-    ("'", "'"),
-    ("“", "”"),
-    ("‘", "’"),
-    ("「", "」"),
-    ("『", "』"),
-)
-
-# ── rule 2: explicit naming leads ────────────────────────────────────────────────
-# The non-greedy capture stops at the trailing delimiter via the lookahead, so a
-# multi-token name ("2026-Q1 报表") is kept WHOLE — never cut at a space.
-_NAMED_RE = re.compile(
-    r"(?:叫|命名为|named|called)\s*(.+?)(?=\s*(?:的)?文件夹|\s*的|$)",
-    re.IGNORECASE,
-)
-
-# ── rule 3: English "for the X" ─────────────────────────────────────────────────
-_FOR_THE_RE = re.compile(r"for the\s+(.+?)\s*$", re.IGNORECASE)
-
-# ── rule 4: Chinese "X 文件夹" / "X 的文件夹" ──────────────────────────────────────
-_ZH_FOLDER_RE = re.compile(
-    r"(?:建个|建一个|新建一个|新建|创建一个|创建|加个|建)\s*(.+?)\s*(?:的)?文件夹"
-)
-
-# A candidate that is only intent/stop words is NOT a folder name.
-_GENERIC_RE = re.compile(
-    r"文件夹|folder|新建|创建|建个|建一个|一个|帮我|please", re.IGNORECASE
-)
-_GENERIC_EXACT = frozenset(
-    {"a", "an", "the", "new", "folder", "please", "的", "了", "个", "这个", "那个"}
-)
-
-_EDGE_PUNCT = " \t\r\n。.!?，,;；:：\"'“”‘’「」『』"
-_SLASH_CHARS = ("/", "\\", "／", "＼")
-
-
-def _quoted(message: str) -> str | None:
-    for open_q, close_q in _QUOTED_PAIRS:
-        start = message.find(open_q)
-        if start == -1:
-            continue
-        end = message.find(close_q, start + 1)
-        if end > start + 1:
-            return message[start + 1:end].strip() or None
-    return None
-
-
-def _named(message: str) -> str | None:
-    match = _NAMED_RE.search(message)
-    return match.group(1).strip() or None if match else None
-
-
-def _for_the(message: str) -> str | None:
-    match = _FOR_THE_RE.search(message)
-    return match.group(1).strip() or None if match else None
-
-
-def _zh_folder(message: str) -> str | None:
-    match = _ZH_FOLDER_RE.search(message)
-    return match.group(1).strip() or None if match else None
-
-
-def _clean(name: str | None) -> str | None:
-    """Trim edge punctuation; reject empty, generic-only, or slash-bearing names."""
-    if name is None:
-        return None
-    name = name.strip(_EDGE_PUNCT).strip()
-    if not name:
-        return None
-    if name.lower() in _GENERIC_EXACT or _GENERIC_RE.search(name):
-        return None
-    if any(ch in name for ch in _SLASH_CHARS):
-        return None
-    return name
 
 
 class CreateFolderHandler:
@@ -139,22 +45,16 @@ class CreateFolderHandler:
     capability_id = "cap-create-folder"
 
     async def acquire(self, *, query: str, facts) -> dict[str, object] | None:
-        """Return the ``create_folder`` DET draft — ``{"name": <literal>}`` when a
-        rule reliably names one, else the EMPTY ``{}`` draft (not ``None``) so the
+        """Return the EMPTY ``{}`` draft (never a rule-extracted name) so the
         model is authorized to extract ``name``. Only a blank query returns
         ``None`` (no input at all)."""
         message = str(query or "").strip()
         if not message:
             return None
-        for extractor in (_quoted, _named, _for_the, _zh_folder):
-            name = _clean(extractor(message))
-            if name is not None:
-                return {"name": name}
         return {}
 
     def slot_plan(self, *, query: str, facts, draft: dict) -> SlotPlan:
-        """Authorize the model ONLY for ``name`` and ONLY when a DET rule did not
-        already resolve it. The model never guesses a root or path — ``name`` is
-        the single slot; an unresolved name stays MISSING for the Binder gate."""
-        model_slots = () if "name" in (draft or {}) else ("name",)
-        return SlotPlan(model_slots=model_slots)
+        """Authorize the model for ``name`` (the single slot). The model never
+        guesses a root or path — an unresolved name stays MISSING for the Binder
+        gate."""
+        return SlotPlan(model_slots=("name",))
