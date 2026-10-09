@@ -148,6 +148,13 @@ FROZEN_PARAMETERS: dict[str, dict] = {
     "cap-translate": {
         "text": {"type": "string", "required": True,
                  "description": "the text to translate, copied from the sentence"},
+        # deliberate post-0927 change (migration 0019): target_language is the
+        # confirmed optional semantic slot — always model-authorized via the
+        # TranslateHandler slot_plan, omitted -> the executor's English default.
+        "target_language": {
+            "type": "string", "required": False,
+            "description": 'optional target language name (e.g. "English", '
+                           '"Chinese"); omitted -> executor default (English)'},
     },
     "cap-vision": {
         "asset_id": {"type": "string", "max_len": 64, "required": True,

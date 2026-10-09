@@ -6,9 +6,15 @@ Owns ONLY this capability's required schema slot, ``name``. ``cap-create-folder`
 supplied). There is no asset model and no path plane on this capability: the
 value is a single folder NAME, never a filesystem path.
 
-The name is resolved DETERMINISTICALLY — no model call, no Qwen. It may come ONLY
-from a literal folder name in the user's own sentence, found by a priority ladder
-(first hit wins), never echoed from the whole sentence:
+The name is resolved DET-FIRST (the rule ladder below), and a name the rules do
+NOT reliably obtain is authorized to the unified local-Qwen slot extractor via
+``slot_plan()`` — a DET miss never bails to the Agent before the model runs. The
+model is authorized for ``name`` ONLY: it must NEVER guess a root or a path (the
+optional ``parent_path`` stays tool-owned, defaulted to the drive root), and its
+value is folded only after ``_certify``'s SAME kind gate + Binder validate.
+
+The DET name may come ONLY from a literal folder name in the user's own sentence,
+found by a priority ladder (first hit wins), never echoed from the whole sentence:
 
 1. a QUOTED span — ASCII ``"…"`` / ``'…'`` or the full-width ``“…”`` / ``‘…’`` /
    ``「…」`` / ``『…』`` pairs (the enclosing quotes are dropped, the inside copied
@@ -23,15 +29,18 @@ from a literal folder name in the user's own sentence, found by a priority ladde
 The extracted value is copied VERBATIM — original casing and spaces survive
 (``Release Notes`` keeps its space, nothing is lowercased or translated).
 
-Fail-closed — returns ``None`` (the turn exits to the Agent with
-``ACQUISITION_MISSING``) — when: no rule matches; the only candidate is a generic
-stop word (``folder`` / ``文件夹`` / ``一个`` / ``please`` …); the query is blank;
-or the candidate contains a slash (``/`` / ``\\``) — a slash means the sentence
-carried a PATH, not a single folder name, and this handler does not guess.
+A DET name that is only intent/stop words (``folder`` / ``文件夹`` / ``一个`` /
+``please`` …) or carries a slash (``/`` / ``\\``) is REJECTED by the rules — a
+slash means the sentence carried a PATH, not a single folder name. When no rule
+produces a legal name, ``acquire()`` returns the EMPTY ``{}`` draft (not ``None``),
+so the model is authorized to extract ``name``; only a BLANK query (no input)
+returns ``None``. A name neither the rules nor the model resolves honestly lands
+MISSING — the Binder gate owns it; the model is never allowed to fabricate a name.
 
-``parent_path`` is NEVER emitted: the public capability contract is frozen to the
-single ``name`` slot (``create_folder``'s optional ``parent_path`` is tool-owned),
-so the draft is always exactly ``{"name": <literal>}``.
+``parent_path`` is NEVER emitted and NEVER asked of the model: the public
+capability contract is the single ``name`` slot (``create_folder``'s optional
+``parent_path`` is tool-owned, so the folder is created under the drive root — the
+system default), so the draft is always exactly ``{"name": <literal>}`` or ``{}``.
 
 ``facts`` is accepted for the common handler contract but ignored ON PURPOSE — the
 name comes from the sentence, never from the turn's asset context.
@@ -39,6 +48,8 @@ name comes from the sentence, never from the turn's asset context.
 from __future__ import annotations
 
 import re
+
+from .slot_plan import SlotPlan
 
 # ── rule 1: quoted spans — the quotes are dropped, the inside copied verbatim ─────
 _QUOTED_PAIRS = (
@@ -128,8 +139,10 @@ class CreateFolderHandler:
     capability_id = "cap-create-folder"
 
     async def acquire(self, *, query: str, facts) -> dict[str, object] | None:
-        """Return the ``create_folder`` argument draft (``{"name": <literal>}``),
-        or ``None`` when the sentence carries no literal folder name."""
+        """Return the ``create_folder`` DET draft — ``{"name": <literal>}`` when a
+        rule reliably names one, else the EMPTY ``{}`` draft (not ``None``) so the
+        model is authorized to extract ``name``. Only a blank query returns
+        ``None`` (no input at all)."""
         message = str(query or "").strip()
         if not message:
             return None
@@ -137,4 +150,11 @@ class CreateFolderHandler:
             name = _clean(extractor(message))
             if name is not None:
                 return {"name": name}
-        return None
+        return {}
+
+    def slot_plan(self, *, query: str, facts, draft: dict) -> SlotPlan:
+        """Authorize the model ONLY for ``name`` and ONLY when a DET rule did not
+        already resolve it. The model never guesses a root or path — ``name`` is
+        the single slot; an unresolved name stays MISSING for the Binder gate."""
+        model_slots = () if "name" in (draft or {}) else ("name",)
+        return SlotPlan(model_slots=model_slots)

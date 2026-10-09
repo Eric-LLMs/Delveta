@@ -3,10 +3,10 @@
 Two layers are pinned here:
 
 * the HANDLER contract itself (unit): ``cap-web-search``'s ``acquire()`` copies
-  the turn's sentence VERBATIM as ``query`` (the deterministic FALLBACK), NEVER
-  emits ``top_k`` (the ``web_search`` tool's ``_coerce_top_k`` default applies)
-  nor any invented ``scope`` / ``domain`` / ``engine`` slot, and returns
-  ``None`` for a blank query;
+  the turn's sentence VERBATIM as ``query`` (the deterministic FALLBACK), emits
+  ``top_k`` ONLY from the shared DET count rule (never from a model — the
+  ``web_search`` tool's ``_coerce_top_k`` default applies otherwise), invents no
+  ``scope`` / ``domain`` / ``engine`` slot, and returns ``None`` for a blank query;
 * the WIRING: a capability whose handler is registered owns its draft and its
   OPTIONAL ``slot_plan()`` authorizes the shared extractor for its MODEL slots
   (see ``test_orchestrator_slot_extraction``); the draft goes through the SAME
@@ -66,6 +66,12 @@ async def test_web_emits_only_query_no_invented_slots():
     handler = WebSearchHandler()
     draft = await handler.acquire(query=MESSAGE, facts=types.SimpleNamespace())
     assert set(draft) == {"query"}              # no top_k / scope / domain / engine
+
+
+async def test_web_stated_count_is_det_extracted():
+    handler = WebSearchHandler()
+    draft = await handler.acquire(query="search for transformers, top 3", facts=None)
+    assert draft == {"query": "search for transformers, top 3", "top_k": 3}
 
 
 @pytest.mark.parametrize("blank", ["", "   ", "\n\t", None])

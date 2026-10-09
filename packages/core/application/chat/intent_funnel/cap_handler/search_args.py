@@ -1,15 +1,19 @@
-"""Shared DET rule for the search handlers — is a result count STATED?
+"""Shared DET rule for the search handlers — the STATED result count.
 
 The search capabilities (``cap-web-search`` / ``cap-rag-search`` /
 ``cap-social-search``) own an optional integer slot (``top_k`` / ``limit``). The
-ruling for it is: a count slot is authorized for MODEL extraction ONLY when the
-user's sentence states a count explicitly; otherwise the value stays the tool's
-own legal default (never a model guess). This module is that one rule, kept in
-one place so the three handlers cannot drift.
+ruling for it follows the acquisition waterfall (rules + trusted context FIRST):
 
-A stated count is an explicit number bound to a count noun ("5 条", "3 results")
-or a "top N" / "前N" form — NOT a bare number that happens to appear (a year, a
-version, a technology name like "Python 3" is NOT a result count).
+* a count the DET rule can read ("5 条", "top 3", "前 5 条") is a RULE-obtained
+  value — :func:`result_count` extracts the integer and the handler keeps it;
+  the model is never asked to re-derive a rule-obtained value;
+* only when the sentence states NO count does the slot fall to the tool's own
+  legal default (never a model guess).
+
+This module is that one rule, kept in one place so the three handlers cannot
+drift. A stated count is an explicit number bound to a count noun ("5 条",
+"3 results") or a "top N" / "前N" form — NOT a bare number that happens to appear
+(a year, a version, a technology name like "Python 3" is NOT a result count).
 """
 from __future__ import annotations
 
@@ -24,6 +28,23 @@ _COUNT_RE = re.compile(
 )
 
 
+def result_count(message: str) -> int | None:
+    """The explicit result count stated in ``message``, or ``None``.
+
+    The DET half of the acquisition waterfall: when the sentence states a count
+    the handler keeps THIS rule-obtained integer (the model is never asked to
+    re-derive it); a message with no count cue returns ``None`` so the slot falls
+    to the tool's own legal default."""
+    match = _COUNT_RE.search(str(message or ""))
+    if match is None:
+        return None
+    raw = match.group(1) or match.group(2)
+    try:
+        return int(raw)
+    except (TypeError, ValueError):  # pragma: no cover - the regex guarantees digits
+        return None
+
+
 def states_result_count(message: str) -> bool:
     """True when ``message`` states an explicit result count."""
-    return bool(_COUNT_RE.search(str(message or "")))
+    return result_count(message) is not None

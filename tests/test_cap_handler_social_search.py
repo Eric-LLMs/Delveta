@@ -6,8 +6,9 @@ Two layers are pinned here:
   copies the turn's sentence VERBATIM as ``query`` (the deterministic FALLBACK),
   DETERMINISTICALLY resolves ``platform`` over the tool's real enum
   ``{reddit, x, zhihu, auto}`` (one named -> that one; none or several ->
-  ``auto``), emits ``subreddit`` only for a named reddit community, NEVER emits
-  ``limit``, and returns ``None`` for a blank query;
+  ``auto``), emits ``subreddit`` only for a named reddit community, emits
+  ``limit`` ONLY from the shared DET count rule (never from a model), and returns
+  ``None`` for a blank query;
 * the WIRING: a capability whose handler is registered owns its draft and its
   OPTIONAL ``slot_plan()`` authorizes the shared extractor (query cleanup, the
   no-platform-named fallback, a stated ``limit`` — see
@@ -68,6 +69,12 @@ async def test_social_never_emits_limit():
     handler = SocialSearchHandler()
     draft = await handler.acquire(query=MESSAGE, facts=None)
     assert "limit" not in draft                 # search_social defaults it
+
+
+async def test_social_stated_count_is_det_extracted():
+    handler = SocialSearchHandler()
+    draft = await handler.acquire(query="搜索社区讨论，取 3 条", facts=None)
+    assert draft["limit"] == 3
 
 
 @pytest.mark.parametrize("blank", ["", "   ", "\n\t", None])

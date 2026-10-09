@@ -514,8 +514,8 @@ async def _acquisition_hop(requirements, deps, entry, *, query, facts, view, tra
     # values) intact, so the original request is never lost. The draft — with or
     # without the model's contribution — still passes through the SAME
     # _certify -> Binder -> ActionExecutor -> ToolRuntime handoff below. A handler
-    # WITHOUT slot_plan (every handler but the search trio) plans nothing and
-    # calls no model — byte-identical to before.
+    # WITHOUT slot_plan (the asset-anchored vision / read / pdf handlers) plans
+    # nothing and calls no model — byte-identical to before.
     handler = handler_for(entry.capability_id)
     if handler is not None:
         args = await handler.acquire(query=query, facts=facts)

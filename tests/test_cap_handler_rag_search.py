@@ -3,9 +3,10 @@
 Two layers are pinned here:
 
 * the HANDLER contract itself (unit): ``cap-rag-search``'s ``acquire()`` copies
-  the turn's sentence VERBATIM as ``query`` (the deterministic FALLBACK), NEVER
-  emits ``top_k`` (tool default) or ``domain`` (no fact source), and returns
-  ``None`` for a blank query;
+  the turn's sentence VERBATIM as ``query`` (the deterministic FALLBACK), emits
+  ``top_k`` ONLY from the shared DET count rule (never from a model; tool default
+  otherwise) and never ``domain`` (no fact source), and returns ``None`` for a
+  blank query;
 * the WIRING: a capability whose handler is registered owns its draft and its
   OPTIONAL ``slot_plan()`` authorizes the shared extractor for its MODEL slots
   (see ``test_orchestrator_slot_extraction``); the draft — with or without the
@@ -68,6 +69,12 @@ async def test_rag_never_emits_top_k_or_domain():
     handler = RagSearchHandler()
     draft = await handler.acquire(query=MESSAGE, facts=types.SimpleNamespace())
     assert set(draft) == {"query"}              # top_k/domain deliberately absent
+
+
+async def test_rag_stated_count_is_det_extracted():
+    handler = RagSearchHandler()
+    draft = await handler.acquire(query="查一下注意力机制，前 5 条", facts=None)
+    assert draft == {"query": "查一下注意力机制，前 5 条", "top_k": 5}
 
 
 @pytest.mark.parametrize("blank", ["", "   ", "\n\t", None])

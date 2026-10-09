@@ -32,9 +32,10 @@ The four schema slots of ``cap-social-search``:
 * ``subreddit`` — emitted ONLY when the resolved platform is ``reddit`` AND the
   sentence names one (``r/<name>``); otherwise omitted. A subreddit is reddit's
   own scope, never invented for another platform.
-* ``limit``    — emitted ONLY when the sentence states a count (via
-  ``slot_plan``); otherwise the ``search_social`` tool applies its own default
-  (10, clamped to 1..25).
+* ``limit``    — a RULE-obtained value: extracted by the shared DET count rule
+  when the sentence states a count (``acquire()``), so the model never re-derives
+  it; otherwise the ``search_social`` tool applies its own default (10, clamped
+  to 1..25).
 
 Note: ``platform`` is ALWAYS emitted (never omitted). Omitting it would let the
 tool fall back to its own default of ``reddit`` — i.e. silently narrow an
@@ -48,7 +49,7 @@ from __future__ import annotations
 
 import re
 
-from .search_args import states_result_count
+from .search_args import result_count
 from .slot_plan import SlotPlan
 
 # Unambiguous platform tokens only. Order of keys is irrelevant: the detector
@@ -102,23 +103,25 @@ class SocialSearchHandler:
             match = _SUBREDDIT_RE.search(message)
             if match:
                 draft["subreddit"] = match.group(1)
-        # limit deliberately omitted here (tool default); when a slot needs
-        # semantic extraction the unified orchestrator is authorized via
-        # slot_plan() below.
+        # A stated count is a RULE-obtained value (DET), kept as-is; an absent one
+        # stays the tool's default (slot_plan resolves which).
+        count = result_count(message)
+        if count is not None:
+            draft["limit"] = count
         return draft
 
     def slot_plan(self, *, query: str, facts, draft: dict) -> SlotPlan:
-        """Authorize the model for ``query`` (a cleaned topic); for ``limit`` ONLY
-        when the sentence states a count; and for ``platform`` ONLY when the
-        sentence names NO platform by DET tokens (the genuinely-needed fallback —
-        the model may spot one DET's list misses, while ``auto`` stays the
-        fallback). A multi-platform sentence keeps its honest ``auto``."""
+        """Authorize the model for ``query`` (a cleaned topic); and for
+        ``platform`` ONLY when the sentence names NO platform by DET tokens (the
+        genuinely-needed fallback — the model may spot one DET's list misses,
+        while ``auto`` stays the fallback). A multi-platform sentence keeps its
+        honest ``auto``. ``limit`` is the DET count rule's value when the sentence
+        states one (already in the draft), otherwise the tool's default — never
+        asked of a model."""
         message = str(query or "")
         model_slots: list[str] = ["query"]
-        if states_result_count(message):
-            model_slots.append("limit")
         if (str(draft.get("platform") or "") == "auto"
                 and not _named_platforms(message)):
             model_slots.append("platform")
-        default_slots = () if states_result_count(message) else ("limit",)
+        default_slots = () if "limit" in draft else ("limit",)
         return SlotPlan(model_slots=tuple(model_slots), default_slots=default_slots)

@@ -9,9 +9,9 @@ never re-implements the web-search pipeline. The two schema slots of
   orchestrator to have the shared extractor return a CLEANED search topic; a
   valid, constraint-passing model value replaces the verbatim sentence, and an
   empty / invalid / unavailable one leaves the verbatim sentence in place.
-* ``top_k`` — emitted ONLY when the sentence states a count (via ``slot_plan``);
-  otherwise it is deliberately left to the ``web_search`` tool's own default (5)
-  and never asked of a model.
+* ``top_k`` — a RULE-obtained value: extracted by the shared DET count rule when
+  the sentence states a count (``acquire()``), so the model never re-derives it;
+  otherwise it is deliberately left to the ``web_search`` tool's own default (5).
 
 No ``scope`` / ``domain`` / ``engine`` slot exists in the tool schema, so none is
 invented here. The returned draft (``{slot: value}``) is passed through the SAME
@@ -19,7 +19,7 @@ Binder / ActionExecutor / ToolRuntime handoff every other capability uses.
 """
 from __future__ import annotations
 
-from .search_args import states_result_count
+from .search_args import result_count
 from .slot_plan import SlotPlan
 
 
@@ -37,17 +37,19 @@ class WebSearchHandler:
         message = str(query or "").strip()
         if not message:
             return None
-        # top_k deliberately omitted here (tool default); when a slot needs
-        # semantic extraction the unified orchestrator is authorized via
-        # slot_plan() below.
-        return {"query": message}
+        draft: dict[str, object] = {"query": message}
+        # A stated count is a RULE-obtained value (DET), kept as-is; an absent one
+        # stays the tool's default (slot_plan resolves which).
+        count = result_count(message)
+        if count is not None:
+            draft["top_k"] = count
+        return draft
 
     def slot_plan(self, *, query: str, facts, draft: dict) -> SlotPlan:
-        """Authorize the model for ``query`` (a cleaned topic) and for ``top_k``
-        ONLY when the sentence states a count — otherwise ``top_k`` stays the
-        tool's default. The verbatim ``query`` from ``acquire()`` remains the
-        fallback."""
-        message = str(query or "")
-        if states_result_count(message):
-            return SlotPlan(model_slots=("query", "top_k"))
+        """Authorize the model ONLY for ``query`` (a cleaned topic). ``top_k`` is
+        the DET count rule's value when the sentence states one (already in the
+        draft), and otherwise stays the tool's default — never asked of a model.
+        The verbatim ``query`` from ``acquire()`` remains the fallback."""
+        if "top_k" in draft:
+            return SlotPlan(model_slots=("query",))
         return SlotPlan(model_slots=("query",), default_slots=("top_k",))

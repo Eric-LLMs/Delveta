@@ -3,8 +3,9 @@
 Scheme A ("unified Handler orchestration") splits a handler's per-slot
 disposition out of ``acquire()``:
 
-* ``search_args.states_result_count`` — the shared DET rule for the optional
-  count slot (model-authorized ONLY when the sentence states a count);
+* ``search_args.result_count`` — the shared DET rule for the optional count slot:
+  a STATED count is a rule-obtained value the handler keeps (never re-asked of a
+  model); an absent one falls to the tool's own default;
 * ``SlotPlan`` / each search handler's ``slot_plan()`` — the EXPLICIT four-state
   disposition (ACQUIRED / PENDING_MODEL / DEFAULTED / MISSING) the orchestrator
   reads INSTEAD of inferring "needs a model" from ``slot not in draft``;
@@ -30,7 +31,10 @@ from core.application.chat.intent_funnel.argument_acquisition.extractor import (
     _payload,
 )
 from core.application.chat.intent_funnel.argument_acquisition.prompts import (
+    ADD_TERM_PROMPT,
+    CREATE_FOLDER_PROMPT,
     SEARCH_QUERY_PROMPT,
+    TRANSLATE_PROMPT,
     prompt_for,
 )
 from core.application.chat.intent_funnel.argument_acquisition.slot_refine import (
@@ -38,14 +42,21 @@ from core.application.chat.intent_funnel.argument_acquisition.slot_refine import
 )
 from core.application.chat.intent_funnel.cap_handler import (
     AddTermHandler,
+    CreateFolderHandler,
+    PdfExtractTextHandler,
+    PdfTableToTextHandler,
     RagSearchHandler,
+    ReadDocumentHandler,
+    ReadFileHandler,
     SlotPlan,
     SlotPlanningHandler,
     SocialSearchHandler,
     TranslateHandler,
+    VisionHandler,
     WebSearchHandler,
 )
 from core.application.chat.intent_funnel.cap_handler.search_args import (
+    result_count,
     states_result_count,
 )
 from core.application.chat.intent_funnel.registry.entry import CapabilityEntry
@@ -77,6 +88,29 @@ def test_states_result_count_false(message):
     assert states_result_count(message) is False
 
 
+@pytest.mark.parametrize("message,count", [
+    ("帮我搜一下注意力机制，前 5 条", 5),
+    ("search for python asyncio best practices, top 3", 3),
+    ("给我 10 results", 10),
+    ("取 3 个", 3),
+    ("show me 7 items", 7),
+    ("列出 4 篇", 4),
+])
+def test_result_count_extracts_the_stated_integer(message, count):
+    # rule 1: a STATED count is a rule-obtained value (the model never re-derives it)
+    assert result_count(message) == count
+
+
+@pytest.mark.parametrize("message", [
+    "帮我搜一下注意力机制",
+    "python 3 的新特性",                # a version, not a result count
+    "2026 年的最新 AI 新闻",            # a year
+    "RTX 4090 的性能",                 # a model number, no count noun
+])
+def test_result_count_none_without_a_count_cue(message):
+    assert result_count(message) is None
+
+
 # ── SlotPlan + the three search handlers' slot_plan ──────────────────────────────
 
 
@@ -99,12 +133,13 @@ async def test_web_slot_plan_without_count_defaults_top_k():
     assert plan.default_slots == ("top_k",)
 
 
-async def test_web_slot_plan_with_count_authorizes_top_k():
+async def test_web_slot_plan_det_count_is_rule_obtained():
     h = WebSearchHandler()
     msg = "search for transformers, top 3"
     draft = await _draft(h, msg)
+    assert draft == {"query": msg, "top_k": 3}          # DET-extracted (rule 1)
     plan = h.slot_plan(query=msg, facts=None, draft=draft)
-    assert plan.model_slots == ("query", "top_k")
+    assert plan.model_slots == ("query",)               # the model never re-derives it
     assert plan.default_slots == ()
 
 
@@ -116,12 +151,13 @@ async def test_rag_slot_plan_without_count_authorizes_query_and_domain():
     assert plan.default_slots == ("top_k",)
 
 
-async def test_rag_slot_plan_with_count_authorizes_top_k():
+async def test_rag_slot_plan_det_count_is_rule_obtained():
     h = RagSearchHandler()
     msg = "查一下注意力机制，前 5 条"
     draft = await _draft(h, msg)
+    assert draft == {"query": msg, "top_k": 5}          # DET-extracted (rule 1)
     plan = h.slot_plan(query=msg, facts=None, draft=draft)
-    assert plan.model_slots == ("query", "top_k", "domain")
+    assert plan.model_slots == ("query", "domain")      # top_k not re-asked of a model
     assert plan.default_slots == ()
 
 
@@ -153,20 +189,24 @@ async def test_social_slot_plan_skips_platform_when_det_named_one():
     assert "platform" not in plan.model_slots           # DET value is authoritative
 
 
-async def test_social_slot_plan_with_count_authorizes_limit():
+async def test_social_slot_plan_det_count_is_rule_obtained():
     h = SocialSearchHandler()
     msg = "搜索社区讨论，取 3 条"
     draft = await _draft(h, msg)
+    assert draft["limit"] == 3                          # DET-extracted (rule 1)
     plan = h.slot_plan(query=msg, facts=None, draft=draft)
-    assert "limit" in plan.model_slots
+    assert "limit" not in plan.model_slots             # rule-obtained, never a model value
     assert plan.default_slots == ()
 
 
-def test_search_handlers_opt_in_other_handlers_do_not():
-    for h in (WebSearchHandler(), RagSearchHandler(), SocialSearchHandler()):
+def test_slot_planning_handlers_opt_in_pure_det_handlers_do_not():
+    # the six capabilities whose unfilled slots are semantic -> the model lane
+    for h in (WebSearchHandler(), RagSearchHandler(), SocialSearchHandler(),
+              AddTermHandler(), CreateFolderHandler(), TranslateHandler()):
         assert isinstance(h, SlotPlanningHandler)
-    # non-search handlers carry no slot_plan -> the orchestrator calls no model.
-    for h in (AddTermHandler(), TranslateHandler()):
+    # pure-DET handlers carry no slot_plan -> the orchestrator calls no model.
+    for h in (VisionHandler(), ReadDocumentHandler(), ReadFileHandler(),
+              PdfExtractTextHandler(), PdfTableToTextHandler()):
         assert not isinstance(h, SlotPlanningHandler)
 
 
@@ -239,7 +279,16 @@ def test_prompt_for_search_caps_is_the_search_prompt(cid):
     assert prompt_for(cid) == SEARCH_QUERY_PROMPT
 
 
-@pytest.mark.parametrize("cid", ["cap-add-term", "cap-translate", "", None])
+@pytest.mark.parametrize("cid,expected", [
+    ("cap-add-term", ADD_TERM_PROMPT),
+    ("cap-create-folder", CREATE_FOLDER_PROMPT),
+    ("cap-translate", TRANSLATE_PROMPT),
+])
+def test_prompt_for_the_new_model_assisted_caps(cid, expected):
+    assert prompt_for(cid) == expected
+
+
+@pytest.mark.parametrize("cid", ["cap-vision", "cap-read-file", "", None])
 def test_prompt_for_unregistered_cap_is_the_frozen_default(cid):
     assert prompt_for(cid) == SYSTEM_EXTRACT
 

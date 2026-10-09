@@ -1,28 +1,36 @@
 """cap_handler — CreateFolderHandler and the create_folder WRITE hardening.
 
-Three layers are pinned here:
+Four layers are pinned here:
 
-* the HANDLER contract (unit): ``cap-create-folder``'s single required slot is
-  ``name``, resolved DETERMINISTICALLY — no model call, no Qwen. ``name`` comes
-  ONLY from a literal folder name in the sentence, by a priority ladder: a
-  quoted span; an explicit naming lead (``叫``/``命名为``/``named``/``called``)
-  whose multi-token value is NEVER cut at whitespace (``2026-Q1 报表`` stays
-  whole); the English ``for the X`` clause; the Chinese ``X 文件夹`` modifier.
+* the HANDLER DET contract (unit): ``cap-create-folder``'s single required slot is
+  ``name``, resolved DET-FIRST from a literal folder name in the sentence, by a
+  priority ladder: a quoted span; an explicit naming lead (``叫``/``命名为``/``named``
+  /``called``) whose multi-token value is NEVER cut at whitespace (``2026-Q1 报表``
+  stays whole); the English ``for the X`` clause; the Chinese ``X 文件夹`` modifier.
   The value is copied VERBATIM (casing/spaces survive). A generic sentence, a
-  verb-only request, a blank query, or a slash-bearing candidate all fail closed
-  (``None``). ``parent_path`` is never emitted, and no asset field is injected.
+  verb-only request, or a slash-bearing candidate produce NO DET name — the handler
+  then returns the EMPTY ``{}`` draft (not ``None``) so the model is authorized to
+  extract ``name``; only a BLANK query returns ``None``. ``parent_path`` is never
+  emitted and never asked of the model (root = the drive default); no asset field
+  is injected.
 * the TOOL hardening: ``create_folder`` explicitly declares ``{WRITE}`` so the
   sandbox's ASK/DENY gate no longer depends on the inference that ``parent_path``
   contains "path".
 * the FUNNEL wiring: ``handler_for("cap-create-folder")`` is the registered
   handler, and the handler short-circuits the generic acquisition chain — its
-  draft flows through the SAME ``_certify`` -> Binder -> ``tool_intent`` handoff,
-  a ``None`` draft exits to the Agent with ``ACQUISITION_MISSING``, and a forged
-  generic MODEL value never reaches ``name``.
+  draft flows through the SAME ``_certify`` -> Binder -> ``tool_intent`` handoff;
+  a name no source filled exits ``BIND_MISSING`` with the extractor seam absent
+  (the handler no longer bails with ``ACQUISITION_MISSING``), and a forged generic
+  MODEL value never reaches ``name``.
+* the model-assisted path (see ``test_orchestrator_slot_extraction``): an empty
+  draft is completed by the shared extractor for ``name`` only, then the SAME gate
+  runs.
 
 The gold spans are the 20 ``cap-create-folder`` cases of the frozen Formal-500
-argument benchmark (``logs/_argbench/dataset_formal500.jsonl``), so this suite is
-a direct reconciliation against that evidence.
+argument benchmark (``logs/_argbench/dataset_formal500.jsonl``) — the OLD DET-only
+baseline, reconciled byte-for-byte below (a DET miss is the empty draft; the frozen
+file records those as ``None``/no-args, exactly the ``{} -> model -> still-missing
+-> BIND_MISSING -> Agent`` final outcome).
 """
 from __future__ import annotations
 
@@ -46,6 +54,7 @@ from core.application.chat.intent_funnel.cap_handler import (
 from core.application.chat.intent_funnel.contract import (
     MATCH_HIT,
     REASON_ACQUISITION_MISSING,
+    REASON_BIND_MISSING,
     MatchResult,
 )
 from core.application.chat.intent_funnel.registry import content_fingerprint
@@ -77,7 +86,7 @@ GOLD_CASES: list[tuple[str, dict[str, str] | None]] = [
     ("给我建个叫 学习笔记 的文件夹", {"name": "学习笔记"}),
     ('create a folder named "Release Notes"', {"name": "Release Notes"}),
     ("create a new folder called Project Phoenix", {"name": "Project Phoenix"}),
-    ("帮我建个文件夹", None),
+    ("帮我建个文件夹", {}),
     ('新建文件夹"RAG-2.0"', {"name": "RAG-2.0"}),
     ('新建文件夹 "2026 年度计划"', {"name": "2026 年度计划"}),
     ("create a folder called Project Atlas", {"name": "Project Atlas"}),
@@ -85,14 +94,14 @@ GOLD_CASES: list[tuple[str, dict[str, str] | None]] = [
     ('make a new folder named "release-v2.0"', {"name": "release-v2.0"}),
     ("创建一个叫 2026-Q1 报表 的文件夹", {"name": "2026-Q1 报表"}),
     ('create folder "Meeting Notes"', {"name": "Meeting Notes"}),
-    ("新建一个文件夹", None),
-    ("make a new folder", None),
+    ("新建一个文件夹", {}),
+    ("make a new folder", {}),
     ("在 项目 下面建个叫 archive 的子文件夹", {"name": "archive"}),
     ("建一个叫 2026Q2 的文件夹", {"name": "2026Q2"}),
     ('create a folder named "Design Docs"', {"name": "Design Docs"}),
     ("make a new folder for the Q3 backlog", {"name": "Q3 backlog"}),
     ('create a folder called "invoices-2026"', {"name": "invoices-2026"}),
-    ("new folder please", None),
+    ("new folder please", {}),
 ]
 
 
@@ -121,7 +130,9 @@ def test_gold_matches_the_frozen_dataset():
         for r in rows
         if r.get("capability_id") == "cap-create-folder"
     }
-    embedded = {message: expected for message, expected in GOLD_CASES}
+    # the DET layer's empty {} draft is the same no-args final outcome the frozen
+    # file records as null/None, so normalize {} -> None for the reconciliation.
+    embedded = {message: (expected or None) for message, expected in GOLD_CASES}
     assert actual == embedded
     assert len(actual) == 20
 
@@ -185,7 +196,7 @@ async def test_zh_folder_modifier(message, expected):
     assert await handler.acquire(query=message, facts=None) == {"name": expected}
 
 
-# ── Layer 1e: slash defense — a path is not a folder name ⇒ fail closed ──────────
+# ── Layer 1e: slash defense — a path is not a folder name ⇒ the DET yields nothing ─
 
 
 @pytest.mark.parametrize("message", [
@@ -194,12 +205,12 @@ async def test_zh_folder_modifier(message, expected):
     "建一个叫 项目/归档 的文件夹",
     'create a folder named "a／b"',        # full-width slash
 ])
-async def test_slash_bearing_name_fails_closed(message):
+async def test_slash_bearing_name_yields_the_empty_draft(message):
     handler = CreateFolderHandler()
-    assert await handler.acquire(query=message, facts=None) is None
+    assert await handler.acquire(query=message, facts=None) == {}
 
 
-# ── Layer 1f: strict fail-closed ─────────────────────────────────────────────────
+# ── Layer 1f: strict DET yield — a nameless sentence gives the empty draft ────────
 
 
 @pytest.mark.parametrize("message", [
@@ -209,9 +220,9 @@ async def test_slash_bearing_name_fails_closed(message):
     "new folder please",
     "create a folder",         # nothing but intent
 ])
-async def test_generic_or_verb_only_sentence_fails_closed(message):
+async def test_generic_or_verb_only_sentence_yields_the_empty_draft(message):
     handler = CreateFolderHandler()
-    assert await handler.acquire(query=message, facts=None) is None
+    assert await handler.acquire(query=message, facts=None) == {}
 
 
 @pytest.mark.parametrize("blank", ["", "   ", "\n\t", None])
@@ -239,10 +250,33 @@ def _facts_viewer(asset_id):
 
 
 async def test_asset_context_never_rescues_a_nameless_sentence():
-    # a generic sentence with an asset present must STILL fail closed: facts are
-    # ignored on purpose, so no viewer/attachment id can leak in as a name.
+    # a generic sentence with an asset present must carry NO name: facts are
+    # ignored on purpose, so no viewer/attachment id can leak in as a name. The DET
+    # layer yields the empty draft (the model, not the asset, owns the gap).
     handler = CreateFolderHandler()
-    assert await handler.acquire(query="帮我建个文件夹", facts=_facts_viewer("abc")) is None
+    assert await handler.acquire(query="帮我建个文件夹", facts=_facts_viewer("abc")) == {}
+
+
+# ── Layer 1h: slot_plan — the model is authorized for ``name`` ONLY on a DET miss ──
+
+
+async def test_slot_plan_authorizes_name_on_a_det_miss():
+    handler = CreateFolderHandler()
+    msg = "帮我建个文件夹"                       # DET yields nothing
+    draft = await handler.acquire(query=msg, facts=None)
+    assert draft == {}
+    plan = handler.slot_plan(query=msg, facts=None, draft=draft)
+    assert plan.model_slots == ("name",)                 # name only — never a root/path
+    assert plan.default_slots == ()
+
+
+async def test_slot_plan_authorizes_nothing_when_det_named_the_folder():
+    handler = CreateFolderHandler()
+    msg = "创建一个叫 2026-Q1 报表 的文件夹"
+    draft = await handler.acquire(query=msg, facts=None)
+    assert draft == {"name": "2026-Q1 报表"}
+    plan = handler.slot_plan(query=msg, facts=None, draft=draft)
+    assert plan.model_slots == ()                        # DET-sufficient -> no model
 
 
 # ── Layer 2: the roster wiring ───────────────────────────────────────────────────
@@ -342,7 +376,11 @@ async def test_create_folder_turn_certifies_handler_payload(monkeypatch):
     assert not rec.legacy                              # no legacy hop
 
 
-async def test_create_folder_turn_without_a_name_exits_to_agent(monkeypatch, caplog):
+async def test_create_folder_turn_without_a_name_exits_bind_missing(monkeypatch, caplog):
+    """The DET miss no longer bails with ``ACQUISITION_MISSING``: the empty ``{}``
+    draft + a plan authorizing ``name`` reaches the model; with the extractor seam
+    ABSENT (hermetic lane) the required slot stays unfilled, so the SAME Binder gate
+    exits ``BIND_MISSING``."""
     caplog.set_level(logging.INFO, logger=FUNNEL_LOGGER)
     entry = _create_folder_entry()
     rec, _view = _wire(monkeypatch, entry)
@@ -353,8 +391,8 @@ async def test_create_folder_turn_without_a_name_exits_to_agent(monkeypatch, cap
     lines = [r.getMessage() for r in caplog.records
              if r.name == FUNNEL_LOGGER and "funnel_trace" in r.getMessage()]
     assert len(lines) == 1, lines
-    assert re.search(r"fallback_reason=(\S+)", lines[0]).group(1) == REASON_ACQUISITION_MISSING
-    assert not rec.legacy                              # no Qwen, no legacy extraction
+    assert re.search(r"fallback_reason=(\S+)", lines[0]).group(1) == REASON_BIND_MISSING
+    assert not rec.legacy                              # no legacy extraction
 
 
 async def test_handler_bypasses_a_forged_generic_chain(monkeypatch):

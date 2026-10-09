@@ -8,7 +8,13 @@ domain by an EXACT case-insensitive name match over the caller's visible domains
 literal domain NAME — copied from the sentence, never translated, slugified or
 otherwise "understood".
 
-Both slots are resolved DETERMINISTICALLY — no model call, no Qwen.
+Both slots are resolved DET-FIRST (the rule ladder below is the authoritative
+source when it reliably names the value); a slot the DET rules do NOT obtain is
+authorized to the unified local-Qwen slot extractor via ``slot_plan()`` — a
+semantic gap, never a bail to the Agent. The model value is only folded in after
+``_certify``'s SAME kind gate + Binder validate; a model value is NEVER allowed to
+overwrite a DET-obtained one (an ACQUIRED slot is truth), and a slot the model
+also cannot resolve honestly lands MISSING (the Binder gate, then the Agent).
 
 ``term`` — the word being added — comes from a literal span, first hit wins:
 
@@ -39,15 +45,17 @@ KEPT whole when a modifier precedes them (``金融 词汇库`` keeps its space,
 ``machine learning vocabulary`` stays intact). A region that is ONLY a generic
 carrier (``词库`` / ``glossary``) names no domain.
 
-Draft contract (fail-closed):
+Draft contract (rule-1 DET-first, rule-2 model for the gap):
 
-* ``term`` present AND ``domain`` present  → ``{"term": …, "domain": …}``
-* ``term`` present AND ``domain`` absent   → ``{"term": …}`` — the honest partial
-  draft: the downstream Binder sees the required ``domain`` slot missing and
-  yields ``BIND_MISSING`` (certify is blocked, the turn escalates to the Agent to
-  clarify). This handler never invents a domain.
-* ``term`` absent (with or without a domain) → ``None`` — the turn exits to the
-  Agent with ``ACQUISITION_MISSING``.
+* a DET-obtained value is ACQUIRED and kept; only the slots DET did NOT obtain are
+  handed to the model. So ``acquire()`` returns whatever the rules resolved — both,
+  one, or NONE — and ``slot_plan()`` authorizes exactly the unfilled subset.
+* ``acquire()`` returns ``{}`` (an EMPTY draft, NOT ``None``) when the rules name
+  neither slot — that empty draft still reaches the orchestrator, whose plan
+  authorizes both slots to the model. A DET miss never short-circuits the turn
+  before the model runs; only a BLANK query (no input at all) returns ``None``.
+* a required slot neither the rules nor the model resolves stays MISSING — the
+  Binder gate owns it (never fabricated here).
 
 ``definition`` is NEVER emitted (tool-owned, optional, no producer — an emitted
 value would be a fabrication).
@@ -58,6 +66,8 @@ values come from the sentence, never from the turn's asset context.
 from __future__ import annotations
 
 import re
+
+from .slot_plan import SlotPlan
 
 # ── term rule 1: quoted spans — the quotes are dropped, the inside copied ─────────
 _QUOTED_PAIRS = (
@@ -196,25 +206,36 @@ class AddTermHandler:
 
     ``facts`` is accepted for the common handler contract but ignored ON PURPOSE:
     ``term`` and ``domain`` both come from the sentence, never from the turn's
-    asset context.
+    asset context — so no viewer/attachment id can leak in as a term or domain.
     """
 
     capability_id = "cap-add-term"
 
     async def acquire(self, *, query: str, facts) -> dict[str, object] | None:
-        """Return the ``add_term`` argument draft (``{"term": …}`` or
-        ``{"term": …, "domain": …}``), or ``None`` when no literal term is named.
+        """Return the ``add_term`` DET draft — whichever of ``term`` / ``domain``
+        the rules reliably resolved (both, one, or the empty ``{}``).
 
-        A present term with an absent domain yields the honest partial
-        ``{"term": …}`` — the Binder owns the required-slot gate."""
+        A DET miss is NOT a bail: the empty ``{}`` draft still reaches the
+        orchestrator, whose ``slot_plan`` hands the unfilled slots to the model.
+        Only a blank query returns ``None`` (no input at all)."""
         message = str(query or "").strip()
         if not message:
             return None
+        draft: dict[str, object] = {}
         term = _clean_term(_term(message))
-        if term is None:
-            return None
-        draft: dict[str, object] = {"term": term}
+        if term is not None:
+            draft["term"] = term
         domain = _domain(message)
         if domain is not None:
             draft["domain"] = domain
         return draft
+
+    def slot_plan(self, *, query: str, facts, draft: dict) -> SlotPlan:
+        """Authorize the model ONLY for the slots the DET rules did NOT reliably
+        obtain. A DET-obtained value is ACQUIRED and never re-asked (an
+        unauthorized slot can never be overwritten); a slot the model also cannot
+        resolve honestly stays MISSING for the Binder gate. Never a fabricated
+        ``term`` / ``domain``."""
+        model_slots = tuple(s for s in ("term", "domain") if s not in (draft or {}))
+        return SlotPlan(model_slots=model_slots)
+

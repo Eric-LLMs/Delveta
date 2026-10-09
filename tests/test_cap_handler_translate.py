@@ -2,23 +2,35 @@
 
 Three layers are pinned here:
 
-* the HANDLER contract itself (unit): ``cap-translate``'s single ``text`` slot is
-  resolved DETERMINISTICALLY — priority ① a paired quote / code-block span, then
-  priority ② a colon that is part of the translation instruction — and the payload
-  is copied VERBATIM (outer delimiters stripped, only surrounding whitespace
-  trimmed, internal/trailing punctuation kept, CJK never pre-translated). A colon
-  that is NOT an instruction delimiter (``https://``, ``localhost:8080``) never
-  splits. A bare form, a pure instruction, or an empty sentence fails closed
-  (``None``) — the Agent owns the turn.
+* the HANDLER DET contract (unit): ``cap-translate``'s payload slot ``text`` is
+  resolved DET-FIRST — priority ① a paired quote / code-block span, then priority ②
+  a colon that is part of the translation instruction — and the payload is copied
+  VERBATIM (outer delimiters stripped, only surrounding whitespace trimmed,
+  internal/trailing punctuation kept, CJK never pre-translated). A colon that is NOT
+  an instruction delimiter (``https://``, ``localhost:8080``) never splits. When no
+  delimiter yields a payload (a bare form / a pure instruction), the DET layer
+  returns the EMPTY ``{}`` draft — NOT ``None`` — so the model is authorized to
+  extract ``text``; only a BLANK query returns ``None``. The DET ``acquire()`` emits
+  ``text`` ONLY; the optional ``target_language`` (the confirmed contract — default
+  English, retired always-Chinese) is a SEMANTIC slot always handed to the model via
+  ``slot_plan()`` (filled only when the sentence names a target), never emitted at
+  the DET layer.
 * the ROSTER wiring: ``handler_for("cap-translate")`` is the registered handler.
 * the FUNNEL wiring: the handler short-circuits the generic acquisition chain and
-  its draft goes through the SAME ``_certify`` -> Binder -> ``tool_intent``
-  handoff; a ``None`` draft exits to the Agent with ``ACQUISITION_MISSING`` and
-  the legacy extractor is never invoked.
+  its draft goes through the SAME ``_certify`` -> Binder -> ``tool_intent`` handoff;
+  a payload no source filled exits ``BIND_MISSING`` with the extractor seam absent
+  (the handler no longer bails with ``ACQUISITION_MISSING``) and the legacy extractor
+  is never invoked. The model-assisted path (see ``test_orchestrator_slot_extraction``)
+  folds the authorized ``target_language`` (and a DET-missed ``text``) through the
+  SAME gate.
 
 The gold spans are the ``cap-translate`` cases from the frozen Formal-500
-argument benchmark (``logs/_argbench/dataset_formal500.jsonl``), so this suite is
-a direct reconciliation against that evidence.
+argument benchmark (``logs/_argbench/dataset_formal500.jsonl``) — the OLD DET-only,
+always-Chinese baseline, covering ONLY the ``text`` slot. ``target_language`` is a
+NEW slot: the frozen gold has no target-language column, so the per-capability
+accuracy of the OLD baseline must NOT be recomputed against the new two-slot
+contract (the old cases' ``text`` still matches; a target language is additionally,
+honestly extracted where a sentence names one).
 """
 from __future__ import annotations
 
@@ -38,6 +50,7 @@ from core.application.chat.intent_funnel.cap_handler import (
 from core.application.chat.intent_funnel.contract import (
     MATCH_HIT,
     REASON_ACQUISITION_MISSING,
+    REASON_BIND_MISSING,
     MatchResult,
 )
 from core.application.chat.intent_funnel.registry import content_fingerprint
@@ -104,9 +117,10 @@ async def test_paired_quote_span_wins_over_a_later_colon():
 
 
 async def test_empty_quoted_span_is_not_a_payload():
-    # an empty pair supplies nothing -> fail closed, not a blank ``text``.
+    # an empty pair supplies nothing -> the empty draft (the model owns the gap),
+    # never a blank ``text`` and never a None bail.
     handler = TranslateHandler()
-    assert await handler.acquire(query='翻译 ""', facts=None) is None
+    assert await handler.acquire(query='翻译 ""', facts=None) == {}
 
 
 # ── Layer 1b: priority ② — instruction-context colon ─────────────────────────────
@@ -144,14 +158,15 @@ async def test_colon_payload_keeps_an_inner_colon():
     "translate http://a.b/c:d into Chinese",
 ])
 async def test_colon_in_url_or_port_is_not_a_delimiter(message):
-    # no instruction lead-in prefixes these colons -> nothing is extracted.
+    # no instruction lead-in prefixes these colons -> the DET yields nothing (the
+    # empty draft; the model can still attempt the payload).
     handler = TranslateHandler()
-    assert await handler.acquire(query=message, facts=None) is None
+    assert await handler.acquire(query=message, facts=None) == {}
 
 
 async def test_colon_without_a_translation_verb_is_not_a_delimiter():
     handler = TranslateHandler()
-    assert await handler.acquire(query="注意：这里没有翻译意图", facts=None) is None
+    assert await handler.acquire(query="注意：这里没有翻译意图", facts=None) == {}
 
 
 # ── Layer 1d: payload fidelity — punctuation, no pre-translation, no shell ───────
@@ -194,19 +209,56 @@ async def test_only_the_text_slot_is_ever_emitted():
     "把这句话翻译一下",
     "please translate the following",
     "translate the paragraph above",
-    "translate 你好，世界 into English",   # bare form, no delimiter
+    "translate 你好，世界 into English",   # bare form, no delimiter -> model owns text
     "翻译",
     "translate",
 ])
-async def test_instruction_without_a_payload_fails_closed(message):
+async def test_instruction_without_a_payload_yields_the_empty_draft(message):
+    # a DET miss is NOT a bail: the empty ``{}`` draft still reaches the model.
     handler = TranslateHandler()
-    assert await handler.acquire(query=message, facts=None) is None
+    assert await handler.acquire(query=message, facts=None) == {}
 
 
 @pytest.mark.parametrize("blank", ["", "   ", "\n\t", None])
 async def test_blank_query_fails_closed(blank):
     handler = TranslateHandler()
     assert await handler.acquire(query=blank, facts=None) is None
+
+
+# ── Layer 1f: slot_plan — ``target_language`` is always the model's; ``text``
+# only when the DET layer found no delimiter payload ─────────────────────────────
+
+
+async def test_slot_plan_authorizes_target_language_and_a_det_missed_text():
+    handler = TranslateHandler()
+    msg = "translate 你好，世界 into English"          # bare form: DET yields nothing
+    draft = await handler.acquire(query=msg, facts=None)
+    assert draft == {}
+    plan = handler.slot_plan(query=msg, facts=None, draft=draft)
+    assert set(plan.model_slots) == {"target_language", "text"}
+    assert plan.default_slots == ()          # the English default is the EXECUTOR's,
+                                             # never a plan-owned model/default slot
+
+
+async def test_slot_plan_always_authorizes_target_language_even_after_a_det_hit():
+    handler = TranslateHandler()
+    msg = '把 "machine translation" 翻译成中文'
+    draft = await handler.acquire(query=msg, facts=None)
+    assert draft == {"text": "machine translation"}  # DET owns the payload
+    plan = handler.slot_plan(query=msg, facts=None, draft=draft)
+    assert plan.model_slots == ("target_language",)  # semantic slot: the model reads
+                                                     # the directive the DET drops
+
+
+async def test_slot_plan_from_the_empty_draft_reaches_the_model():
+    # a DET miss is a HANDOFF, not a bail: ``{}`` -> plan authorizes text (and the
+    # optional target), so the model owns the gap instead of the Agent.
+    handler = TranslateHandler()
+    msg = "帮我翻译一下"
+    draft = await handler.acquire(query=msg, facts=None)
+    assert draft == {}
+    plan = handler.slot_plan(query=msg, facts=None, draft=draft)
+    assert "text" in plan.model_slots and "target_language" in plan.model_slots
 
 
 # ── Layer 2: the roster wiring ───────────────────────────────────────────────────
@@ -308,7 +360,11 @@ async def test_translate_turn_certifies_handler_payload(monkeypatch, caplog):
     assert not rec.legacy                              # no legacy hop
 
 
-async def test_translate_turn_without_a_payload_exits_to_agent(monkeypatch, caplog):
+async def test_translate_turn_without_a_payload_exits_bind_missing(monkeypatch, caplog):
+    """The DET miss no longer bails with ``ACQUISITION_MISSING``: the empty ``{}``
+    draft + a plan authorizing ``text``/``target_language`` reaches the model; with
+    the extractor seam ABSENT (hermetic lane) the required ``text`` stays unfilled, so
+    the SAME Binder gate exits ``BIND_MISSING``."""
     caplog.set_level(logging.INFO, logger=FUNNEL_LOGGER)
     entry = _translate_entry()
     rec, _view = _wire(monkeypatch, entry)
@@ -319,8 +375,8 @@ async def test_translate_turn_without_a_payload_exits_to_agent(monkeypatch, capl
     lines = [r.getMessage() for r in caplog.records
              if r.name == FUNNEL_LOGGER and "funnel_trace" in r.getMessage()]
     assert len(lines) == 1, lines
-    assert re.search(r"fallback_reason=(\S+)", lines[0]).group(1) == REASON_ACQUISITION_MISSING
-    assert not rec.legacy                              # no Qwen, no legacy extraction
+    assert re.search(r"fallback_reason=(\S+)", lines[0]).group(1) == REASON_BIND_MISSING
+    assert not rec.legacy                              # no legacy extraction
 
 
 async def test_handler_bypasses_a_forged_generic_chain(monkeypatch, caplog):

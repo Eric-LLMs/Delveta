@@ -1,31 +1,38 @@
 """cap_handler — AddTermHandler and the add_term WRITE hardening.
 
-Four layers are pinned here:
+Five layers are pinned here:
 
-* the HANDLER contract (unit): ``cap-add-term``'s two public slots are ``term``
-  and ``domain``, both resolved DETERMINISTICALLY — no model call, no Qwen.
-  ``term`` comes from a literal span (a quoted pair; an unquoted ``把/将`` token;
-  an unquoted English token after an insert verb); a deictic reference with no
-  antecedent is MISSING. ``domain`` is the named vocabulary, copied VERBATIM
-  (translation, slugification and multi-token truncation are all defects): its
-  leading determiner (``my`` / ``我的``) is stripped, a trailing bare ``词库``
-  token and a trailing English ``domain`` word are dropped, while a carrier with
-  a modifier stays whole (``金融 词汇库`` keeps its space).
-* the DRAFT contract (fail-closed): both slots → ``{"term", "domain"}``; term
-  without a domain → the honest partial ``{"term"}``; no term → ``None``.
-  ``definition`` is NEVER emitted.
+* the HANDLER DET contract (unit): ``cap-add-term``'s two public slots are ``term``
+  and ``domain``, resolved DET-FIRST. ``term`` comes from a literal span (a quoted
+  pair; an unquoted ``把/将`` token; an unquoted English token after an insert verb);
+  a deictic reference with no antecedent yields NO term. ``domain`` is the named
+  vocabulary, copied VERBATIM (translation, slugification and multi-token truncation
+  are all defects): its leading determiner (``my`` / ``我的``) is stripped, a trailing
+  bare ``词库`` token and a trailing English ``domain`` word are dropped, while a
+  carrier with a modifier stays whole (``金融 词汇库`` keeps its space).
+* the UNIFIED-ACQUISITION draft contract: a DET-obtained value is ACQUIRED and kept;
+  ``acquire()`` returns whatever the rules resolved — both, one, or the EMPTY ``{}``
+  when they resolve neither (a DET miss is NOT a bail). Only a BLANK query returns
+  ``None``. ``definition`` is NEVER emitted. ``slot_plan()`` authorizes the model for
+  exactly the slots DET did NOT fill (rule 2), so a termless sentence is handed to
+  the extractor rather than short-circuited to the Agent.
 * the TOOL hardening: ``add_term`` explicitly declares ``{WRITE}`` — without it
   the auto-classifier defaults this INSERT tool to READ.
-* the FUNNEL wiring: ``handler_for("cap-add-term")`` is the registered handler
-  and short-circuits the generic acquisition chain; a COMPLETE draft certifies,
-  a partial ``{"term"}`` is blocked by the Binder (``BIND_MISSING`` — the turn
-  escalates to the Agent, the tool never runs), a ``None`` draft exits with
-  ``ACQUISITION_MISSING``, and a forged generic MODEL value never reaches the
-  draft.
+* the FUNNEL wiring: ``handler_for("cap-add-term")`` is the registered handler and
+  short-circuits the generic acquisition chain; a COMPLETE draft certifies, a partial
+  or empty draft whose required slot no source filled is blocked by the Binder
+  (``BIND_MISSING`` — the turn escalates to the Agent to clarify, the tool never
+  runs) — with the extractor seam absent (the hermetic lane) a DET miss therefore
+  exits ``BIND_MISSING``, NOT ``ACQUISITION_MISSING`` (the handler no longer bails).
+* the model-assisted path (see ``test_orchestrator_slot_extraction``): a DET-miss
+  draft is completed by the shared extractor and only the authorized slots are
+  folded, then the SAME ``_certify -> Binder`` gate runs.
 
 The gold spans are the 44 ``cap-add-term`` cases of the frozen Formal-500
-argument benchmark (``logs/_argbench/dataset_formal500.jsonl``), so this suite is
-a direct reconciliation against that evidence.
+argument benchmark (``logs/_argbench/dataset_formal500.jsonl``) — the OLD
+DET-only baseline, reconciled byte-for-byte below (a DET miss is the empty draft;
+the frozen file still records those as ``None``/no-args, which is exactly what the
+``{} -> model -> still-missing -> BIND_MISSING -> Agent`` chain finally produces).
 """
 from __future__ import annotations
 
@@ -106,8 +113,8 @@ GOLD_CASES: list[tuple[str, dict[str, str] | None]] = [
     ('add "sharding" to the database glossary',
      {"term": "sharding", "domain": "database glossary"}),
     ('把 "正则化" 加到词库', {"term": "正则化"}),
-    ("帮我加个词到词库里", None),
-    ("add this word to the glossary", None),
+    ("帮我加个词到词库里", {}),
+    ("add this word to the glossary", {}),
     ('把 "pipeline" 加到 工程词汇库',
      {"term": "pipeline", "domain": "工程词汇库"}),
     ('在 算法 词库里加入 "贪心"', {"term": "贪心", "domain": "算法"}),
@@ -124,7 +131,7 @@ GOLD_CASES: list[tuple[str, dict[str, str] | None]] = [
      {"term": "spectrogram", "domain": "语音 术语表"}),
     ('把 "缓存击穿" 添到 后端 词汇库',
      {"term": "缓存击穿", "domain": "后端 词汇库"}),
-    ("帮我加个词到 机器学习 词库", None),
+    ("帮我加个词到 机器学习 词库", {}),
     ('add "idempotency" to the distributed systems glossary',
      {"term": "idempotency", "domain": "distributed systems glossary"}),
     ('put "tokenizer" in my NLP vocabulary',
@@ -180,7 +187,10 @@ def test_gold_matches_the_frozen_dataset():
         for r in rows
         if r.get("capability_id") == "cap-add-term"
     }
-    embedded = {message: expected for message, expected in GOLD_CASES}
+    # the DET layer's empty {} draft is the same no-args final outcome the frozen
+    # file records as null/None (the model then fails to resolve it too -> Agent),
+    # so normalize {} -> None for the byte-for-byte reconciliation.
+    embedded = {message: (expected or None) for message, expected in GOLD_CASES}
     assert actual == embedded
     assert len(actual) == 44
 
@@ -223,7 +233,10 @@ async def test_unquoted_term(message, expected):
     assert draft is not None and draft["term"] == expected
 
 
-# ── Layer 1c: term — deictic / antecedent-less references are MISSING ─────────────
+# ── Layer 1c: term — deictic / antecedent-less references yield the EMPTY draft ────
+# a DET miss is NOT a bail: the empty ``{}`` draft still reaches the orchestrator,
+# whose slot_plan hands term/domain to the model (rule 2). Only a blank query
+# returns ``None``.
 
 
 @pytest.mark.parametrize("message", [
@@ -232,9 +245,9 @@ async def test_unquoted_term(message, expected):
     "把这个词加进去",                        # ZH deictic
     "帮我加个词到 机器学习 词库",             # a named DOMAIN does not rescue a missing term
 ])
-async def test_deictic_or_termless_fails_closed(message):
+async def test_deictic_or_termless_yields_the_empty_draft(message):
     handler = AddTermHandler()
-    assert await handler.acquire(query=message, facts=None) is None
+    assert await handler.acquire(query=message, facts=None) == {}
 
 
 @pytest.mark.parametrize("blank", ["", "   ", "\n\t", None])
@@ -334,10 +347,40 @@ def _facts_viewer(asset_id):
 
 
 async def test_asset_context_never_supplies_a_term_or_domain():
-    # a termless sentence with an asset present must STILL fail closed: facts are
-    # ignored on purpose, so no viewer/attachment id can leak in as a term or domain.
+    # a termless sentence with an asset present must still carry NO term/domain:
+    # facts are ignored on purpose, so no viewer/attachment id can leak in. The DET
+    # layer yields the empty draft (the model, not the asset, owns the gap).
     handler = AddTermHandler()
-    assert await handler.acquire(query="帮我加个词到词库里", facts=_facts_viewer("abc")) is None
+    assert await handler.acquire(query="帮我加个词到词库里", facts=_facts_viewer("abc")) == {}
+
+
+# ── Layer 3b: slot_plan — the model is authorized ONLY for the DET-unfilled slots ──
+
+
+async def test_slot_plan_authorizes_both_when_det_resolves_neither():
+    handler = AddTermHandler()
+    draft = await handler.acquire(query="帮我加个词到词库里", facts=None)   # {}
+    plan = handler.slot_plan(query="帮我加个词到词库里", facts=None, draft=draft)
+    assert set(plan.model_slots) == {"term", "domain"}
+    assert plan.default_slots == ()
+
+
+async def test_slot_plan_authorizes_domain_when_det_got_only_the_term():
+    handler = AddTermHandler()
+    msg = '把 "正则化" 加到词库'                       # term DET-ok, domain bare -> None
+    draft = await handler.acquire(query=msg, facts=None)
+    assert draft == {"term": "正则化"}
+    plan = handler.slot_plan(query=msg, facts=None, draft=draft)
+    assert plan.model_slots == ("domain",)               # the term is ACQUIRED, not re-asked
+
+
+async def test_slot_plan_authorizes_nothing_when_det_resolved_both():
+    handler = AddTermHandler()
+    msg = '把 "keystone" 加入我的工程词汇库'
+    draft = await handler.acquire(query=msg, facts=None)
+    assert set(draft) == {"term", "domain"}
+    plan = handler.slot_plan(query=msg, facts=None, draft=draft)
+    assert plan.model_slots == ()                        # DET-sufficient -> no model call
 
 
 # ── Layer 4: the roster wiring ───────────────────────────────────────────────────
@@ -458,7 +501,12 @@ async def test_partial_term_only_draft_is_blocked_by_the_binder(monkeypatch, cap
     assert not rec.legacy                              # no Qwen, no legacy extraction
 
 
-async def test_termless_turn_exits_with_acquisition_missing(monkeypatch, caplog):
+async def test_termless_turn_without_extractor_exits_bind_missing(monkeypatch, caplog):
+    """The DET miss is no longer an ``ACQUISITION_MISSING`` bail: the handler hands
+    the empty ``{}`` draft + a plan authorizing term/domain to the model. With the
+    extractor seam ABSENT (hermetic lane) nothing fills the required slots, so the
+    SAME Binder gate exits ``BIND_MISSING`` — the Agent still owns the turn, but for
+    the right reason (no legal value, not a pre-model short-circuit)."""
     caplog.set_level(logging.INFO, logger=FUNNEL_LOGGER)
     entry = _add_term_entry()
     rec, _view = _wire(monkeypatch, entry)
@@ -469,8 +517,8 @@ async def test_termless_turn_exits_with_acquisition_missing(monkeypatch, caplog)
     lines = [r.getMessage() for r in caplog.records
              if r.name == FUNNEL_LOGGER and "funnel_trace" in r.getMessage()]
     assert len(lines) == 1, lines
-    assert re.search(r"fallback_reason=(\S+)", lines[0]).group(1) == REASON_ACQUISITION_MISSING
-    assert not rec.legacy                              # no Qwen, no legacy extraction
+    assert re.search(r"fallback_reason=(\S+)", lines[0]).group(1) == REASON_BIND_MISSING
+    assert not rec.legacy                              # no legacy extraction
 
 
 async def test_handler_bypasses_a_forged_generic_chain(monkeypatch):
