@@ -2,14 +2,18 @@
 
 Two layers are pinned here:
 
-* the HANDLER contract itself (unit): ``cap-social-search`` copies the turn's
-  sentence VERBATIM as ``query``, DETERMINISTICALLY resolves ``platform`` over
-  the tool's real enum ``{reddit, x, zhihu, auto}`` (one named -> that one; none
-  or several -> ``auto``), emits ``subreddit`` only for a named reddit community,
-  NEVER emits ``limit``, and returns ``None`` for a blank query;
-* the WIRING: a capability whose handler is registered short-circuits the
-  generic acquisition chain (provider / path_router / Qwen) and its draft goes
-  through the SAME ``_certify`` -> Binder -> ``tool_intent`` handoff.
+* the HANDLER contract itself (unit): ``cap-social-search``'s ``acquire()``
+  copies the turn's sentence VERBATIM as ``query`` (the deterministic FALLBACK),
+  DETERMINISTICALLY resolves ``platform`` over the tool's real enum
+  ``{reddit, x, zhihu, auto}`` (one named -> that one; none or several ->
+  ``auto``), emits ``subreddit`` only for a named reddit community, NEVER emits
+  ``limit``, and returns ``None`` for a blank query;
+* the WIRING: a capability whose handler is registered owns its draft and its
+  OPTIONAL ``slot_plan()`` authorizes the shared extractor (query cleanup, the
+  no-platform-named fallback, a stated ``limit`` — see
+  ``test_orchestrator_slot_extraction``); the draft goes through the SAME
+  ``_certify`` -> Binder -> ``tool_intent`` handoff. The generic chain
+  (provider / path_router) is NOT consulted for a handled capability.
 
 The funnel test drives the REAL ``funnel.route`` -> orchestrator cascade with a
 faked Matcher HIT (mirroring ``test_phase4_acquisition_step2``); no provider /

@@ -499,15 +499,23 @@ async def _acquisition_hop(requirements, deps, entry, *, query, facts, view, tra
 
     import time
 
-    from .cap_handler import handler_for
+    from .cap_handler import SlotPlanningHandler, handler_for
 
     # ── Per-capability parameter handler (cap_handler) ───────────────────────────
-    # A capability wired to a CapabilityHandler owns its own argument acquisition
-    # end to end: the handler returns the standard args directly, bypassing the
-    # generic acquisition chain (declaration / evidence / context_values /
-    # provider / path_router / Qwen). Its draft still passes through the SAME
-    # _certify -> Binder -> ActionExecutor -> ToolRuntime handoff below. A
-    # capability with no handler (the default) is untouched — byte-identical.
+    # A capability wired to a CapabilityHandler owns its own argument acquisition:
+    # the handler's ``acquire()`` returns the DET / trusted-context draft, and its
+    # OPTIONAL ``slot_plan()`` states, per slot, what still has to happen (§ the
+    # four-state model: ACQUIRED / PENDING_MODEL / DEFAULTED / MISSING) — so the
+    # caller NEVER infers "needs a model" from ``slot not in draft``. When a plan
+    # authorizes >=1 slot the SHARED extractor runs ONCE over the query bundle
+    # with the capability's Prompt (the default when it registers none), and only
+    # valid, authorized model values are folded into the draft; an empty / invalid
+    # / unavailable reply leaves the handler draft (the verbatim query + DET
+    # values) intact, so the original request is never lost. The draft — with or
+    # without the model's contribution — still passes through the SAME
+    # _certify -> Binder -> ActionExecutor -> ToolRuntime handoff below. A handler
+    # WITHOUT slot_plan (every handler but the search trio) plans nothing and
+    # calls no model — byte-identical to before.
     handler = handler_for(entry.capability_id)
     if handler is not None:
         args = await handler.acquire(query=query, facts=facts)
@@ -520,6 +528,39 @@ async def _acquisition_hop(requirements, deps, entry, *, query, facts, view, tra
                 "declared": True, "strategy": "CAP_HANDLER",
                 "handler": type(handler).__name__, "args": dict(args),
             }
+        plan = (handler.slot_plan(query=query, facts=facts, draft=args)
+                if isinstance(handler, SlotPlanningHandler) else None)
+        model_slots = tuple(getattr(plan, "model_slots", ()) or ())
+        if model_slots:
+            if capture is not None:
+                capture["acquisition"]["slot_plan"] = {
+                    "model_slots": list(model_slots),
+                    "default_slots": list(getattr(plan, "default_slots", ()) or ()),
+                }
+            extractor = getattr(deps, "argument_extractor", None)
+            if extractor is not None:
+                from .argument_acquisition import context_bundle
+                from .argument_acquisition.prompts import prompt_for
+                from .argument_acquisition.slot_refine import accept_model_values
+
+                bundle = context_bundle.build(query)  # query-only bundle
+                try:
+                    _t_extract = time.monotonic()
+                    model_values, model_source = await extractor(
+                        query=query, entry=entry, model_slots=model_slots,
+                        bundle=bundle, prompt=prompt_for(entry.capability_id))
+                    _mark(capture, "extraction_ms", _t_extract)
+                except ExtractionUnavailable:
+                    # No fabricated value: the handler draft (verbatim query + DET
+                    # slots) stands, and the Binder remains the final gate.
+                    model_values, model_source = {}, ""
+                args = accept_model_values(args, dict(model_values or {}),
+                                           model_slots=model_slots,
+                                           parameters=entry.parameters)
+                if capture is not None:
+                    capture["acquisition"]["extractor"] = EXTRACTOR_NAME
+                    capture["acquisition"]["model_values"] = dict(model_values or {})
+                    capture["acquisition"]["model_source"] = str(model_source or "")
         return _certify(requirements, entry, args, facts=facts,
                         view=view, trace=trace, capture=capture)
 

@@ -1,14 +1,19 @@
 """SocialSearchHandler — argument acquisition for ``cap-social-search``.
 
 Owns ONLY this capability's parameter preparation; it never executes a tool and
-never re-implements the social/search adapters. It is fully DETERMINISTIC — no
-model call — because the two failure modes the audit found here are both
-fabrication: a model guessing a single platform the user never named, and a
-model inventing a subreddit. The turn's sentence is the only source.
+never re-implements the social/search adapters. The platform/subreddit/limit
+DISPOSITION is deterministic (no fabrication: a single named platform is used,
+none/several fall back to ``auto``, a subreddit is never invented); the shared
+extractor is consulted ONLY for the ``query`` cleanup and the no-platform-named
+fallback, both authorized by ``slot_plan()``. The turn's sentence is the only
+value source.
 
 The four schema slots of ``cap-social-search``:
 
-* ``query``    — the user's sentence, taken VERBATIM (strip only).
+* ``query``    — the user's sentence, taken VERBATIM (strip only) as the
+  deterministic FALLBACK. ``slot_plan()`` additionally authorizes the shared
+  extractor to return a CLEANED search topic; only a valid, constraint-passing
+  model value replaces the verbatim sentence.
 * ``platform`` — DETECTED deterministically from the sentence over the tool's
   real enum ``{reddit, x, zhihu, auto}``:
     * exactly ONE platform is named -> that platform;
@@ -19,12 +24,17 @@ The four schema slots of ``cap-social-search``:
   / ``twitter`` / ``x.com`` / ``推特`` / ``zhihu`` / ``知乎``). The bare letter
   ``x`` is deliberately NOT matched: it collides with ``RTX`` / ``X-ray`` /
   ``X战警`` / ``x^2`` far more often than it means the platform, and the safe
-  fallback (``auto``) is benign.
+  fallback (``auto``) is benign. ``slot_plan()`` adds a MODEL fallback ONLY when
+  NO platform is named by those tokens: the model may then supply one that DET's
+  token list misses, while the ``auto`` value stays the fallback. A sentence
+  naming SEVERAL platforms keeps the honest ``auto`` and is never narrowed by a
+  model.
 * ``subreddit`` — emitted ONLY when the resolved platform is ``reddit`` AND the
   sentence names one (``r/<name>``); otherwise omitted. A subreddit is reddit's
   own scope, never invented for another platform.
-* ``limit``    — NOT emitted: the ``search_social`` tool applies its own default
-  (10, clamped to 1..25) whenever the slot is absent.
+* ``limit``    — emitted ONLY when the sentence states a count (via
+  ``slot_plan``); otherwise the ``search_social`` tool applies its own default
+  (10, clamped to 1..25).
 
 Note: ``platform`` is ALWAYS emitted (never omitted). Omitting it would let the
 tool fall back to its own default of ``reddit`` — i.e. silently narrow an
@@ -37,6 +47,9 @@ ActionExecutor / ToolRuntime handoff every other capability uses.
 from __future__ import annotations
 
 import re
+
+from .search_args import states_result_count
+from .slot_plan import SlotPlan
 
 # Unambiguous platform tokens only. Order of keys is irrelevant: the detector
 # counts how many DISTINCT platforms matched, not which one matched first.
@@ -54,9 +67,14 @@ _PLATFORM_RES = {
 }
 
 
+def _named_platforms(message: str) -> list[str]:
+    """The DISTINCT platforms named by unambiguous DET tokens, in enum order."""
+    return [p for p, rx in _PLATFORM_RES.items() if rx.search(message)]
+
+
 def _detect_platform(message: str) -> str:
     """The tool enum value for ``message``: the one named platform, else ``auto``."""
-    named = [p for p, rx in _PLATFORM_RES.items() if rx.search(message)]
+    named = _named_platforms(message)
     if len(named) == 1:
         return named[0]
     # none named -> no guess; several named -> a set is not one enum. Both -> auto.
@@ -84,5 +102,23 @@ class SocialSearchHandler:
             match = _SUBREDDIT_RE.search(message)
             if match:
                 draft["subreddit"] = match.group(1)
-        # limit deliberately omitted: search_social defaults it (10, 1..25).
+        # limit deliberately omitted here (tool default); when a slot needs
+        # semantic extraction the unified orchestrator is authorized via
+        # slot_plan() below.
         return draft
+
+    def slot_plan(self, *, query: str, facts, draft: dict) -> SlotPlan:
+        """Authorize the model for ``query`` (a cleaned topic); for ``limit`` ONLY
+        when the sentence states a count; and for ``platform`` ONLY when the
+        sentence names NO platform by DET tokens (the genuinely-needed fallback —
+        the model may spot one DET's list misses, while ``auto`` stays the
+        fallback). A multi-platform sentence keeps its honest ``auto``."""
+        message = str(query or "")
+        model_slots: list[str] = ["query"]
+        if states_result_count(message):
+            model_slots.append("limit")
+        if (str(draft.get("platform") or "") == "auto"
+                and not _named_platforms(message)):
+            model_slots.append("platform")
+        default_slots = () if states_result_count(message) else ("limit",)
+        return SlotPlan(model_slots=tuple(model_slots), default_slots=default_slots)

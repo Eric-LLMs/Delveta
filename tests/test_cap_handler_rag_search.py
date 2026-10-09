@@ -2,13 +2,17 @@
 
 Two layers are pinned here:
 
-* the HANDLER contract itself (unit): ``cap-rag-search`` copies the turn's
-  sentence VERBATIM as ``query``, NEVER emits ``top_k`` (tool default) or
-  ``domain`` (no fact source), and returns ``None`` for a blank query;
-* the WIRING: a capability whose handler is registered short-circuits the
-  generic acquisition chain (provider / path_router / Qwen) and its draft goes
-  through the SAME ``_certify`` -> Binder -> ``tool_intent`` handoff, while a
-  capability with no handler is untouched.
+* the HANDLER contract itself (unit): ``cap-rag-search``'s ``acquire()`` copies
+  the turn's sentence VERBATIM as ``query`` (the deterministic FALLBACK), NEVER
+  emits ``top_k`` (tool default) or ``domain`` (no fact source), and returns
+  ``None`` for a blank query;
+* the WIRING: a capability whose handler is registered owns its draft and its
+  OPTIONAL ``slot_plan()`` authorizes the shared extractor for its MODEL slots
+  (see ``test_orchestrator_slot_extraction``); the draft — with or without the
+  model's contribution — goes through the SAME ``_certify`` -> Binder ->
+  ``tool_intent`` handoff, while a capability with no handler is untouched. The
+  generic chain (provider / path_router) is NOT consulted for a handled
+  capability.
 
 The funnel test drives the REAL ``funnel.route`` -> orchestrator cascade with a
 faked Matcher HIT (mirroring ``test_phase4_acquisition_step2``); no provider /

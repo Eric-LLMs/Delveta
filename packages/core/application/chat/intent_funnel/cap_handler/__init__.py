@@ -15,6 +15,7 @@ from .rag_search_handler import RagSearchHandler
 from .read_document_handler import ReadDocumentHandler
 from .read_file_handler import ReadFileHandler
 from .roster import HANDLERS, CapabilityHandler, handler_for
+from .slot_plan import SlotPlan, SlotPlanningHandler
 from .social_search_handler import SocialSearchHandler
 from .translate_handler import TranslateHandler
 from .vision_handler import VisionHandler
@@ -30,6 +31,8 @@ __all__ = [
     "RagSearchHandler",
     "ReadDocumentHandler",
     "ReadFileHandler",
+    "SlotPlan",
+    "SlotPlanningHandler",
     "SocialSearchHandler",
     "TranslateHandler",
     "VisionHandler",

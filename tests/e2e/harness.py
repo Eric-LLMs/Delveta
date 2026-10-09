@@ -318,6 +318,11 @@ def _set_gates(monkeypatch, *, backend: str = "stub") -> None:
     # MATCH_HIT -> acquisition-hop direct lane the A-1 matrix asserts.
     monkeypatch.setattr(settings, "chat_cap_router_backend", backend, raising=False)
     monkeypatch.setattr(settings, "chat_funnel_trace_capture", False, raising=False)
+    # The slot extractor is a NETWORK seam (the unified handler branch and the
+    # generic MODEL strategy both reach for it). The e2e stack must stay hermetic,
+    # so pin it off ("" = not deployed, 8.17 ruling) — the handler branch then
+    # keeps its deterministic draft instead of attempting a live-model call.
+    monkeypatch.setattr(settings, "chat_tool_intent_local_url", "", raising=False)
 
 
 # ── the assembled stack ────────────────────────────────────────────────────────────

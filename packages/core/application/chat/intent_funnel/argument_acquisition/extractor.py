@@ -94,12 +94,14 @@ def _user_prompt(entry, model_slots, bundle) -> str:
     return "\n".join(parts)
 
 
-def _payload(entry, model_slots, bundle) -> dict:
+def _payload(entry, model_slots, bundle, prompt: str | None = None) -> dict:
     from core.config import settings
 
     payload = {
         "messages": [
-            {"role": "system", "content": SYSTEM_EXTRACT},
+            # ``prompt`` (the per-capability registry's system prompt) overrides
+            # the default; absent -> the frozen SYSTEM_EXTRACT (byte-compatible).
+            {"role": "system", "content": str(prompt) if prompt else SYSTEM_EXTRACT},
             {"role": "user", "content": _user_prompt(entry, model_slots, bundle)},
         ],
         "temperature": 0.0,   # greedy
@@ -152,21 +154,26 @@ def _parse_args(text: str, model_slots) -> dict[str, str]:
     raise ExtractionUnavailable("extractor malformed reply")
 
 
-async def extract(*, query: str, entry, model_slots, bundle) -> tuple[dict[str, str], str]:
+async def extract(*, query: str, entry, model_slots, bundle,
+                  prompt: str | None = None) -> tuple[dict[str, str], str]:
     """Extract the MODEL-owned slot values for ONE capability.
 
     Returns ``(values, source)`` where ``source`` is the context bundle's source
     (``QUERY`` or ``CONVERSATION_5_USER_TURNS``) — the ACTUAL acquisition source
     recorded in provenance. Raises :class:`ExtractionUnavailable` when no
     endpoint is deployed or the reply is unusable; never returns a fabricated
-    value."""
+    value.
+
+    ``prompt`` optionally overrides the system prompt with a per-capability one
+    (see :mod:`.prompts`); absent -> the frozen :data:`SYSTEM_EXTRACT`, so an
+    existing caller is byte-compatible."""
     from core.config import settings
 
     url = (settings.chat_tool_intent_local_url or "").strip()
     if not url:
         raise ExtractionUnavailable("no extractor endpoint deployed")
     timeout = settings.chat_tool_intent_timeout_seconds
-    payload = _payload(entry, model_slots, bundle)
+    payload = _payload(entry, model_slots, bundle, prompt)
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.post(url.rstrip("/") + "/chat/completions", json=payload)

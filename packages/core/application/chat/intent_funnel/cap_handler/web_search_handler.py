@@ -4,18 +4,23 @@ Owns ONLY this capability's parameter preparation; it never executes a tool and
 never re-implements the web-search pipeline. The two schema slots of
 ``cap-web-search``:
 
-* ``query`` — the user's sentence, taken VERBATIM. No model call: the turn's
-  message already IS the search intent, and asking a model to re-extract it only
-  adds a failure surface (the same ruling the RAG handler records).
-* ``top_k`` — NOT emitted: the ``web_search`` tool's own ``_coerce_top_k`` falls
-  back to its default (5) whenever the slot is absent, so the value is never
-  guessed by a model.
+* ``query`` — the user's sentence, taken VERBATIM by ``acquire()`` as the
+  deterministic FALLBACK. ``slot_plan()`` additionally authorizes the unified
+  orchestrator to have the shared extractor return a CLEANED search topic; a
+  valid, constraint-passing model value replaces the verbatim sentence, and an
+  empty / invalid / unavailable one leaves the verbatim sentence in place.
+* ``top_k`` — emitted ONLY when the sentence states a count (via ``slot_plan``);
+  otherwise it is deliberately left to the ``web_search`` tool's own default (5)
+  and never asked of a model.
 
 No ``scope`` / ``domain`` / ``engine`` slot exists in the tool schema, so none is
 invented here. The returned draft (``{slot: value}``) is passed through the SAME
 Binder / ActionExecutor / ToolRuntime handoff every other capability uses.
 """
 from __future__ import annotations
+
+from .search_args import states_result_count
+from .slot_plan import SlotPlan
 
 
 class WebSearchHandler:
@@ -32,5 +37,17 @@ class WebSearchHandler:
         message = str(query or "").strip()
         if not message:
             return None
-        # top_k deliberately omitted: web_search_tool._coerce_top_k defaults it.
+        # top_k deliberately omitted here (tool default); when a slot needs
+        # semantic extraction the unified orchestrator is authorized via
+        # slot_plan() below.
         return {"query": message}
+
+    def slot_plan(self, *, query: str, facts, draft: dict) -> SlotPlan:
+        """Authorize the model for ``query`` (a cleaned topic) and for ``top_k``
+        ONLY when the sentence states a count — otherwise ``top_k`` stays the
+        tool's default. The verbatim ``query`` from ``acquire()`` remains the
+        fallback."""
+        message = str(query or "")
+        if states_result_count(message):
+            return SlotPlan(model_slots=("query", "top_k"))
+        return SlotPlan(model_slots=("query",), default_slots=("top_k",))
