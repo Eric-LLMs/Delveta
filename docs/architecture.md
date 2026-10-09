@@ -5584,15 +5584,16 @@ capability itself:
         handler registered?            no handler
             ↓ yes                        ↓
    cap_handler.acquire            generic acquisition
-   (§25.16, deterministic)        (§28, ARP → Qwen)
+   (§25.16)                       (§28, ARP → Qwen)
             └─────────────┬──────────────┘
                           ↓
    _certify → Binder → certified action → ActionExecutor → Runtime → Tool
 ```
 
 A capability with a registered **capability-specific handler** (§25.16) is served
-by that deterministic handler, which returns the standard arguments directly;
-every other capability runs the generic ARGUMENT_ACQUISITION chain (§28). Both
+by that handler, which returns the standard argument draft (a deterministic
+skeleton plus its declared `slot_plan`); every other capability runs the generic
+ARGUMENT_ACQUISITION chain (§28). Both
 paths converge on the SAME `_certify` → Binder → certified `requested_action` →
 ActionExecutor → ToolRuntime tail, so the executor never sees which path produced
 the draft. The dispatch is one capability-agnostic branch in
@@ -6402,20 +6403,30 @@ chain over a real uvicorn API + real PostgreSQL (`@pytest.mark.live`, skip-gated
 ### 25.16 Capability-Specific Acquisition Handlers
 
 **Architecture ruling.** Capability selection and argument acquisition are
-separate concerns (§28). For a cohort of ten chat-plane capabilities the
+separate concerns (§28). For a cohort of eleven chat-plane capabilities the
 generic acquisition chain (declaration → evidence → context values → provider →
 path router → Qwen extractor → merge) is replaced by a **per-capability
-parameter handler**: a small deterministic object that owns its capability's
-argument acquisition end to end and returns the standard argument dictionary
-directly. The two acquisition paths **coexist**, and both feed the SAME tail —
-`_certify` → Binder → certified `requested_action` → ActionExecutor →
-ToolRuntime — so execution, auth, schema validation and tool dispatch are
-untouched. §28 remains the acquisition path for **every capability without a
-registered handler**; it is NOT deprecated.
+parameter handler**: a small object that owns its capability's argument
+acquisition end to end. A handler returns a plain argument draft and, when it is
+a `SlotPlanningHandler`, an explicit `slot_plan` naming which slots the SHARED
+extractor (§28.4) may fill and which fall to the tool default. The two
+acquisition paths **coexist**, and both feed the SAME tail — `_certify` → Binder
+→ certified `requested_action` → ActionExecutor → ToolRuntime — so execution,
+auth, schema validation and tool dispatch are untouched. §28 remains the
+acquisition path for **every capability without a registered handler**; it is NOT
+deprecated.
+
+**No natural-language extraction rule lives in a handler.** An earlier iteration
+resolved a capability's natural-language slots with regex / quote / fixed-phrase
+ladders inside the handlers; those rules had **no requirement basis** and were
+retired. Ownership of a natural-language slot is now the MODEL's (through the
+shared extractor), not a hand-written pattern: a handler delivers only the
+deterministic skeleton — facts-derived ids and a lossless verbatim fallback — and
+declares the rest in its `slot_plan`.
 
 Scope: `cap-rag-search`, `cap-web-search`, `cap-social-search`, `cap-vision`,
 `cap-read-document`, `cap-pdf-extract-text`, `cap-pdf-table-to-text`,
-`cap-read-file`, `cap-create-folder`, `cap-add-term`.
+`cap-read-file`, `cap-create-folder`, `cap-add-term`, `cap-translate`.
 
 #### 25.16.1 Where the branch lives (`orchestrator.py`)
 
@@ -6426,12 +6437,18 @@ built. The branch:
 
 1. resolves `handler_for(entry.capability_id)`;
 2. if a handler owns the capability, calls `await handler.acquire(query, facts)`
-   and, when it returns a draft, records `acquisition="CAP_HANDLER"` in the
-   capture and hands the draft to the SAME `_certify(...)` the generic chain
-   uses;
-3. if the handler returns `None`, exits the turn to the Agent with
-   `REASON_ACQUISITION_MISSING` (fail-closed, identical to a generic MISSING);
-4. if NO handler is registered, falls through to the generic chain byte-for-byte.
+   and records `acquisition="CAP_HANDLER"` in the capture; a `None` draft exits
+   the turn to the Agent with `REASON_ACQUISITION_MISSING` (fail-closed,
+   identical to a generic MISSING);
+3. if the handler is a `SlotPlanningHandler`, calls `slot_plan(...)`; when the
+   plan names `model_slots`, calls the shared extractor ONCE
+   (`deps.argument_extractor`, §28.4) with the per-capability prompt
+   (`prompt_for(capability_id)`), then `accept_model_values` folds ONLY the
+   authorized, schema-valid values over the draft — the Binder stays the final
+   gate (§28.5);
+4. hands the (possibly model-enriched) draft to the SAME `_certify(...)` the
+   generic chain uses;
+5. if NO handler is registered, falls through to the generic chain byte-for-byte.
 
 The branch is written once and is capability-agnostic: it names no capability,
 no tool and no slot. Adding a capability handler is a roster edit (below), never
@@ -6443,6 +6460,7 @@ an edit to `orchestrator.py`.
 intent_funnel/cap_handler/
 ├── __init__.py                       # package facade — public re-exports only
 ├── roster.py                         # the ONE capability_id → handler wiring point
+├── slot_plan.py                      # SlotPlan / SlotPlanningHandler (the model-slot authorization)
 ├── scope.py                          # shared TurnFacts → asset_id + page-window (stateless)
 ├── rag_search_handler.py             # RagSearchHandler        (cap-rag-search)
 ├── web_search_handler.py             # WebSearchHandler        (cap-web-search)
@@ -6461,9 +6479,11 @@ intent_funnel/cap_handler/
 maps a `capability_id` to its handler instance, and `handler_for(capability_id)`
 is the lookup the orchestrator branch uses. The `CapabilityHandler` protocol is a
 `runtime_checkable` `Protocol` declaring `capability_id: str` and
-`async def acquire(*, query, facts) -> dict | None`. There are **no base classes**
-and no shared acquisition implementation: each handler is an independent,
-deterministic module with one responsibility. The three file-content handlers
+`async def acquire(*, query, facts) -> dict | None`; a handler that owns
+natural-language slots additionally satisfies `SlotPlanningHandler`
+(`slot_plan(*, query, facts, draft) -> SlotPlan`, defined in `slot_plan.py`).
+There are **no base classes** and no shared acquisition implementation: each
+handler is an independent module with one responsibility. The three file-content handlers
 (`read_document` / the two PDF tools) share only `scope.py` — a **stateless**
 function set (`acquire_file_scope`, `resolve_asset_id`, `page_window`), not a
 base class — so their asset-precedence and page-window rules stay in lockstep.
@@ -6481,49 +6501,78 @@ Every capability handler obeys the same boundary:
   gate; an unknown slot lands `BIND_INVALID`);
 - it is **fail-closed**: when it cannot produce a legal draft it returns `None`,
   which the branch maps to `REASON_ACQUISITION_MISSING` → Agent;
-- it is **deterministic and Qwen-free** (§25.16.11).
+- it **never calls a model itself** — a natural-language slot is declared in the
+  handler's `slot_plan` and filled by the shared extractor in the branch above,
+  never by handler-local code.
 
 #### 25.16.4 The eleven handlers
 
-| Capability | Handler | Args produced | Args deliberately omitted |
-|---|---|---|---|
-| `cap-rag-search` | `RagSearchHandler` | `query` (verbatim sentence) | `top_k`, `domain` |
-| `cap-web-search` | `WebSearchHandler` | `query` (verbatim sentence) | `top_k`, `scope`, `domain`, `engine` |
-| `cap-social-search` | `SocialSearchHandler` | `query` (verbatim), `platform`, `subreddit` (reddit only) | `limit` |
-| `cap-translate` | `TranslateHandler` | `text` (verbatim: a quoted / code-block span, or a lead-in colon payload) | (the instruction frame and any target-language directive) |
-| `cap-vision` | `VisionHandler` | `asset_id` (TurnFacts), `question` (verbatim) | — |
-| `cap-read-document` | `ReadDocumentHandler` | `asset_id` (TurnFacts), `pages` (viewer facts) | `query`, `question` |
-| `cap-pdf-extract-text` | `PdfExtractTextHandler` | `asset_id` (TurnFacts), `pages` (viewer facts) | `query`, `question` |
-| `cap-pdf-table-to-text` | `PdfTableToTextHandler` | `asset_id` (TurnFacts), `pages` (viewer facts) | `query`, `question` |
-| `cap-read-file` | `ReadFileHandler` | `path` (verbatim literal) | `max_chars` |
-| `cap-create-folder` | `CreateFolderHandler` | `name` (verbatim literal) | `parent_path` |
-| `cap-add-term` | `AddTermHandler` | `term` (verbatim literal), `domain` (verbatim literal, omitted when unnamed) | `definition` |
+| Capability | Handler | `slot_plan` — MODEL slots | TOOL_DEFAULT | deterministic skeleton |
+|---|---|---|---|---|
+| `cap-rag-search` | `RagSearchHandler` | `query`, `domain`, `top_k` | `top_k` | `query` (verbatim fallback) |
+| `cap-web-search` | `WebSearchHandler` | `query`, `top_k` | `top_k` | `query` (verbatim fallback) |
+| `cap-social-search` | `SocialSearchHandler` | `query`, `platform`, `subreddit`, `limit` | `limit` | `query` (verbatim fallback) |
+| `cap-translate` | `TranslateHandler` | `text`, `target_language` | (executor default) | — |
+| `cap-create-folder` | `CreateFolderHandler` | `name` | — | — |
+| `cap-add-term` | `AddTermHandler` | `term`, `domain` | — | — |
+| `cap-vision` | `VisionHandler` | — (no plan) | — | `asset_id` (TurnFacts), `question` (verbatim) |
+| `cap-read-document` | `ReadDocumentHandler` | — (no plan) | — | `asset_id`, `pages` |
+| `cap-pdf-extract-text` | `PdfExtractTextHandler` | — (no plan) | — | `asset_id`, `pages` |
+| `cap-pdf-table-to-text` | `PdfTableToTextHandler` | — (no plan) | — | `asset_id`, `pages` |
+| `cap-read-file` | `ReadFileHandler` | — (no plan) | — | `path` (verbatim literal) |
 
 #### 25.16.5 `cap-rag-search` and `cap-web-search`
 
-Both copy the turn's sentence **verbatim** (only surrounding whitespace stripped)
-into `query`. Neither calls any model — the sentence *is* the query. Both omit
-`top_k`, leaving the tool's own default in force (`rag_search` and `web_search`
-each default `top_k` to 5). No invented slots: web emits no `scope` / `domain` /
-`engine`; rag emits no `domain`. A blank / whitespace-only `query` returns `None`
-(fail-closed).
+Both are **model-lane** handlers. `acquire()` returns the turn's sentence
+**verbatim** (only surrounding whitespace stripped) as the deterministic
+*fallback* draft; `slot_plan()` then authorizes the shared extractor (the
+acquisition contract's MODEL lane, §28) for the natural-language slots each
+capability owns.
+
+- **`query` (U6 — clean-topic contract).** The model owns natural-language
+  understanding: it returns the **clean search topic** — the user's intent
+  understood into a query, *not* the raw sentence and *not* a regex-cleaned
+  one. A model value that is valid and constraint-passing **replaces** the
+  verbatim sentence; an empty / invalid / model-unavailable reply **leaves the
+  verbatim sentence in place**. The verbatim sentence is thus a guaranteed
+  fallback, never a pre-cleaning step.
+- **`top_k` (web + rag).** A MODEL-owned optional slot: a stated result count is
+  understood by the model, never by a deterministic rule. Omitted ⇒ the tool's
+  own default (`web_search` / `rag_search` each default `top_k` to 5).
+- **`domain` (rag only, U1 — name, never id).** A MODEL-owned optional slot. The
+  model returns the domain **NAME** the user named; it is **never** a UUID. The
+  business layer — the `rag_search` tool — resolves the name to a real
+  `assets.domain_id`. The model never fabricates an id; an unresolvable /
+  non-unique name fails the tool's preflight and escalates to the Agent; an
+  unnamed domain is OMITTED (the tool applies no scope).
+
+No invented slots: web emits no `scope` / `domain` / `engine`. A blank /
+whitespace-only sentence returns `None` (fail-closed).
 
 #### 25.16.6 `cap-social-search`
 
-`query` is the verbatim sentence and `limit` is omitted (the tool's default 10
-applies). `platform` is resolved **deterministically** over the tool's real enum
-`{reddit, x, zhihu, auto}`:
+A **model-lane** handler. `acquire()` returns the sentence **verbatim** as the
+deterministic *fallback* draft; `slot_plan()` authorizes the shared extractor
+for all four natural-language slots. No token / quoted-phrase detection runs
+here — the former deterministic platform detector was removed (it had no
+requirement basis).
 
-- exactly one platform named in the sentence → that platform;
-- none named → `auto`;
-- two or more named → `auto` (a set is not one enum value).
+- **`query` (U6).** The model owns the clean search topic; the valid model value
+  replaces the verbatim sentence, an empty / invalid / unavailable one leaves it
+  in place (verbatim fallback).
+- **`platform`.** A MODEL-owned optional slot over the tool's enum `{reddit, x,
+  zhihu, auto}`. The model returns the platform the user **named**, and OMITS it
+  when none is named. A blank query returns `None` (fail-closed).
+- **`subreddit`.** MODEL-owned optional; returned only when a reddit scope is
+  named, never invented.
+- **`limit`.** MODEL-owned optional; the stated count is understood by the model.
+  Omitted ⇒ the tool's own default (10, clamped to 1..25).
 
-The bare token `x` is **never** read as the X platform (only `twitter` / `推特` /
-`x.com` match). `subreddit` is emitted **only** when `platform == reddit` and an
-explicit `r/<community>` is present. Emitting nothing for `platform` was
-rejected: the tool's own default is `reddit`, so omission would silently narrow
-an unspecified turn to reddit — `auto` is the explicit "whole platform" choice.
-A blank query returns `None`.
+> **Open contract question (undecided here).** With the deterministic platform
+> detector retired, an *unnamed* platform is now simply omitted and the tool's
+> own default (`reddit`) applies. Whether an unspecified turn should instead
+> default to `auto` (the explicit "whole platform" choice) is a **contract
+> decision that remains open** — the handler does not decide it.
 
 #### 25.16.7 `cap-vision` and the three file-content handlers
 
@@ -6574,35 +6623,32 @@ Qwen, no translation, no case normalization, no prefix stripping, and no
 pronoun referent (`读取这个文档` / `read this file`), a vague sentence with no
 literal path, or a blank query fails closed (`None` → Agent).
 
-#### 25.16.9 `cap-create-folder` — the deterministic name handler & explicit WRITE
+#### 25.16.9 `cap-create-folder` — the model-owned name handler & explicit WRITE
 
-`cap-create-folder` (tool binding `create_folder`) owns ONE slot, `name`,
-resolved **deterministically** (zero-LLM / zero-Qwen) by a four-tier extraction
-ladder, first hit wins:
+`cap-create-folder` (tool binding `create_folder`) owns ONE slot, `name`, which
+is **MODEL-owned**. The former four-tier deterministic extraction ladder (quoted
+span → naming lead → `for the X` clause → `X 文件夹`) was **retired**: it was
+implementation with no requirement basis, and it truncated multi-token names at
+whitespace.
 
-1. a **quoted** span — ASCII `"…"` / `'…'` or the full-width `“…”` / `‘…’` /
-   `「…」` / `『…』` pairs (quotes dropped, inside copied verbatim);
-2. an explicit **naming lead** — `叫 X` / `命名为 X` / `named X` / `called X` —
-   captured up to the trailing delimiter (`的文件夹` / `文件夹` / `的` / end);
-3. the English **`for the X`** clause;
-4. the Chinese modifier **`X 文件夹`** / **`X 的文件夹`**.
-
-The name is copied **verbatim** — original spaces and casing survive, and a
-multi-token name is **never truncated at whitespace**: `2026-Q1 报表` stays whole
-(the legacy model extraction cut it to `2026-Q1`). Two hard defences make the
-handler **fail closed** (`None` → Agent): a **slash** in the candidate (`/` `\` /
-`／` `＼`) means the sentence carried a path, not a single folder name; and a
-candidate that is only a generic stop word (`folder` / `文件夹` / `一个` /
-`please` …) is not a name. A verb-only request (`帮我建个文件夹` / `make a new
-folder` / `new folder please`) or a blank query also returns `None`.
+`acquire()` returns the **empty `{}`** draft (never a rule-extracted name; only a
+blank query returns `None`), and `slot_plan()` authorizes the shared extractor
+for `name` alone. The model extracts the literal folder name from the sentence,
+**verbatim** — quotes dropped, casing and original spaces kept, multi-token
+names (`2026-Q1 报表`) never truncated. A name the model does not resolve
+honestly lands MISSING, and the **Binder owns the required-slot gate** (`name` is
+required) → `BIND_MISSING` → Agent; the model is never permitted to fabricate a
+name. The model is authorized for `name` **only**: it must never guess a root or
+a path.
 
 **`parent_path` contract boundary.** `parent_path` exists in the underlying Tool
 implementation but is **intentionally not part of the current public capability
 contract**. The Public Contract exposes **only the `name` single slot**, so the
-handler's draft is always exactly `{"name": <literal>}`; keeping the parent path
-off the contract avoids the extra ambiguity and security complexity of parent
-resolution. Acquisition-side, `parent_path` is tool-owned — `declaration.py`
-maps the slot to `TOOL_DEFAULT` — and the tool body defaults it to the drive root.
+model is authorized for `name` alone and never ASKED for a parent; keeping the
+parent path off the contract avoids the extra ambiguity and security complexity
+of parent resolution. Acquisition-side, `parent_path` is tool-owned —
+`declaration.py` maps the slot to `TOOL_DEFAULT` — and the tool body defaults it
+to the drive root.
 
 **Explicit WRITE permission.** `create_folder_tool` declares
 `permission={ToolPermission.WRITE}` on its `define_tool(...)`. This removes the
@@ -6611,50 +6657,42 @@ the substring `"path"` in a parameter name (`parent_path`) — a rename would ha
 silently downgraded the tool to READ and bypassed the sandbox's ASK/DENY gate.
 The permission is now independent of any parameter name.
 
-#### 25.16.10 `cap-add-term` — the deterministic term/domain handler & policy β
+#### 25.16.10 `cap-add-term` — the model-owned term/domain handler & policy β
 
-`cap-add-term` (tool binding `add_term`) owns TWO slots — `term` and `domain`,
-both resolved **deterministically** (zero-LLM / zero-Qwen). The capability
-inserts a word into a vocabulary domain addressed **by name**; the tool resolves
-the domain by an exact case-insensitive name match over the caller's visible
-domains, so the `domain` value must be the user's **literal** domain name —
-copied, never translated or slugified.
+`cap-add-term` (tool binding `add_term`) owns TWO slots — `term` and `domain` —
+both **MODEL-owned**. The former deterministic extraction ladders (quoted span /
+`把`·`将` clause / English insert-verb for `term`; the `在 X 里加入` clause, the
+suffix-strip rule and the determiner normalisation for `domain`) were **retired**:
+they were implementation with no requirement basis.
 
-`term` comes from a literal span, first hit wins: (1) a **quoted** span (ASCII
-`"…"` / `'…'`, full-width `“…”` / `‘…’` / `「…」` / `『…』`, quotes dropped,
-inside copied verbatim and edge-trimmed); (2) an unquoted Chinese term — the
-token between `把` / `将` and the trailing insert verb; (3) an unquoted English
-term — the single token after an insert verb (`add` / `put` / `record` / `save` /
-`insert`) and before `to` / `in` / `into`. A deictic reference with no antecedent
-(`这个词` / `this word`) is **not** a term: no literal span ⇒ the term is MISSING.
+The capability inserts a word into a vocabulary domain addressed **by name**; the
+tool resolves the domain by an exact case-insensitive name match over the caller's
+visible domains (0 → "not found", >1 → "ambiguous"), so the `domain` value must be
+the user's **literal** domain name — copied, never translated or slugified.
 
-`domain` is located by structure and copied **verbatim**: the Chinese `在 X 里加入`
-clause, the Chinese verb-trailing clause, or the English `… to|in|into
-[determiner] X` clause. The region must carry a vocabulary indicator (`词库` /
-`词汇库` / `术语表` / `glossary` / `vocabulary` / `terms` …); an indicator-less
-region names no domain. Normalization is **minimal**: strip a leading determiner
-(`my` / `the` / `我的` …), a trailing bare `词库` token, and a trailing bare
-English `domain` word. **Domain suffix strip rule** — a whitespace-separated
-`词库` is the generic carrier and is **dropped**, leaving the modifier
-(`信息论 词库` → `信息论`, `金融 词库` → `金融`), while `词汇库` / `词汇本` /
-`术语库` / `术语表` / `生词本` (and the English `glossary` / `vocabulary` /
-`terms` with a modifier present) are kept **whole** as the domain name
-(`金融 词汇库` → `金融 词汇库`; `machine learning vocabulary` keeps its
-spaces). Translation and slugification are defects: a Chinese domain is never
-rewritten to an English slug, and a multi-token domain is never truncated at
-whitespace.
+`acquire()` returns the **empty `{}`** draft (never a rule-extracted term/domain;
+only a blank query returns `None`), and `slot_plan()` authorizes the shared
+extractor for both slots:
+
+- **`term`.** The model extracts the word to add from the sentence, **verbatim**
+  (quotes dropped). A deictic reference with no antecedent (`这个词` / `this word`)
+  yields no term; a required `term` the model does not resolve honestly lands
+  MISSING for the Binder gate.
+- **`domain`.** The model returns the domain **NAME** verbatim. The tool owns the
+  name→entity resolution (name match / not-found / ambiguous preflight).
 
 **Policy β — honest extraction, the Binder owns completeness.** The handler does
-not decide whether the turn is *complete*; it reports exactly what the sentence
-yields and never invents a value. The draft contract is therefore **tri-state**:
+not decide whether the turn is *complete*; the model reports exactly what the
+sentence yields and never invents a value. The draft contract is therefore
+**tri-state**:
 
 - `term` present AND `domain` present → `{"term": …, "domain": …}` (certifies);
 - `term` present AND `domain` absent → the **partial** draft `{"term": …}` — the
   downstream Binder sees the required `domain` slot missing and yields
   `BIND_MISSING`, which **blocks certify** and escalates the turn to the Agent to
   clarify (the tool is never dispatched);
-- `term` absent (with or without a domain) → `None` → `REASON_ACQUISITION_MISSING`
-  → Agent.
+- `term` absent (with or without a domain) → `None` / MISSING →
+  `REASON_ACQUISITION_MISSING` → Agent.
 
 `definition` is **never** emitted (tool-owned, optional, no producer — an emitted
 value would be a fabrication). `facts` is accepted for the common handler
@@ -6685,12 +6723,26 @@ default acquisition path for every capability that has no registered handler,
 and it is exercised by the same Binder / certified-handoff tail. The two paths
 are distinguished only by the dispatch branch in `_acquisition_hop`.
 
-The eleven handlers are all **deterministic**, so Qwen is not on their path
-at all — the branch returns before the extractor is considered. The handlers
-deliberately share **no** `Qwen` abstraction: Qwen 0.6B is a plain callable, and
-a *future* capability whose handler genuinely needs model extraction decides for
-itself when (and whether) to call it. There is no "universal Qwen extractor"
-that every handler is forced through.
+The eleven handlers split into **two lanes** by whether they declare a
+`slot_plan`:
+
+- **Deterministic lane (5)** — `cap-vision`, `cap-read-file`,
+  `cap-read-document`, `cap-pdf-extract-text`, `cap-pdf-table-to-text`. These
+  declare **no** `slot_plan`; every slot is sourced from `TurnFacts` / the
+  verbatim sentence by handler-local code, so Qwen is **never** on their path —
+  the branch returns before the extractor is considered.
+- **Model lane (6)** — the search trio (`cap-rag-search` / `cap-web-search` /
+  `cap-social-search`), `cap-translate`, `cap-create-folder`, `cap-add-term`.
+  These declare a `slot_plan` of MODEL-owned slots; the branch hands the plan to
+  the **one shared extractor** (the §28 machinery — no second, per-handler
+  extractor). The handler's `acquire()` draft (verbatim fallback for the search
+  trio; `{}` for translate / create-folder / add-term) is folded only *after*
+  `accept_model_values` keeps authorized + valid values.
+
+The handlers deliberately share **no** `Qwen` abstraction of their own: Qwen 0.6B
+is a plain callable behind the single extractor seam (`deps.argument_extractor`,
+§28.4), and the branch — not the handler — decides when (and whether) to call it.
+There is no "universal Qwen extractor" that every handler is forced through.
 
 #### 25.16.13 Execution safety boundary (unchanged)
 
@@ -6710,21 +6762,28 @@ every other capability.
   tool invocation.
 - No image / document binary loading and no tool-body re-implementation.
 - No `query` slot on `read_document` / the two PDF capabilities; no `subreddit`
-  outside reddit; no `platform` defaulting to the tool's `reddit` when unspecified.
-- No Qwen call inside any of the eleven handlers.
-- No shared `BaseHandler`; each handler is an independent deterministic module.
-  The three file-content handlers share only the **stateless** `scope.py`
-  helper, not a base class.
+  outside reddit; no handler-local `platform` default (an unnamed platform is
+  simply omitted — the tool default applies; see the open question, §25.16.6).
+- No Qwen call inside any handler. A natural-language slot is declared in
+  `slot_plan` and filled by the branch's shared extractor — never by handler-local
+  code.
+- No natural-language extraction rule (regex / quotes / fixed phrases) in a
+  handler. Such a rule was implementation with no requirement basis and is
+  retired for every capability.
+- No shared `BaseHandler`; each handler is an independent module. The three
+  file-content handlers share only the **stateless** `scope.py` helper, not a
+  base class.
 - No page number parsed from the sentence and no `pages` widening: a half-open /
   reversed viewer range fails closed (→ Agent), never a whole-document read.
-- No `parent_path` emitted by `CreateFolderHandler` (the public contract exposes
-  only `name`), and no slash-bearing name accepted — a path-shaped candidate
-  fails closed.
-- No deletion of `argument_acquisition/`; §28 stays live for unwired capabilities.
-- No fabricated slot values: a handler emits only slots the sentence actually names.
-  `AddTermHandler` never emits `definition` (tool-owned, optional, no producer), and
-  when `domain` is unnamed it returns the honest partial draft `{"term"}` rather than
-  inventing a domain — the Binder owns the required-slot gate (policy β, §25.16.10).
+- No `parent_path` emitted by `CreateFolderHandler`, and the model is never asked
+  for one (the public contract exposes only `name`).
+- No deletion of `argument_acquisition/`; §28 stays live — it now backs the
+  shared extractor the model-lane handlers declare a `slot_plan` into.
+- No fabricated slot values: the model emits only slots the sentence actually
+  names. `cap-add-term` never emits `definition` (tool-owned, optional, no
+  producer), and when `domain` is unnamed the honest **partial** draft (model
+  value folded, `domain` absent) is passed through rather than inventing a domain
+  — the Binder owns the required-slot gate (policy β, §25.16.10).
 - Asset facts must follow `attachment → path → viewer`, matching the Binder.
 
 #### 25.16.15 Implementation status
@@ -6741,29 +6800,39 @@ Tests: `tests/test_cap_handler_rag_search.py`,
 #### 25.16.16 Phase 3 capability matrix & the deferred toolkit trio
 
 **Phase 3 is closed.** All eighteen Registry capabilities are classified below.
-The Chat fast path acquires arguments for **eleven** of them with zero model
-calls; the other seven are owned by the Agent or a separate lane. Because every
-non-hidden, enabled candidate either has a deterministic handler or is an
-undeclared capability that exits to the Agent, the acquisition stage **never
-reaches the §28 generic chain** — argument acquisition on the fast path is now
-100% model-free (no Qwen call anywhere in the stage).
+The Chat fast path acquires arguments for **eleven** of them through a registered
+handler; the other seven are owned by the Agent or a separate lane. Every
+non-hidden, enabled candidate either has a handler or is an undeclared capability
+that exits to the Agent, so the §28 **generic chain is never the fallback path**
+for a wired capability — but the shared extractor it provides is now the single
+seam the model-lane handlers declare a `slot_plan` into.
 
-**Deterministic, zero-LLM handlers (11)** — modules in
-`intent_funnel/cap_handler/`, wired only by `roster.py`:
+**Capability handlers (11)** — modules in `intent_funnel/cap_handler/`, wired by
+`roster.py`. They split into two lanes:
+
+**Deterministic, zero-model handlers (5)** — declare no `slot_plan`; all slots
+come from `TurnFacts` / the verbatim sentence:
 
 | Capability | Handler |
 |---|---|
-| `cap-rag-search` | `RagSearchHandler` |
-| `cap-web-search` | `WebSearchHandler` |
-| `cap-social-search` | `SocialSearchHandler` |
-| `cap-translate` | `TranslateHandler` |
 | `cap-vision` | `VisionHandler` |
 | `cap-read-document` | `ReadDocumentHandler` |
 | `cap-pdf-extract-text` | `PdfExtractTextHandler` |
 | `cap-pdf-table-to-text` | `PdfTableToTextHandler` |
 | `cap-read-file` | `ReadFileHandler` |
-| `cap-create-folder` | `CreateFolderHandler` |
-| `cap-add-term` | `AddTermHandler` |
+
+**Model-lane handlers (6)** — declare a `slot_plan` of MODEL-owned slots; the
+shared extractor fills them (verbatim-fallback for the search trio, `{}` draft
+otherwise):
+
+| Capability | Handler | MODEL slots |
+|---|---|---|
+| `cap-rag-search` | `RagSearchHandler` | `query`, `domain`, `top_k` |
+| `cap-web-search` | `WebSearchHandler` | `query`, `top_k` |
+| `cap-social-search` | `SocialSearchHandler` | `query`, `platform`, `subreddit`, `limit` |
+| `cap-translate` | `TranslateHandler` | `text`, `target_language` |
+| `cap-create-folder` | `CreateFolderHandler` | `name` |
+| `cap-add-term` | `AddTermHandler` | `term`, `domain` |
 
 **Agent-only / Deferred Contract — the toolkit trio (3)**: `cap-summary`,
 `cap-mindmap`, `cap-slides`.
@@ -6802,8 +6871,54 @@ to admit non-string slots per the runtime JSON schema.
 hidden), and `cap-research` (the separate Research lane, §17 — not a Chat
 capability).
 
-**Matrix.** 18 = **11** deterministic handlers + **3** deferred toolkit + **4**
-specialized.
+**Matrix.** 18 = **11** capability handlers (**5** deterministic + **6**
+model-lane) + **3** deferred toolkit + **4** specialized.
+
+#### 25.16.17 The model-lane contract (U6 query, U1 domain) and open items
+
+The six model-lane handlers share **one** contract with the §28 extractor:
+
+- **No handler-local natural-language rule.** Regex / quote / fixed-phrase
+  extraction is retired for every capability. A slot whose value is understood
+  from natural language is declared in the handler's `slot_plan` and filled by
+  the shared extractor.
+- **`slot_plan` is the authorization surface.** `model_slots` names exactly which
+  slots the model may fill for that capability; a value outside the plan is never
+  folded (a wrong-named slot — e.g. `top_k` where `limit` was authorized — lands
+  `BIND_INVALID`). `default_slots` records the slots the *tool* owns when the
+  model omits them (the search trio's `top_k` / `limit`).
+- **`accept_model_values` is the fold gate.** Only authorized + schema-valid
+  values replace the `acquire()` draft; an empty / invalid / model-unavailable
+  reply leaves the deterministic fallback (verbatim sentence for the search trio;
+  the `{}` draft — hence MISSING — for translate / create-folder / add-term).
+- **Two contract anchors:**
+  - **U6 — clean-topic query.** The `query` slot of the search trio is the model's
+    *understood topic* (a query), never the raw sentence and never a regex-cleaned
+    one. The verbatim sentence is a fallback only. Unified across the extraction
+    prompt, the Registry `query.description` (migration `0020`), the handlers, and
+    the tests.
+  - **U1 — domain by name, never by id.** `cap-rag-search`'s `domain` (and
+    `cap-add-term`'s `domain`) is the user's domain **NAME**; the **business
+    layer** resolves NAME → real `domain_id`. The model never fabricates a UUID;
+    an unresolvable / non-unique name fails the tool's preflight and escalates to
+    the Agent.
+
+**Open items (not decided here):**
+
+- **Social `platform` on an unnamed turn.** With the deterministic detector
+  retired, an unnamed platform is omitted and the tool default (`reddit`) applies;
+  whether it should instead default to `auto` is open (§25.16.6).
+- **Translate `target_language` default.** An absent target defaults to English in
+  the **executor** (the confirmed contract); no model slot produces the default.
+  `migrations/0019_translate_target_language.sql` adds the optional slot.
+
+**A/B evidence.** A controlled A (rule-first) vs B (model-lane, DET removed)
+comparison over the frozen Formal-500 corpus showed B's slot accuracy 64.7% vs
+A's 81.3% — a **model-quality** gap (the local 0.6B model translates CN→EN,
+omits required slots, mis-names slots), **not** an architecture regression: every
+guardrail (zero unauthorized overwrites, WRITE / permission gates, the Binder's
+required-slot gate, tool defaults, DB name→id resolution, MISSING → Agent) held
+identically in both arms.
 
 ### 25.17 Phase 4 — Verification & Hardening (closed)
 
@@ -7308,6 +7423,17 @@ MODEL slots are never fabricated; an EMPTY but well-formed reply is a normal
 empty extraction (the Binder then lands `MISSING`). The adapter is wired as a
 turn-independent seam (`ChatDeps.argument_extractor`) in
 `apps/api/routers/chat.py`.
+
+**One extractor, two callers.** The seam is reached by **both** acquisition
+paths, so there is no second model implementation to drift:
+
+- the generic ARP chain below (a capability with no registered handler), and
+- the model-lane capability handlers (§25.16.17) — `_acquisition_hop` hands the
+  handler's declared `slot_plan.model_slots` to this same extractor and folds the
+  reply through the same `accept_model_values` + `_certify` / Binder tail.
+
+A handler never calls a model directly; it declares a `slot_plan` and the branch
+invokes the extractor ONCE for that turn's capability.
 
 ### 28.5 Fail-closed exits
 
