@@ -63,3 +63,15 @@ scripts/laya_finetune/V1/data/smoke/
 # LayaChoice-v2 data-construction chain (capture -> generate_final -> adjust_test_to_train);
 # exempted from the generic `build/` rule above so the reproducible chain is committed.
 !scripts/laya_finetune/V2/build/
+
+# Qwen3-0.6B parameter-extraction SFT bundle — the frozen train/validation/test
+# splits, manifest and build reports are the reproduce-and-commit artifacts;
+# `data/` is exempted from the generic rule above so the bundle is committed.
+# Training checkpoints and exported model artifacts (later stages) stay ignored.
+!scripts/qwen_parameter_extraction_finetune/data/
+scripts/qwen_parameter_extraction_finetune/checkpoints/
+scripts/qwen_parameter_extraction_finetune/exports/
+# Isolated smoke-test environment, local HF model cache and smoke outputs stay local.
+scripts/qwen_parameter_extraction_finetune/.venv/
+scripts/qwen_parameter_extraction_finetune/.hf_cache/
+scripts/qwen_parameter_extraction_finetune/smoke_out/

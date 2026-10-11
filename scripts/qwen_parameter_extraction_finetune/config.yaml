@@ -1,0 +1,134 @@
+# Qwen3-0.6B parameter-extraction fine-tune — build / train / eval / export config.
+#
+# `source.*` paths are relative to the REPOSITORY ROOT (they point at the repo's
+# data/ and logs/). Every other section (`output.*`, `model.*`, `train.*`,
+# `eval.*`, `export.*`) is relative to THIS SCRIPT DIRECTORY, so the whole project
+# stays self-contained under scripts/qwen_parameter_extraction_finetune/.
+#
+# Stage map:
+#   prepare_dataset.py -> read PE v2 candidates, re-derive labels against
+#                         pe_contract.py, audit, dedup, check leakage, write the
+#                         frozen train/validation/test bundle.
+#   validate_dataset.py-> re-check the frozen bundle; fail loudly on any drift.
+#   train.py           -> LoRA SFT on data/train.jsonl ONLY (reads validation for
+#                         loss monitoring). No capability selection, arguments only.
+#   evaluate.py        -> task-metric scoring on validation, checkpoint selection.
+#   export.py          -> best LoRA adapter / merged HF model / (planned) GGUF.
+
+source:
+  # The ONLY candidate data source (12,000 rows). Never modified, never moved.
+  train_candidates: data/delveta_parameter_extraction_v2/delveta_pe_train_candidate_6000.jsonl
+  test_candidates:  data/delveta_parameter_extraction_v2/delveta_pe_test_candidate_6000.jsonl
+  # Frozen external benchmark — fully isolated (no repair, split, train, select).
+  formal500:        logs/_argbench/dataset_formal500.jsonl
+  source_commit:    fdf96cf
+
+output:
+  data_dir:      data
+  manifests_dir: manifests
+  reports_dir:   reports
+  # Copy the two candidates into data/_source_snapshot/ for cross-machine
+  # reproducibility. OFF: the derived bundle is self-contained and the source
+  # SHA-256 is always recorded in manifests/manifest.json.
+  snapshot_source: false
+
+build:
+  seed: 20261011
+  # PE v2 rows whose outcome is `clarify` (a schema-required slot is unstated) carry
+  # no schema-valid extraction target; isolated by default. The missing-required path
+  # is owned by the downstream Binder, not the extractor.
+  include_clarify_rows: false
+  # Near-duplicate threshold (character-bigram Jaccard), applied on the TARGET payload
+  # and on the raw input, within each (capability, language) group; no cluster (one
+  # target + its paraphrase frames) is allowed to span two splits.
+  near_dup_jaccard: 0.90
+  # How the clustered rows are split:
+  #   cluster        whole clusters per split, ALL rows kept (a target's paraphrase
+  #                  frames stay together); validation/test are row-proportional and
+  #                  per-capability balanced. Targets never span splits.
+  #   target_unique  exactly one row per (capability, language, target) everywhere
+  #                  (a non-redundant ~4.2k-row variant; validation/test shrink to
+  #                  the distinct-target count and lose per-capability balance).
+  split_policy: cluster
+  # Per-(capability, language) split ratios.
+  split:
+    train: 0.80
+    validation: 0.10
+    test: 0.10
+
+# ── model: the pinned base checkpoint (frozen revision) ───────────────────────────
+# Standard LoRA on the HF weights. The Ollama qwen3-tools:q5_k_m GGUF is a
+# DEPLOYMENT target (what serves the online extractor), NEVER a training input.
+model:
+  base: iromu/Qwen3-0.6B-tools
+  revision: 10e61428cfbcc907c84d52a6b9d7505903aedd12
+  # Loaded in bf16 on a bf16-capable GPU; forced to float32 on CPU (see train.py).
+  torch_dtype: bfloat16
+
+# ── train: LoRA SFT hyperparameters (adjustable, not copied from any suggestion) ──
+# Sizing rationale: 8679 train rows, effective batch 8x2=16, 3 epochs -> ~1632
+# optimizer steps. lr 2e-4 is the standard LoRA range for a 0.6B causal LM with
+# cosine decay + 3% warmup; r=8 / alpha=16 (~2.29M trainable params) is the small-
+# capacity default for a single-format extraction task. These are STARTING values
+# to be confirmed by the validation task metric, not tuned against test / Formal-500.
+train:
+  output_dir: checkpoints      # checkpoints/checkpoint-<step>/ (not committed)
+  data_dir: data               # reads ONLY data/train.jsonl
+  max_seq_len: 1024            # data max is 914 tokens; the target is never truncated
+  seed: 20261011
+  per_device_train_batch_size: 8
+  gradient_accumulation_steps: 2
+  num_train_epochs: 3
+  learning_rate: 2.0e-4
+  lr_scheduler_type: cosine
+  warmup_ratio: 0.03
+  weight_decay: 0.0
+  max_grad_norm: 1.0
+  optim: adamw_torch
+  bf16: true                   # ignored (forced off) when training on CPU
+  gradient_checkpointing: false
+  logging_steps: 10
+  save_strategy: steps
+  save_steps: 200
+  save_total_limit: 20
+  eval_strategy: steps         # validation LOSS monitoring only — NOT selection
+  eval_steps: 200
+  dataloader_num_workers: 0
+  # null -> fresh run; "auto" -> the latest checkpoint-<step> under output_dir;
+  # a path -> that checkpoint. Resume restores model/adapter, optimizer, scheduler,
+  # global step and the dataloader/RNG state (full HF Trainer checkpoint).
+  resume_from_checkpoint: null
+  lora:
+    r: 8
+    alpha: 16
+    dropout: 0.0
+    bias: none
+    target_modules: [q_proj, k_proj, v_proj, o_proj]
+
+# ── eval: task-metric scoring + the explicit checkpoint-selection rule ────────────
+eval:
+  data_dir: data
+  report_dir: reports
+  batch_size: 16
+  max_new_tokens: 128          # a tool_call (name + flat args) is far shorter
+  # Selection is on a TASK metric, never train/eval loss:
+  #   exact_match       predicted args == gold args on every model-owned slot AND name ok
+  #   field_accuracy    micro accuracy over the union of gold/predicted model slots
+  #   required_accuracy micro accuracy over the REQUIRED model-owned slots
+  # Ties break on: fewer required-missing -> higher field_accuracy -> lower step.
+  select_metric: exact_match
+  select_mode: max
+  # data/test.jsonl is FROZEN (never trains, never tunes, never selects). Scoring it
+  # requires the explicit --allow-test flag AND `allow_test: true` here.
+  allow_test: false
+
+# ── export: artifacts written after a checkpoint is selected ──────────────────────
+export:
+  output_dir: exports
+  merged_dtype: bfloat16
+  # The deployment GGUF (Q5_K_M) is produced LATER with llama.cpp, from the MERGED
+  # HF model, and is NOT this stage's output. `enabled: false` + the export.py guard
+  # keep this stage from quantising or touching the live Ollama model.
+  gguf:
+    enabled: false
+    quant: Q5_K_M

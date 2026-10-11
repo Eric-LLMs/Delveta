@@ -1,0 +1,20 @@
+# Qwen parameter-extraction SFT — smoke-test environment (CPU, isolated).
+#
+# Dedicated venv under THIS directory; never merged into the app env or the Ollama
+# env. `transformers` is exact-pinned to the version the LayaChoice-v2 recipe is
+# verified against. `torch` must come from the CPU index on a box without CUDA:
+#
+#   uv venv --python 3.11 .venv
+#   uv pip install --python .venv/Scripts/python.exe --index-url \
+#       https://download.pytorch.org/whl/cpu torch
+#   uv pip install --python .venv/Scripts/python.exe -r requirements-smoke.txt
+#
+# A CUDA build is installed from a matching PyTorch index on a GPU box; a plain
+# `pip install torch` may pull a CPU-only or mismatched wheel.
+
+transformers==5.17.0
+torch>=2.4
+peft>=0.11
+safetensors>=0.4
+huggingface_hub>=0.30
+accelerate>=1.0

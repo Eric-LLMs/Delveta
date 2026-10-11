@@ -1,0 +1,247 @@
+{
+  "dataset_version": "delveta_pe_sft_toolcalls_v1",
+  "built_from": "delveta_parameter_extraction_v2 (candidate)",
+  "source_commit": "fdf96cf",
+  "render_source": "production",
+  "source_files": {
+    "train_candidates": {
+      "path": "data/delveta_parameter_extraction_v2/delveta_pe_train_candidate_6000.jsonl",
+      "sha256": "4648503676de1245e8706475fea45a9fc9f091a3bb9558c21def3417c8ae6499"
+    },
+    "test_candidates": {
+      "path": "data/delveta_parameter_extraction_v2/delveta_pe_test_candidate_6000.jsonl",
+      "sha256": "b789213b91d4a755b15898719fdb1ddff2cb5f6020dfcdacde3ce114db5fa0e8"
+    }
+  },
+  "config": {
+    "seed": 20261011,
+    "include_clarify_rows": false,
+    "near_dup_jaccard": 0.9,
+    "split_policy": "cluster",
+    "split": {
+      "train": 0.8,
+      "validation": 0.1,
+      "test": 0.1
+    }
+  },
+  "counts": {
+    "raw_candidates": 12000,
+    "isolated": 1200,
+    "exact_duplicates_dropped": 0,
+    "valid_after_audit": 10800,
+    "kept_after_dedup": 10800,
+    "emitted": 10800,
+    "train": 8679,
+    "validation": 1041,
+    "test": 1080
+  },
+  "label_redundancy": {
+    "distinct_targets": 4203,
+    "rows": 10800,
+    "mean_frames_per_target": 2.57,
+    "max_frames_per_target": 15
+  },
+  "file_sha256": {
+    "train.jsonl": "dbd06f3a3e8e30a0d6395ec0fb5d80f3bf0ba85ea4bb7a9dfd0cd78ddab51222",
+    "validation.jsonl": "addc0baa8fa61624ad054a54dfcac43e15ec27f03b985a61543db18d3185f949",
+    "test.jsonl": "507bc036b4d9a15a797097e8074ba7471abcf2188f3ab0ff85458b49281327e2"
+  },
+  "per_group_split": {
+    "cap-add-term/en": {
+      "rows": 900,
+      "clusters": 80,
+      "train": 726,
+      "validation": 84,
+      "test": 90
+    },
+    "cap-add-term/zh": {
+      "rows": 900,
+      "clusters": 80,
+      "train": 721,
+      "validation": 89,
+      "test": 90
+    },
+    "cap-create-folder/en": {
+      "rows": 900,
+      "clusters": 80,
+      "train": 720,
+      "validation": 90,
+      "test": 90
+    },
+    "cap-create-folder/zh": {
+      "rows": 900,
+      "clusters": 80,
+      "train": 725,
+      "validation": 85,
+      "test": 90
+    },
+    "cap-rag-search/en": {
+      "rows": 900,
+      "clusters": 80,
+      "train": 725,
+      "validation": 85,
+      "test": 90
+    },
+    "cap-rag-search/zh": {
+      "rows": 900,
+      "clusters": 80,
+      "train": 724,
+      "validation": 86,
+      "test": 90
+    },
+    "cap-social-search/en": {
+      "rows": 900,
+      "clusters": 80,
+      "train": 725,
+      "validation": 85,
+      "test": 90
+    },
+    "cap-social-search/zh": {
+      "rows": 900,
+      "clusters": 80,
+      "train": 720,
+      "validation": 90,
+      "test": 90
+    },
+    "cap-translate/en": {
+      "rows": 900,
+      "clusters": 900,
+      "train": 720,
+      "validation": 90,
+      "test": 90
+    },
+    "cap-translate/zh": {
+      "rows": 900,
+      "clusters": 900,
+      "train": 720,
+      "validation": 90,
+      "test": 90
+    },
+    "cap-web-search/en": {
+      "rows": 900,
+      "clusters": 80,
+      "train": 727,
+      "validation": 83,
+      "test": 90
+    },
+    "cap-web-search/zh": {
+      "rows": 900,
+      "clusters": 80,
+      "train": 726,
+      "validation": 84,
+      "test": 90
+    }
+  },
+  "stats": {
+    "train": {
+      "total": 8679,
+      "by_capability": {
+        "cap-add-term": 1447,
+        "cap-create-folder": 1445,
+        "cap-rag-search": 1449,
+        "cap-social-search": 1445,
+        "cap-translate": 1440,
+        "cap-web-search": 1453
+      },
+      "by_language": {
+        "en": 4343,
+        "zh": 4336
+      },
+      "slot_presence": {
+        "domain": 1736,
+        "name": 1445,
+        "platform": 131,
+        "query": 4347,
+        "target_language": 1440,
+        "term": 1447,
+        "text": 1440,
+        "top_k": 479
+      }
+    },
+    "validation": {
+      "total": 1041,
+      "by_capability": {
+        "cap-add-term": 173,
+        "cap-create-folder": 175,
+        "cap-rag-search": 171,
+        "cap-social-search": 175,
+        "cap-translate": 180,
+        "cap-web-search": 167
+      },
+      "by_language": {
+        "en": 517,
+        "zh": 524
+      },
+      "slot_presence": {
+        "domain": 208,
+        "name": 175,
+        "platform": 12,
+        "query": 513,
+        "target_language": 180,
+        "term": 173,
+        "text": 180,
+        "top_k": 51
+      }
+    },
+    "test": {
+      "total": 1080,
+      "by_capability": {
+        "cap-add-term": 180,
+        "cap-create-folder": 180,
+        "cap-rag-search": 180,
+        "cap-social-search": 180,
+        "cap-translate": 180,
+        "cap-web-search": 180
+      },
+      "by_language": {
+        "en": 540,
+        "zh": 540
+      },
+      "slot_presence": {
+        "domain": 216,
+        "name": 180,
+        "platform": 14,
+        "query": 540,
+        "target_language": 180,
+        "term": 180,
+        "text": 180,
+        "top_k": 70
+      }
+    }
+  },
+  "audit": {
+    "isolated_by_reason": {
+      "clarify_required_missing": 1200
+    },
+    "derivation_flag_counts": {
+      "domain_surface_applied": 2228
+    },
+    "surface_corrections": {
+      "cap-add-term": 1868,
+      "cap-rag-search": 360
+    },
+    "audit_warning_counts": {},
+    "clusters_total": 2600,
+    "cluster_size_histogram": {
+      "1": 1800,
+      "6": 1,
+      "7": 10,
+      "8": 32,
+      "9": 84,
+      "10": 132,
+      "11": 162,
+      "12": 185,
+      "13": 132,
+      "14": 56,
+      "15": 6
+    },
+    "formal500_overlap_normalized": 0,
+    "cross_split_normalized_overlap_query": 0,
+    "cross_split_normalized_overlap_target": 0
+  },
+  "notes": [
+    "Protocol: single function (name == capability_id) + tool_choice=required; schema exposes ONLY model-owned slots (Phase-3b face narrowing).",
+    "assistant target uses tool_calls; function.arguments is a JSON string of {slot:value}, with no nested {\"arguments\": {...}} wrapper.",
+    "ONLINE ALIGNED: the live extractor sends the SAME tools request (one function named for the pinned capability_id, tool_choice=required) and reads the reply from message.tool_calls; a name mismatch or non-object arguments is a hard ExtractionUnavailable (no content fallback)."
+  ]
+}
