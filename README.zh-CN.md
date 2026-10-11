@@ -163,6 +163,22 @@ Hugging Face 仓库中（根目录不存模型副本）。
 该模型是检索管线背后的 dense retriever
 （[architecture.md §29](docs/architecture.md#29-bge-m3-embedding-fine-tuning)）。
 
+### Delveta Qwen3-0.6B 参数抽取 (Parameter Extraction)
+
+Delveta 包含一个微调后的本地 **参数抽取** 模型——对 `iromu/Qwen3-0.6B-tools` 的
+LoRA SFT，在 capability 已由上游选定之后，负责填充该 capability 的参数槽位。它**只做
+参数抽取**：从不选择、重选或质疑 capability。
+
+* 模型（FP16 / FP32 / INT8 / Q5_K_M）：[Delveta-Qwen3-0.6B-PE-v1](https://huggingface.co/eric-ml-nlp/Delveta-Qwen3-0.6B-PE-v1)
+* 数据集：[Delveta-Qwen3-0.6B-PE-v1-Data](https://huggingface.co/datasets/eric-ml-nlp/Delveta-Qwen3-0.6B-PE-v1-Data) · [`scripts/qwen_parameter_extraction_finetune/data/`](scripts/qwen_parameter_extraction_finetune/data/)
+* 训练代码：[`scripts/qwen_parameter_extraction_finetune/`](scripts/qwen_parameter_extraction_finetune/) —— 入口 `bash run.sh`
+* Checkpoints：[Delveta-Qwen3-0.6B-PE-v1-checkpoints](https://huggingface.co/eric-ml-nlp/Delveta-Qwen3-0.6B-PE-v1-checkpoints)
+* 实验记录：[Qwen3-0.6B Parameter-Extraction Fine-Tuning](docs/experiments/qwen3-0.6b-parameter-extraction-finetuning.md)
+
+该模型是 Intent Funnel 参数获取（argument acquisition）阶段的抽取器
+（[architecture.md §28.6](docs/architecture.md#286-the-extractor-model--qwen3-06b-parameter-extraction-fine-tune)）。
+它仅在 validation 划分上完成选模；test 划分与 Formal-500 **未评测**。
+
 ---
 
 ## 🚀 快速开始

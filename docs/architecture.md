@@ -133,6 +133,7 @@
   - [28.3 Production acquisition inputs](#283-production-acquisition-inputs)
   - [28.4 The extractor](#284-the-extractor)
   - [28.5 Fail-closed exits](#285-fail-closed-exits)
+  - [28.6 The extractor model — Qwen3-0.6B parameter-extraction fine-tune](#286-the-extractor-model--qwen3-06b-parameter-extraction-fine-tune)
 - [29. BGE-M3 Embedding Fine-tuning](#29-bge-m3-embedding-fine-tuning)
   - [29.1 Data flow](#291-data-flow)
   - [29.2 Training design](#292-training-design)
@@ -159,7 +160,7 @@
 | Retrieval | config-driven node pipeline (query rewrite → recall → RRF → rerank, plus optional parent-expand / CRAG nodes; CJK + contextual + parent-child indexing); `in_process` default, gRPC service available (`AuthGuard` token gate / per-peer rate limit / tenant binding); admin RAG console + golden-set eval (Recall@k / Precision@k / MRR); Redis **query cache** (keyed by query/filters/top_k + config + corpus version); **retrieval-feedback loop** — grounded answers get a persistent per-message 👍/👎 source rating: the turn's `rag_search` hits are extracted server-side from the tool trace and snapshotted into `messages.meta.retrieval` (JSONB in the canonical schema; rides the done frame + `GET /sessions/{id}`), the chat bubble's rate panel posts the `POST /rag/feedback` golden-set recorder — [§10.12](#1012-query-cache--retrieval-feedback) |
 | RAG node pipeline config | the whole retrieval chain is runtime-configured from admin **RAG → Nodes**: add / remove / reorder / enable / disable stages and edit params, persisted in `app_settings.rag`, applied live — no code, no restart; ingest side likewise (chunk strategy `fixed` / `paragraph` / `sentence` / `semantic` + contextual / parent-child / CJK-jieba toggles, with a Chunking preview) — [§10.6](#106-nodes), [§10.7](#107-ingest-side-runtime-configured-chunking), [§10.10](#1010-admin-console) |
 | Query repository | unified multi-source corpus: cloud-drive files (`source_type='file'`) + Learning-Platform sentences/articles (`'learning'`) + chat Q&A pairs / LLM-grouped whole-session imports (`'chat'`) + boot-seeded built-in product manual (`'manual'`, owner-NULL, public to every tenant and guests); `chunks.asset_id` nullable + `source_type`/`source_id`, source-aware recall (both recallers `LEFT JOIN assets`); PDF tool chain (body text + tables rendered to PNG → vision LLM, per-table skip on failure); admin RAG → **Repository** tab lists non-file chunks with delete |
-| Model services | TEI embedding (BGE-M3), Kokoro TTS, FunASR SenseVoice STT, the **`cap_router`** capability-selector service (current model: LayaChoice v2), the local **tool-intent / argument-extractor** service (current model: `qwen3-tools:q5_k_m`), LiteLLM gateway (all Docker) |
+| Model services | TEI embedding (BGE-M3), Kokoro TTS, FunASR SenseVoice STT, the **`cap_router`** capability-selector service (current model: LayaChoice v2), the local **tool-intent / argument-extractor** service (current model: `qwen3-tools:q5_k_m`; the extractor model is fine-tuned — §28.6), LiteLLM gateway (all Docker) |
 | Edge gateway | **Traefik** as the single public entrypoint: `:80` strips `/api` onto the host-run FastAPI and also fronts the web console (`/admin` + `/audio` `/images` `/avatars` static mounts); retrieval gRPC rides its own entryPoint (`:15052` → `h2c://retrieval:50051`); the host API is reached by **explicit IPv4** (`192.168.65.254:8300` — `host.docker.internal` also yields a ULA IPv6 the host never answers, which hangs Go's dialer); file-provider config in `deploy/traefik/`, LAN-IP published — [§13](#13-multi-tenancy-and-deployment-strategy) |
 | Async enrichment | gateway + arq worker split; `jobs` table is the source of truth; frontend polls `GET /jobs/{id}`; daily `session_events` retention cron in `WorkerSettings.cron_jobs`; `run_agent_turn` job reuses the shared `AgentKernel` composition (`apps/api/agent_factory.py`) for scheduled background turns; `toolkit_generate` runs the 5-stage toolkit pipeline (file mode → workspace output; session / cloud-file modes → caller's Cloud Drive, with a custom `prompt` + `name`) |
 | Session memory | PG-backed `sessions` / `messages` / `session_events`; **client Live State (summary + tail) is the normal-turn context source — zero SQL reads on hot turns**; threshold compaction folds raw rows into one 5-section structured summary behind a dual persistence barrier (`sessions.compaction` JSONB = durable checkpoint, revision CAS); per-session async write queue (one batch INSERT/turn); deferred finalize = incremental embed + first-time-only sidebar summary/title; trigger-gated proactive recall (Lane-1 brief always on) + RRF recency weighting + importance-weighted file recall + supersede-in-place user directives + 30-day audit-event retention — see [§22](#22-chat-session-memory-v2--client-live-state-authority--zero-read-turns) |
@@ -7444,6 +7445,51 @@ Every other outcome — no declaration (`ACQUISITION_UNDECLARED`), no legal valu
 (`ACQUISITION_MISSING`), an unavailable extractor (`ACQUISITION_MODEL_PENDING`),
 or a non-COMPLETE Binder (`BIND_*`) — exits to the Agent byte-identically.
 Acquisition never invents a value and never re-selects a capability.
+
+### 28.6 The extractor model — Qwen3-0.6B parameter-extraction fine-tune
+
+The extractor seam of §28.4 is a **deployment, not part of the contract**. Its
+current implementation is a **fine-tuned `iromu/Qwen3-0.6B-tools`** — LoRA SFT
+that fills a capability's MODEL-owned slots once the capability is already pinned
+upstream. It is reached through the same turn-independent seam
+(`ChatDeps.argument_extractor`) by **both** acquisition paths (the generic ARP
+chain and the model-lane handlers of §25.16), and it is exactly the shared
+extractor those model-lane handlers declare a `slot_plan` into (§25.16.17). It is
+called **once per turn's capability**, and only for the slots the plan authorizes.
+
+**Boundaries (unchanged by the model).** The model owns natural-language
+*understanding* of a slot value; it does **not** own capability selection,
+execution, or final validity. It never selects or re-selects a capability, never
+re-implements a tool, and never fabricates a slot: `accept_model_values` folds
+only authorized + schema-valid values, and the **Binder stays the final gate**
+(§28.5). A transport or malformed reply raises `ExtractionUnavailable` → Agent,
+never a fabricated value; an empty but well-formed reply is a normal empty
+extraction. Swapping the model must not rename the strategy (§28.2), the seam, or
+the service.
+
+**Training and evaluation.** Standard LoRA (r 8 / alpha 16) on the pinned base
+revision `10e61428cfbcc907c84d52a6b9d7505903aedd12`; the native OpenAI
+`messages + tools + assistant tool_calls` protocol, `tool_choice="required"`,
+single function named after the capability, `function.arguments` = a flat JSON
+`{slot: value}`. Checkpoint selection is the **validation task metric**
+(`exact_match`), never train loss; `checkpoint-1000` is selected (validation
+exact-match 0.9933). The model is published as FP16 / FP32 / INT8 / Q5_K_M plus a
+frozen dataset and a full-state checkpoint archive. **The test split and
+Formal-500 were not evaluated**; the validation metric is not a production
+accuracy claim.
+
+> The reproducible procedure, the configuration, the per-checkpoint selection
+> table, the variant provenance and the limitations live in
+> [Qwen3-0.6B Parameter-Extraction Fine-Tuning](experiments/qwen3-0.6b-parameter-extraction-finetuning.md).
+
+**Artifacts.**
+
+| Artifact | Home |
+|---|---|
+| Training code / entry | [`scripts/qwen_parameter_extraction_finetune/`](https://github.com/Eric-LLMs/Delveta/tree/main/scripts/qwen_parameter_extraction_finetune) |
+| Model (FP16 / FP32 / INT8 / Q5_K_M) | [Delveta-Qwen3-0.6B-PE-v1](https://huggingface.co/eric-ml-nlp/Delveta-Qwen3-0.6B-PE-v1) |
+| Frozen dataset | [Delveta-Qwen3-0.6B-PE-v1-Data](https://huggingface.co/datasets/eric-ml-nlp/Delveta-Qwen3-0.6B-PE-v1-Data) |
+| Checkpoints (full trainer state) | [Delveta-Qwen3-0.6B-PE-v1-checkpoints](https://huggingface.co/eric-ml-nlp/Delveta-Qwen3-0.6B-PE-v1-checkpoints) |
 
 ## 29. BGE-M3 Embedding Fine-tuning
 

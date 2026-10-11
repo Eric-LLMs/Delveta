@@ -22,6 +22,7 @@ in the data build, and no stage ever reads Formal-500 or the frozen test split.
 ```
 scripts/qwen_parameter_extraction_finetune/
   README.md                 this file
+  run.sh                    reproducible entry: preflight, then hand off to train.py
   config.yaml               source/output paths + build/train/eval/export knobs
   pe_contract.py            the frozen capability/slot contract (single source of truth)
   pe_config.py              the ONE config/path resolver (source.* = repo-root, rest = local)
@@ -182,12 +183,24 @@ directory.
 ## Training / evaluation / export
 
 ```bash
+# recommended: preflight (python/deps/config/data/SHA-256/disk/GPU), then the real run
+bash scripts/qwen_parameter_extraction_finetune/run.sh --check            # preflight only — NEVER trains
+bash scripts/qwen_parameter_extraction_finetune/run.sh --dry-run          # preflight, then stop before train()
+bash scripts/qwen_parameter_extraction_finetune/run.sh                    # preflight, then the real LoRA run
+
+# or drive the entry directly
 python scripts/qwen_parameter_extraction_finetune/train.py --check       # config + data gate (no torch)
 python scripts/qwen_parameter_extraction_finetune/train.py --dry-run     # build the wiring; stop before train()
 python scripts/qwen_parameter_extraction_finetune/train.py               # the real LoRA run
 python scripts/qwen_parameter_extraction_finetune/evaluate.py --all-checkpoints   # score + select
 python scripts/qwen_parameter_extraction_finetune/export.py --which all           # adapter + merged + gguf plan
 ```
+
+`run.sh` is a thin, safe wrapper: it resolves paths from its own location (not the
+CWD), verifies the interpreter / deps / config / data, **aborts on a frozen-bundle
+SHA-256 mismatch**, checks disk and GPU, then hands off to `train.py` unchanged. It
+never auto-deletes, overwrites or resumes. Overrides: `PE_PYTHON`, `PE_CONFIG`,
+`PE_MIN_GPU_MEM_MB`, `PE_MIN_DISK_MB`, `PE_ALLOW_CPU=1`, `PE_SKIP_HASH=1` (debug).
 
 **Model.** Standard LoRA on the pinned HF revision of `iromu/Qwen3-0.6B-tools`
 (`model.base` / `model.revision`). The Ollama `qwen3-tools:q5_k_m` GGUF is a
@@ -221,11 +234,15 @@ and never quantises or touches the live Ollama model.
 
 - **Built and verified:** `data/{train,validation,test}.jsonl` (see `manifests/` and
   `reports/` for the exact counts, hashes and per-row audit).
+- **Trained and selected:** the LoRA run completed (1,629 optimizer steps,
+  `checkpoint-1000` selected on validation exact-match 0.9933). The model is
+  published as `Delveta-Qwen3-0.6B-PE-v1` (FP16 / FP32 / INT8 / Q5_K_M) with its
+  dataset and checkpoint archive; the full record is
+  [Qwen3-0.6B Parameter-Extraction Fine-Tuning](../../docs/experiments/qwen3-0.6b-parameter-extraction-finetuning.md).
+- **Scope of the numbers:** **validation only** — the test split and Formal-500
+  were **not** evaluated, and validation accuracy is not a production claim.
 - **Online serving aligned:** the live extractor sends the SAME single-function
   `tools` request (`tool_choice="required"`) the model is trained for, and reads the
   reply from `message.tool_calls` (a name mismatch or non-object arguments is a hard
-  `ExtractionUnavailable`, with no content fallback).
-- **Not started:** the real training run, GPU upload, evaluation against a trained
-  checkpoint, export/quantisation and deployment. Each is gated on explicit approval;
-  the real-service compatibility probe (`compat_probe.py`) must additionally pass
-  against the deployed model before training.
+  `ExtractionUnavailable`, with no content fallback). The real-service compatibility
+  probe (`compat_probe.py`) runs against the deployed endpoint.

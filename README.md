@@ -162,6 +162,24 @@ INT8 — inside one Hugging Face repository (no root model copy).
 The model is the dense retriever behind the retrieval pipeline
 ([architecture.md §29](docs/architecture.md#29-bge-m3-embedding-fine-tuning)).
 
+### Delveta Qwen3-0.6B Parameter Extraction
+
+Delveta includes a fine-tuned local **parameter-extraction** model — a LoRA SFT of
+`iromu/Qwen3-0.6B-tools` that fills a capability's argument slots once the
+capability is already chosen upstream. It extracts arguments **only**: it never
+selects, re-selects or questions the capability.
+
+- Model (FP16 / FP32 / INT8 / Q5_K_M): [Delveta-Qwen3-0.6B-PE-v1](https://huggingface.co/eric-ml-nlp/Delveta-Qwen3-0.6B-PE-v1)
+- Dataset: [Delveta-Qwen3-0.6B-PE-v1-Data](https://huggingface.co/datasets/eric-ml-nlp/Delveta-Qwen3-0.6B-PE-v1-Data) · [`scripts/qwen_parameter_extraction_finetune/data/`](scripts/qwen_parameter_extraction_finetune/data/)
+- Training code: [`scripts/qwen_parameter_extraction_finetune/`](scripts/qwen_parameter_extraction_finetune/) — entry `bash run.sh`
+- Checkpoints: [Delveta-Qwen3-0.6B-PE-v1-checkpoints](https://huggingface.co/eric-ml-nlp/Delveta-Qwen3-0.6B-PE-v1-checkpoints)
+- Experiment record: [Qwen3-0.6B Parameter-Extraction Fine-Tuning](docs/experiments/qwen3-0.6b-parameter-extraction-finetuning.md)
+
+The model is the extractor behind the Intent Funnel's argument-acquisition stage
+([architecture.md §28.6](docs/architecture.md#286-the-extractor-model--qwen3-06b-parameter-extraction-fine-tune)).
+It was selected on the validation split only; the test split and Formal-500 were
+**not** evaluated.
+
 ---
 
 ## 🚀 Quick Start
