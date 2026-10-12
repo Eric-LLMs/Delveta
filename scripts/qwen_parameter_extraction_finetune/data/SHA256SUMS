@@ -1,4 +1,5 @@
-# sha256 of data/*.jsonl (recorded by prepare_dataset.py)
-2fadeaeb33ccba0876f4e058fe5ca6578025cfa31faa8505446916b9ad12b63d  train.jsonl
-5974e0a9acbd14025632986e240b27b6e3a162f92ac74904ac98f56af70589e1  validation.jsonl
-5c7649326e46b710a915b0c41e0f1f625526280d43712a683cd0c6e851905c4c  test.jsonl
+# sha256 of data/*.jsonl and manifest.json (LF-normalized; see repo .gitattributes)
+2065cdbedf1817f66b33ea21711a415d6ab9dc98ea65a077d4f28be09c1600a4  train.jsonl
+0a88be602d740e39b6b79753549fa3d405f2d6dc5213ceda6ad92d19dc06488a  validation.jsonl
+d048f1b53dbae1ea6a2f1f128382724f316badc32e08f6600d1037185a8cf47f  test.jsonl
+77d9ce781c39522263d15aee209a482dcce15a4eb1af19a66ed8ea7ba95ec814  manifest.json

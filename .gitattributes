@@ -1,0 +1,5 @@
+# Parameter-extraction dataset: enforce LF so the git blob equals the checkout on
+# every platform, keeping data/*.jsonl, manifest.json and SHA256SUMS mutually consistent.
+scripts/qwen_parameter_extraction_finetune/data/*.jsonl text eol=lf
+scripts/qwen_parameter_extraction_finetune/data/manifest.json text eol=lf
+scripts/qwen_parameter_extraction_finetune/data/SHA256SUMS text eol=lf
