@@ -1,0 +1,4 @@
+# sha256 of data/*.jsonl (recorded by prepare_dataset.py)
+2fadeaeb33ccba0876f4e058fe5ca6578025cfa31faa8505446916b9ad12b63d  train.jsonl
+5974e0a9acbd14025632986e240b27b6e3a162f92ac74904ac98f56af70589e1  validation.jsonl
+5c7649326e46b710a915b0c41e0f1f625526280d43712a683cd0c6e851905c4c  test.jsonl

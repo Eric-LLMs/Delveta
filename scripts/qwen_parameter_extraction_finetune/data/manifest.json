@@ -1,0 +1,239 @@
+{
+  "dataset_version": "delveta_pe_sft_toolcalls_v1",
+  "built_from": "delveta_parameter_extraction_v2 (candidate)",
+  "source_commit": "fdf96cf",
+  "render_source": "production",
+  "source_files": {
+    "train_candidates": {
+      "path": "scripts/qwen_parameter_extraction_finetune/data/V5/delveta_pe_train_contract_aligned_v5_candidate.jsonl",
+      "sha256": "4cf05489c005f13f3d99e46296d33bad65a14deacc1cbfaa33c090b124433647"
+    },
+    "test_candidates": {
+      "path": "scripts/qwen_parameter_extraction_finetune/data/V5/delveta_pe_test_contract_aligned_v5_candidate.jsonl",
+      "sha256": "5f010c3ef4668b661e42765f9c9a84499c76c1a0ef288e1aa828c0112fcb52c6"
+    }
+  },
+  "config": {
+    "seed": 20261011,
+    "include_clarify_rows": true,
+    "near_dup_jaccard": 0.9,
+    "split_policy": "cluster",
+    "split": {
+      "train": 0.8,
+      "validation": 0.1,
+      "test": 0.1
+    }
+  },
+  "counts": {
+    "raw_candidates": 12883,
+    "isolated": 0,
+    "exact_duplicates_dropped": 0,
+    "valid_after_audit": 12883,
+    "kept_after_dedup": 12883,
+    "emitted": 12883,
+    "train": 10303,
+    "validation": 1290,
+    "test": 1290
+  },
+  "label_redundancy": {
+    "distinct_targets": 4432,
+    "rows": 12883,
+    "mean_frames_per_target": 2.907,
+    "max_frames_per_target": 158
+  },
+  "file_sha256": {
+    "train.jsonl": "2fadeaeb33ccba0876f4e058fe5ca6578025cfa31faa8505446916b9ad12b63d",
+    "validation.jsonl": "5974e0a9acbd14025632986e240b27b6e3a162f92ac74904ac98f56af70589e1",
+    "test.jsonl": "5c7649326e46b710a915b0c41e0f1f625526280d43712a683cd0c6e851905c4c"
+  },
+  "per_group_split": {
+    "cap-add-term/en": {
+      "rows": 1011,
+      "clusters": 128,
+      "train": 809,
+      "validation": 101,
+      "test": 101
+    },
+    "cap-add-term/zh": {
+      "rows": 1016,
+      "clusters": 133,
+      "train": 812,
+      "validation": 102,
+      "test": 102
+    },
+    "cap-create-folder/en": {
+      "rows": 1110,
+      "clusters": 236,
+      "train": 835,
+      "validation": 111,
+      "test": 111
+    },
+    "cap-create-folder/zh": {
+      "rows": 1095,
+      "clusters": 236,
+      "train": 928,
+      "validation": 110,
+      "test": 110
+    },
+    "cap-rag-search/en": {
+      "rows": 1011,
+      "clusters": 191,
+      "train": 809,
+      "validation": 101,
+      "test": 101
+    },
+    "cap-rag-search/zh": {
+      "rows": 1016,
+      "clusters": 196,
+      "train": 812,
+      "validation": 102,
+      "test": 102
+    },
+    "cap-social-search/en": {
+      "rows": 1210,
+      "clusters": 389,
+      "train": 968,
+      "validation": 121,
+      "test": 121
+    },
+    "cap-social-search/zh": {
+      "rows": 1315,
+      "clusters": 495,
+      "train": 1051,
+      "validation": 132,
+      "test": 132
+    },
+    "cap-translate/en": {
+      "rows": 1035,
+      "clusters": 991,
+      "train": 827,
+      "validation": 104,
+      "test": 104
+    },
+    "cap-translate/zh": {
+      "rows": 1037,
+      "clusters": 993,
+      "train": 829,
+      "validation": 104,
+      "test": 104
+    },
+    "cap-web-search/en": {
+      "rows": 1013,
+      "clusters": 193,
+      "train": 811,
+      "validation": 101,
+      "test": 101
+    },
+    "cap-web-search/zh": {
+      "rows": 1014,
+      "clusters": 194,
+      "train": 812,
+      "validation": 101,
+      "test": 101
+    }
+  },
+  "stats": {
+    "train": {
+      "total": 10303,
+      "by_capability": {
+        "cap-add-term": 1621,
+        "cap-create-folder": 1763,
+        "cap-rag-search": 1621,
+        "cap-social-search": 2019,
+        "cap-translate": 1656,
+        "cap-web-search": 1623
+      },
+      "by_language": {
+        "en": 5059,
+        "zh": 5244
+      },
+      "slot_presence": {
+        "domain": 1767,
+        "name": 1453,
+        "platform": 551,
+        "query": 4595,
+        "target_language": 1516,
+        "term": 1468,
+        "text": 1550
+      }
+    },
+    "validation": {
+      "total": 1290,
+      "by_capability": {
+        "cap-add-term": 203,
+        "cap-create-folder": 221,
+        "cap-rag-search": 203,
+        "cap-social-search": 253,
+        "cap-translate": 208,
+        "cap-web-search": 202
+      },
+      "by_language": {
+        "en": 639,
+        "zh": 651
+      },
+      "slot_presence": {
+        "domain": 229,
+        "name": 219,
+        "platform": 19,
+        "query": 646,
+        "target_language": 202,
+        "term": 201,
+        "text": 103
+      }
+    },
+    "test": {
+      "total": 1290,
+      "by_capability": {
+        "cap-add-term": 203,
+        "cap-create-folder": 221,
+        "cap-rag-search": 203,
+        "cap-social-search": 253,
+        "cap-translate": 208,
+        "cap-web-search": 202
+      },
+      "by_language": {
+        "en": 639,
+        "zh": 651
+      },
+      "slot_presence": {
+        "domain": 232,
+        "name": 218,
+        "platform": 22,
+        "query": 657,
+        "target_language": 182,
+        "term": 199,
+        "text": 192
+      }
+    }
+  },
+  "audit": {
+    "isolated_by_reason": {},
+    "derivation_flag_counts": {},
+    "surface_corrections": {},
+    "audit_warning_counts": {},
+    "clusters_total": 4375,
+    "cluster_size_histogram": {
+      "1": 3465,
+      "2": 88,
+      "6": 9,
+      "7": 9,
+      "8": 41,
+      "9": 84,
+      "10": 126,
+      "11": 158,
+      "12": 181,
+      "13": 138,
+      "14": 64,
+      "15": 11,
+      "16": 1
+    },
+    "formal500_overlap_normalized": 0,
+    "cross_split_normalized_overlap_query": 0,
+    "cross_split_normalized_overlap_target": 0
+  },
+  "notes": [
+    "Protocol: single function (name == capability_id) + tool_choice=required; schema exposes ONLY model-owned slots (Phase-3b face narrowing).",
+    "assistant target uses tool_calls; function.arguments is a JSON string of {slot:value}, with no nested {\"arguments\": {...}} wrapper.",
+    "ONLINE ALIGNED: the live extractor sends the SAME tools request (one function named for the pinned capability_id, tool_choice=required) and reads the reply from message.tool_calls; a name mismatch or non-object arguments is a hard ExtractionUnavailable (no content fallback)."
+  ]
+}
