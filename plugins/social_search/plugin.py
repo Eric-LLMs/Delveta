@@ -26,8 +26,11 @@ site-scoped aggregate is used. Every result is guaranteed to live on the platfor
 search-backend outage / timeout / auth failure is surfaced as a tool error (``degraded``)
 — it is never disguised as a normal empty result, so gate diagnostics stay honest.
 
-``platform="auto"`` runs every adapter that is actually configured (reddit always, x only
-when a token exists) concurrently and merges the results.
+An omitted ``platform`` (and ``platform="auto"``) runs EVERY available platform
+concurrently and merges the results — reddit (anonymous JSON, or OAuth when the four
+creds are set), x (the official API when ``X_BEARER_TOKEN`` is set, otherwise the
+domain-scoped degrade) and zhihu (the domain-scoped degrade). No available platform is
+dropped to save latency: covering every available platform is the contract.
 
 The tool does not summarize or re-reason: the model running the chat is the LLM and already
 holds the full conversation context, so it generates the query and does the
@@ -45,6 +48,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import time
 from urllib.parse import quote, urlparse
 
@@ -61,6 +65,8 @@ _MAX_LIMIT = 25
 _SNIPPET_CHARS = 500
 
 _SUPPORTED = ("reddit", "x", "zhihu", "auto")
+# Separators accepted when several platforms are named in one string, e.g. "reddit,x".
+_PLATFORM_SEP = re.compile(r"[,\+\s]+")
 
 # ── reddit OAuth (official API) ──────────────────────────────────────────────
 _REDDIT_OAUTH = "https://oauth.reddit.com"
@@ -300,14 +306,47 @@ _ADAPTERS = {"reddit": _reddit, "x": _x, "zhihu": _zhihu}
 
 
 def _available() -> list[str]:
-    """Platforms merged by ``auto``: reddit always, plus official-API platforms whose
-    keys are configured. x / zhihu degrade paths are *always* available, but running two
-    extra domain-scoped web searches on every ``auto`` call is slow, so they are opt-in
-    via an explicit ``platform`` argument rather than part of ``auto``."""
-    available = ["reddit"]
-    if os.environ.get("X_BEARER_TOKEN"):
-        available.append("x")
-    return available
+    """Every platform whose adapter can actually run right now — the set that ``auto``
+    (and an omitted ``platform``) searches.
+
+    All three are runnable without optional credentials: reddit via anonymous JSON
+    (OAuth when the four creds are set), x via the official API when ``X_BEARER_TOKEN``
+    is set and otherwise its domain-scoped degrade, zhihu via its domain-scoped degrade.
+    No platform is dropped to save latency; an explicitly named platform is still the
+    only one searched."""
+    return ["reddit", "x", "zhihu"]
+
+
+def _resolve_platforms(raw) -> list[str]:
+    """Turn the ``platform`` argument into the platforms to actually search.
+
+    ``None`` / ``""`` / ``"auto"`` → every available platform (``_available()``). A
+    single name, a list/tuple of names, or a comma/plus/space-separated string of names
+    → exactly those platforms. Order-preserving and de-duplicated; a name with no
+    adapter raises (the existing convention)."""
+    if raw is None:
+        return _available()
+    if isinstance(raw, (list, tuple, set)):
+        tokens = [str(p).strip().lower() for p in raw]
+    else:
+        text = str(raw).strip().lower()
+        if not text:
+            return _available()
+        tokens = _PLATFORM_SEP.split(text)
+    names: list[str] = []
+    for token in tokens:
+        if not token:
+            continue
+        if token == "auto":
+            for p in _available():
+                if p not in names:
+                    names.append(p)
+            continue
+        if token not in _ADAPTERS:
+            raise RuntimeError(f"unknown platform: {token!r} (use one of {_SUPPORTED})")
+        if token not in names:
+            names.append(token)
+    return names
 
 
 def _terminal_for_run(platform: str, code: int) -> dict:
@@ -326,45 +365,69 @@ def _terminal_for_run(platform: str, code: int) -> dict:
 
 
 async def _execute(args: dict, exec) -> list[dict]:
-    platform = args.get("platform", "reddit").lower()
-    if platform not in _SUPPORTED:
-        raise RuntimeError(f"unknown platform: {platform!r} (use one of {_SUPPORTED})")
     query = args["query"]
-    limit = min(max(int(args.get("limit", 10)), 1), _MAX_LIMIT)
+    limit = min(max(int(args.get("limit", 5)), 1), _MAX_LIMIT)
     subreddit = args.get("subreddit")
+    platforms = _resolve_platforms(args.get("platform"))
+    if not platforms:
+        # No platform is available at all — fail loudly instead of returning an empty
+        # list that would read as "searched every platform, found nothing".
+        raise RuntimeError("no social platform is available to search")
+    if subreddit:
+        # A subreddit scope is reddit-ONLY. Never let it silently fan out to platforms
+        # that cannot honour it (that would widen the requested scope beyond what the
+        # user asked for): require reddit to be among the selected platforms and search
+        # reddit alone. A request that names only non-reddit platforms cannot honour the
+        # scope, so it is refused loudly rather than searched with the scope dropped.
+        if "reddit" not in platforms:
+            raise RuntimeError(
+                f"a subreddit scope needs the reddit platform, but only {platforms} "
+                "were selected — refusing to silently widen the search"
+            )
+        platforms = ["reddit"]
 
-    if platform == "auto":
-        plats = list(_available())
-        results = await asyncio.gather(
-            *(_ADAPTERS[p](query, limit, subreddit) for p in plats),
-            return_exceptions=True,
-        )
-        merged: list[dict] = []
-        for p, r in zip(plats, results):
-            if isinstance(r, BaseException):
-                # a failing platform never takes down the others; a 403/429 still
-                # surfaces as the same terminal-for-run marker the explicit path returns
-                exc = r
-                while not isinstance(exc, httpx.HTTPStatusError) and exc.__cause__ is not None:
-                    exc = exc.__cause__
-                if (
-                    isinstance(exc, httpx.HTTPStatusError)
-                    and exc.response.status_code in (429, 403)
-                ):
-                    merged.append(_terminal_for_run(p, exc.response.status_code))
-                continue
-            merged.extend(r)
-        return merged
+    if len(platforms) == 1:
+        platform = platforms[0]
+        try:
+            return await _ADAPTERS[platform](query, limit, subreddit)
+        except httpx.HTTPStatusError as exc:
+            code = exc.response.status_code
+            if code in (429, 403):
+                return [_terminal_for_run(platform, code)]
+            raise RuntimeError(f"{platform} returned HTTP {code}") from exc
+        except httpx.HTTPError as exc:
+            raise RuntimeError(f"{platform} request failed: {exc}") from exc
 
-    try:
-        return await _ADAPTERS[platform](query, limit, subreddit)
-    except httpx.HTTPStatusError as exc:
-        code = exc.response.status_code
-        if code in (429, 403):
-            return [_terminal_for_run(platform, code)]
-        raise RuntimeError(f"{platform} returned HTTP {code}") from exc
-    except httpx.HTTPError as exc:
-        raise RuntimeError(f"{platform} request failed: {exc}") from exc
+    # Several platforms: fan out concurrently. One platform's failure never takes the
+    # others down (a 403/429 becomes the same terminal-for-run marker the single path
+    # returns), but a run where EVERY platform failed is an honest error — never a
+    # silent empty list claiming a completed all-platform search.
+    results = await asyncio.gather(
+        *(_ADAPTERS[p](query, limit, subreddit) for p in platforms),
+        return_exceptions=True,
+    )
+    merged: list[dict] = []
+    produced = 0
+    failures: list[str] = []
+    for p, r in zip(platforms, results):
+        if isinstance(r, BaseException):
+            exc = r
+            while not isinstance(exc, httpx.HTTPStatusError) and exc.__cause__ is not None:
+                exc = exc.__cause__
+            if (
+                isinstance(exc, httpx.HTTPStatusError)
+                and exc.response.status_code in (429, 403)
+            ):
+                merged.append(_terminal_for_run(p, exc.response.status_code))
+                produced += 1
+            else:
+                failures.append(f"{p}: {type(r).__name__}: {r}"[:200])
+            continue
+        merged.extend(r)
+        produced += 1
+    if produced == 0:
+        raise RuntimeError("no social platform could be searched: " + "; ".join(failures))
+    return merged
 
 
 PLUGIN = Plugin(
@@ -390,7 +453,10 @@ PLUGIN = Plugin(
                     "platform": {
                         "type": "string",
                         "enum": ["reddit", "x", "zhihu", "auto"],
-                        "description": "Target platform; 'auto' merges every configured platform.",
+                        "description": (
+                            "Target platform; omit it (or use 'auto') to search every "
+                            "supported platform."
+                        ),
                     },
                     "subreddit": {
                         "type": "string",
@@ -398,7 +464,7 @@ PLUGIN = Plugin(
                     },
                     "limit": {
                         "type": "integer",
-                        "description": "Max results per platform (1-25, default 10).",
+                        "description": "Max results per platform (1-25, default 5).",
                     },
                 },
                 "required": ["query"],

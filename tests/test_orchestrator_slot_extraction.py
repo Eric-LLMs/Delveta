@@ -7,8 +7,8 @@ model" from ``slot not in draft``:
 * an authorized plan runs the extractor ONCE, over the query bundle, with the
   capability's Prompt; valid, authorized values are folded into the draft;
 * the search trio keeps the turn's sentence VERBATIM as a lossless fallback the
-  model may clean (the ``query`` slot), and the count slot (``top_k`` / ``limit``)
-  is MODEL-owned — an unstated one stays the tool's default;
+  model may clean (the ``query`` slot); the count (``top_k`` / ``limit``) is NOT a
+  model slot — an unstated one stays the tool's default and a stated one is dropped;
 * the three MODEL-lane capabilities (add-term / create-folder / translate) run NO
   extraction rule: their ``acquire()`` is the EMPTY ``{}`` and the model fills
   every slot;
@@ -33,14 +33,14 @@ from core.application.chat.intent_funnel import orchestrator as orch_mod
 from core.application.chat.intent_funnel.argument_acquisition.extractor import (
     ExtractionUnavailable,
 )
-from core.application.chat.intent_funnel.argument_acquisition.prompts import (
-    ADD_TERM_PROMPT,
-    CREATE_FOLDER_PROMPT,
-    SEARCH_QUERY_PROMPT,
-    TRANSLATE_PROMPT,
+from core.application.chat.intent_funnel.argument_acquisition.extractor import (
+    SYSTEM_EXTRACT,
 )
 from core.application.chat.intent_funnel.cap_handler import roster
-from core.application.chat.intent_funnel.contract import REASON_BIND_MISSING
+from core.application.chat.intent_funnel.contract import (
+    REASON_BIND_INVALID,
+    REASON_BIND_MISSING,
+)
 from core.application.chat.intent_funnel.registry import content_fingerprint
 from core.application.chat.intent_funnel.registry.entry import (
     CapabilityEntry,
@@ -152,23 +152,25 @@ async def test_web_query_is_replaced_by_the_cleaned_topic():
     assert out is not None
     assert out.requested_action["args"] == {"query": "注意力机制的最新进展"}
     assert seen["query"] == msg                      # the model saw the raw sentence
-    assert set(seen["slots"]) == {"query", "top_k"}  # both slots model-owned
-    assert seen["prompt"] == SEARCH_QUERY_PROMPT     # per-capability prompt
+    assert set(seen["slots"]) == {"query"}           # only query is model-owned
+    assert seen["prompt"] == SYSTEM_EXTRACT          # the shared interface prompt
     assert capture["acquisition"]["extractor"] == "Qwen"
     assert capture["acquisition"]["slot_plan"] == {
-        "model_slots": ["query", "top_k"], "default_slots": ["top_k"]}
+        "model_slots": ["query"], "default_slots": []}
 
 
-async def test_web_stated_count_is_understood_by_the_model():
+async def test_web_stated_count_is_not_a_model_slot_and_is_dropped():
+    # The count is a function default, never a model slot: the extractor is asked
+    # for ``query`` only, and a stray ``top_k`` the model returns is UNAUTHORIZED and
+    # never folded, so the ``web_search`` default stands.
     msg = "search for transformers, top 3"
     seen: dict = {}
     out, trace, capture = await _hop(
         _web_entry(), query=msg,
         extractor=_mock({"query": "transformers", "top_k": 3}, seen=seen))
 
-    assert set(seen["slots"]) == {"query", "top_k"}   # the count is model-owned now
-    # the model's count is folded; the Binder normalizes it to str.
-    assert out.requested_action["args"] == {"query": "transformers", "top_k": "3"}
+    assert set(seen["slots"]) == {"query"}            # top_k is NOT authorized
+    assert out.requested_action["args"] == {"query": "transformers"}   # top_k dropped
 
 
 async def test_web_without_count_keeps_the_tool_default_for_top_k():
@@ -189,11 +191,16 @@ async def test_empty_model_value_keeps_the_verbatim_query():
     assert out.requested_action["args"] == {"query": msg}
 
 
-async def test_over_length_model_value_is_rejected():
+async def test_over_length_model_value_is_rejected_not_silently_truncated():
+    # A produced value is carried VERBATIM, so an over-length value is NOT
+    # truncated / coerced: the Binder flags INVALID and the Agent owns the turn.
     msg = "帮我搜一下注意力机制"
     out, trace, capture = await _hop(
         _web_entry(), query=msg, extractor=_mock({"query": "x" * 300}))
-    assert out.requested_action["args"] == {"query": msg}
+    assert out is None
+    assert trace["fallback"] == REASON_BIND_INVALID
+    # the raw over-length value is REPORTED, never silently repaired
+    assert capture["acquisition"]["validation"]["query"] == "max_len"
 
 
 async def test_model_unavailable_keeps_the_draft_and_still_certifies():
@@ -214,7 +221,7 @@ async def test_unauthorized_slot_from_the_model_is_never_written():
     assert "platform" not in out.requested_action["args"]
 
 
-# ── social: query + platform + subreddit are all MODEL-owned ─────────────────────
+# ── social: query + platform are MODEL-owned (subreddit temporarily not) ─────────
 
 
 async def test_social_query_and_named_platform_come_from_the_model():
@@ -223,8 +230,26 @@ async def test_social_query_and_named_platform_come_from_the_model():
     out, trace, capture = await _hop(
         _social_entry(), query=msg,
         extractor=_mock({"query": "transformer", "platform": "reddit"}, seen=seen))
-    assert set(seen["slots"]) == {"query", "platform", "subreddit", "limit"}
+    assert set(seen["slots"]) == {"query", "platform"}
     assert out.requested_action["args"] == {"query": "transformer", "platform": "reddit"}
+
+
+async def test_social_explicit_subreddit_is_scoped_and_never_widened():
+    # An explicit ``r/<sub>`` is a deterministic reddit-only scope: platform is pinned
+    # to reddit (NOT model-authorizable that turn) and the scope rides the tool-only
+    # ``subreddit`` arg — so the search can never be silently widened to other sources.
+    msg = "r/MachineLearning 上关于 transformer 的讨论"
+    seen: dict = {}
+    out, trace, capture = await _hop(
+        _social_entry(), query=msg,
+        extractor=_mock({"query": "transformer 的讨论"}, seen=seen))
+
+    assert set(seen["slots"]) == {"query"}            # platform is NOT model-owned
+    assert out.requested_action["args"] == {
+        "query": "transformer 的讨论", "platform": "reddit",
+        "subreddit": "MachineLearning"}
+    assert capture["acquisition"]["slot_plan"] == {
+        "model_slots": ["query"], "default_slots": []}
 
 
 async def test_social_unnamed_platform_is_omitted_by_the_model():
@@ -284,7 +309,7 @@ async def test_add_term_both_slots_come_from_the_model():
         _add_term_entry(), query=msg,
         extractor=_mock({"term": "attention", "domain": "Tec"}, seen=seen))
     assert set(seen["slots"]) == {"term", "domain"}
-    assert seen["prompt"] == ADD_TERM_PROMPT
+    assert seen["prompt"] == SYSTEM_EXTRACT
     assert out.requested_action["args"] == {"term": "attention", "domain": "Tec"}
 
 
@@ -307,7 +332,7 @@ async def test_create_folder_name_is_model_filled_and_path_dropped():
         extractor=_mock({"name": "会议纪要", "parent_path": "/etc"}, seen=seen))
 
     assert seen["slots"] == ("name",)                  # name ONLY — never a root/path
-    assert seen["prompt"] == CREATE_FOLDER_PROMPT
+    assert seen["prompt"] == SYSTEM_EXTRACT
     args = out.requested_action["args"]
     assert args["name"] == "会议纪要"
     assert "parent_path" not in args                   # unauthorized -> dropped
@@ -333,7 +358,7 @@ async def test_translate_text_and_target_language_come_from_the_model():
                         seen=seen))
 
     assert set(seen["slots"]) == {"text", "target_language"}
-    assert seen["prompt"] == TRANSLATE_PROMPT
+    assert seen["prompt"] == SYSTEM_EXTRACT
     assert out.requested_action["args"] == {"text": "machine translation",
                                             "target_language": "Chinese"}
 
@@ -419,8 +444,8 @@ async def test_real_qwen_search_query_is_never_lost():
     out, trace, capture = await _hop(_web_entry(), query=msg, extractor=real)
     args = out.requested_action["args"]
     assert args["query"]                                   # a non-empty topic
-    assert seen["prompt"] == SEARCH_QUERY_PROMPT
-    assert set(seen["slots"]) == {"query", "top_k"}
+    assert seen["prompt"] == SYSTEM_EXTRACT
+    assert set(seen["slots"]) == {"query"}
     assert capture["acquisition"]["extractor"] == "Qwen"
 
 
@@ -441,7 +466,7 @@ async def test_real_qwen_translate_payload_is_never_lost():
 
     msg = '把 "machine translation" 翻译成中文'
     out, trace, capture = await _hop(_translate_entry(), query=msg, extractor=real)
-    assert seen["prompt"] == TRANSLATE_PROMPT
+    assert seen["prompt"] == SYSTEM_EXTRACT
     assert set(seen["slots"]) == {"text", "target_language"}
     if out is not None:                                    # model resolved a payload
         assert out.requested_action["args"]["text"]

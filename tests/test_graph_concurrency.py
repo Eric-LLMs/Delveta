@@ -562,6 +562,14 @@ class TestP35bTerminalForRun:
                 raise RuntimeError("wrapped") from exc
 
         monkeypatch.setitem(social._ADAPTERS, "reddit", _boom)
+
+        async def _empty(query, limit, subreddit):
+            return []
+
+        # auto now searches every available platform; neutralise x/zhihu so the test
+        # stays deterministic (no real degrade network call) and asserts only on reddit.
+        monkeypatch.setitem(social._ADAPTERS, "x", _empty)
+        monkeypatch.setitem(social._ADAPTERS, "zhihu", _empty)
         merged = await social._execute({"query": "q", "platform": "auto"}, exec=None)
         markers = [m for m in merged if m.get("terminal_for_run")]
         assert len(markers) == 1 and markers[0]["platform"] == "reddit"

@@ -6,13 +6,15 @@ that contract as executable code:
 
 1. no natural-language extraction rule runs in a handler — the search trio's
    ``acquire()`` copies the turn's sentence VERBATIM as the ``query`` fallback
-   (the model may clean it), and the semantic handlers (add-term / create-folder
-   / translate) return the EMPTY ``{}`` draft;
+   (the model may clean it; an explicit ``r/<sub>`` token is the one DETERMINISTIC
+   exception and is not a model slot), and the semantic handlers (add-term /
+   create-folder / translate) return the EMPTY ``{}`` draft;
 2. the model is authorized ONLY for genuinely semantic slots (search ``query``
-   cleaning + the named platform/subreddit + a stated count, a rag ``domain``
-   scope, an add-term ``term``/``domain``, a create-folder ``name``, a translate
-   ``text`` and the optional ``target_language``);
-3. an optional slot with no value falls to the tool's legal default;
+   cleaning + the named platform, a rag ``domain`` scope, an add-term
+   ``term``/``domain``, a create-folder ``name``, a translate ``text`` and the
+   optional ``target_language``) — NOT the result count (``top_k`` / ``limit``) or
+   ``subreddit``;
+3. an optional slot with no value falls to the tool's own legal default downstream;
 4. every exposed capability is accounted for: EITHER handler-owned (an explicit
    ``slot_plan``) OR deliberately fail-open (no handler -> undeclared -> the
    Agent owns the turn).
@@ -96,7 +98,7 @@ def test_only_the_model_assisted_caps_opt_into_slot_plans():
         assert isinstance(handler, SlotPlanningHandler) == (cid in MODEL_OPT_IN), cid
 
 
-# ── rule 2 + rule 3: the model owns the semantic slots; the count is its, too ────
+# ── rule 2 + rule 3: the model owns the semantic slots, NOT the count ────────────
 
 
 @pytest.mark.parametrize("cid,msg,count_slot", [
@@ -104,13 +106,13 @@ def test_only_the_model_assisted_caps_opt_into_slot_plans():
     ("cap-rag-search", "查一下注意力机制，前 5 条", "top_k"),
     ("cap-social-search", "搜索社区讨论，取 3 条", "limit"),
 ])
-async def test_stated_count_is_model_owned_and_defaulted(cid, msg, count_slot):
+async def test_stated_count_is_not_a_model_slot(cid, msg, count_slot):
     handler = handler_for(cid)
     draft = await handler.acquire(query=msg, facts=None)
     assert count_slot not in draft                    # rule 1: NO DET extraction
     plan = handler.slot_plan(query=msg, facts=None, draft=draft)
-    assert count_slot in plan.model_slots             # the model understands the count
-    assert count_slot in plan.default_slots           # an unstated one -> tool default
+    assert count_slot not in plan.model_slots         # rule 2: count is NOT model-owned
+    assert count_slot not in plan.default_slots       # it is the tool's own default
     assert "query" in plan.model_slots                # rule 2: semantic query cleaning
 
 
@@ -122,4 +124,5 @@ async def test_unstated_count_falls_to_the_tool_default(cid):
     count_slot = "limit" if cid == "cap-social-search" else "top_k"
     assert count_slot not in draft                    # rule 1: no rule value
     plan = handler.slot_plan(query=msg, facts=None, draft=draft)
-    assert count_slot in plan.default_slots           # -> the tool's legal default
+    assert count_slot not in plan.model_slots         # never a model slot
+    assert count_slot not in plan.default_slots       # the TOOL applies its default (5)

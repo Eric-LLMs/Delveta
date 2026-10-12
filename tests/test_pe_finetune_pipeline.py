@@ -195,13 +195,30 @@ def test_train_modules_import_no_torch():
 
 
 @pytest.mark.skipif(not _HAS_BUNDLE, reason="frozen PE bundle not present")
-def test_check_contract_gates_the_frozen_bundle():
+def test_frozen_bundle_is_flagged_as_drifted_not_silently_accepted():
+    """The HISTORICAL bundle predates the model-face narrowing (its ``tools``
+    ``function.parameters`` still carry the retired count slot), so the gate must
+    REJECT it — the drift is surfaced, never hidden by a relaxed check. The bundle
+    itself is left untouched (frozen); rebuilding it is a later data phase."""
     cfg = pcfg.load_config()
-    summary = T.check_contract(cfg)
-    assert summary["hash_verified"] is True
-    assert summary["train_rows"] == 8679
-    assert summary["validation_rows"] == 1041
-    assert set(summary["by_capability"]) == set(C.SCHEMA)
+    with pytest.raises(D.SftDataError):
+        T.check_contract(cfg)
+
+
+def test_new_data_contract_accepts_a_current_contract_bundle():
+    """The NEW data-generation contract: a row rendered to the CURRENT
+    ``model_schema`` (model slots only — the count excluded) passes the row
+    validator, while a row still carrying the retired count slot is refused."""
+    T._validate_rows([_sample()])                       # current contract -> OK
+
+    stale = _sample()                                   # tool face still lists the count
+    stale["tools"][0]["function"]["parameters"]["properties"]["top_k"] = {"type": "integer"}
+    with pytest.raises(D.SftDataError):
+        T._validate_rows([stale])
+
+    off_slot = _sample(args={"query": "q", "top_k": 3})  # target carries the retired slot
+    with pytest.raises(D.SftDataError):
+        T._validate_rows([off_slot])
 
 
 # ── evaluate: scoring + the selection rule ────────────────────────────────────────
@@ -214,10 +231,13 @@ def test_canon_value_normalizes_int_slots():
 
 
 def test_score_sample_exact_match_and_illegal_keys():
+    # Under the CURRENT contract ``top_k`` is NOT a model slot, so an emitted count is
+    # an ILLEGAL key (surfaced via ``illegal_keys``); the slot-wise compare still
+    # matches on the model-owned ``query`` alone.
     rec = E.score_sample("cap-web-search", {"query": "a", "top_k": 3},
                          "cap-web-search", {"query": "a", "top_k": "3", "platform": "x"})
-    assert rec["exact_match"] is True            # illegal key does not break exact match
-    assert rec["illegal_keys"] == ["platform"]
+    assert rec["exact_match"] is True            # illegal keys do not break exact match
+    assert rec["illegal_keys"] == ["platform", "top_k"]
     assert rec["required_present"] == 1 and rec["required_correct"] == 1
 
     miss = E.score_sample("cap-create-folder", {"name": "n"}, "cap-create-folder", {})

@@ -104,6 +104,42 @@ async def _run(payload, *, platform="reddit", query="q", status_code=200, **extr
     return result, fake
 
 
+# ── platform-selection doubles ────────────────────────────────────────────────
+# These swap every adapter for a recording stub, so a test can assert exactly which
+# platforms ``_execute`` *called* (not just which ``platform`` value was passed). The
+# real adapters would otherwise hit the network (x/zhihu degrade via ``_domain_search``).
+_OMITTED = object()
+
+
+def _spy_adapters(record, *, raise_map=None):
+    raise_map = raise_map or {}
+
+    def _make(name):
+        async def _adapter(query, limit, subreddit):
+            record.append(name)
+            if name in raise_map:
+                raise raise_map[name]
+            return [{"platform": name}]
+
+        return _adapter
+
+    return {name: _make(name) for name in mod._ADAPTERS}
+
+
+async def _run_spy(*, platform=_OMITTED, subreddit=_OMITTED, raise_map=None):
+    """Run ``_execute`` with all adapters stubbed; return (called_platforms, result)."""
+    record: list[str] = []
+    spies = _spy_adapters(record, raise_map=raise_map)
+    args = {"query": "q"}
+    if platform is not _OMITTED:
+        args["platform"] = platform
+    if subreddit is not _OMITTED:
+        args["subreddit"] = subreddit
+    with mock.patch.object(mod, "_ADAPTERS", spies):
+        result = await mod._execute(args, exec=None)
+    return record, result
+
+
 @pytest.fixture(autouse=True)
 def _no_reddit_creds():
     """Keep the anonymous-reddit tests deterministic: no OAuth creds, cold token cache."""
@@ -157,7 +193,7 @@ class TestReddit:
         url, params, _ = fake.calls[0]
         assert "/r/MachineLearning/search.json" in url
         assert params["q"] == "q"
-        assert params["limit"] == 10
+        assert params["limit"] == 5   # the tool default (was 10 before the §F10 change)
         assert params["sort"] == "relevance"
 
     async def test_absolute_url_left_untouched(self):
@@ -285,36 +321,81 @@ class TestHttpErrors:
         assert marker["platform"] == "reddit"
         assert marker["http_status"] == 429
 
-    async def test_auto_surfaces_denied_platform_as_marker(self):
-        # In auto mode a 403 on one platform becomes the same marker in the merged
-        # list; other platforms still contribute their results.
-        result, _ = await _run(_REDDIT_PAYLOAD, platform="auto", status_code=403)
-        markers = [i for i in result if i.get("terminal_for_run")]
-        assert len(markers) == 1
-        assert markers[0]["platform"] == "reddit"
-
     async def test_5xx_maps_to_status_error(self):
         with pytest.raises(RuntimeError, match="HTTP 500"):
             await _run(_REDDIT_PAYLOAD, status_code=500)
 
 
-# ── auto merge policy ────────────────────────────────────────────────────────
-class TestAuto:
-    async def test_runs_only_configured_platforms(self):
-        # no X_BEARER_TOKEN → auto == reddit only
-        result, fake = await _run(_REDDIT_PAYLOAD, platform="auto")
-        assert len(fake.calls) == 1
-        assert result and result[0]["platform"] == "reddit"
+# ── platform selection: which platforms are actually CALLED ──────────────────
+class TestPlatformSelection:
+    async def test_omitted_platform_searches_every_available(self):
+        # Product contract: naming no platform searches EVERY supported, available
+        # platform — never an implicit reddit-only fallback.
+        record, _ = await _run_spy()
+        assert set(record) == set(mod._available()) == {"reddit", "x", "zhihu"}
 
-    async def test_skips_a_failing_adapter(self):
-        async def _boom(query, limit, subreddit):
-            raise RuntimeError("x exploded")
+    async def test_auto_matches_the_available_set(self):
+        record, _ = await _run_spy(platform="auto")
+        assert set(record) == set(mod._available())
 
-        with mock.patch.dict(os.environ, {"X_BEARER_TOKEN": "t"}, clear=False):
-            with mock.patch.dict(mod._ADAPTERS, {"x": _boom}):
-                result, _ = await _run(_REDDIT_PAYLOAD, platform="auto")
-        # the broken x adapter must not take down the whole search
-        assert result and all(i["platform"] == "reddit" for i in result)
+    async def test_explicit_reddit_searches_only_reddit(self):
+        record, _ = await _run_spy(platform="reddit")
+        assert record == ["reddit"]
+
+    async def test_explicit_x_searches_only_x(self):
+        record, _ = await _run_spy(platform="x")
+        assert record == ["x"]
+
+    async def test_explicit_multi_string_searches_only_those(self):
+        record, _ = await _run_spy(platform="reddit,x")
+        assert set(record) == {"reddit", "x"}
+
+    async def test_explicit_multi_list_searches_only_those(self):
+        record, _ = await _run_spy(platform=["zhihu", "reddit"])
+        assert set(record) == {"reddit", "zhihu"}
+
+    async def test_no_available_provider_raises(self):
+        # No platform runnable at all → a loud error, never an empty "all done" result.
+        with mock.patch.object(mod, "_available", return_value=[]):
+            with pytest.raises(RuntimeError, match="no social platform is available"):
+                await mod._execute({"query": "q"}, exec=None)
+
+    async def test_all_platforms_failing_raises_not_silent_empty(self):
+        # Every platform failed → an honest error, never a silent empty list that would
+        # read as "searched every platform, found nothing".
+        raise_map = {p: RuntimeError(f"{p} down") for p in mod._available()}
+        with pytest.raises(RuntimeError, match="no social platform could be searched"):
+            await _run_spy(raise_map=raise_map)
+
+    async def test_one_failing_adapter_merges_the_rest(self):
+        record, result = await _run_spy(raise_map={"x": RuntimeError("x exploded")})
+        assert set(record) == {"reddit", "x", "zhihu"}  # all three were attempted
+        assert {i["platform"] for i in result} == {"reddit", "zhihu"}
+
+    async def test_denied_platform_becomes_marker_others_contribute(self):
+        # A 403 on one platform is a source-scoped marker, never a task failure; the
+        # other platforms still contribute their results to the merge.
+        _, result = await _run_spy(raise_map={"reddit": _http_error(403)})
+        markers = [i for i in result if i.get("terminal_for_run")]
+        assert len(markers) == 1 and markers[0]["platform"] == "reddit"
+        assert {i["platform"] for i in result if not i.get("terminal_for_run")} == {"x", "zhihu"}
+
+    async def test_subreddit_scope_forces_reddit_only_never_widens(self):
+        # An explicit ``r/<sub>`` scope is reddit-ONLY: even with the platform omitted
+        # it must resolve to reddit alone, never a fan-out that silently widens the
+        # requested scope to other sources.
+        record, _ = await _run_spy(subreddit="MachineLearning")
+        assert record == ["reddit"]
+
+    async def test_subreddit_scope_with_an_explicit_reddit_platform(self):
+        record, _ = await _run_spy(platform="reddit", subreddit="MachineLearning")
+        assert record == ["reddit"]
+
+    async def test_subreddit_scope_on_a_non_reddit_platform_refuses_not_widens(self):
+        # A request naming only non-reddit platforms cannot honour the scope, so it is
+        # refused loudly rather than searched with the subreddit silently dropped.
+        with pytest.raises(RuntimeError, match="subreddit scope needs the reddit platform"):
+            await _run_spy(platform="x", subreddit="MachineLearning")
 
 
 # ── reddit OAuth (official API) ──────────────────────────────────────────────

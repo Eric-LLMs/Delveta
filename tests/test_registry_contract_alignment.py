@@ -122,10 +122,16 @@ FROZEN_PARAMETERS: dict[str, dict] = {
     },
     "cap-rag-search": {
         "query": {"type": "string", "required": True,
-                  "description": "the search query — a clean, self-contained TOPIC "
-                                 "distilled from the user sentence (instruction frame "
-                                 "removed); the model understands the topic, it is NOT "
-                                 "copied verbatim"},
+                  "description": "the search query — the user's search TOPIC, copied "
+                                 "verbatim from the sentence: remove ONLY the execution-"
+                                 "instruction frame AND an explicit result-count control "
+                                 "(a phrase that says how many RESULTS to return, e.g. "
+                                 "\"top 3 results\", \"10 results\"); KEEP a number that "
+                                 "is part of the TOPIC itself (e.g. \"top 3 retrieval "
+                                 "methods\"); if you cannot tell, keep it; keep the user's "
+                                 "own wording and language and any qualifiers (time range, "
+                                 "domain, material type) as stated; never translate, "
+                                 "summarize, expand or paraphrase"},
         "top_k": {"type": "integer", "required": False,
                   "description": "optional result count; only when the sentence states one"},
         "domain": {"type": "string", "required": False,
@@ -135,22 +141,35 @@ FROZEN_PARAMETERS: dict[str, dict] = {
     },
     "cap-web-search": {
         "query": {"type": "string", "required": True,
-                  "description": "the search query — a clean, self-contained TOPIC "
-                                 "distilled from the user sentence (instruction frame "
-                                 "removed); the model understands the topic, it is NOT "
-                                 "copied verbatim"},
+                  "description": "the search query — the user's search TOPIC, copied "
+                                 "verbatim from the sentence: remove ONLY the execution-"
+                                 "instruction frame AND an explicit result-count control "
+                                 "(a phrase that says how many RESULTS to return, e.g. "
+                                 "\"top 3 results\", \"10 results\"); KEEP a number that "
+                                 "is part of the TOPIC itself (e.g. \"top 3 retrieval "
+                                 "methods\"); if you cannot tell, keep it; keep the user's "
+                                 "own wording and language and any qualifiers (time range, "
+                                 "domain, material type) as stated; never translate, "
+                                 "summarize, expand or paraphrase"},
         "top_k": {"type": "integer", "required": False,
                   "description": "optional number of results; only when the sentence states one"},
     },
     "cap-social-search": {
         "query": {"type": "string", "required": True,
-                  "description": "the search query — a clean, self-contained TOPIC "
-                                 "distilled from the user sentence (instruction frame "
-                                 "removed); the model understands the topic, it is NOT "
-                                 "copied verbatim"},
+                  "description": "the search query — the user's search TOPIC, copied "
+                                 "verbatim from the sentence: remove ONLY the execution-"
+                                 "instruction frame AND an explicit result-count control "
+                                 "(a phrase that says how many RESULTS to return, e.g. "
+                                 "\"top 3 results\", \"10 results\"); KEEP a number that "
+                                 "is part of the TOPIC itself (e.g. \"top 3 retrieval "
+                                 "methods\"); if you cannot tell, keep it; keep the user's "
+                                 "own wording and language and any qualifiers (time range, "
+                                 "domain, material type) as stated; never translate, "
+                                 "summarize, expand or paraphrase"},
         "platform": {"type": "string", "required": False,
-                     "description": "optional platform (reddit / x / zhihu / auto); "
-                                    "only when the sentence names one"},
+                     "description": "optional platform (reddit / x / zhihu); only "
+                                    "when the sentence names one; OMIT when no "
+                                    "specific platform is named"},
         "subreddit": {"type": "string", "required": False,
                       "description": "optional reddit-only scope; only when the sentence names one"},
         "limit": {"type": "integer", "required": False,

@@ -83,6 +83,19 @@ except Exception as _exc:  # pragma: no cover
     prompt_for = None
     _prod_user_prompt = None
 
+# The deterministic per-turn slot rule (the SAME one the runtime handler and both
+# scorers read). Pure stdlib module — always importable inside the repo.
+from core.application.chat.intent_funnel.cap_handler.search_scope import (  # noqa: E402
+    effective_model_slots,
+)
+
+
+def _sample_slots(cap: str, raw_query: str) -> tuple[str, ...]:
+    """The per-sample MODEL slots: the static contract slots minus any slot a
+    deterministic execution scope pins for this turn (e.g. an ``r/<sub>`` sentence
+    pins ``platform`` → the model is asked for ``query`` only)."""
+    return effective_model_slots(cap, raw_query, C.model_slots(cap))
+
 # The single string that identifies a row's extraction payload (used to measure
 # near-duplicate targets, since the instruction frame is not the signal).
 PAYLOAD_SLOT = {
@@ -168,12 +181,18 @@ class DSU:
 
 # ── label re-derivation + audit ──────────────────────────────────────────────────
 def derive_target(row: dict) -> tuple[dict, list[str]]:
-    """(target, flags). Deterministic; only reads expected_arguments + surface fields."""
+    """(target, flags). Deterministic; only reads expected_arguments + surface fields.
+
+    The slot set is the PER-SAMPLE effective slots (:func:`_sample_slots`): a turn
+    whose sentence carries a deterministic execution scope (``r/<sub>``) is narrowed
+    exactly as the runtime handler narrows it, so the training target can never
+    contain a slot the runtime never asks the model for."""
     cap = row["capability_id"]
     exp = row.get("expected_arguments") or {}
+    slots = _sample_slots(cap, row["query"])
     flags: list[str] = []
     target: dict = {}
-    for slot in C.model_slots(cap):
+    for slot in slots:
         if slot not in exp:
             continue
         val = exp[slot]
@@ -194,7 +213,7 @@ def derive_target(row: dict) -> tuple[dict, list[str]]:
             except (TypeError, ValueError):
                 flags.append("int_uncoercible")
         target[slot] = val
-    if set(exp) - set(C.model_slots(cap)):
+    if set(exp) - set(slots):
         flags.append("non_model_keys_dropped")
     return target, flags
 
@@ -209,15 +228,16 @@ def audit_row(row: dict, target: dict, *, include_clarify: bool) -> tuple[list[s
 
     missing = list(row.get("expected_missing_required_slots") or [])
     outcome = row.get("expected_outcome")
+    slots = _sample_slots(cap, row["query"])
 
     # clarify rows: a schema-required slot is unstated -> no schema-valid call.
     if missing and not include_clarify:
         return [f"clarify_required_missing:{','.join(missing)}"], warn
 
     for slot in C.required_model_slots(cap):
-        if slot not in target and slot not in missing:
+        if slot in slots and slot not in target and slot not in missing:
             fatal.append(f"required_slot_absent:{slot}")
-    if set(target) - set(C.model_slots(cap)):
+    if set(target) - set(slots):
         fatal.append("target_non_model_slot")
     if not target:
         return [*(fatal or ["empty_target"])], warn
@@ -234,7 +254,7 @@ def audit_row(row: dict, target: dict, *, include_clarify: bool) -> tuple[list[s
             elif params[slot].get("max_len") and len(val) > params[slot]["max_len"]:
                 warn.append(f"over_max_len:{slot}")
 
-    if "query" in C.model_slots(cap) and "query" in target:
+    if "query" in slots and "query" in target:
         if re.search(r"(给我\s*\d+\s*条|show me\s+\d+\s+results|scoped to|只看.*领域)", str(target["query"])):
             warn.append("query_carries_appended_clause")
     if missing and outcome != "clarify":
@@ -256,7 +276,7 @@ def build_sample(row: dict, target: dict) -> dict:
         "tools": [{"type": "function", "function": {
             "name": fn_name,
             "description": C.function_description(cap),
-            "parameters": C.model_schema(cap)}}],
+            "parameters": C.model_schema(cap, _sample_slots(cap, row["query"]))}}],
         "tool_choice": "required",
         "messages": [
             {"role": "system", "content": prompt_for(cap)},
@@ -267,6 +287,13 @@ def build_sample(row: dict, target: dict) -> dict:
         ],
         "meta": {
             "provenance": "delveta_parameter_extraction_v2 (candidate)",
+            # The Gold VALUE source, stated explicitly: today every target is
+            # RE-DERIVED from the PE v2 candidate file's ``expected_arguments``
+            # (filtered to the model slots) — NOT an independent LLM re-labeling.
+            # ``labeling_status`` keeps that honest: these rows await the separate
+            # independent-labeling pass and must not be reported as LLM-labeled.
+            "gold_source": "script_rederived_from_PE_v2_candidate_expected_arguments",
+            "labeling_status": "pending_independent_llm_review",
             "source_commit": C.SOURCE_COMMIT,
             "target_slots": list(target),
             "missing_required": row.get("expected_missing_required_slots") or [],

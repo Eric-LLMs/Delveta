@@ -130,13 +130,10 @@ def main() -> int:
             print(f"FAIL: function.arguments not JSON: {exc!r}", file=sys.stderr)
             ok = False
     if ok:
-        # Also exercise the production parser + the anti-fabrication grounding gate.
-        from core.application.chat.intent_funnel.argument_acquisition import source_grounding
+        # Also exercise the production parser: the parsed values ARE the model's
+        # output (no grounding / no semantic post-processing downstream).
         values = ex._parse_tool_call(message, entry, model_slots)
-        grounded, dropped = source_grounding.ground_values(
-            values, model_slots=model_slots, source=source_grounding.source_text(bundle))
         print(f"\nparsed values : {json.dumps(values, ensure_ascii=False)}")
-        print(f"grounded kept : {json.dumps(grounded, ensure_ascii=False)}  dropped={dropped}")
         print("\nSTATUS: PASS (native tool_call, matching name, object arguments)")
         return 0
     print("\nSTATUS: NOT-YET-PASSED", file=sys.stderr)

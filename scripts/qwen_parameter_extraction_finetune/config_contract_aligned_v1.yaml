@@ -1,0 +1,36 @@
+# PE contract-aligned v1 — SFT rebuild config (VARIANT of config.yaml).
+#
+# Purpose: rebuild the frozen train/validation/test bundle against the CURRENT
+# (contract-aligned) pe_contract.py, so the SFT labels/schema no longer carry the
+# non-model slots (top_k / limit) that the retired contract exposed. This is a
+# NON-DESTRUCTIVE re-render: the base `data/` bundle and every historical artifact
+# stay untouched; the v1-aligned bundle is written to NEW, versioned directories.
+#
+# Only `output.*` differs from config.yaml; `source.*` and `build.*` are IDENTICAL
+# so the two bundles are byte-comparable modulo the contract change.
+#
+# Run: python prepare_dataset.py --config config_contract_aligned_v1.yaml
+
+source:
+  train_candidates: data/delveta_parameter_extraction_v2/delveta_pe_train_candidate_6000.jsonl
+  test_candidates:  data/delveta_parameter_extraction_v2/delveta_pe_test_candidate_6000.jsonl
+  # Leakage guard: the frozen Formal-500. Alignment does NOT change any query, so
+  # the normalized-query overlap against the original and the aligned file is equal.
+  formal500:        logs/_argbench/dataset_formal500.jsonl
+  source_commit:    fdf96cf
+
+output:
+  data_dir:      data_contract_aligned_v1
+  manifests_dir: manifests_contract_aligned_v1
+  reports_dir:   reports_contract_aligned_v1
+  snapshot_source: false
+
+build:
+  seed: 20261011
+  include_clarify_rows: false
+  near_dup_jaccard: 0.90
+  split_policy: cluster
+  split:
+    train: 0.80
+    validation: 0.10
+    test: 0.10

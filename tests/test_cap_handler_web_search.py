@@ -5,8 +5,9 @@ Two layers are pinned here:
 * the HANDLER contract itself (unit): ``cap-web-search``'s ``acquire()`` copies
   the turn's sentence VERBATIM as ``query`` (the deterministic FALLBACK the model
   may clean), runs NO extraction rule (no count / ``scope`` / ``domain`` /
-  ``engine`` rule — the count is MODEL-owned and an unstated one falls to the
-  ``web_search`` tool's own default), and returns ``None`` for a blank query;
+  ``engine`` rule — the count is NOT a model slot either, so an unstated one falls
+  to the ``web_search`` tool's own default 5), and returns ``None`` for a blank
+  query;
 * the WIRING: a capability whose handler is registered owns its draft and its
   OPTIONAL ``slot_plan()`` authorizes the shared extractor for its MODEL slots
   (see ``test_orchestrator_slot_extraction``); the draft goes through the SAME
@@ -69,13 +70,17 @@ async def test_web_emits_only_query_no_invented_slots():
 
 
 async def test_web_a_stated_count_is_not_rule_extracted():
-    # no DET count rule: the count is MODEL-owned, so the raw sentence is the whole
-    # draft and the model (via slot_plan) is the one that may fill ``top_k``.
+    # no DET count rule AND no model count slot: the count is a real backend
+    # parameter owned by the ``web_search`` tool (default 5 — the frozen contract),
+    # so the raw sentence is the whole draft and no slot resolves a count; the tool
+    # default stands.
     handler = WebSearchHandler()
     draft = await handler.acquire(query="search for transformers, top 3", facts=None)
     assert draft == {"query": "search for transformers, top 3"}
     plan = handler.slot_plan(query="search for transformers, top 3", facts=None, draft=draft)
-    assert "top_k" in plan.model_slots          # the model resolves the stated count
+    assert tuple(plan.model_slots) == ("query",)   # top_k is NOT a model slot
+    assert "top_k" not in plan.model_slots
+    assert plan.default_slots == ()
 
 
 @pytest.mark.parametrize("blank", ["", "   ", "\n\t", None])

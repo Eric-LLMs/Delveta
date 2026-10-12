@@ -4,16 +4,18 @@ Two layers are pinned here:
 
 * the HANDLER contract itself (unit): ``cap-social-search``'s ``acquire()``
   copies the turn's sentence VERBATIM as ``query`` (the deterministic FALLBACK
-  the model may clean) and runs NO natural-language extraction rule — the former
-  token/``r/`` detector for ``platform`` / ``subreddit`` and the count rule for
-  ``limit`` all had no requirement basis and are removed. Every natural-language
-  slot is MODEL-owned; the tool enum and name resolution stay tool-side. A blank
-  query returns ``None``.
+  the model may clean) and runs NO natural-language extraction rule — the ``limit``
+  count rule and the NL platform detector had no requirement basis and are removed.
+  One DETERMINISTIC structured token IS honoured: an explicit ``r/<name>`` scope is
+  extracted into the tool-only ``subreddit`` arg, with ``platform`` pinned to reddit
+  so the scope can never be silently widened downstream. Every natural-language slot
+  (``query``, ``platform``) is MODEL-owned; the tool enum and name resolution stay
+  tool-side. A blank query returns ``None``.
 * the WIRING: a capability whose handler is registered owns its draft and its
-  OPTIONAL ``slot_plan()`` authorizes the shared extractor (query cleanup, the
-  named platform / subreddit, a stated ``limit`` — see
-  ``test_orchestrator_slot_extraction``); the draft goes through the SAME
-  ``_certify`` -> Binder -> ``tool_intent`` handoff. The generic chain
+  OPTIONAL ``slot_plan()`` authorizes the shared extractor (query cleanup + the
+  named platform; an explicit ``r/<sub>`` scope drops ``platform`` from the model
+  slots — see ``test_orchestrator_slot_extraction``); the draft goes through the
+  SAME ``_certify`` -> Binder -> ``tool_intent`` handoff. The generic chain
   (provider / path_router) is NOT consulted for a handled capability.
 
 The funnel test drives the REAL ``funnel.route`` -> orchestrator cascade with a
@@ -68,15 +70,37 @@ async def test_social_query_is_the_verbatim_sentence():
 @pytest.mark.parametrize("message", [
     MESSAGE,                                    # no platform at all
     "在 reddit 上搜一下 transformer 的讨论",       # a named platform is the MODEL's read
-    "r/MachineLearning 里怎么讨论的",             # a named community is the MODEL's read
-    "搜索社区讨论，取 3 条",                       # a stated count is the MODEL's read
+    "搜索社区讨论，取 3 条",                       # a stated count is the tool's default
 ])
 async def test_social_acquire_emits_only_the_verbatim_query(message):
-    # NO extraction rule runs: the platform / subreddit / limit are all MODEL-owned,
-    # so ``acquire()`` never carries them and the sentence is the fallback.
+    # NO natural-language extraction rule runs: the platform is MODEL-owned and the
+    # count is a tool default, so ``acquire()`` carries neither and the sentence is
+    # the fallback. (An explicit ``r/<sub>`` token is the one deterministic
+    # exception — see the scope tests below.)
     handler = SocialSearchHandler()
     draft = await handler.acquire(query=message, facts=None)
     assert draft == {"query": message}
+
+
+@pytest.mark.parametrize("message,expected_sub", [
+    ("r/MachineLearning 里怎么讨论的", "MachineLearning"),
+    ("r/learnpython 上有没有关于 asyncio 的帖子", "learnpython"),
+])
+async def test_social_acquire_extracts_an_explicit_subreddit_scope(message, expected_sub):
+    # An explicit ``r/<name>`` token is a deterministic STRUCTURED scope (not NL
+    # guessing): it fills the tool-only ``subreddit`` arg and ``platform`` is pinned
+    # to reddit so the search scope can never be silently widened downstream.
+    handler = SocialSearchHandler()
+    draft = await handler.acquire(query=message, facts=None)
+    assert draft == {"query": message, "subreddit": expected_sub, "platform": "reddit"}
+
+
+async def test_social_acquire_does_not_mistake_a_word_slash_for_a_scope():
+    # ``car/road`` has no ``r/`` token boundary — it must NOT be read as a scope.
+    handler = SocialSearchHandler()
+    msg = "社区里 car/road 的讨论"
+    draft = await handler.acquire(query=msg, facts=None)
+    assert draft == {"query": msg}
 
 
 async def test_social_slot_plan_authorizes_the_model_lane():
@@ -84,8 +108,22 @@ async def test_social_slot_plan_authorizes_the_model_lane():
     msg = "在 reddit 上搜一下 transformer"
     draft = await handler.acquire(query=msg, facts=None)
     plan = handler.slot_plan(query=msg, facts=None, draft=draft)
-    assert set(plan.model_slots) == {"query", "platform", "subreddit", "limit"}
-    assert plan.default_slots == ("limit",)     # no platform default is emitted here
+    # platform is MODEL-owned (the sentence names it); subreddit is NOT a model slot
+    # (only a deterministic ``r/<sub>`` token fills it); limit is the tool default.
+    assert set(plan.model_slots) == {"query", "platform"}
+    assert plan.default_slots == ()
+
+
+async def test_social_slot_plan_drops_platform_when_a_scope_is_pinned():
+    # An explicit ``r/<sub>`` pins platform to reddit deterministically, so the model
+    # must NOT be authorized to re-own platform (it could otherwise overwrite the pin
+    # and widen the search); only ``query`` is model-owned that turn.
+    handler = SocialSearchHandler()
+    msg = "r/MachineLearning 上关于 transformer 的讨论"
+    draft = await handler.acquire(query=msg, facts=None)
+    plan = handler.slot_plan(query=msg, facts=None, draft=draft)
+    assert plan.model_slots == ("query",)
+    assert plan.default_slots == ()
 
 
 @pytest.mark.parametrize("blank", ["", "   ", "\n\t", None])

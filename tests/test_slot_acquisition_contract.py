@@ -17,8 +17,7 @@ removed.
   reads INSTEAD of inferring "needs a model" from ``slot not in draft``.
 * ``slot_refine.accept_model_values`` — the fold of authorized, valid model
   values into the draft (never an unauthorized overwrite).
-* ``prompts.prompt_for`` — the per-capability system prompt (default
-  byte-compatible for a capability that registers none).
+* ``prompts.prompt_for`` — the shared INTERFACE prompt (no per-capability rule).
 * the extractor's ``_payload`` — the ``prompt`` override is the system message
   and an absent one is byte-identical to the frozen default.
 
@@ -36,13 +35,7 @@ from core.application.chat.intent_funnel.argument_acquisition.extractor import (
     SYSTEM_EXTRACT,
     _payload,
 )
-from core.application.chat.intent_funnel.argument_acquisition.prompts import (
-    ADD_TERM_PROMPT,
-    CREATE_FOLDER_PROMPT,
-    SEARCH_QUERY_PROMPT,
-    TRANSLATE_PROMPT,
-    prompt_for,
-)
+from core.application.chat.intent_funnel.argument_acquisition.prompts import prompt_for
 from core.application.chat.intent_funnel.argument_acquisition.slot_refine import (
     accept_model_values,
 )
@@ -107,28 +100,29 @@ async def _draft(handler, message):
     return await handler.acquire(query=message, facts=types.SimpleNamespace())
 
 
-async def test_web_slot_plan_authorizes_query_and_the_optional_count():
+async def test_web_slot_plan_authorizes_query_only():
     h = WebSearchHandler()
     draft = await _draft(h, "帮我搜一下注意力机制")
     plan = h.slot_plan(query="帮我搜一下注意力机制", facts=None, draft=draft)
-    assert plan.model_slots == ("query", "top_k")        # count is model-owned now
-    assert plan.default_slots == ("top_k",)              # unstated -> the tool default
+    assert plan.model_slots == ("query",)                # count is NOT a model slot
+    assert plan.default_slots == ()                      # the tool owns the default (5)
 
 
-async def test_rag_slot_plan_authorizes_query_domain_and_count():
+async def test_rag_slot_plan_authorizes_query_and_domain():
     h = RagSearchHandler()
     draft = await _draft(h, "帮我搜一下注意力机制")
     plan = h.slot_plan(query="帮我搜一下注意力机制", facts=None, draft=draft)
-    assert plan.model_slots == ("query", "domain", "top_k")
-    assert plan.default_slots == ("top_k",)
+    assert plan.model_slots == ("query", "domain")       # count is NOT a model slot
+    assert plan.default_slots == ()
 
 
-async def test_social_slot_plan_authorizes_query_platform_subreddit_and_count():
+async def test_social_slot_plan_authorizes_query_and_platform():
     h = SocialSearchHandler()
     draft = await _draft(h, "搜索社区里对注意力机制的讨论")
     plan = h.slot_plan(query="搜索社区里对注意力机制的讨论", facts=None, draft=draft)
-    assert plan.model_slots == ("query", "platform", "subreddit", "limit")
-    assert plan.default_slots == ("limit",)              # no platform default emitted
+    # subreddit is never a model slot; limit is a tool default (5), not a slot.
+    assert plan.model_slots == ("query", "platform")
+    assert plan.default_slots == ()
 
 
 async def test_add_term_slot_plan_authorizes_term_and_domain():
@@ -174,10 +168,12 @@ _PARAMS = {
 }
 
 
-def test_accept_folds_authorized_valid_values():
-    out = accept_model_values({"query": "raw sentence"}, {"query": "clean topic", "top_k": 3},
+def test_accept_folds_authorized_values_unchanged():
+    # The model's value is folded in EXACTLY as produced — no int coercion, no
+    # strip. ("3" stays the string the model emitted.)
+    out = accept_model_values({"query": "raw sentence"}, {"query": "clean topic", "top_k": "3"},
                               model_slots=("query", "top_k"), parameters=_PARAMS)
-    assert out == {"query": "clean topic", "top_k": 3}   # integer coerced
+    assert out == {"query": "clean topic", "top_k": "3"}
 
 
 def test_accept_never_writes_an_unauthorized_slot():
@@ -194,28 +190,32 @@ def test_accept_drops_unknown_slot():
 
 
 @pytest.mark.parametrize("raw", [None, "", "   ", "\n\t"])
-def test_accept_rejects_empty_value_keeps_draft(raw):
+def test_accept_blank_value_keeps_the_draft(raw):
+    # A blank model value is "no value produced" (a PRESENCE check, not a rewrite):
+    # the draft's own deterministic fallback stands.
     out = accept_model_values({"query": "raw sentence"}, {"query": raw},
                               model_slots=("query",), parameters=_PARAMS)
     assert out == {"query": "raw sentence"}
 
 
-def test_accept_rejects_type_invalid_integer():
+def test_accept_writes_a_non_blank_value_verbatim():
+    # A value the model DID produce is carried EXACTLY as emitted (no strip).
+    out = accept_model_values({"query": "raw sentence"}, {"query": " padded "},
+                              model_slots=("query",), parameters=_PARAMS)
+    assert out == {"query": " padded "}
+
+
+def test_accept_does_not_coerce_a_type_invalid_integer():
     out = accept_model_values({"query": "raw"}, {"top_k": "three"},
                               model_slots=("query", "top_k"), parameters=_PARAMS)
-    assert "top_k" not in out
+    assert out["top_k"] == "three"                       # verbatim, not dropped
 
 
-def test_accept_rejects_over_length_string():
-    out = accept_model_values({"query": "raw"}, {"query": "x" * 201},
-                              model_slots=("query",), parameters=_PARAMS)
-    assert out == {"query": "raw"}
-
-
-def test_accept_rejects_out_of_enum():
-    out = accept_model_values({"platform": "auto"}, {"platform": "facebook"},
-                              model_slots=("platform",), parameters=_PARAMS)
-    assert out == {"platform": "auto"}
+def test_accept_does_not_filter_over_length_or_enum():
+    out = accept_model_values({"query": "raw", "platform": "auto"},
+                              {"query": "x" * 201, "platform": "facebook"},
+                              model_slots=("query", "platform"), parameters=_PARAMS)
+    assert out == {"query": "x" * 201, "platform": "facebook"}
 
 
 def test_accept_does_not_mutate_the_input_draft():
@@ -225,25 +225,26 @@ def test_accept_does_not_mutate_the_input_draft():
     assert draft == {"query": "raw"}
 
 
+def test_validation_report_flags_without_changing_values():
+    from core.application.chat.intent_funnel.argument_acquisition.slot_refine import (
+        validation_report,
+    )
+    report = validation_report(
+        {"query": "x" * 201, "top_k": "three", "platform": "facebook", "stray": "v"},
+        model_slots=("query", "top_k", "platform"), parameters=_PARAMS)
+    assert report == {"query": "max_len", "top_k": "type",
+                      "platform": "enum", "stray": "unauthorized"}
+
+
 # ── prompts.prompt_for ───────────────────────────────────────────────────────────
 
 
-@pytest.mark.parametrize("cid", ["cap-web-search", "cap-rag-search", "cap-social-search"])
-def test_prompt_for_search_caps_is_the_search_prompt(cid):
-    assert prompt_for(cid) == SEARCH_QUERY_PROMPT
-
-
-@pytest.mark.parametrize("cid,expected", [
-    ("cap-add-term", ADD_TERM_PROMPT),
-    ("cap-create-folder", CREATE_FOLDER_PROMPT),
-    ("cap-translate", TRANSLATE_PROMPT),
-])
-def test_prompt_for_the_new_model_assisted_caps(cid, expected):
-    assert prompt_for(cid) == expected
-
-
-@pytest.mark.parametrize("cid", ["cap-vision", "cap-read-file", "", None])
-def test_prompt_for_unregistered_cap_is_the_frozen_default(cid):
+@pytest.mark.parametrize("cid", ["cap-web-search", "cap-rag-search", "cap-social-search",
+                                 "cap-add-term", "cap-create-folder", "cap-translate",
+                                 "cap-vision", "", None])
+def test_prompt_for_every_capability_is_the_shared_interface_prompt(cid):
+    # No per-capability rule prompt any more: TRAINING and PRODUCTION carry the
+    # SAME interface prompt (the extractor default) for every capability.
     assert prompt_for(cid) == SYSTEM_EXTRACT
 
 

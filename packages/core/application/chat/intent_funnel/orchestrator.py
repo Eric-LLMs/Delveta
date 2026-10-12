@@ -541,7 +541,10 @@ async def _acquisition_hop(requirements, deps, entry, *, query, facts, view, tra
             if extractor is not None:
                 from .argument_acquisition import context_bundle
                 from .argument_acquisition.prompts import prompt_for
-                from .argument_acquisition.slot_refine import accept_model_values
+                from .argument_acquisition.slot_refine import (
+                    accept_model_values,
+                    validation_report,
+                )
 
                 bundle = context_bundle.build(query)  # query-only bundle
                 try:
@@ -561,6 +564,11 @@ async def _acquisition_hop(requirements, deps, entry, *, query, facts, view, tra
                     capture["acquisition"]["extractor"] = EXTRACTOR_NAME
                     capture["acquisition"]["model_values"] = dict(model_values or {})
                     capture["acquisition"]["model_source"] = str(model_source or "")
+                    # Report (never repair) the schema check on the RAW model
+                    # values: the executed value is exactly what the model said.
+                    capture["acquisition"]["validation"] = validation_report(
+                        dict(model_values or {}), model_slots=model_slots,
+                        parameters=entry.parameters)
         return _certify(requirements, entry, args, facts=facts,
                         view=view, trace=trace, capture=capture)
 

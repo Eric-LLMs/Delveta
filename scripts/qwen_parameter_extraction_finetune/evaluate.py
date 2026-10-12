@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -33,10 +34,43 @@ HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
+# The repo + packages roots, so the ONE deterministic slot rule (shared with the
+# runtime handler and the offline scorer) is importable here too. Pure module.
+_ROOT = HERE.parents[1]
+for _p in (str(_ROOT), str(_ROOT / "packages")):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+
 import pe_config as cfgmod  # noqa: E402
 import pe_contract as C  # noqa: E402
 import pe_runtime as R  # noqa: E402
 import sft_data as D  # noqa: E402
+
+from core.application.chat.intent_funnel.cap_handler.search_scope import (  # noqa: E402
+    effective_model_slots,
+)
+
+# The user message renders the raw sentence inside this tag (see the shared
+# ``_user_prompt``); the per-sample slot rule needs the raw sentence, so it is
+# recovered from the SFT row rather than duplicated onto every row.
+_USER_SENTENCE_RE = re.compile(r"<user_sentence>(.*?)</user_sentence>", re.DOTALL)
+
+
+def _raw_query(sample: dict) -> str:
+    """The raw user sentence of an SFT row (the text the slot rule reads)."""
+    for msg in sample.get("messages") or []:
+        if msg.get("role") == "user":
+            hit = _USER_SENTENCE_RE.search(str(msg.get("content") or ""))
+            if hit:
+                return hit.group(1)
+    return ""
+
+
+def _sample_slots(sample: dict) -> tuple[str, ...]:
+    """The per-sample MODEL slots: the contract slots minus any slot a
+    deterministic execution scope pins for this row (e.g. ``r/<sub>`` → ``query``)."""
+    cap = sample["capability_id"]
+    return effective_model_slots(cap, _raw_query(sample), C.model_slots(cap))
 
 
 # ── canonicalization + per-sample scoring (pure, no torch) ────────────────────────
@@ -54,10 +88,14 @@ def canon_value(slot: str, value) -> str:
 
 
 def score_sample(cap: str, gold_args: dict, pred_name: str | None,
-                 pred_args: dict) -> dict:
+                 pred_args: dict, *, model_slots=None) -> dict:
     """Score one prediction against the gold. ``pred_args`` is the parsed object
-    (or ``{}`` on a parse failure)."""
-    slots = set(C.model_slots(cap))
+    (or ``{}`` on a parse failure).
+
+    ``model_slots`` optionally narrows the scored slot set to the PER-SAMPLE
+    effective slots (a deterministic execution scope drops a normally-model-owned
+    slot for one turn); ``None`` keeps the static capability slots."""
+    slots = set(model_slots) if model_slots is not None else set(C.model_slots(cap))
     gold = {s: canon_value(s, gold_args[s]) for s in slots if s in gold_args}
     pred = {s: canon_value(s, pred_args[s]) for s in slots if s in pred_args}
     illegal = sorted(set(pred_args) - slots)
@@ -167,15 +205,18 @@ def generate(model, tokenizer, rows: list[dict], *, torch, device: str,
     return texts
 
 
-def _score_split(cap_of_row, gold_of_row, texts: list[str]) -> list[dict]:
+def _score_split(rows: list[dict], texts: list[str]) -> list[dict]:
     out = []
-    for cap, gold, text in zip(cap_of_row, gold_of_row, texts):
+    for sample, text in zip(rows, texts):
         try:
             name, args = D.parse_tool_call_text(text)
             parse_ok = True
         except D.SftDataError:
             name, args, parse_ok = None, {}, False
-        out.append({"record": score_sample(cap, gold, name, args), "parse_ok": parse_ok})
+        out.append({"record": score_sample(sample["capability_id"],
+                                           D.gold_target(sample), name, args,
+                                           model_slots=_sample_slots(sample)),
+                    "parse_ok": parse_ok})
     return out
 
 
@@ -209,8 +250,7 @@ def run_eval(cfg: dict, *, split: str, allow_test: bool, checkpoint: Path | None
     texts = generate(model, tokenizer, rows, torch=torch, device=device,
                      max_new_tokens=int(cfg["eval"]["max_new_tokens"]),
                      batch_size=int(cfg["eval"]["batch_size"]))
-    results = _score_split([r["capability_id"] for r in rows],
-                           [D.gold_target(r) for r in rows], texts)
+    results = _score_split(rows, texts)
     metrics = aggregate(results)
     report = {
         "split": split, "checkpoint": label, "base_only": base_only,

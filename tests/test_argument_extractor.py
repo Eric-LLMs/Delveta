@@ -1,11 +1,13 @@
 """Unit surface for ``argument_acquisition.extractor`` (Phase 4).
 
 Locks the EXTRACTION-ONLY adapter contract: ``_parse_args`` accepts exactly the
-three documented reply shapes and rejects everything else; ``extract`` posts the
-pinned decoding payload to the local OpenAI-compatible endpoint and maps every
-transport/malformed failure to :class:`ExtractionUnavailable` (fail-closed to the
-Agent) — while a WELL-FORMED empty reply is a normal empty extraction, never a
-fabricated value.
+TWO documented JSON reply shapes (the ``arguments`` wrapper, or a bare slot map)
+and treats every other shape — including markdown ``- slot: value`` lines — as a
+recorded FORMAT ERROR (no string stripping, no markdown fallback). ``extract``
+posts the pinned decoding payload to the local OpenAI-compatible endpoint, returns
+the model's values UNCHANGED, and maps every transport/malformed failure to
+:class:`ExtractionUnavailable` (fail-closed to the Agent) — while a WELL-FORMED
+empty reply is a normal empty extraction.
 
 No endpoint, no model, no network: ``httpx.MockTransport`` stands in for the
 local server, so the tests pin behavior, not a deployment.
@@ -74,11 +76,12 @@ def test_parse_args_bare_slot_map_shape():
     assert got == {"name": "Notes", "colour": "red"}
 
 
-def test_parse_args_markdown_lines_shape():
-    # (3) the argmax-drift shape: "- slot: value" lines, filtered to requested
+def test_parse_args_markdown_lines_is_a_format_error():
+    # markdown is NO LONGER a fallback shape: it is a recorded FORMAT ERROR, never
+    # silently repaired by string stripping.
     text = "Here you go:\n- name: Notes\n* colour: red\nnoise: dropped"
-    got = _parse_args(text, ["name", "colour"])
-    assert got == {"name": "Notes", "colour": "red"}  # "noise" is not requested
+    with pytest.raises(ExtractionUnavailable):
+        _parse_args(text, ["name", "colour"])
 
 
 def test_parse_args_bare_map_with_unrequested_key_yields_no_args():
@@ -91,9 +94,14 @@ def test_parse_args_arguments_not_an_object_raises():
         _parse_args('{"arguments": "oops"}', ["name"])
 
 
+def test_parse_args_empty_content_is_empty_extraction():
+    # an empty reply is a normal empty extraction, not an error
+    assert _parse_args("", ["name"]) == {}
+
+
 def test_parse_args_malformed_reply_raises():
     with pytest.raises(ExtractionUnavailable):
-        _parse_args("", ["name"])
+        _parse_args("sorry, I cannot help with that", ["name"])
 
 
 # ── extract: transport / response handling ───────────────────────────────────────
@@ -109,8 +117,9 @@ async def test_extract_success_returns_values_and_source(monkeypatch):
         return _reply('{"arguments": {"pages": "3"}}')
 
     _patch_transport(monkeypatch, handler)
+    # The bundle IS the sanctioned source the model saw; "3" is grounded in it.
     values, source = await ex.extract(query="go to page 3", entry=_entry(),
-                                      model_slots=["pages"], bundle=_bundle())
+                                      model_slots=["pages"], bundle=_bundle("go to page 3"))
     assert values == {"pages": "3"}
     assert source == SOURCE_QUERY
     assert seen["url"].endswith("/v1/chat/completions")

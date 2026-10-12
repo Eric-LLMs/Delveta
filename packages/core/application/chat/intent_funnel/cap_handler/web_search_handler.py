@@ -1,19 +1,19 @@
 """WebSearchHandler — argument acquisition for ``cap-web-search``.
 
 Owns ONLY this capability's parameter preparation; it never executes a tool and
-never re-implements the web-search pipeline. The two schema slots of
+never re-implements the web-search pipeline. The one MODEL-owned schema slot of
 ``cap-web-search``:
 
 * ``query`` — the user's sentence, taken VERBATIM by ``acquire()`` as the
-  deterministic FALLBACK only. ``slot_plan()`` authorizes the unified extractor
-  to return a CLEANED search TOPIC (the acquisition contract: the model owns
-  natural-language understanding); a valid, constraint-passing model value
-  replaces the verbatim sentence, and an empty / invalid / unavailable one
-  leaves the verbatim sentence in place.
-* ``top_k`` — a MODEL-owned optional slot: the result count the sentence states
-  is understood by the MODEL (natural-language understanding), never by a
-  deterministic rule. When the model omits it, the ``web_search`` tool applies
-  its own default (5).
+  deterministic FALLBACK. ``slot_plan()`` authorizes the unified extractor to
+  return the search TOPIC with only the execution-instruction frame stripped
+  (the acquisition contract: the model owns natural-language understanding); a
+  valid, constraint-passing model value replaces the verbatim sentence, and an
+  empty / invalid / unavailable one leaves the verbatim sentence in place.
+
+``top_k`` is a real ``web_search`` parameter but NOT model-owned: it is a tool
+default (5) applied downstream, never a model output, so it is absent from
+``slot_plan().model_slots``.
 
 No ``scope`` / ``domain`` / ``engine`` slot exists in the tool schema, so none is
 invented here. No natural-language extraction rule (regex / quotes / fixed
@@ -42,8 +42,7 @@ class WebSearchHandler:
         return {"query": message}
 
     def slot_plan(self, *, query: str, facts, draft: dict) -> SlotPlan:
-        """Authorize the model for the natural-language slots it owns: the
-        cleaned ``query`` topic and the stated ``top_k`` count. An absent count
-        stays the tool's own default — the model is never forced to invent one."""
-        return SlotPlan(model_slots=("query", "top_k"),
-                        default_slots=("top_k",))
+        """Authorize the model for the one natural-language slot it owns: the
+        ``query`` topic (execution frame stripped). ``top_k`` is the tool's own
+        default (5) and is never a model slot."""
+        return SlotPlan(model_slots=("query",), default_slots=())

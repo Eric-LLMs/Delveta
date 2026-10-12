@@ -10,10 +10,11 @@ Assets/CTX capabilities (vision / read / pdf / ...) are SYSTEM-owned (``asset_id
 comes from turn facts, never the sentence) and are intentionally absent: the model
 is never asked to fill a slot for them.
 
-Descriptions are the exact registry strings the model reads, frozen at
-``SOURCE_COMMIT`` (migrations 0002 seed + 0019 translate ``target_language`` +
-0020 clean-topic ``query`` / human-readable ``domain``). ``max_len`` mirrors the
-registry so the rendered slot block matches the live contract byte-for-byte.
+Descriptions are the exact registry strings the model reads (migrations 0002 seed
++ 0019 translate ``target_language`` + 0021 verbatim-topic ``query`` /
+human-readable ``domain``). ``max_len`` mirrors the registry so the rendered slot
+block matches the live contract byte-for-byte. Updated alongside each registry
+migration — this snapshot and the migrated live table must agree.
 
 Stdlib only — no production import — so the verifier runs anywhere.
 """
@@ -21,11 +22,16 @@ from __future__ import annotations
 
 SOURCE_COMMIT = "fdf96cf"
 
-# ── the clean-topic query contract (migration 0020) ──────────────────────────────
+# ── the verbatim-topic query contract (migration 0021) ───────────────────────────
+# The desc the Registry ``query`` slot carries (and the training tool schema + the
+# user slot block echo). It states the ONE interface fact the model needs: WHICH
+# text to extract (the search topic) and that it is kept VERBATIM. It teaches NO
+# semantic rule (no frame removal, no result-count removal) — the model learns the
+# extraction behaviour from the SFT data, and the description is the SAME string at
+# training and inference time.
 _SEARCH_QUERY_DESC = (
-    "the search query — a clean, self-contained TOPIC distilled from the user "
-    "sentence (instruction frame removed); the model understands the topic, it is "
-    "NOT copied verbatim")
+    "the user's search TOPIC, extracted from the sentence and kept VERBATIM — do "
+    "not rewrite, translate, summarize, expand or paraphrase")
 _RAG_DOMAIN_DESC = (
     "optional domain NAME to scope the search to (resolved to a real domain id by "
     "the tool); only when the sentence names one")
@@ -50,10 +56,13 @@ SCHEMA: dict[str, dict] = {
             "不属于它。"),
         "params": {
             "query": {"type": "string", "required": True, "description": _SEARCH_QUERY_DESC},
+            # A real backend parameter (the web_search tool accepts it, default 5),
+            # but NOT model-owned: the count is a function default, never a model
+            # output, so it stays out of `model_slots` and the rendered slot block.
             "top_k": {"type": "integer", "required": False,
                       "description": "optional number of results; only when the sentence states one"},
         },
-        "model_slots": ["query", "top_k"],
+        "model_slots": ["query"],
     },
     "cap-rag-search": {
         "tool": "rag_search",
@@ -66,10 +75,11 @@ SCHEMA: dict[str, dict] = {
         "params": {
             "query": {"type": "string", "required": True, "description": _SEARCH_QUERY_DESC},
             "domain": {"type": "string", "required": False, "description": _RAG_DOMAIN_DESC},
+            # real backend param, NOT model-owned (function default owns the count).
             "top_k": {"type": "integer", "required": False,
                       "description": "optional result count; only when the sentence states one"},
         },
-        "model_slots": ["query", "domain", "top_k"],
+        "model_slots": ["query", "domain"],
     },
     "cap-social-search": {
         "tool": "search_social",
@@ -83,18 +93,16 @@ SCHEMA: dict[str, dict] = {
         "params": {
             "query": {"type": "string", "required": True, "description": _SEARCH_QUERY_DESC},
             "platform": {"type": "string", "required": False,
-                         "description": "optional platform (reddit / x / zhihu / auto); only when the sentence names one"},
+                         "description": "optional platform (reddit / x / zhihu); only when the sentence names one; OMIT when no specific platform is named"},
             # A real backend parameter (the search_social tool still accepts it),
-            # but TEMPORARILY NOT model-owned: the frozen corpus has zero subreddit
-            # positives, so it is deliberately left out of `model_slots` below and
-            # never appears in the rendered slot block / function face (matching the
-            # production handler's slot_plan). Do not re-add until the data covers it.
+            # but NOT model-owned: the count is a function default (5), never a
+            # model output, so it stays out of `model_slots` and the slot block.
             "subreddit": {"type": "string", "required": False,
                           "description": "optional reddit-only scope; only when the sentence names one"},
             "limit": {"type": "integer", "required": False,
                       "description": "optional max results per platform; only when the sentence states one"},
         },
-        "model_slots": ["query", "platform", "limit"],
+        "model_slots": ["query", "platform"],
     },
     "cap-translate": {
         "tool": "translate",
@@ -153,7 +161,10 @@ SCHEMA: dict[str, dict] = {
 # equal their canonical tool-facing value in ``expected_arguments``, so no remap.
 SURFACE_FIELD: dict[str, str] = {"domain": "domain_surface"}
 
-# Integer-typed model slots (type-checked during the audit).
+# Integer-typed registry params (type-checked where they appear in a target).
+# NOT model slots any more: ``top_k`` / ``limit`` are function defaults now, so
+# the live contract never asks the model to emit them. Retained so the legacy
+# Formal-500 evaluator can still type-check those keys on the frozen dataset.
 INT_SLOTS: frozenset[str] = frozenset({"top_k", "limit"})
 
 
@@ -168,13 +179,17 @@ def required_model_slots(capability_id: str) -> list[str]:
     return [s for s in SCHEMA[capability_id]["model_slots"] if params[s].get("required")]
 
 
-def model_schema(capability_id: str) -> dict:
+def model_schema(capability_id: str, slots=None) -> dict:
     """The JSON-schema ``function.parameters`` object: ONLY the model-owned slots
-    (the Phase-3b face narrowing), with ``required`` recomputed over the survivors."""
+    (the Phase-3b face narrowing), with ``required`` recomputed over the survivors.
+
+    ``slots`` optionally narrows the face to a PER-SAMPLE slot set (a deterministic
+    execution scope can drop a normally-model-owned slot for one turn — see
+    ``cap_handler.search_scope``); ``None`` keeps the static capability face."""
     props: dict[str, dict] = {}
     required: list[str] = []
     params = SCHEMA[capability_id]["params"]
-    for slot in SCHEMA[capability_id]["model_slots"]:
+    for slot in (SCHEMA[capability_id]["model_slots"] if slots is None else list(slots)):
         spec = params[slot]
         prop: dict = {"type": spec["type"]}
         if spec.get("description"):
