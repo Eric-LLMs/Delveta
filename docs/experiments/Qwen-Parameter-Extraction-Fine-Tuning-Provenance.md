@@ -4,8 +4,8 @@
 
 ## 0. 结论速览
 
-- 本地**完整逐字节渲染核验实际执行且通过**：`validate_dataset.py` 退出码 0，输出 `byte-render check: on`，stderr 为空（无 `[validate] live prompt registry unavailable` 跳过行）。
-- 为排除“渲染校验是空操作”的可能，另做了**正/负对照探针**：正对照逐字节相等；负对照（查询扰动一字符）立即不等。二者均符合预期，证明该比对是活的。
+- 本地**完整契约核验实际执行且通过**：`validate_dataset.py` 退出码 0，输出 `live-contract check: on`，stderr 为空（无 `[validate] live prompt registry unavailable` 跳过行）。
+- 为排除“校验是空操作”的可能，另做了**正/负对照探针**（§5.1）：正对照零失败；负对照（system 提示扰动一字符 / 工具面删一个 slot）立即失败。二者均符合预期，证明该比对是活的。
 - **远程完整渲染校验未执行**，本报告不宣称该项已通过。远程只运行 `validate_dataset.py` 的数据哈希/计数/schema/泄漏检查，以及 `train.py --check`；因只上传 scripts 目录，远程 `prompt_for` 不可导入，**远程渲染检查会被跳过**。
 - `manifest.source_commit = fdf96cf` **仅代表 HEAD**，不代表 dirty 源码快照；manifest 的 `source_files` 只记录了候选 JSONL 哈希，**未记录任何代码哈希**。
 
@@ -14,10 +14,10 @@
 | 项 | 值 |
 |---|---|
 | 仓库路径 | `e:/Work Space/Git Repositories/DeepDive` |
-| HEAD (完整) | `fdf96cf793177a648c64b1f5536b53a7d43f2d33` |
-| HEAD (短) | `fdf96cf` |
+| HEAD (完整) | `bc6f496bb4e6f5a870f7f4b3bda8d7aca0b39cb1` |
+| HEAD (短) | `bc6f496` |
 | 分支 | `main` |
-| manifest.source_commit | `fdf96cf`（= HEAD） |
+| manifest.source_commit | `fdf96cf`（数据构建时的 commit，**早于当前 HEAD**） |
 | manifest.render_source | `production` |
 
 ## 2. 实际参与数据生成的源码文件路径 + SHA-256（工作副本）
@@ -26,46 +26,46 @@
 
 | 文件 | 工作副本 SHA-256 | 与 HEAD 关系 |
 |---|---|---|
-| `packages/core/application/chat/intent_funnel/argument_acquisition/prompts.py` | `92b842325dd1cc2dbf3ccd9bf38ea483736f80de6dc2d7bd32e6c74c0ba494fa` | **已修改 (M)** |
-| `packages/core/application/chat/intent_funnel/argument_acquisition/extractor.py` | `0b8024fe80dbde5135e18f621fc402651e57e6a58531d074c68853bb1814c5b9` | **已修改 (M)** |
-| `packages/core/application/chat/intent_funnel/argument_acquisition/source_grounding.py` | `61fd8985c3d74ee97782171c2200fa293bffb4cd2e641cf2b67a1a969f5e04ce` | **未跟踪 (??)**，HEAD 中不存在 |
+| `packages/core/application/chat/intent_funnel/argument_acquisition/prompts.py` | `cc3bbc6105395cd855f340f412e1b6031736fe81ab19328d1fe78f348574c700` | 与 HEAD 一致（clean） |
+| `packages/core/application/chat/intent_funnel/argument_acquisition/extractor.py` | `2139726507a8f5eff91d3729080e3bd2241895b2ee93334dc791d32a6b0c1e4a` | **已修改 (M)** |
 | `packages/core/application/chat/intent_funnel/argument_acquisition/context_bundle.py` | `5c73532c559484664fd4c16751b68b19677eefb1aab9bf397222ffb5605f6022` | 与 HEAD 一致（clean） |
-| `scripts/qwen_parameter_extraction_finetune/pe_contract.py` | `48d197b8ac001aa5b6b55846cd0e7dd6a359b597ae096be4648a2a453236e5e8` | 未跟踪（整个 scripts 目录 untracked） |
-| `scripts/qwen_parameter_extraction_finetune/prepare_dataset.py` | `5f692299f3451940990e291e8f0534705cd3120f55be321e9431572a0a4dd374` | 未跟踪 |
+| `scripts/qwen_parameter_extraction_finetune/pe_contract.py` | `bd29aebba8c216523d172079e62ae69805c5810a77633628924cf9d8a6203e38` | **已修改 (M)** |
+| `scripts/qwen_parameter_extraction_finetune/prepare_dataset.py` | `47bf8ca87f40a8763e7ce571f310ed33a27fe312bdb3b3c015445b62fc011d79` | **已修改 (M)** |
 
-> 说明：`scripts/qwen_parameter_extraction_finetune/` 整棵目录为 untracked（`git ls-files` 计数 = 0），故其文件无 HEAD 版本可比对。
+> 说明：`source_grounding.py` 已从工作副本移除（当前不存在于仓库）。`scripts/qwen_parameter_extraction_finetune/` 现已被 git 跟踪（`git ls-files` 计数 = 25）。
 
-## 3. HEAD = fdf96cf 与 dirty worktree 的区别
+## 3. HEAD = bc6f496 与 dirty worktree 的区别
 
 用 `git hash-object`（git blob SHA-1）对工作副本与 HEAD 逐文件比对：
 
 | 文件 | worktree blob | HEAD blob | 判定 |
 |---|---|---|---|
-| `.../prompts.py` | `5997dfd1a04d649591f40483dd2a4cedb3d1df74` | `92c697c1b3697dd1f13b60ff09169fe28d44cf76` | **DIFFERS** |
-| `.../extractor.py` | `405cfacc9ed68d5779e2cf4ab4f9cf0d55b23547` | `25d5f8a525b995c974de432628e89f54d0948fdb` | **DIFFERS** |
+| `.../prompts.py` | `2e9e5a3acf6d017f7e91d252d1fb5812462dfd71` | `2e9e5a3acf6d017f7e91d252d1fb5812462dfd71` | IDENTICAL |
+| `.../extractor.py` | `72462445c51a26afe43b729a4795ec04ffbb6bac` | `643848a05642e8347d2987a4f437fb93941e1b99` | **DIFFERS** |
 | `.../context_bundle.py` | `2d722e67f54f6234bf06b851fa07f88c5b54554c` | `2d722e67f54f6234bf06b851fa07f88c5b54554c` | IDENTICAL |
-| `.../source_grounding.py` | (untracked) | 不存在 | 无 HEAD 版本 |
+| `scripts/.../pe_contract.py` | `dad9d02feb8df7a457d6e18294832cf05f9eb165` | `877accde559f41671a6a662dc3f0ca7a66444322` | **DIFFERS** |
+| `scripts/.../prepare_dataset.py` | `656d93afa930deeb1eca08b4d4d14ddae3db82cb` | `eb1f982632bdb3304a3670a2ad02627dd99d2006` | **DIFFERS** |
 
-**含义**：数据由 **dirty 工作副本**（prompts.py、extractor.py 已改动；source_grounding.py 未跟踪）渲染，而 `HEAD=fdf96cf` 对应的旧版本 prompts.py/extractor.py **不是**生成数据用的版本。因此 `manifest.source_commit=fdf96cf` 不能作为“源码快照”的证据——它只锚定 HEAD commit，不锚定生成时的工作区状态。
+**含义**：`prompt_for` 所在的 `prompts.py` 现已与 HEAD 一致（clean）；`extractor.py`（`_user_prompt`）、`pe_contract.py`、`prepare_dataset.py` 仍为 dirty 工作副本。`manifest.source_commit=fdf96cf` 锚定的是数据构建时的 commit，**早于当前 HEAD `bc6f496`**，也不锚定生成时的工作区状态。
 
 ## 4. train / validation / test 数据哈希 + 行数
 
 | split | SHA-256 | 行数 | 与 manifest 一致 |
 |---|---|---|---|
-| train | `dbd06f3a3e8e30a0d6395ec0fb5d80f3bf0ba85ea4bb7a9dfd0cd78ddab51222` | 8679 | 是 |
-| validation | `addc0baa8fa61624ad054a54dfcac43e15ec27f03b985a61543db18d3185f949` | 1041 | 是 |
-| test | `507bc036b4d9a15a797097e8074ba7471abcf2188f3ab0ff85458b49281327e2` | 1080 | 是 |
+| train | `2065cdbedf1817f66b33ea21711a415d6ab9dc98ea65a077d4f28be09c1600a4` | 10303 | 是 |
+| validation | `0a88be602d740e39b6b79753549fa3d405f2d6dc5213ceda6ad92d19dc06488a` | 1290 | 是 |
+| test | `d048f1b53dbae1ea6a2f1f128382724f316badc32e08f6600d1037185a8cf47f` | 1290 | 是 |
 
-manifest `counts`：`raw_candidates 12000 / isolated 1200 / exact_duplicates_dropped 0 / valid_after_audit 10800 / kept_after_dedup 10800 / emitted 10800`，三联 split 合计 = 10800，与磁盘行数一致。
+manifest `counts`：`raw_candidates 12883 / isolated 0 / exact_duplicates_dropped 0 / valid_after_audit 12883 / kept_after_dedup 12883 / emitted 12883`，三联 split 合计 = 12883，与磁盘行数一致（`include_clarify_rows: true`，比早期版本多纳入曾按 `clarify_required_missing` 隔离的行）。
 
 候选源文件（数据生成输入）哈希与 manifest `source_files` 完全一致：
 
-| 源 | SHA-256 | 行数 |
-|---|---|---|
-| `data/delveta_parameter_extraction_v2/delveta_pe_train_candidate_6000.jsonl` | `4648503676de1245e8706475fea45a9fc9f091a3bb9558c21def3417c8ae6499` | 6000 |
-| `data/delveta_parameter_extraction_v2/delveta_pe_test_candidate_6000.jsonl` | `b789213b91d4a755b15898719fdb1ddff2cb5f6020dfcdacde3ce114db5fa0e8` | 6000 |
+| 源 | SHA-256 |
+|---|---|
+| `.../data/V5/delveta_pe_train_contract_aligned_v5_candidate.jsonl` | `4cf05489c005f13f3d99e46296d33bad65a14deacc1cbfaa33c090b124433647` |
+| `.../data/V5/delveta_pe_test_contract_aligned_v5_candidate.jsonl` | `5f010c3ef4668b661e42765f9c9a84499c76c1a0ef288e1aa828c0112fcb52c6` |
 
-## 5. 本地完整渲染核验 —— 实际执行状态与结果
+## 5. 本地完整契约核验 —— 实际执行状态与结果
 
 命令（工作目录 = `scripts/qwen_parameter_extraction_finetune/`，解释器 = 仓库 `.venv`，Python 3.13.11）：
 
@@ -79,55 +79,62 @@ manifest `counts`：`raw_candidates 12000 / isolated 1200 / exact_duplicates_dro
 EXIT=0
 ----- STDOUT -----
 VALIDATION PASSED
-{"train": 8679, "validation": 1041, "test": 1080}
-byte-render check: on
+{"train": 10303, "validation": 1290, "test": 1290}
+live-contract check: on
+empty-{} negative targets (excluded from payload-leak check): {"train": 1169, "validation": 21, "test": 24}
+[info] cross-capability payload collisions (NOT leakage): 4
+  [info] payload shared across capabilities ['cap-social-search', 'cap-translate']
+  [info] payload shared across capabilities ['cap-social-search', 'cap-translate']
+  [info] payload shared across capabilities ['cap-social-search', 'cap-translate']
+  [info] payload shared across capabilities ['cap-social-search', 'cap-translate']
 ----- STDERR -----
 (空)
 ```
 
 判定：
-- `byte-render check: on` 直接表明 `_load_prompts()` 返回了真实 `prompt_for`（非 None）——渲染分支**未跳过**。
-- stderr 为空，证明**未**触发 `[validate] live prompt registry unavailable ...; skipping byte-match render check`。
-- 该次运行对全部 10800 行逐条执行了 `check_sample`，其中包含 system 内容 `sys_c == prompt_for(cap)` 与 user 内容逐字节重渲染比对（validate_dataset.py:125-135）。
+- `live-contract check: on` 直接表明 app prompt registry 可导入、`prompt_for` 可用（非 `static-fallback`）——system 提示的实时等式分支**未跳过**；stderr 为空（无 `[validate] live prompt registry unavailable` 跳过行）。
+- 该次运行对全部 12883 行逐条执行 `check_sample`，包含：system 内容 `sys_c == prompt_for(cap)` 的**实时逐字节相等**；user 消息的**结构化**校验（roles / 静态 slot 块 / 恰好一个 `<user_sentence>` 且以其结尾，validate_dataset.py:113-128）；工具面 == 单条收窄规则 `search_scope.effective_model_slots` 产生的 model face；以及声明式缺槽闸门 `_check_meta`。
+- 空 `{}` 负样本按 split 单列（train 1169 / val 21 / test 24），不计入 payload 泄漏判定；4 条跨能力 payload 碰撞为**信息性**报告，不判泄漏。
 
-### 5.1 正/负对照探针（证明比对是“活的”，非空操作）
+### 5.1 正/负对照探针（证明校验是“活的”，非空操作）
 
-探针：`F:/WorkSpace/Delveta/.tmp/pe_render_control_probe.py`（只读，不写仓库）。结果：
+探针：`F:/WorkSpace/Delveta/.tmp/pe_probe_v2.py`（只读，不写仓库）。结果：
 
 ```json
 {
   "prompt_for_is_none": false,
-  "verdict": "LIVE",
-  "sample_id": "test-add_term-en-0005",
-  "capability_id": "cap-add-term",
-  "query": "Add one term, offline benchmark, to information retrieval.",
-  "sys_byte_equal": true,
-  "usr_byte_equal": true,
-  "perturbed_query": "Add one term, offline benchmark, to information retrievalX",
-  "usr_byte_equal_after_perturb": false,
-  "check_sample_added_failures": 0,
+  "narrowing_rule_loaded": true,
+  "sample_id": "aug-test-folder-session-007-t1",
+  "capability_id": "cap-create-folder",
+  "live_contract_check": "on",
+  "positive_added_failures": 0,
+  "negative_system_perturb_failures": 1,
+  "negative_system_msg": "[test] aug-test-folder-session-007-t1: system content != live prompt_for(cap-create-folder)",
+  "negative_face_narrow_failures": 1,
+  "negative_face_msg": "[test] aug-test-folder-session-007-t1: function.parameters != the expected model face",
   "PASS": true
 }
 ```
 
-- **正对照**：存量 system/user 内容与实时重渲染逐字节相等（`sys_byte_equal=true`, `usr_byte_equal=true`）。
-- **负对照**：把查询末尾改一字符后，实时重渲染**不再**相等（`usr_byte_equal_after_perturb=false`）——证明相等判定确实在做比较，不会因恒真而假通过。
-- `check_sample` 对该样本新增 0 条失败。
+- **正对照**：未改动的冻结行经 `check_sample` 新增 **0** 条失败。
+- **负对照 1（system 提示）**：把 system 内容末尾改一字符后，实时等式判定**立即失败**——证明 `sys_c == prompt_for(cap)` 确实在做比较，不会恒真。
+- **负对照 2（工具面）**：从 function face 移除一个 slot 后，收窄面判定**立即失败**——证明 face 比对是活的。
 
-### 5.2 由此得到的源码一致性推论
+### 5.2 由核验得到的源码一致性推论
 
-渲染核验逐字节通过了**全部** 10800 行。若当前 dirty 的 `prompts.py` / `_user_prompt`（`extractor.py`）与生成数据时的版本有任何字节差异，比对必然失败。既然全通过，**当前 dirty 工作副本与生成数据所用的生产渲染代码逐字节一致**——这是“本地实际参与数据生成的 dirty 工作副本”这一要求的直接证据。
+- **system 提示**：全部 12883 行的 system 内容与**实时** `prompt_for(cap)` 逐字节相等，而 `prompt_for` 来自 `prompts.py`（当前与 HEAD 一致）。若该文件与生成数据所用版本有任何字节差异，此等式必然失败；等式全过 ⇒ 当前 `prompts.py` 的 system 提示与数据一致。
+- **user 提示**：校验器**不再**在单轮假设下对 user 消息做字节重渲染（那正是多轮样本误报的来源），改为**结构化**校验。因此本报告**不宣称** user 消息与 `extractor._user_prompt` 逐字节一致；该等式由 `tests/test_prompt_contract_invariants.py` 单独保证。
+- **工具面**：每行 face == 唯一收窄规则 `search_scope.effective_model_slots(cap, query, model_slots(cap))` 产生的 model face（静态 capability 为完整面；仅 `cap-social-search` 的 `r/<name>` 合法收窄）。
 
 ## 6. 边界与未执行项（重要）
 
-1. **远程完整渲染校验未执行**：本报告不宣称远程该项通过。远程仅执行 `validate_dataset.py` 的数据哈希/计数/schema/跨 split 与 Formal-500 泄漏检查，以及 `train.py --check`。
-2. **远程渲染检查会被跳过**：因上传范围为 scripts 目录、不含 `packages/core`，远程 `_load_prompts()` 将因 `ImportError` 返回 None，渲染分支跳过并打印 stderr 跳过行。此跳过的**质量门由本地本次核验替代覆盖**（已在 §5 证明实际执行且通过）。
-3. **manifest 未锚定代码**：`source_files` 仅含候选 JSONL 哈希，不含 prompts.py/extractor.py/pe_contract.py 等代码哈希；代码来源证据仅存在于本报告与 §5 的逐字节核验通过。
-4. **未提交风险**：prompts.py、extractor.py 为已修改；source_grounding.py 与整个 scripts 目录为 untracked。若 dirty 工作区丢失，源码快照无法从 git 恢复。
-5. 本报告未修改 manifest、未修改任何数据、未修改生产代码、未改配置（除本轮已批准的 `save_total_limit` 单项）。
+1. **远程实时契约校验未执行**：本报告不宣称远程该项通过。远程仅执行 `validate_dataset.py` 的数据哈希/计数/schema/跨 split 与 Formal-500 泄漏检查，以及 `train.py --check`。
+2. **远程实时契约检查会被跳过**：因上传范围为 scripts 目录、不含 `packages/core`，远程 system 提示等式因 `prompt_for` 不可导入而回落为 `static-fallback`（收窄面仍强制）。此跳过的**质量门由本地本次核验替代覆盖**（已在 §5 证明实际执行且通过）。
+3. **manifest 未锚定代码**：`source_files` 仅含候选 JSONL 哈希，不含 prompts.py/extractor.py/pe_contract.py 等代码哈希；代码来源证据仅存在于本报告与 §5 的实时契约核验通过。
+4. **提交状态**：`prompts.py` 已与 HEAD 一致（clean）；`extractor.py`、`pe_contract.py`、`prepare_dataset.py` 仍为已跟踪的未提交修改（M）；`source_grounding.py` 已从工作副本移除；`scripts/qwen_parameter_extraction_finetune/` 目录已被 git 跟踪。数据由 dirty 工作副本渲染，代码来源证据存在于本报告与 §5 的实时契约核验中。
+5. 本报告未修改 manifest、未修改任何数据、未修改生产代码。
 
-## 7. 本轮附带核查（配置改动）
+## 7. 附带核查（配置）
 
-- 已批准的唯一配置改动：`scripts/qwen_parameter_extraction_finetune/config.yaml` 第 93 行 `save_total_limit: 3` → `20`。
-- 只读解析确认：`pe_config.load_config()['train']['save_total_limit'] == 20`（其余项未变）。
-- 相关测试：`tests/test_pe_finetune_pipeline.py` 26 passed；`tests/test_parameter_extraction_protocol.py` 36 passed。
+- `scripts/qwen_parameter_extraction_finetune/config.yaml`：`train.save_total_limit: 20`（第 107 行）、`output.manifests_dir: data`（manifest 与冻结 split 同目录，见 §4）。
+- 该配置携带契约对齐改动：`source.*` 指向 V5 候选、`build.include_clarify_rows: true`（见 §4）。

@@ -47,9 +47,9 @@ lane made every argument MODEL-owned and invalidated PE v2's
 
 | Split | Rows | SHA-256 |
 |---|---:|---|
-| `train.jsonl` | 8,679 | `dbd06f3a3e8e30a0d6395ec0fb5d80f3bf0ba85ea4bb7a9dfd0cd78ddab51222` |
-| `validation.jsonl` | 1,041 | `addc0baa8fa61624ad054a54dfcac43e15ec27f03b985a61543db18d3185f949` |
-| `test.jsonl` | 1,080 | `507bc036b4d9a15a797097e8074ba7471abcf2188f3ab0ff85458b49281327e2` |
+| `train.jsonl` | 10,303 | `2065cdbedf1817f66b33ea21711a415d6ab9dc98ea65a077d4f28be09c1600a4` |
+| `validation.jsonl` | 1,290 | `0a88be602d740e39b6b79753549fa3d405f2d6dc5213ceda6ad92d19dc06488a` |
+| `test.jsonl` | 1,290 | `d048f1b53dbae1ea6a2f1f128382724f316badc32e08f6600d1037185a8cf47f` |
 
 Six MODEL-extraction capabilities (`cap-web-search`, `cap-rag-search`,
 `cap-social-search`, `cap-translate`, `cap-add-term`, `cap-create-folder`). Rows
@@ -57,7 +57,11 @@ are clustered per (capability, language) by normalized target / near-duplicate
 target / near-duplicate input, and **whole clusters** are assigned to one split,
 so no target (and no paraphrase of one) can span train/validation/test; the build
 aborts on any leakage and is verified against Formal-500 for zero overlap. The
-frozen bundle is the `data/` tree
+face is **write-only**: its JSON schema always sets `required: []`, and a target
+may honestly be partial or **`{}`**; execution-side requiredness is enforced
+separately by the Binder (§28.5). This release **keeps** rows whose target leaves a
+required slot unfilled (`include_clarify_rows: true`) rather than isolating them.
+The frozen bundle is the `data/` tree
 ([`scripts/qwen_parameter_extraction_finetune/data/`](../../scripts/qwen_parameter_extraction_finetune/data/))
 and is published as
 [`Delveta-Qwen3-0.6B-PE-v1-Data`](https://huggingface.co/datasets/eric-ml-nlp/Delveta-Qwen3-0.6B-PE-v1-Data).
@@ -70,10 +74,10 @@ and is published as
 | Trainable parameters | 2,293,760 |
 | Epochs | 3 |
 | Batch | per-device 8 × grad-accum 2 = **effective 16** |
-| Optimizer steps | **1,629** (= ⌈8,679 / 16⌉ × 3) |
+| Optimizer steps | **1,932** (= ⌈10,303 / 16⌉ × 3) |
 | Learning rate | 2e-4, cosine decay, 3% warmup |
 | Weight decay / grad-clip | 0.0 / 1.0 |
-| Max sequence length | 1,024 (data max 914 — the supervised target is never truncated) |
+| Max sequence length | 1,024 (data max below the cap — the supervised target is never truncated) |
 | Precision | bf16 |
 | Seed | 20261011 |
 | Save / eval | every 200 steps, `save_total_limit` 20 |
@@ -86,15 +90,15 @@ masked. The config is
 
 | Field | Value |
 |---|---|
-| Optimizer steps | 1,629 |
-| Wall-clock | ≈ 3,603 s (≈ 60 min) |
-| Final train loss | ≈ 0.00442 |
-| Final eval loss | ≈ 0.0009873 |
+| Optimizer steps | 1,932 |
+| Wall-clock | ≈ 4,794 s (≈ 80 min) |
+| Final train loss | ≈ 0.005787 |
+| Final eval loss | ≈ 0.009731 |
+| Hardware | 1 × NVIDIA L4 (24 GB) |
 
 The published checkpoint archive keeps per-checkpoint `trainer_state.json`; the
 run-level aggregates above are reported from the run (the archive does not carry
-the final aggregate state). Checkpoint-level eval loss re-read from the archive:
-step 1000 = 8.3375e-4, step 1600 = 9.6503e-4.
+the final aggregate state).
 
 ## 5. Checkpoint selection
 
@@ -104,31 +108,32 @@ Rule: `exact_match`, mode `max`, ties broken on
 
 | Step | Validation exact-match |
 |---:|---:|
-| 200 | 0.9750 |
-| 400 | 0.9875 |
-| 600 | 0.9914 |
-| 800 | 0.9846 |
-| **1000** | **0.9933** |
-| 1200 | 0.9914 |
-| 1400 | 0.9933 |
-| 1600 | 0.9923 |
-| 1629 | 0.9933 |
+| 200 | 0.9039 |
+| 400 | 0.9202 |
+| 600 | 0.9264 |
+| 800 | 0.9271 |
+| 1000 | 0.9403 |
+| 1200 | 0.9372 |
+| **1400** | **0.9504** |
+| 1600 | 0.9488 |
+| 1800 | 0.9465 |
+| 1932 | 0.9496 |
 
-The selected checkpoint is **`checkpoint-1000`** (0.9933 — the earliest step at
-the peak; later equal scores lose the `step` tie-break). This matches
+The selected checkpoint is **`checkpoint-1400`** (0.9504 — the maximum). The final
+step (1,932, 0.9496) is **not** the best checkpoint. This matches
 `reports/selection.json` and `reports/validation_metrics.json` (published in the
 model/checkpoints repos).
 
-## 6. Validation metrics (selected checkpoint-1000)
+## 6. Validation metrics (selected checkpoint-1400)
 
-Overall, on the 1,041-row validation split:
+Overall, on the 1,290-row validation split:
 
 | Metric | Value |
 |---|---:|
-| Exact match | **0.9933** |
-| Field accuracy | 0.9953 |
-| Required-slot accuracy | 0.9942 |
-| Required-slot missing rate | 0.0 |
+| Exact match | **0.9504** |
+| Field accuracy | 0.9600 |
+| Required-slot accuracy | 0.9940 |
+| Required-slot missing rate | 0.0871 |
 | Illegal / unauthorized slot rate | 0.0 |
 | JSON parse rate | 1.0 |
 
@@ -136,16 +141,18 @@ Per capability:
 
 | Capability | Samples | Exact match |
 |---|---:|---:|
-| `cap-add-term` | 173 | 1.0 |
-| `cap-create-folder` | 175 | 1.0 |
-| `cap-rag-search` | 171 | 1.0 |
-| `cap-social-search` | 175 | 0.96 |
-| `cap-translate` | 180 | 1.0 |
-| `cap-web-search` | 167 | 1.0 |
+| `cap-add-term` | 203 | 1.0 |
+| `cap-create-folder` | 221 | 1.0 |
+| `cap-rag-search` | 203 | 0.9951 |
+| `cap-social-search` | 253 | 0.9842 |
+| `cap-translate` | 208 | 0.7163 |
+| `cap-web-search` | 202 | 1.0 |
 
-The only non-perfect capability is `cap-social-search` (0.96); the illegal-slot
-and required-missing rates are 0.0 across the split, so every error is a
-value/slot-content mismatch, never an unauthorized key or a fabricated slot.
+The weakest capability is `cap-translate` (0.7163); its validation rows most often
+carry an *unfilled* model slot declared as `required_missing` (rate ≈ 0.49), so its
+errors are dominated by legitimate partial/empty extractions. The illegal-slot
+rate is 0.0 across the split, so no error is an unauthorized key or a fabricated
+slot; the parse rate is 1.0 (every reply is a well-formed single tool call).
 
 ## 7. Model variants
 
@@ -155,20 +162,29 @@ Published as four parallel variants in one Hugging Face repository
 
 | Variant | Path | Format | Size | Content SHA-256 |
 |---|---|---|---|---|
-| FP16 (recommended, GPU) | `FP16/` | safetensors, float16 | 1.19 GB | `bbbb00daaad0b1ff1e7c75b4fa76bafa502110a4f5f676bec62ac81ee803f795` |
-| FP32 | `FP32/` | safetensors, float32 | 2.38 GB | `f088362c…da67` |
-| INT8 (CPU) | `INT8/` | ONNX, dynamic int8 | 601.5 MB | `e001e661…1dc3` |
-| Q5_K_M (Ollama) | `Q5_K_M/` | GGUF, Q5_K_M | 444.4 MB | `fd4d5095…f896d` |
+| FP16 (recommended, GPU) | `FP16/` | safetensors, float16 | 1.19 GB | `84892d296b4bf166597bd633971405296ef8eb0b29f28ff8d70528f239dff31f` |
+| FP32 | `FP32/` | safetensors, float32 | 2.38 GB | `1d1577dc1aaa22d793fdcdd533b8bc3d3d2d272c8030a55b52cee802fb6477cf` |
+| INT8 (CPU) | `INT8/` | ONNX, dynamic int8 | 753.8 MB | `94961bf49e4093ee353e3c91b12ff96deb1be72a3435104a60f5e1037e0d9ba2` |
+| Q5_K_M (GGUF) | `Q5_K_M/` | GGUF, Q5_K_M | 444.4 MB | `17772c20f3bf356f251c29816b24000dfdbf4b412755024dc087ae63591b98f6` |
 
-Provenance chain: `checkpoint-1000` → PEFT `merge_and_unload` (float32) → cast to
-FP16 / FP32; the INT8 ONNX is a dynamic-PTQ export of the merged model; the GGUF
-is `convert_hf_to_gguf` (f16) → `llama-quantize Q5_K_M` from the merged model.
+Provenance chain: `checkpoint-1400` → PEFT `merge_and_unload` (float32) → cast to
+FP16 / FP32; the INT8 ONNX is a dynamic-PTQ export of the merged model (the graph
+is converted to fp32 first, then `quantize_dynamic(QInt8)`); the GGUF is
+`convert_hf_to_gguf` (f16) → `llama-quantize Q5_K_M` from the merged model.
 Every published variant's file content was verified byte-for-byte against the
 staged local artifact (only HF-appended `.gitattributes` LFS rules differ).
 
+**Verification, stated honestly.** FP16 and FP32 both reproduce the selected
+checkpoint: re-scored over the full 1,290-row validation split they match the
+training-path baseline (exact-match 0.9504, parse 1.0, illegal-slot 0). INT8 is a
+*dynamic* PTQ variant — it runs end-to-end but is not numerically identical.
+Q5_K_M was verified for **native tool-calling under llama.cpp `llama-server
+--jinja`** (the runtime Ollama embeds); the repository's `compat_probe.py`
+**against Ollama has not been run/passed**.
+
 ## 8. Evaluation boundaries
 
-- **Validation only.** Every number above is measured on the 1,041-row
+- **Validation only.** Every number above is measured on the 1,290-row
   validation split.
 - **Test split NOT evaluated** and **Formal-500 NOT evaluated.** Neither split
   was used for training or checkpoint selection; neither was scored.
@@ -178,19 +194,24 @@ staged local artifact (only HF-appended `.gitattributes` LFS rules differ).
 
 ## 9. Limitations
 
-1. **INT8 numerical drift.** The dynamic-PTQ INT8 variant agrees with the FP32
-   variant on ≈ 0.563 of per-token argmax positions, with a max logit difference
-   ≈ 22.2. Documented in the variant card; not a "fake INT8".
-2. **`source-grounding` false positives NOT fixed.** A known source-grounding
+1. **INT8 numerical drift.** The dynamic-PTQ INT8 variant runs end-to-end but is
+   **not** numerically identical to FP16 / FP32 — its per-token logits differ.
+   Documented in the variant card; not a "fake INT8".
+2. **Ollama not verified.** The GGUF (`Q5_K_M`) native tool-call was checked under
+   llama.cpp `llama-server --jinja` only; the real-service `compat_probe.py`
+   **against Ollama has not been run/passed** for this release. Q5_K_M must not be
+   reported as Ollama-verified.
+3. **`source-grounding` false positives NOT fixed.** A known source-grounding
    limitation remains; this fine-tune does not address it and it must not be
    reported as resolved.
-3. **Per-checkpoint default README templates.** Each published
+4. **Per-checkpoint default README templates.** Each published
    `checkpoint-*/README.md` is the HF Trainer auto-generated stub; the
    authoritative document is the archive root README.
-4. **No `special_tokens_map.json`** in the exported variants; the tokenizer loads
+5. **No `special_tokens_map.json`** in the exported variants; the tokenizer loads
    from `tokenizer.json` + `tokenizer_config.json`, stated in each variant card.
-5. **FP16 / FP32 verification** is load + minimal `generate()` only; tool-call
-   level verification is covered by the INT8 and Q5_K_M variants.
+6. **FP16 / FP32 verification** is a full-validation re-score under the frozen
+   protocol (not a byte-identity check against the adapter); tool-call level
+   verification for INT8 / Q5_K_M is the ONNX / llama.cpp native-tool-call test.
 
 ## 10. Reproducibility
 
@@ -245,6 +266,10 @@ training.
 
 The published model, dataset and checkpoints are pinned by their repository
 revisions; the base revision `10e61428…aedd12` fixes the starting weights. The
-checkpoint archive keeps the five checkpoints 400 / 800 / 1000 / 1200 / 1600 with
-their full HF Trainer state (adapter + optimizer + scheduler + RNG), so a run is
-resumable — it deliberately does not re-host the final merged weights.
+checkpoint archive publishes all ten training steps — 200 / 400 / 600 / 800 / 1000 /
+1200 / 1400 / 1600 / 1800 / 1932 — plus a weights-only `final/` (its adapter is
+identical to `checkpoint-1932`). Each `checkpoint-*/` keeps the full HF Trainer state
+(adapter + optimizer + scheduler + RNG), so a run is resumable; only
+`checkpoint-1400` is the selected checkpoint, the other steps and `final/` are
+archived as training history. The archive deliberately does not re-host the final
+merged weights.

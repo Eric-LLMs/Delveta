@@ -177,7 +177,11 @@ LoRA SFT，在 capability 已由上游选定之后，负责填充该 capability 
 
 该模型是 Intent Funnel 参数获取（argument acquisition）阶段的抽取器
 （[architecture.md §28.6](docs/architecture.md#286-the-extractor-model--qwen3-06b-parameter-extraction-fine-tune)）。
-它仅在 validation 划分上完成选模；test 划分与 Formal-500 **未评测**。
+它训练 3 个 epoch（**1,932** 优化步），数据集为冻结的 10,303 / 1,290 / 1,290
+train/validation/test；选中的检查点为 **`checkpoint-1400`**，validation
+exact-match **0.9504**（1,290 行），parse rate **1.0**，illegal-slot rate **0.0**。
+选模仅使用 validation 划分——冻结的 **test 划分与 Formal-500 未评测**；GGUF 的
+`compat_probe.py` 针对 Ollama **尚未运行/通过**。
 
 ---
 

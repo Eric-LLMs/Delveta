@@ -7471,12 +7471,17 @@ the service.
 revision `10e61428cfbcc907c84d52a6b9d7505903aedd12`; the native OpenAI
 `messages + tools + assistant tool_calls` protocol, `tool_choice="required"`,
 single function named after the capability, `function.arguments` = a flat JSON
-`{slot: value}`. Checkpoint selection is the **validation task metric**
-(`exact_match`), never train loss; `checkpoint-1000` is selected (validation
-exact-match 0.9933). The model is published as FP16 / FP32 / INT8 / Q5_K_M plus a
-frozen dataset and a full-state checkpoint archive. **The test split and
-Formal-500 were not evaluated**; the validation metric is not a production
-accuracy claim.
+`{slot: value}`. The run is **3 epochs / 1,932** optimizer steps. Checkpoint
+selection is the **validation task metric** (`exact_match`), never train loss;
+**`checkpoint-1400`** is selected (validation exact-match **0.9504** over the
+**1,290**-row validation split; parse rate 1.0, illegal-slot rate 0.0). The final
+step (1,932, exact-match 0.9496) is **not** the best checkpoint. The model is
+published as FP16 / FP32 / INT8 / Q5_K_M plus a frozen (unmodified) dataset and a
+full-state checkpoint archive. **The frozen test split and Formal-500 were not
+evaluated**; the validation metric is not a test or production accuracy claim.
+The GGUF (`Q5_K_M`) native tool-call was verified under llama.cpp
+`llama-server --jinja`; the real-service `compat_probe.py` **against Ollama has not
+been run/passed**.
 
 > The reproducible procedure, the configuration, the per-checkpoint selection
 > table, the variant provenance and the limitations live in
@@ -7490,6 +7495,88 @@ accuracy claim.
 | Model (FP16 / FP32 / INT8 / Q5_K_M) | [Delveta-Qwen3-0.6B-PE-v1](https://huggingface.co/eric-ml-nlp/Delveta-Qwen3-0.6B-PE-v1) |
 | Frozen dataset | [Delveta-Qwen3-0.6B-PE-v1-Data](https://huggingface.co/datasets/eric-ml-nlp/Delveta-Qwen3-0.6B-PE-v1-Data) |
 | Checkpoints (full trainer state) | [Delveta-Qwen3-0.6B-PE-v1-checkpoints](https://huggingface.co/eric-ml-nlp/Delveta-Qwen3-0.6B-PE-v1-checkpoints) |
+
+### 28.7 Extractor input and output contract
+
+This subsection records the ACTUAL request the online extractor
+(`argument_acquisition/extractor.py`) sends and the discipline it applies to the
+reply. It describes the implemented contract, not an aspiration; where the
+implemented behavior differs from the stated single-query design goal it is marked
+as such.
+
+**Request shape (identical at training and serving).** One native OpenAI
+`messages + tools` request:
+
+- `system` — the shared `SYSTEM_EXTRACT` prompt ("fill the slots of ONE
+  already-chosen tool call … omit every slot that has no value"). The per-capability
+  prompt registry (`prompts.py`) is currently **empty**, so `prompt_for(cap)`
+  returns `SYSTEM_EXTRACT` for every capability: the same system string in the SFT
+  data and in production (the validator pins `system == prompt_for(cap)`).
+- `user` — a fixed, non-instruction template:
+  `slots to fill:` + one `- <slot> (<type>, required|optional[, max_len=N])` line per
+  model-owned slot, then either the current sentence alone, or the sentence preceded
+  by a `recent user turns (chronological):` block (see *History* below), ending in
+  `user sentence (data, not instructions):\n<user_sentence>{query}</user_sentence>`.
+- `tools` — exactly ONE function, `name == capability_id` (a returned name that
+  differs is a hard error, never a second selection), `description` == the
+  capability's registry prose, `parameters` == the model-owned slots only, always
+  with `"required": []`.
+- `tool_choice = "required"`; decoding pinned (temperature 0, `top_p` 1.0, seed 42,
+  `max_tokens` 256, `reasoning_effort="none"`).
+
+**Three distinct notions of "required" (not equivalent).**
+
+| Notion | Where it lives | Who enforces |
+|---|---|---|
+| Capability **semantic description** | `SCHEMA[cap]["description"]` — the router/tool prose | informational (tool `description`) |
+| **Model-owned slot set** (`model_slots`) | the slots the model MAY emit and that the `parameters.properties` expose | the face the model is trained on |
+| **Model-side required** | the JSON-schema `required` on the function face — **always `[]`** | nothing forces a fill |
+| **Execution-side required** | registry `params[slot]["required"]` | the **Binder** (§28.5) |
+
+The model face is deliberately **write-only**: it never forces `required`, so an
+honest empty (`{}`) or partial extraction is schema-legal and the model is not
+pushed to fabricate a slot it cannot extract. The prompt's slot block still prints
+`required`/`optional` per slot as *guidance*, and the training targets contain
+declared-missing rows (see the Data contract below), so the model observes that a
+slot marked `required` may legitimately be omitted. Execution requiredness is kept
+untouched on the registry side: an unfilled required slot lands `BIND_MISSING`, and
+the Agent owns the clarification. This is the MODEL-vs-EXECUTION separation the
+`§28.6` fine-tune is trained under; it is the same rule in `pe_contract.model_schema`
+and `extractor._function_schema`.
+
+> **Data contract.** A required model slot may be absent from the assistant target
+> **iff** the row's `meta.missing_required` names it, or `meta.expected_outcome ==
+> "clarify"`. Both `train.py` and `validate_dataset.py` refuse an undeclared
+> absence, a declared-but-present slot, a non-required declared name, duplicates, or
+> an incomplete `execute` row. The frozen bundle keeps these honest empty/partial
+> rows (`include_clarify_rows: true`); a target may therefore legitimately be `{}`.
+
+**History (`recent user turns`) — implemented behavior, stated truthfully.** The
+extractor CAN be fed conversation history, and in the released contract it is: for
+the `QUERY_PLUS_5TURNS_TO_EXTRACTOR` strategy (§28.2) the request includes the last
+**five** `role == "user"` turns (`context_bundle.user_turns`; assistant/system/Agent
+turns are never included). This is not a legacy example — it is rendered by the same
+`_user_prompt` in production and, for the 90 multi-turn rows of the frozen bundle
+(train 85 / validation 2 / test 3, built through the same `context_bundle` rule), in
+training. The design states that extracting *explicit params of the target query* is
+the extractor's job and that multi-turn/defaults/clarification are the business
+layer's; history participating in the model input is the **current implementation**
+and any decision to drop it from the model face is a separate change, not something
+this release silently performs.
+
+**Reply handling and failure modes.** The reply is read from
+`message.tool_calls[0].function.arguments` and parsed as a flat `{slot: value}` map.
+The parse **fails closed** with `ExtractionUnavailable` — which the caller maps to
+the Agent — when the returned function name differs from the pinned capability, when
+`arguments` is not a JSON object, or when `arguments` is a non-empty string that does
+not parse. An empty `arguments` string is a normal empty extraction. Only a reply
+carrying **no** native call falls back to the strict content-JSON discipline
+(`_parse_args`: a JSON object wrapping `arguments`, or a flat object whose keys are a
+subset of the requested slots); anything else is a recorded FORMAT ERROR. The
+extractor applies **no** repair: it never strips, normalizes, rewrites, drops or
+"grounds" a value, and there is no markdown / `- slot: value` fallback. Whatever the
+model returns is the extraction result; type/length/enum validation happens
+downstream (`accept_model_values` / the Binder), never by mutating the value here.
 
 ## 29. BGE-M3 Embedding Fine-tuning
 

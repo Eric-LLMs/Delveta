@@ -177,8 +177,12 @@ selects, re-selects or questions the capability.
 
 The model is the extractor behind the Intent Funnel's argument-acquisition stage
 ([architecture.md §28.6](docs/architecture.md#286-the-extractor-model--qwen3-06b-parameter-extraction-fine-tune)).
-It was selected on the validation split only; the test split and Formal-500 were
-**not** evaluated.
+It trains for 3 epochs (**1,932** optimizer steps) on the frozen
+10,303 / 1,290 / 1,290 train/validation/test bundle; **`checkpoint-1400`** is
+selected on validation exact-match **0.9504** over 1,290 rows, with parse rate
+**1.0** and illegal-slot rate **0.0**. Selection used the validation split only —
+the frozen **test split and Formal-500 were not evaluated** — and the GGUF's
+`compat_probe.py` against Ollama has **not** been run/passed.
 
 ---
 

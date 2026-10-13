@@ -39,7 +39,8 @@ scripts/qwen_parameter_extraction_finetune/
     train.jsonl             SFT samples
     validation.jsonl        SFT samples (the only split that may select a checkpoint)
     test.jsonl              frozen SFT benchmark (never trains, never selects)
-  manifests/                manifest.json (counts, splits, hashes, audit) + SHA256SUMS
+    manifest.json           counts, splits, hashes, source provenance
+    SHA256SUMS              sha256 of the three splits + manifest.json
   reports/                  build_report.md + derivation_audit.jsonl + isolated_rows.jsonl
                             (+ eval_*.json / selection.json written by evaluate.py)
   checkpoints/              training checkpoints — not committed
@@ -52,16 +53,18 @@ between the smoke test, the trainer and the evaluator.
 
 ## Data source
 
-The **only** candidate source is the PE v2 bundle, kept in place and never modified:
+The only source the build reads is the contract-aligned candidate pack named by
+`config.yaml` (`source.train_candidates` / `source.test_candidates`, the
+`data/V5/*_candidate.jsonl` files); their SHA-256s are recorded in
+`data/manifest.json`.
 
-| file | rows | sha256 |
-|---|---|---|
-| `data/delveta_parameter_extraction_v2/delveta_pe_train_candidate_6000.jsonl` | 6000 | `4648503676de1245e8706475fea45a9fc9f091a3bb9558c21def3417c8ae6499` |
-| `data/delveta_parameter_extraction_v2/delveta_pe_test_candidate_6000.jsonl` | 6000 | `b789213b91d4a755b15898719fdb1ddff2cb5f6020dfcdacde3ce114db5fa0e8` |
-
-Both SHA-256s are re-recorded in `manifests/manifest.json` on every build. The
-source is local-only (under the gitignored `data/`), so `prepare_dataset.py` fails
-loudly if it is absent.
+**Provenance limitation (known, not fixed).** Those `data/V5/*_candidate.jsonl`
+paths do not exist anywhere in the repository, and the local archive under
+`data/qwen_pe_finetune_archive/` (git-ignored) holds only FINAL splits whose
+SHA-256 differ from the shipped bundle. The exact candidates therefore cannot be
+located, so the committed `data/{train,validation,test}.jsonl` is the **frozen
+authoritative training input** and is not fully reconstructable from any
+checked-in material.
 
 `logs/_argbench/dataset_formal500.jsonl` (the frozen Formal-500 benchmark) is
 **fully isolated**: it is read only to assert zero overlap and is never used for
@@ -82,9 +85,10 @@ target = { slot: expected_arguments[slot] for slot in MODEL_SLOTS[cap]
 # domain is taken from its human-readable surface (domain_surface), never the slug
 ```
 
-This moves generator-mislabeled model-owned slots (`top_k` / `platform` / `text` /
-`name` / `domain`) out of the dead DET lane and into the model target, excludes every
-system/default slot by construction, and turns the DET slug `nlp` into the name
+This moves the generator-mislabeled model-owned slots (`query` / `platform` / `text`
+/ `name` / `domain`) out of the dead DET lane and into the model target, excludes
+every system/default slot by construction (counts such as `top_k` / `limit` are
+function defaults now, never model slots), and turns the DET slug `nlp` into the name
 `natural language processing`. No model call is made — the build is deterministic.
 
 Benchmark-only vs production: the contract the model is measured against is the
@@ -98,14 +102,26 @@ Six MODEL-extraction capabilities (assets/CTX capabilities such as vision / read
 pdf are SYSTEM-owned — `asset_id` comes from turn facts, never the sentence — and are
 absent):
 
-| capability | model slots (rendered order) | required |
+| capability | model slots (rendered order) | execution-required |
 |---|---|---|
-| `cap-web-search` | query, top_k | query |
-| `cap-rag-search` | query, domain, top_k | query |
-| `cap-social-search` | query, platform, limit | query |
+| `cap-web-search` | query | query |
+| `cap-rag-search` | query, domain | query |
+| `cap-social-search` | query, platform | query |
 | `cap-translate` | text, target_language | text |
 | `cap-add-term` | term, domain | term, domain |
 | `cap-create-folder` | name | name |
+
+**Model face vs execution face.** The two columns are deliberately distinct. The
+rendered tool face is **write-only**: its JSON schema always sets `required: []`, so
+the model may honestly omit a required slot it cannot extract (returning `{}` or a
+partial object) instead of fabricating a value. The **execution** requirement
+(`params[...]["required"]`, the third column) is enforced separately by the Binder,
+which lands `BIND_MISSING` for any unfilled required slot and lets the Agent
+clarify. A required model slot may be absent from the assistant target **iff** the
+row's `meta.missing_required` declares it or `meta.expected_outcome == "clarify"`;
+the trainer and `validate_dataset.py` both refuse an undeclared absence. The one
+legal per-sample narrowing is `cap-social-search` with an `r/<name>` scope, where
+`platform` is dropped from the face (`cap_handler.search_scope.effective_model_slots`).
 
 `subreddit` is a real backend parameter of the `search_social` tool but is
 **not** model-owned: the frozen corpus has zero subreddit positives, so it is left
@@ -123,7 +139,7 @@ Each emitted sample (one JSON line):
  "language": "en",
  "tools": [{"type": "function", "function": {"name": "cap-web-search",
             "description": "...", "parameters": {"type": "object", "properties": {...},
-            "required": ["query"]}}}],
+            "required": []}}}],
  "tool_choice": "required",
  "messages": [
    {"role": "system", "content": "<prompt_for(capability)>"},
@@ -232,17 +248,22 @@ and never quantises or touches the live Ollama model.
 
 ## Current status
 
-- **Built and verified:** `data/{train,validation,test}.jsonl` (see `manifests/` and
-  `reports/` for the exact counts, hashes and per-row audit).
-- **Trained and selected:** the LoRA run completed (1,629 optimizer steps,
-  `checkpoint-1000` selected on validation exact-match 0.9933). The model is
-  published as `Delveta-Qwen3-0.6B-PE-v1` (FP16 / FP32 / INT8 / Q5_K_M) with its
-  dataset and checkpoint archive; the full record is
+- **Built and verified:** `data/{train,validation,test}.jsonl` (10,303 / 1,290 /
+  1,290 rows; see `data/manifest.json`, `data/SHA256SUMS` and `reports/` for the exact
+  counts, hashes and per-row audit). The frozen bundle is **unmodified**.
+- **Trained and selected:** the LoRA run completed (**1,932** optimizer steps, 3 epochs)
+  and **`checkpoint-1400`** is selected on validation exact-match **0.9504** over the
+  **1,290**-row validation split. Validation **parse rate = 1.0** and **illegal-slot
+  rate = 0.0**; the final step (1,932, exact-match 0.9496) is **not** the best checkpoint.
+  The model is published as `Delveta-Qwen3-0.6B-PE-v1` (FP16 / FP32 / INT8 / Q5_K_M) with
+  its dataset and checkpoint archive; the full record is
   [Qwen3-0.6B Parameter-Extraction Fine-Tuning](../../docs/experiments/qwen3-0.6b-parameter-extraction-finetuning.md).
-- **Scope of the numbers:** **validation only** — the test split and Formal-500
-  were **not** evaluated, and validation accuracy is not a production claim.
+- **Scope of the numbers:** **validation only** — the frozen **test split and Formal-500
+  were not evaluated**, and validation accuracy is not a test or production claim.
 - **Online serving aligned:** the live extractor sends the SAME single-function
   `tools` request (`tool_choice="required"`) the model is trained for, and reads the
   reply from `message.tool_calls` (a name mismatch or non-object arguments is a hard
-  `ExtractionUnavailable`, with no content fallback). The real-service compatibility
-  probe (`compat_probe.py`) runs against the deployed endpoint.
+  `ExtractionUnavailable`, with no content fallback).
+- **Ollama not yet verified:** the GGUF (`Q5_K_M`) native tool-call was checked under
+  llama.cpp `llama-server --jinja`, but the real-service compatibility probe
+  (`compat_probe.py`) **against Ollama has not been run/passed** for this release.
