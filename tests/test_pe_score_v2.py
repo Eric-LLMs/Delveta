@@ -1,5 +1,5 @@
-"""PE scoring v2 (``logs/_argbench/pe_score_v2``) — the per-sample, contract-aligned
-口径, on synthetic records.
+"""PE scoring v2 (``scripts/qwen_parameter_extraction_finetune/pe_score_v2``) — the
+per-sample, contract-aligned 口径, on synthetic records.
 
 The v2 scorer is the CURRENT versioned standard (the legacy ``eval_pilot.score`` is
 frozen for historical reproduction). These tests pin its three obligations:
@@ -21,9 +21,10 @@ from pathlib import Path
 
 import pytest
 
-_ARGBENCH = Path(__file__).resolve().parents[1] / "logs" / "_argbench"
-if str(_ARGBENCH) not in sys.path:
-    sys.path.insert(0, str(_ARGBENCH))
+_SCRIPTS = (Path(__file__).resolve().parents[1] / "scripts"
+            / "qwen_parameter_extraction_finetune")
+if str(_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS))
 import pe_score_v2 as V  # noqa: E402
 
 
