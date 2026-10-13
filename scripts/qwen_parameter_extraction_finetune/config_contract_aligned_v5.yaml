@@ -1,0 +1,36 @@
+# PE contract-aligned v5 — SFT rebuild config (supersedes v4 candidate labels).
+#
+# v5 source = the v4 candidate pack with ONE fix applied: cap-add-term `domain` is
+# REQUIRED again (v4 treated it as optional; the frozen contract and the add_term
+# handler both require it and the tool resolves the domain by name with no default).
+#
+# The one build change vs v2/v1: `include_clarify_rows: true` — the no-slot
+# negative rows (information-absent, e.g. "翻译一下这句话") now ENTER the bundle as
+# honest native tool calls with EMPTY `arguments`. The model omits a required slot
+# it cannot extract; the Binder lands the missing required slot and the Agent
+# clarifies. Model face = `required: []` (no hard force); execution side keeps
+# the registry `required=True`.
+#
+# Run: python prepare_dataset.py --config config_contract_aligned_v5.yaml
+
+source:
+  train_candidates: scripts/qwen_parameter_extraction_finetune/data/V5/delveta_pe_train_contract_aligned_v5_candidate.jsonl
+  test_candidates:  scripts/qwen_parameter_extraction_finetune/data/V5/delveta_pe_test_contract_aligned_v5_candidate.jsonl
+  formal500:        logs/_argbench/dataset_formal500.jsonl
+  source_commit:    fdf96cf
+
+output:
+  data_dir:      data_contract_aligned_v5
+  manifests_dir: manifests_contract_aligned_v5
+  reports_dir:   reports_contract_aligned_v5
+  snapshot_source: false
+
+build:
+  seed: 20261011
+  include_clarify_rows: true
+  near_dup_jaccard: 0.90
+  split_policy: cluster
+  split:
+    train: 0.80
+    validation: 0.10
+    test: 0.10

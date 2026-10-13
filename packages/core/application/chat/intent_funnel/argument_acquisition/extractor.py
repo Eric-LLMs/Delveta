@@ -110,14 +110,21 @@ def _user_prompt(entry, model_slots, bundle) -> str:
 
 def _function_schema(entry, model_slots) -> dict:
     """The OpenAI ``function.parameters`` object for the ONE selected capability:
-    ONLY the authorized model-owned slots (in slot-plan order), with ``required``
-    recomputed over the survivors. Types / descriptions / ``maxLength`` come from
-    ``entry.parameters`` — the Registry schema truth — never string-guessed. This
-    is the SAME narrowing the SFT contract applies (:mod:`pe_contract.model_schema`),
-    so the function face the model calls matches the face it was trained on."""
+    ONLY the authorized model-owned slots (in slot-plan order). Types /
+    descriptions / ``maxLength`` come from ``entry.parameters`` — the Registry
+    schema truth — never string-guessed. This is the SAME narrowing the SFT
+    contract applies (:mod:`pe_contract.model_schema`), so the function face the
+    model calls matches the face it was trained on.
+
+    MODEL-vs-EXECUTION separation: the MODEL face emits ``required: []``. The
+    model may return ONLY the slots it can honestly extract and OMIT a required
+    one it cannot (the prompt's slot block still flags required/optional as
+    guidance); the EXECUTION side keeps the registry's ``required=True`` — the
+    Binder lands the missing required slot and the Agent clarifies. Forcing
+    ``required`` here would make an honest empty or partial extraction
+    schema-illegal and push the model to fabricate values."""
     params = dict(getattr(entry, "parameters", None) or {})
     props: dict[str, dict] = {}
-    required: list[str] = []
     for slot in model_slots:
         spec = params.get(slot)
         spec = spec if isinstance(spec, dict) else {}
@@ -128,9 +135,7 @@ def _function_schema(entry, model_slots) -> dict:
         if spec.get("max_len") is not None:
             prop["maxLength"] = int(spec["max_len"])
         props[slot] = prop
-        if spec.get("required"):
-            required.append(slot)
-    return {"type": "object", "properties": props, "required": required}
+    return {"type": "object", "properties": props, "required": []}
 
 
 def _tools_for(entry, model_slots) -> list[dict]:

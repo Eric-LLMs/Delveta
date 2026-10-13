@@ -181,13 +181,22 @@ def required_model_slots(capability_id: str) -> list[str]:
 
 def model_schema(capability_id: str, slots=None) -> dict:
     """The JSON-schema ``function.parameters`` object: ONLY the model-owned slots
-    (the Phase-3b face narrowing), with ``required`` recomputed over the survivors.
+    (the Phase-3b face narrowing).
 
     ``slots`` optionally narrows the face to a PER-SAMPLE slot set (a deterministic
     execution scope can drop a normally-model-owned slot for one turn — see
-    ``cap_handler.search_scope``); ``None`` keeps the static capability face."""
+    ``cap_handler.search_scope``); ``None`` keeps the static capability face.
+
+    MODEL-vs-EXECUTION separation (item 3): the MODEL face emits ``required: []``.
+    The model may return ONLY the slots it can honestly extract from the sentence
+    and OMIT a required one it cannot — the prompt's slot block still flags which
+    slots are ``required``/``optional`` (guidance, not a hard force), and the
+    EXECUTION side keeps the registry's ``required=True`` untouched: the Binder
+    lands a missing required slot, and the Agent clarifies. Forcing ``required`` at
+    the model face would make an honest empty/partial extraction schema-illegal and
+    push the model to fabricate values.
+    """
     props: dict[str, dict] = {}
-    required: list[str] = []
     params = SCHEMA[capability_id]["params"]
     for slot in (SCHEMA[capability_id]["model_slots"] if slots is None else list(slots)):
         spec = params[slot]
@@ -197,9 +206,7 @@ def model_schema(capability_id: str, slots=None) -> dict:
         if spec.get("max_len") is not None:
             prop["maxLength"] = int(spec["max_len"])
         props[slot] = prop
-        if spec.get("required"):
-            required.append(slot)
-    return {"type": "object", "properties": props, "required": required}
+    return {"type": "object", "properties": props, "required": []}
 
 
 def function_description(capability_id: str) -> str:

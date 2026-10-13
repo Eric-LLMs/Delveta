@@ -88,6 +88,12 @@ except Exception as _exc:  # pragma: no cover
 from core.application.chat.intent_funnel.cap_handler.search_scope import (  # noqa: E402
     effective_model_slots,
 )
+# The ONE online multi-turn context rule (§B/§I): only the last-5 ``role == "user"``
+# turns are ever shown to a MODEL acquisition. The builder renders a multi-turn
+# row through this SAME function, so training context == the runtime context.
+from core.application.chat.intent_funnel.argument_acquisition.context_bundle import (  # noqa: E402
+    user_turns as _context_user_turns,
+)
 
 
 def _sample_slots(cap: str, raw_query: str) -> tuple[str, ...]:
@@ -133,9 +139,13 @@ def _user_prompt_replica(entry, model_slots, bundle) -> str:
     return "\n".join(parts)
 
 
-def render_user_message(cap: str, query: str) -> str:
+def render_user_message(cap: str, query: str, history=()) -> str:
     entry = SimpleNamespace(parameters=C.SCHEMA[cap]["params"])
-    bundle = SimpleNamespace(query=query, user_turns=())
+    # A multi-turn row keeps its conversation context: the SAME last-5 user-turn
+    # window the live extractor is fed (``context_bundle.user_turns`` — user role
+    # only, assistant/system excluded). Absent history -> () -> byte-identical to
+    # the single-turn rendering.
+    bundle = SimpleNamespace(query=query, user_turns=_context_user_turns(history))
     if _prod_user_prompt is not None:
         return _prod_user_prompt(entry, C.model_slots(cap), bundle)
     return _user_prompt_replica(entry, C.model_slots(cap), bundle)
@@ -218,6 +228,16 @@ def derive_target(row: dict) -> tuple[dict, list[str]]:
     return target, flags
 
 
+def is_clarify(row: dict) -> bool:
+    """A row whose expected outcome is clarification: a schema-required slot is
+    unstated, so the honest model target may be EMPTY or partial. Under the
+    model-vs-execution separation the model is allowed to omit it; the Binder owns
+    the clarification. Such rows are keyed OUT of the target-based near-dup
+    clustering (their empty target is not a leakable value)."""
+    return bool(row.get("expected_missing_required_slots")) \
+        or row.get("expected_outcome") == "clarify"
+
+
 def audit_row(row: dict, target: dict, *, include_clarify: bool) -> tuple[list[str], list[str]]:
     """(fatal, warnings). fatal => isolate."""
     fatal: list[str] = []
@@ -230,7 +250,10 @@ def audit_row(row: dict, target: dict, *, include_clarify: bool) -> tuple[list[s
     outcome = row.get("expected_outcome")
     slots = _sample_slots(cap, row["query"])
 
-    # clarify rows: a schema-required slot is unstated -> no schema-valid call.
+    # clarify rows: a schema-required slot is unstated. When clarify rows are
+    # DISABLED they are isolated (no schema-valid call). When ENABLED they are
+    # kept as an honest EMPTY/partial extraction — the model omits what it cannot
+    # extract and the Binder clarifies.
     if missing and not include_clarify:
         return [f"clarify_required_missing:{','.join(missing)}"], warn
 
@@ -239,7 +262,7 @@ def audit_row(row: dict, target: dict, *, include_clarify: bool) -> tuple[list[s
             fatal.append(f"required_slot_absent:{slot}")
     if set(target) - set(slots):
         fatal.append("target_non_model_slot")
-    if not target:
+    if not target and not (include_clarify and missing):
         return [*(fatal or ["empty_target"])], warn
 
     params = C.SCHEMA[cap]["params"]
@@ -280,7 +303,8 @@ def build_sample(row: dict, target: dict) -> dict:
         "tool_choice": "required",
         "messages": [
             {"role": "system", "content": prompt_for(cap)},
-            {"role": "user", "content": render_user_message(cap, row["query"])},
+            {"role": "user", "content": render_user_message(
+                cap, row["query"], row.get("conversation_history") or ())},
             {"role": "assistant", "content": "",
              "tool_calls": [{"type": "function",
                              "function": {"name": fn_name, "arguments": args_json}}]},
@@ -326,6 +350,19 @@ def _write_jsonl(path: Path, items) -> None:
 def _payload(target: dict, cap: str) -> str:
     v = target.get(PAYLOAD_SLOT[cap])
     return v if isinstance(v, str) else json.dumps(target, sort_keys=True, ensure_ascii=False)
+
+
+def _leak_payload(rec: dict) -> str:
+    """The string used for near-dup clustering AND cross-split leakage. A row with
+    an EMPTY target (a fully-unstated clarify turn) carries no extraction payload —
+    the empty ``{}`` is NOT a value that can leak — so it is keyed by its own input
+    query instead, so empty-target rows neither collapse into one cluster nor trip
+    the target-leakage guard. A PARTIAL target (a clarify row that still extracted
+    some slots) keeps its payload, so its value is still leak-checked."""
+    row = rec["row"]
+    if not rec["target"]:
+        return normalize(row["query"])
+    return normalize(_payload(rec["target"], row["capability_id"]))
 
 
 def main() -> None:
@@ -399,45 +436,70 @@ def main() -> None:
         seen_q[key] = rec["row"]["id"]
         deduped.append(rec)
 
-    # ── cluster per (cap, lang): exact target ∪ near-dup target ∪ near-dup input ─
-    # Each cluster IS one extraction target (plus its paraphrase frames); a cluster
-    # never spans two splits, so no target leaks across train/validation/test.
-    clusters: dict[str, int] = {}          # row id -> local cluster root
+    # ── cluster: exact target ∪ near-dup target ∪ near-dup input (per cap,lang)
+    # ∪ same conversation (GLOBAL). One global DSU keyed by row ordinal: near-dup
+    # clusters form within each (capability, language) group, and every row sharing
+    # a ``conversation_id`` is unioned globally so a multi-turn exchange can never
+    # span two splits (§B/§I). Each cluster never spans two splits, so neither a
+    # target nor a conversation leaks across train/validation/test.
+    gid = {rec["row"]["id"]: k for k, rec in enumerate(deduped)}
+    gdsu = DSU(len(deduped))
     for (cap, lang), group in _groupby(
             deduped, lambda r: (r["row"]["capability_id"], r["row"]["language"])).items():
-        dsu = DSU(len(group))
-        tkey = [json.dumps(r["target"], sort_keys=True, ensure_ascii=False) for r in group]
+        idx = [gid[r["row"]["id"]] for r in group]
+        # An EMPTY clarify target is not a leakable value, so it is keyed by its own
+        # id (a unique cluster, never merged by target identity). Every NON-empty
+        # target — including a PARTIAL clarify extraction — is keyed by its value,
+        # so identical targets cluster together and never span splits.
+        tkey = [json.dumps(r["target"], sort_keys=True, ensure_ascii=False)
+                if r["target"] else f"__clarify__{r['row']['id']}"
+                for r in group]
         exact: dict[str, list[int]] = defaultdict(list)
         for i, k in enumerate(tkey):
             exact[k].append(i)
         for ls in exact.values():
             for x in ls[1:]:
-                dsu.union(ls[0], x)
-        pay = [_bigrams(_payload(r["target"], cap)) for r in group]
+                gdsu.union(idx[ls[0]], idx[x])
+        pay = [_bigrams(_leak_payload(r)) for r in group]
         inp = [_bigrams(r["row"]["query"]) for r in group]
         for i in range(len(group)):
             for j in range(i + 1, len(group)):
                 if _jac_ge(pay[i], pay[j], near_dup_thr) or _jac_ge(inp[i], inp[j], near_dup_thr):
-                    dsu.union(i, j)
-        for i, rec in enumerate(group):
-            clusters[rec["row"]["id"]] = dsu.find(i)
+                    gdsu.union(idx[i], idx[j])
+    first_by_conv: dict[str, int] = {}
+    for rec in deduped:
+        cid = rec["row"].get("conversation_id")
+        if not cid:
+            continue
+        k = gid[rec["row"]["id"]]
+        if cid in first_by_conv:
+            gdsu.union(first_by_conv[cid], k)
+        else:
+            first_by_conv[cid] = k
 
-    # ── split: whole clusters per (cap, lang); val/test take one row per cluster ─
+    clusters: dict[str, int] = {}          # row id -> global cluster root
+    group_of_cluster: dict[int, tuple] = {}  # root -> the (cap, lang) it is counted under
+    for rec in deduped:
+        root = gdsu.find(gid[rec["row"]["id"]])
+        clusters[rec["row"]["id"]] = root
+        group_of_cluster.setdefault(root, (rec["row"]["capability_id"], rec["row"]["language"]))
+
+    # ── split: whole clusters; val/test take one row per cluster ─────────────────
     group_atoms: dict[tuple, dict[int, list[dict]]] = defaultdict(lambda: defaultdict(list))
     for rec in deduped:
-        cap, lang = rec["row"]["capability_id"], rec["row"]["language"]
-        group_atoms[(cap, lang)][clusters[rec["row"]["id"]]].append(rec)
+        group_atoms[group_of_cluster[clusters[rec["row"]["id"]]]][clusters[rec["row"]["id"]]].append(rec)
 
     split_of: dict[str, str] = {}
     keep_rep: dict[str, bool] = {}
     cluster_sizes: list[int] = []
-    per_group_counts: dict[str, dict] = {}
+    group_shape: dict[str, tuple[int, int]] = {}
     for (cap, lang), atoms in group_atoms.items():
         atom_list = list(atoms.values())
         random.shuffle(atom_list)
         atom_list.sort(key=len, reverse=True)           # largest clusters first
         cluster_sizes.extend(len(a) for a in atom_list)
         n_rows = sum(len(a) for a in atom_list)
+        group_shape[f"{cap}/{lang}"] = (n_rows, len(atom_list))
         if policy == "target_unique":
             # keep ONE row per cluster (each cluster is one distinct target)
             val_left = round(len(atom_list) * ratios["validation"])
@@ -467,8 +529,15 @@ def main() -> None:
                 for rec in atom:
                     split_of[rec["row"]["id"]] = s
                     keep_rep[rec["row"]["id"]] = True
-        per_group_counts[f"{cap}/{lang}"] = {
-            "rows": n_rows, "clusters": len(atom_list),
+
+    # per-(cap, lang) counts, computed AFTER every split is assigned (a cluster may
+    # span two (cap, lang) groups via a shared conversation, so its rows are counted
+    # under the cluster's group — the recount below is a pure post-pass).
+    per_group_counts: dict[str, dict] = {}
+    for key, (n_rows, n_clusters) in group_shape.items():
+        cap, lang = key.split("/", 1)
+        per_group_counts[key] = {
+            "rows": n_rows, "clusters": n_clusters,
             **{k: sum(1 for rec in deduped if rec["row"]["capability_id"] == cap
                       and rec["row"]["language"] == lang and split_of[rec["row"]["id"]] == k
                       and keep_rep[rec["row"]["id"]])
@@ -496,8 +565,12 @@ def main() -> None:
             seen |= here
         return n
 
-    cross_leak_q = _leak(lambda r: normalize(r["row"]["query"]))
-    cross_leak_t = _leak(lambda r: normalize(_payload(r["target"], r["row"]["capability_id"])))
+    # Leakage is CAPABILITY-SCOPED: the model builds a per-capability tool call, so
+    # a topic string reused across DIFFERENT capabilities (e.g. a social `query` and
+    # a translate `text` that share a phrase) is not a leak. Only the SAME
+    # capability + the same normalized input/payload spanning two splits is.
+    cross_leak_q = _leak(lambda r: (r["row"]["capability_id"], normalize(r["row"]["query"])))
+    cross_leak_t = _leak(lambda r: (r["row"]["capability_id"], _leak_payload(r)))
     if cross_leak_q or cross_leak_t:
         raise SystemExit(f"ABORT: cross-split leakage (query={cross_leak_q}, target={cross_leak_t})")
 

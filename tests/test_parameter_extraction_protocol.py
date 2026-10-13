@@ -81,8 +81,12 @@ def test_function_schema_is_the_shared_contract(cid):
     schema = _function_schema(_entry(cid), model_slots)
     assert schema == C.model_schema(cid)                 # identical face
     assert list(schema["properties"]) == model_slots     # order preserved
-    required = {s for s in model_slots if C.SCHEMA[cid]["params"][s].get("required")}
-    assert set(schema["required"]) == required
+    # MODEL-vs-EXECUTION separation: the MODEL face never forces `required` (the
+    # model may omit a required slot it cannot honestly extract); the EXECUTION
+    # side keeps the registry's required=True and the Binder clarifies. The
+    # prompt's slot block still flags required/optional as guidance.
+    assert schema["required"] == []
+    assert C.required_model_slots(cid)                   # execution side unchanged
 
 
 @pytest.mark.parametrize("cid", CAPS)

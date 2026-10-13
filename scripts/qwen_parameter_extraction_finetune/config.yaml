@@ -16,16 +16,29 @@
 #   export.py          -> best LoRA adapter / merged HF model / (planned) GGUF.
 
 source:
-  # The ONLY candidate data source (12,000 rows). Never modified, never moved.
-  train_candidates: data/delveta_parameter_extraction_v2/delveta_pe_train_candidate_6000.jsonl
-  test_candidates:  data/delveta_parameter_extraction_v2/delveta_pe_test_candidate_6000.jsonl
+  # The contract-aligned candidate pack (the ONLY data source). The legacy v2
+  # 6000-row candidates that produced the superseded bundle are gone; these two
+  # files (the merged base + platform/translate additions + no-slot negatives,
+  # add-term `domain` restored to required) rebuild exactly the shipped bundle.
+  #
+  # PROVENANCE LIMITATION (documented, not fixed): these `data/V5/*_candidate.jsonl`
+  # paths do NOT exist anywhere in the repo, and the local archive
+  # `data/qwen_pe_finetune_archive/` (git-ignored) holds only FINAL splits whose
+  # SHA-256 differ from the shipped bundle. The exact candidates cannot be located,
+  # so the committed bundle is the frozen authoritative training input and is NOT
+  # fully reconstructable from any checked-in material.
+  train_candidates: scripts/qwen_parameter_extraction_finetune/data/V5/delveta_pe_train_contract_aligned_v5_candidate.jsonl
+  test_candidates:  scripts/qwen_parameter_extraction_finetune/data/V5/delveta_pe_test_contract_aligned_v5_candidate.jsonl
   # Frozen external benchmark — fully isolated (no repair, split, train, select).
   formal500:        logs/_argbench/dataset_formal500.jsonl
   source_commit:    fdf96cf
 
 output:
   data_dir:      data
-  manifests_dir: manifests
+  # The manifest lives BESIDE the frozen splits in the training data dir
+  # (data/manifest.json). It is NOT under a separate manifests/ dir (that dir was
+  # removed in bc6f496; keeping the old path made the trainer's hash gate a no-op).
+  manifests_dir: data
   reports_dir:   reports
   # Copy the two candidates into data/_source_snapshot/ for cross-machine
   # reproducibility. OFF: the derived bundle is self-contained and the source
@@ -34,10 +47,11 @@ output:
 
 build:
   seed: 20261011
-  # PE v2 rows whose outcome is `clarify` (a schema-required slot is unstated) carry
-  # no schema-valid extraction target; isolated by default. The missing-required path
-  # is owned by the downstream Binder, not the extractor.
-  include_clarify_rows: false
+  # `clarify` rows (a schema-required slot is unstated) now ENTER the bundle as
+  # honest EMPTY (or partial) native tool calls: the model may omit a required slot
+  # it cannot extract, the Binder lands the missing slot and the Agent clarifies.
+  # ON so the shipped bundle reproduces (the no-slot negatives are in the source).
+  include_clarify_rows: true
   # Near-duplicate threshold (character-bigram Jaccard), applied on the TARGET payload
   # and on the raw input, within each (capability, language) group; no cluster (one
   # target + its paraphrase frames) is allowed to span two splits.
@@ -66,7 +80,7 @@ model:
   torch_dtype: bfloat16
 
 # ── train: LoRA SFT hyperparameters (adjustable, not copied from any suggestion) ──
-# Sizing rationale: 8679 train rows, effective batch 8x2=16, 3 epochs -> ~1632
+# Sizing rationale: 10303 train rows, effective batch 8x2=16, 3 epochs -> ~1932
 # optimizer steps. lr 2e-4 is the standard LoRA range for a 0.6B causal LM with
 # cosine decay + 3% warmup; r=8 / alpha=16 (~2.29M trainable params) is the small-
 # capacity default for a single-format extraction task. These are STARTING values

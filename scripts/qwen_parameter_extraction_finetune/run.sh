@@ -95,7 +95,7 @@ preflight() {
     step "frozen data + bundle SHA-256 gate"
     [[ -f "${SCRIPT_DIR}/data/train.jsonl" ]]      || die "missing data/train.jsonl"
     [[ -f "${SCRIPT_DIR}/data/validation.jsonl" ]] || die "missing data/validation.jsonl"
-    [[ -f "${SCRIPT_DIR}/manifests/manifest.json" ]] || die "missing manifests/manifest.json"
+    [[ -f "${SCRIPT_DIR}/data/manifest.json" ]] || die "missing data/manifest.json"
     if [[ "${PE_SKIP_HASH}" == "1" ]]; then
         warn "PE_SKIP_HASH=1 — frozen-bundle SHA-256 gate SKIPPED (debug only)"
     else

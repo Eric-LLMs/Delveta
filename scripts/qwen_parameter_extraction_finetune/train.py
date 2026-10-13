@@ -32,13 +32,21 @@ import argparse
 import hashlib
 import json
 import math
+import re
 import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+REPO = HERE.parents[1]
 
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
+# ``search_scope`` (the ONE slot-narrowing rule) is a stdlib-only production
+# module; the trainer reuses it so the legal model face cannot drift from the
+# builder / handler. It pulls no torch, so ``--check`` stays torch-free.
+for _p in (str(REPO), str(REPO / "packages")):
+    if _p not in sys.path:
+        sys.path.append(_p)
 
 # pe_runtime sets HF_HOME (the local cache) and TOKENIZERS_PARALLELISM on import.
 import pe_config as cfgmod  # noqa: E402
@@ -75,13 +83,44 @@ def check_contract(cfg: dict, *, verify_hash: bool = True) -> dict:
         raise D.SftDataError(f"missing training file: {train_path}")
 
     manifest_path = cfgmod.local_path(cfg, "output", "manifests_dir") / "manifest.json"
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.is_file() else {}
-    recorded = (manifest.get("file_sha256") or {}).get(TRAIN_FILE)
+    # FAIL-CLOSED: when the hash gate is on, a missing / unreadable / malformed
+    # manifest, a missing recorded hash, or a mismatch is a hard error. A missing
+    # manifest is NEVER silently treated as ``{}`` (that is what made the gate a
+    # no-op). Only the explicit ``--no-hash-check`` escape hatch skips this.
+    manifest: dict = {}
+    if verify_hash:
+        if not manifest_path.is_file():
+            raise D.SftDataError(
+                f"missing manifest {manifest_path} (hash gate is fail-closed; "
+                f"pass --no-hash-check only to override)")
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise D.SftDataError(
+                f"unreadable/invalid manifest {manifest_path}: {exc!r}") from exc
+        if not isinstance(manifest, dict):
+            raise D.SftDataError(f"manifest {manifest_path} is not a JSON object")
+    file_sha = (manifest.get("file_sha256") or {}) if verify_hash else {}
     got = _sha256(train_path)
-    if verify_hash and recorded and recorded != got:
-        raise D.SftDataError(
-            f"{TRAIN_FILE} hash {got} != frozen manifest {recorded}; refusing to train "
-            f"on a mutated bundle")
+    recorded = file_sha.get(TRAIN_FILE)
+    if verify_hash:
+        if not recorded:
+            raise D.SftDataError(f"manifest {manifest_path} has no file_sha256[{TRAIN_FILE!r}]")
+        if recorded != got:
+            raise D.SftDataError(
+                f"{TRAIN_FILE} hash {got} != frozen manifest {recorded}; refusing to train "
+                f"on a mutated bundle")
+
+    # The training entry also READS validation.jsonl (loss monitoring), so its
+    # hash is gated too — a mutated validation file must not slip through.
+    val_got = _sha256(val_path) if val_path.is_file() else None
+    val_recorded = file_sha.get(VAL_FILE)
+    if verify_hash and val_got is not None:
+        if not val_recorded:
+            raise D.SftDataError(f"manifest {manifest_path} has no file_sha256[{VAL_FILE!r}]")
+        if val_recorded != val_got:
+            raise D.SftDataError(
+                f"{VAL_FILE} hash {val_got} != frozen manifest {val_recorded}")
 
     rows = D.load_rows(train_path)
     _validate_rows(rows)
@@ -89,21 +128,104 @@ def check_contract(cfg: dict, *, verify_hash: bool = True) -> dict:
     by_cap: dict[str, int] = {}
     for r in rows:
         by_cap[r["capability_id"]] = by_cap.get(r["capability_id"], 0) + 1
+    val_ok = val_got is None or val_recorded == val_got
     return {
         "train_file": str(train_path),
         "train_sha256": got,
         "manifest_sha256": recorded,
-        "hash_verified": bool(recorded) and recorded == got,
+        "validation_sha256": val_got,
+        "hash_verified": bool(verify_hash and recorded == got and val_ok),
         "train_rows": len(rows),
         "validation_rows": n_val,
         "by_capability": dict(sorted(by_cap.items())),
     }
 
 
+_QUERY_RE = re.compile(r"<user_sentence>(.*)</user_sentence>", re.DOTALL)
+
+
+def _extract_query(user_content: str) -> str | None:
+    """The verbatim user sentence embedded in the serialized user message."""
+    m = _QUERY_RE.search(user_content or "")
+    return m.group(1) if m else None
+
+
+_NARROWING_RULE = None
+
+
+def _narrowing_rule():
+    """The ONE slot-narrowing rule (:func:`search_scope.effective_model_slots`),
+    reused — never copied, and resolved even when the heavy ``core.…`` package chain
+    is not importable (the isolated training venv lacks a parent-``__init__`` dep).
+    ``search_scope`` is stdlib-only, so it can be loaded straight from its file."""
+    global _NARROWING_RULE
+    if _NARROWING_RULE is None:
+        try:
+            from core.application.chat.intent_funnel.cap_handler.search_scope import (
+                effective_model_slots,
+            )
+        except Exception:
+            import importlib.util
+            path = (REPO / "packages" / "core" / "application" / "chat"
+                    / "intent_funnel" / "cap_handler" / "search_scope.py")
+            spec = importlib.util.spec_from_file_location("pe_search_scope", path)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            effective_model_slots = mod.effective_model_slots
+        _NARROWING_RULE = effective_model_slots
+    return _NARROWING_RULE
+
+
+def _expected_slots(cap: str, query: str) -> list[str]:
+    """The per-sample MODEL-owned slots for this turn — the SAME rule the builder
+    and the runtime handler use (:func:`search_scope.effective_model_slots`). A
+    deterministic ``r/<name>`` scope drops the pinned ``platform``; every other
+    turn keeps the static capability slots."""
+    return list(_narrowing_rule()(cap, query, C.model_slots(cap)))
+
+
+def _check_meta(i: int, cap: str, args: dict, meta: dict) -> None:
+    """The DECLARED-INTENT gate plus metadata-consistency checks.
+
+    A required model slot may be absent from the target IFF it is declared in
+    ``meta.missing_required`` or ``meta.expected_outcome == "clarify"``. Declared
+    metadata must be coherent: every name is a real required slot, no duplicates,
+    and each is actually absent. ``execute`` requires a COMPLETE target and may
+    not declare any missing slot (a contradiction)."""
+    missing = [s for s in C.required_model_slots(cap) if s not in args]
+    req = set(C.required_model_slots(cap))
+    outcome = meta.get("expected_outcome")
+    declared = list(meta.get("missing_required") or [])
+    if outcome not in (None, "execute", "clarify"):
+        raise D.SftDataError(f"row {i} ({cap}): unknown expected_outcome {outcome!r}")
+    if len(declared) != len(set(declared)):
+        raise D.SftDataError(f"row {i} ({cap}): meta.missing_required has duplicates {declared}")
+    for s in declared:
+        if s not in req:
+            raise D.SftDataError(
+                f"row {i} ({cap}): missing_required names non-required slot {s!r}")
+        if s not in missing:
+            raise D.SftDataError(
+                f"row {i} ({cap}): missing_required declares {s!r} but it is present")
+    if outcome != "clarify" and declared:
+        raise D.SftDataError(
+            f"row {i} ({cap}): missing_required declared but expected_outcome={outcome!r}")
+    declared_set = set(declared)
+    if outcome == "clarify":
+        declared_set |= set(missing)
+    undeclared = [s for s in missing if s not in declared_set]
+    if undeclared:
+        raise D.SftDataError(
+            f"row {i} ({cap}): target missing required slot(s) {undeclared} (undeclared)")
+
+
 def _validate_rows(rows: list[dict]) -> None:
     """Every row must be an assistant tool-call turn for a known capability, whose
-    ``function.arguments`` is a JSON object over that capability's model-owned slots
-    and carries every REQUIRED model slot. Shape only — no model call."""
+    ``function.parameters`` is the SAME model face the builder produced (static, or
+    the one legal ``cap-social-search`` narrowing), whose ``function.arguments`` is
+    a JSON object over that sample's model slots with type/length-valid values, and
+    whose required slots are present unless correctly DECLARED missing. Shape only —
+    no model call, no value repair."""
     for i, r in enumerate(rows):
         cap = r.get("capability_id")
         if cap not in C.SCHEMA:
@@ -111,22 +233,44 @@ def _validate_rows(rows: list[dict]) -> None:
         msgs = r.get("messages") or []
         if len(msgs) != 3 or [m.get("role") for m in msgs] != ["system", "user", "assistant"]:
             raise D.SftDataError(f"row {i} ({cap}): messages must be system/user/assistant")
+        query = _extract_query(msgs[1].get("content"))
+        if query is None or not query.strip():
+            raise D.SftDataError(f"row {i} ({cap}): user message has no <user_sentence>")
         tools = r.get("tools") or []
         if len(tools) != 1 or tools[0]["function"]["name"] != cap:
             raise D.SftDataError(f"row {i} ({cap}): tools must pin exactly one function named {cap}")
-        if tools[0]["function"].get("parameters") != C.model_schema(cap):
-            raise D.SftDataError(f"row {i} ({cap}): function.parameters != shared contract")
+        expected_face = C.model_schema(cap, _expected_slots(cap, query))
+        face = tools[0]["function"].get("parameters")
+        if face != expected_face:
+            raise D.SftDataError(
+                f"row {i} ({cap}): function.parameters != the expected model face "
+                f"(static or the one legal social narrowing)")
         calls = msgs[-1].get("tool_calls") or []
         if len(calls) != 1 or calls[0]["function"]["name"] != cap:
             raise D.SftDataError(f"row {i} ({cap}): assistant must carry one tool_call named {cap}")
         args = D.gold_target(r)
-        allowed = set(C.model_slots(cap))
+        if not isinstance(args, dict):
+            raise D.SftDataError(f"row {i} ({cap}): target arguments must be a JSON object")
+        allowed = set(expected_face["properties"])
         extra = set(args) - allowed
         if extra:
             raise D.SftDataError(f"row {i} ({cap}): target has unauthorized slot(s) {sorted(extra)}")
-        missing = [s for s in C.required_model_slots(cap) if s not in args]
-        if missing:
-            raise D.SftDataError(f"row {i} ({cap}): target missing required slot(s) {missing}")
+        if "arguments" in args and "arguments" not in allowed:
+            raise D.SftDataError(f"row {i} ({cap}): nested {{'arguments': ...}} wrapper is forbidden")
+        params = C.SCHEMA[cap]["params"]
+        for slot, val in args.items():
+            spec = params[slot]
+            if spec["type"] == "integer":
+                if not isinstance(val, int) or isinstance(val, bool):
+                    raise D.SftDataError(f"row {i} ({cap}): {slot} must be an integer, got {val!r}")
+            else:
+                if not isinstance(val, str) or not val.strip():
+                    raise D.SftDataError(
+                        f"row {i} ({cap}): {slot} must be a non-empty string, got {val!r}")
+                if spec.get("max_len") and len(val) > spec["max_len"]:
+                    raise D.SftDataError(
+                        f"row {i} ({cap}): {slot} exceeds max_len {spec['max_len']}")
+        _check_meta(i, cap, args, r.get("meta") or {})
 
 
 # ── pure planning helpers (unit-testable, no torch) ───────────────────────────────
