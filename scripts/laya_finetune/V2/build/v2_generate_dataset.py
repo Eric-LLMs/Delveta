@@ -43,8 +43,23 @@ import gzip
 import hashlib
 import json
 import random
+import sys
 from collections import Counter, defaultdict
 from pathlib import Path
+
+_ROOT = Path(__file__).resolve().parents[4]     # <- repo root (build/V2/laya_finetune/scripts)
+for _p in (str(_ROOT), str(_ROOT / "packages")):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+
+# Single source of truth for the REJECT option: the SAME constant production
+# renders into the live choice question (cap_router.card_renderer). The frozen
+# bundle's REJECT card is byte-for-byte this string — pinning the import removes
+# the old duplicated literal so the two faces can never drift again.
+from core.application.chat.intent_funnel.cap_router.card_renderer import (  # noqa: E402
+    REJECT_CARD,
+    REJECT_LABEL,
+)
 
 REPO = Path(__file__).resolve().parents[2]
 OUT = Path(__file__).resolve().parent
@@ -64,16 +79,11 @@ ROW_SEED = "reject-rows-v1"          # per-split row-order shuffle seed prefix
 CALIB_SEED = 20260922                # same seed as the V1 calibration holdout
 CALIB_MAX = 400                      # same cap as V1: min(400, n_train // 10)
 
-# ── REJECT option (ASSUMPTION - single point of change) ──────────────────────
-REJECT_LABEL = "REJECT"
-REJECT_ID = "REJECT"
-REJECT_CARD = (
-    "### REJECT\n"
-    "tool: none\n"
-    "does: No listed capability correctly handles the user's request. Choose this "
-    "option only when none of the other options is the right capability.\n\n"
-    "中文：以上列出的能力都不适用于该请求。只有当其它选项都不是正确的能力时才选它。"
-)
+# ── REJECT option ────────────────────────────────────────────────────────────
+# REJECT_LABEL / REJECT_CARD are IMPORTED from the production renderer (see the
+# top of this file): there is exactly one definition, and the frozen bundle's
+# REJECT card is pinned to it by tests/test_laya_aligned_cards.py.
+REJECT_ID = REJECT_LABEL
 
 
 def sha256_file(path: Path) -> str:

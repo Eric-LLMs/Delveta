@@ -1,0 +1,73 @@
+{
+  "renderer": "cap_router.card_renderer.render_card",
+  "entry_source": "registry.store.list_capabilities (normalized CapabilityEntry)",
+  "generator": "v2_refresh_cards_from_registry.py",
+  "generator_version": 2,
+  "source_commit": "37f0a9195a2a81e118a21a3217e6b153eb07371d",
+  "registry_snapshot": "v2_registry_snapshot.json",
+  "registry_snapshot_sha256": "a3842054c8cf3afbc7ef64ed645255c607df6cc6d668f19772c4f651e2fc0c41",
+  "frozen_bundle": {
+    "dir": "data",
+    "note": "unchanged; cards re-rendered from the live Registry, frozen rows preserved byte-for-byte except `options`"
+  },
+  "drifted_capabilities": [
+    "cap-artifact",
+    "cap-bash",
+    "cap-edit-file",
+    "cap-pdf-extract-text",
+    "cap-pdf-table-to-text",
+    "cap-rag-search",
+    "cap-read-file",
+    "cap-social-search",
+    "cap-translate",
+    "cap-web-search"
+  ],
+  "n_drifted": 10,
+  "drift": {
+    "cap-artifact": {
+      "frozen": "### cap-artifact\ntool: artifact\ndoes: Compile a research artifact into a formally published PDF. Use it when the user explicitly asks to compile, generate, or publish research results as a final PDF artifact. It does not apply to ordinary slide decks, summaries, or mind maps.\n\n中文：将研究成果物编译为正式发布的 PDF。当用户明确要求将研究成果编译、生成或发布为正式 PDF 成果物时适用。普通幻灯片、摘要、思维导图不属于它。\nnegative examples:\n- (none curated)\nparams:\n- type (string, optional)\n- required (string, optional)\n- properties (string, optional)",
+      "live": "### cap-artifact\ntool: artifact\ndoes: Compile a research artifact into a formally published PDF. Use it when the user explicitly asks to compile, generate, or publish research results as a final PDF artifact. It does not apply to ordinary slide decks, summaries, or mind maps.\n\n中文：将研究成果物编译为正式发布的 PDF。当用户明确要求将研究成果编译、生成或发布为正式 PDF 成果物时适用。普通幻灯片、摘要、思维导图不属于它。\nnegative examples:\n- (none curated)\nparams:\n- action (string, required): Which action to run. One of: compile_pdf, status.\n- run_id (string, optional): status: the compile run id; compile_pdf: optional replay id override.\n- project_id (string, optional): compile_pdf: research project whose primary manuscript is compiled."
+    },
+    "cap-rag-search": {
+      "frozen": "### cap-rag-search\ntool: rag_search\ndoes: Search the user's own imported materials or document library. Use it when the user asks to find information in their imported or uploaded materials. It does not apply to public-web search or social-platform search.\n\n中文：在用户自己导入的材料（个人文档库、已上传的资料）里检索内容。当用户要在“我导入的资料／我的资料库”中查找某个问题时适用。搜索公开网络、或搜索社交平台，都不属于它。\nnegative examples:\n- (none curated)\nparams:\n- query (string, required): the search query, exactly as the user words it\n- top_k (integer, optional): optional result count; only when the sentence states one\n- domain (string, optional): optional domain id scope; only when the sentence names one",
+      "live": "### cap-rag-search\ntool: rag_search\ndoes: Search the user's own imported materials or document library. Use it when the user asks to find information in their imported or uploaded materials. It does not apply to public-web search or social-platform search.\n\n中文：在用户自己导入的材料（个人文档库、已上传的资料）里检索内容。当用户要在“我导入的资料／我的资料库”中查找某个问题时适用。搜索公开网络、或搜索社交平台，都不属于它。\nnegative examples:\n- (none curated)\nparams:\n- query (string, required): the user's search TOPIC, extracted from the sentence and kept VERBATIM — do not rewrite, translate, summarize, expand or paraphrase\n- top_k (integer, optional): optional result count; only when the sentence states one\n- domain (string, optional): optional domain NAME to scope the search to (resolved to a real domain id by the tool); only when the sentence names one"
+    },
+    "cap-web-search": {
+      "frozen": "### cap-web-search\ntool: web_search\ndoes: Search the public web for external information, including webpages, reference material, news, and current information. Use it when the user asks to search or look up information on the internet. It does not apply to searching the user's own materials or searches restricted to a specific social platform.\n\n中文：在公开互联网上搜索外部信息，包括网页、资料、新闻和时事。当用户要求上网查找公开网络信息时适用。搜索用户自己的资料或限定在特定社交平台上搜索，不属于它。\nnegative examples:\n- (none curated)\nparams:\n- query (string, required): the search query, exactly as the user words it\n- top_k (integer, optional): optional number of results; only when the sentence states one",
+      "live": "### cap-web-search\ntool: web_search\ndoes: Search the public web for external information, including webpages, reference material, news, and current information. Use it when the user asks to search or look up information on the internet. It does not apply to searching the user's own materials or searches restricted to a specific social platform.\n\n中文：在公开互联网上搜索外部信息，包括网页、资料、新闻和时事。当用户要求上网查找公开网络信息时适用。搜索用户自己的资料或限定在特定社交平台上搜索，不属于它。\nnegative examples:\n- (none curated)\nparams:\n- query (string, required): the user's search TOPIC, extracted from the sentence and kept VERBATIM — do not rewrite, translate, summarize, expand or paraphrase\n- top_k (integer, optional): optional number of results; only when the sentence states one"
+    },
+    "cap-social-search": {
+      "frozen": "### cap-social-search\ntool: search_social\ndoes: Search social platforms such as Reddit for discussions, recommendations, and user opinions. Use it when the user asks what people or online communities are saying on a social platform. It does not apply to general public-web search or searches over the user's own materials.\n\n中文：在 Reddit 等社交平台上搜索大家的讨论、推荐与评价。当用户点名社交平台，或要“社区／论坛里大家怎么说、网友评价”时适用。一般网页搜索、搜索用户自己的资料，都不属于它。\nnegative examples:\n- (none curated)\nparams:\n- limit (integer, optional): optional max results per platform; only when the sentence states one\n- query (string, required): the search query, exactly as the user words it\n- platform (string, optional): optional platform (reddit / x / zhihu / auto); only when the sentence names one\n- subreddit (string, optional): optional reddit-only scope; only when the sentence names one",
+      "live": "### cap-social-search\ntool: search_social\ndoes: Search social platforms such as Reddit for discussions, recommendations, and user opinions. Use it when the user asks what people or online communities are saying on a social platform. It does not apply to general public-web search or searches over the user's own materials.\n\n中文：在 Reddit 等社交平台上搜索大家的讨论、推荐与评价。当用户点名社交平台，或要“社区／论坛里大家怎么说、网友评价”时适用。一般网页搜索、搜索用户自己的资料，都不属于它。\nnegative examples:\n- (none curated)\nparams:\n- limit (integer, optional): optional max results per platform; only when the sentence states one\n- query (string, required): the user's search TOPIC, extracted from the sentence and kept VERBATIM — do not rewrite, translate, summarize, expand or paraphrase\n- platform (string, optional): optional platform (reddit / x / zhihu); only when the sentence names one; OMIT when no specific platform is named\n- subreddit (string, optional): optional reddit-only scope; only when the sentence names one"
+    },
+    "cap-translate": {
+      "frozen": "### cap-translate\ntool: translate\ndoes: Translate provided text from one language into another. Use it when the user explicitly asks to translate text into a different language. It does not apply to summarizing, explaining, or rewriting text in the same language.\n\n中文：把给定文本从一种语言翻译成另一种语言。当用户要求“翻译成某种语言”时适用，附件或引用中的文字同样可以翻译。要求总结、解释或同语言改写的，都不属于它。\nnegative examples:\n- (none curated)\nparams:\n- text (string, required): the text to translate, copied from the sentence",
+      "live": "### cap-translate\ntool: translate\ndoes: Translate provided text from one language into another. Use it when the user explicitly asks to translate text into a different language. It does not apply to summarizing, explaining, or rewriting text in the same language.\n\n中文：把给定文本从一种语言翻译成另一种语言。当用户要求“翻译成某种语言”时适用，附件或引用中的文字同样可以翻译。要求总结、解释或同语言改写的，都不属于它。\nnegative examples:\n- (none curated)\nparams:\n- text (string, required): the text to translate, copied from the sentence\n- target_language (string, optional): optional target language name (e.g. \"English\", \"Chinese\"); omitted -> executor default (English)"
+    },
+    "cap-edit-file": {
+      "frozen": "### cap-edit-file\ntool: edit_file\ndoes: Modify the contents of an existing workspace-local file. Use it when the user asks to change, replace, update, or write content in an existing file. It does not apply to only reading a file, creating a folder, or adding a term to a vocabulary domain.\n\n中文：修改工作区里某个已存在文件的内容——替换其中一段文字，或写入新内容。当用户要求“改动／更新／替换某个文件里的内容”时适用。只读取文件、新建文件夹、把词存进词汇库，都不属于它。\nnegative examples:\n- (none curated)\nparams:\n- type (string, optional)\n- required (string, optional)\n- properties (string, optional)",
+      "live": "### cap-edit-file\ntool: edit_file\ndoes: Modify the contents of an existing workspace-local file. Use it when the user asks to change, replace, update, or write content in an existing file. It does not apply to only reading a file, creating a folder, or adding a term to a vocabulary domain.\n\n中文：修改工作区里某个已存在文件的内容——替换其中一段文字，或写入新内容。当用户要求“改动／更新／替换某个文件里的内容”时适用。只读取文件、新建文件夹、把词存进词汇库，都不属于它。\nnegative examples:\n- (none curated)\nparams:\n- path (string, required): Workspace-relative file path, or a drive path \"My Drive/<path>\".\n- new_text (string, optional): Replacement / new file content.\n- old_text (string, optional): Exact text to replace (optional)."
+    },
+    "cap-read-file": {
+      "frozen": "### cap-read-file\ntool: read_file\ndoes: Read the contents of an existing workspace-local file by path. Use it when the user asks to read or open a file in the workspace. It does not apply to attachments or viewer documents, or to image analysis.\n\n中文：按工作区中的路径读取某个工作区文件的正文。当用户要“读取／打开某个工作区里的文件”时适用。当前附件或阅读器中的文档、以及图片，都不属于它。\nnegative examples:\n- (none curated)\nparams:\n- type (string, optional)\n- required (string, optional)\n- properties (string, optional)",
+      "live": "### cap-read-file\ntool: read_file\ndoes: Read the contents of an existing file from the workspace or My Drive using its path. It does not apply to attachments or viewer documents, or to image analysis.\nnegative examples:\n- (none curated)\nparams:\n- path (string, required): Workspace-relative file path, or a drive path \"My Drive/<path>\".\n- max_chars (integer, optional): Optional read cap."
+    },
+    "cap-pdf-extract-text": {
+      "frozen": "### cap-pdf-extract-text\ntool: pdf_extract_text\ndoes: Extract the complete raw text from an attached or resolved document. Use it when the user asks to extract or export the document's full text. It does not apply to extracting only tables or to reading and understanding the document for question answering.\n\n中文：提取附件/已解析文档的完整原始文字内容。当用户要求提取全文或导出文档原始文字时适用。只转换表格的应交给表格转换；要求理解、阅读并据此回答问题的，不属于它。\nnegative examples:\n- (none curated)\nparams:\n- asset_id (string, required, max_len=64): asset id of the attached/opened document (from turn facts, not the sentence)",
+      "live": "### cap-pdf-extract-text\ntool: pdf_extract_text\ndoes: Extract the complete raw text from an attached or resolved document. Use it when the user asks to extract or export the document's full text. It does not apply to extracting only tables or to reading and understanding the document for question answering.\n\n中文：提取附件/已解析文档的完整原始文字内容。当用户要求提取全文或导出文档原始文字时适用。只转换表格的应交给表格转换；要求理解、阅读并据此回答问题的，不属于它。\nnegative examples:\n- (none curated)\nparams:\n- pages (string, optional): optional page spec like \"2\" or \"1-3\" from the viewer context; omitted = whole document\n- asset_id (string, required, max_len=64): asset id of the attached/opened document (from turn facts, not the sentence)"
+    },
+    "cap-pdf-table-to-text": {
+      "frozen": "### cap-pdf-table-to-text\ntool: pdf_table_to_text\ndoes: Convert tables inside an attached PDF into text while preserving their row and column structure. Use it when the user explicitly asks to convert PDF tables to text or CSV. It does not apply to extracting the full document text.\n\n中文：只把附件 PDF 里的表格转换为文字，并保留行列结构。当用户明确要求“把这份 PDF 里的表格转成文字／CSV”时适用。提取整份文档的全文不属于它。\nnegative examples:\n- (none curated)\nparams:\n- asset_id (string, required, max_len=64): asset id of the attached/opened document (from turn facts, not the sentence)",
+      "live": "### cap-pdf-table-to-text\ntool: pdf_table_to_text\ndoes: Convert tables inside an attached PDF into text while preserving their row and column structure. Use it when the user explicitly asks to convert PDF tables to text or CSV. It does not apply to extracting the full document text.\n\n中文：只把附件 PDF 里的表格转换为文字，并保留行列结构。当用户明确要求“把这份 PDF 里的表格转成文字／CSV”时适用。提取整份文档的全文不属于它。\nnegative examples:\n- (none curated)\nparams:\n- pages (string, optional): optional page spec like \"2\" or \"1-3\" from the viewer context; omitted = whole document\n- asset_id (string, required, max_len=64): asset id of the attached/opened document (from turn facts, not the sentence)"
+    },
+    "cap-bash": {
+      "frozen": "### cap-bash\ntool: bash\ndoes: Execute a command or script in the workspace sandbox. Use it when the user explicitly asks to run or execute a command or script. It does not apply when the user only wants to read a file or edit file contents.\n\n中文：在工作区沙箱中执行用户明确要求运行的命令或脚本。当用户要求“运行／执行某条命令或脚本”时适用。只想读取文件、或只想修改文件内容而没有要求执行命令的，都不属于它。\nnegative examples:\n- (none curated)\nparams:\n- type (string, optional)\n- required (string, optional)\n- properties (string, optional)",
+      "live": "### cap-bash\ntool: bash\ndoes: Execute a command or script in the workspace sandbox. Use it when the user explicitly asks to run or execute a command or script. It does not apply when the user only wants to read a file or edit file contents.\n\n中文：在工作区沙箱中执行用户明确要求运行的命令或脚本。当用户要求“运行／执行某条命令或脚本”时适用。只想读取文件、或只想修改文件内容而没有要求执行命令的，都不属于它。\nnegative examples:\n- (none curated)\nparams:\n- command (string, required): The shell command to run.\n- timeout (integer, optional): Timeout in seconds."
+    }
+  },
+  "aligned_files": {
+    "v2_train.aligned.jsonl": "ff05ad452d0fc6815888ad1bc67efc9040aa8b9f2e4ed5b8e1b5dc8d3d8728df",
+    "v2_val.aligned.jsonl": "22f5ad2f32f483769fd844cb513382edb9fe8951b54d4654b978ddd5bcdac7de",
+    "v2_test.aligned.jsonl": "1ff2ba1e2d387b318054a63211f65ae198e019288e583612a57e8585fa4d4736"
+  }
+}
