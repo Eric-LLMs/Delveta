@@ -13,13 +13,12 @@ from dataclasses import dataclass
 
 from .contract import Candidate
 
-# The candidate contract the SELECTION node is defined over (§26.2): the model
-# was trained and benchmarked at K = 3 capability cards, so the business layer
-# hands it at most this many — it is NOT a model-side limit. The selector is
-# consulted ONLY at exactly K = 3 (3 cards + the frozen REJECT card = the 4
-# option slots the model expects); K = 2 is V2-ineligible at the ORCHESTRATION
-# layer (orchestrator.py gates on ``len(norm.candidates) < 3``) and degrades to
-# the Agent. See normalize_top_k below + §25.6/§26.2.
+# The top-k cap the business layer applies to the candidate list before it
+# reaches the SELECTION node: the selector is defined over a VARIABLE-length
+# candidate set, and when more than this many capabilities survive the gate the
+# business layer hands it only the top-k (highest score). This is NOT a
+# model-side limit and NOT a routing threshold — it is a list-length cap only.
+# See normalize_top_k below + §26.2.
 K_DEFAULT = 3
 
 
@@ -28,22 +27,15 @@ class NormalizedCandidates:
     """The outcome of the business-layer K normalization (§26.2).
 
     ``candidates`` is the list the selector may see: at most ``k``, highest score
-    first (the caller sorts by score before normalizing). ``direct`` is set ONLY
-    for K = 1 — the business layer executes that single capability itself and the
-    selector (stub or cap_router) is never consulted. K = 0 yields an empty list
-    with ``direct`` None; the caller has already short-circuited an empty
-    candidate set before reaching normalization. This dataclass carries the
-    PURE-function result only: the ORCHESTRATION layer independently refuses to
-    consult the selector at K = 2 (V2-ineligible — the selector needs exactly 3
-    cards + REJECT and a 2-card payload is never padded up).
+    first (the caller sorts by score before normalizing). There is no "direct"
+    outcome: EVERY K >= 1 candidate set — K = 1 and K = 2 included — is handed to
+    the selector, so the business layer never selects a capability on the model's
+    behalf and no confidence is fabricated. K = 0 yields an empty list; the
+    caller has already short-circuited an empty candidate set before reaching
+    normalization.
     """
 
     candidates: tuple[Candidate, ...] = ()
-    direct: Candidate | None = None
-
-    @property
-    def is_direct(self) -> bool:
-        return self.direct is not None
 
 
 def normalize_top_k(candidates: list[Candidate], k: int = K_DEFAULT) -> NormalizedCandidates:
@@ -54,24 +46,17 @@ def normalize_top_k(candidates: list[Candidate], k: int = K_DEFAULT) -> Normaliz
     maps:
 
     * ``K = 0`` — nothing to select (caller short-circuits on the empty set);
-    * ``K = 1`` — the business layer executes it directly; the selector is never
-      called, so no model is consulted and no confidence is fabricated;
-    * ``K = 2`` — this function returns the 2 candidates, but the ORCHESTRATION
-      layer does NOT consult the selector here: the deployed selector is defined
-      over exactly 3 capability cards (+ the frozen REJECT card = 4 slots), so a
-      2-card payload is V2-ineligible and the turn degrades to the Agent. K = 2
-      is a degradation metric — never padded with a fake card;
-    * ``K = 3..k`` — the whole list goes to the selector;
+    * ``K = 1..k`` — the WHOLE list goes to the selector (K = 1 and K = 2 are
+      ordinary candidate sets, not business-layer special cases);
     * ``K >= k+1`` — only the top-``k`` (highest score) go to the selector.
 
-    The model's decision head therefore only ever sees at most ``k`` options —
-    and, on the deployed lane, exactly ``k`` = 3.
+    The selector is therefore consulted for EVERY non-empty candidate set, over a
+    variable-length option list of ``len(candidates)`` cards plus the frozen
+    REJECT card appended by the card renderer.
     """
     ordered = list(candidates)
     if not ordered:
         return NormalizedCandidates()
-    if len(ordered) == 1:
-        return NormalizedCandidates(direct=ordered[0])
     return NormalizedCandidates(candidates=tuple(ordered[:k]))
 
 

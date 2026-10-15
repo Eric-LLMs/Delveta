@@ -32,11 +32,12 @@ from ..tool_intent.prompt import _MAX_NEGATIVE_EXAMPLES, _params_block
 # model's input distribution, so it is pinned here verbatim.
 INSTRUCTIONS = "Which capability should handle the user's request?"
 
-# The frozen REJECT option (V2 4-slot contract): the 4th criterion the model may
-# answer with. It is byte-for-byte the card the V2 dataset was built and
+# The frozen REJECT option: the criterion the model answers with when no listed
+# capability fits. It is byte-for-byte the card the V2 dataset was built and
 # benchmarked under (scripts/laya_finetune/V2/build/v2_generate_dataset.py
 # -> REJECT_CARD); adding anything to it would take the model out of
-# distribution. REJECT is a NORMAL 4th decision, not a threshold or a fallback.
+# distribution. REJECT is a NORMAL decision, not a threshold or a fallback, and
+# it is appended AFTER however many capability cards the candidate set carries.
 REJECT_LABEL = "REJECT"
 REJECT_CARD = (
     "### REJECT\n"
@@ -66,12 +67,14 @@ def render_card(entry) -> str:
 def render_choice_question(candidates, entries_by_id: dict) -> dict:
     """The ONE choice question for a candidate set: ``criteria`` maps each
     capability_id (the option label the model answers with) to its ``B_noprov``
-    card, with the frozen REJECT card appended as the LAST criterion (the V2
-    4-slot contract). Candidates the active table no longer honors are skipped —
-    the model can only ever choose a capability it was shown.
+    card, with the frozen REJECT card appended as the LAST criterion. Candidates
+    the active table no longer honors are skipped — the model can only ever
+    choose a capability it was shown.
 
-    The caller gates this on a 3-capability candidate set, so a V2-eligible
-    question always carries exactly four options (Cap1+Cap2+Cap3+REJECT)."""
+    The option list is VARIABLE-length: the business layer hands over however
+    many capabilities survive the gate (K = 1, 2, 3, ...), and this renderer
+    appends exactly one REJECT card, so an N-capability question carries N + 1
+    options."""
     criteria: dict[str, str] = {}
     for cand in candidates:
         entry = entries_by_id.get(cand.capability_id)

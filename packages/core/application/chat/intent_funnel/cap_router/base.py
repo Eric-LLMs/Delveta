@@ -34,18 +34,18 @@ BACKENDS = (BACKEND_OFF, BACKEND_STUB, BACKEND_CAP_ROUTER)
 
 ROUTE_SELECTED = "SELECTED"
 ROUTE_NONE = "NONE"
-# REJECT is a NORMAL 4th decision (the V2 4-slot contract: 3 capability + REJECT),
-# never a threshold or a fallback placeholder. It routes to the system's REAL
-# no-capability path (Agent), not to a fake tool / the argument chain.
+# REJECT is a NORMAL decision, never a threshold or a fallback placeholder. It
+# routes to the system's REAL no-capability path (Agent), not to a fake tool /
+# the argument chain. The option list is variable-length — REJECT is appended
+# after however many capability cards the business layer handed over.
 ROUTE_REJECT = "REJECT"
 
 
 @dataclass(frozen=True)
 class CapabilityRoute:
     """cap_router's single output: the ONE capability the turn dispatches, NONE,
-    or REJECT (the 4th V2 decision). ``provenance`` is a candidate-side note
-    (which card won and why) for telemetry only — it carries no execution
-    authority."""
+    or REJECT. ``provenance`` is a candidate-side note (which card won and why)
+    for telemetry only — it carries no execution authority."""
 
     decision: str = ROUTE_NONE
     capability_id: str | None = None

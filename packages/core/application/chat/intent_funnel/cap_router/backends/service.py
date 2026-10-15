@@ -13,10 +13,12 @@ question -> a localhost HTTP call -> the model's chosen label -> a
 business layer's K rule, §26.2), does NOT apply any NONE threshold, does NOT
 extract arguments, and never touches the Binder, the Registry or a tool.
 
-4-slot contract (V2): the model answers one of four labels — three capability
-ids or the frozen REJECT label. A capability label becomes
-``ROUTE_SELECTED``; the REJECT label becomes ``ROUTE_REJECT`` (a NORMAL 4th
-decision routing to the real Agent path, never a threshold/fallback).
+Variable-length option contract: the business layer hands over however many
+capabilities survive the gate (K >= 1), the renderer appends one frozen REJECT
+label, and the model answers one of the resulting N + 1 labels — any shown
+capability id or the frozen REJECT label. A capability label becomes
+``ROUTE_SELECTED``; the REJECT label becomes ``ROUTE_REJECT`` (a NORMAL decision
+routing to the real Agent path, never a threshold/fallback).
 
 Failure contract (ruling): a missing endpoint, a timeout, a transport
 error, a malformed/unexpected reply, a missing answer, a non-choice answer, or a

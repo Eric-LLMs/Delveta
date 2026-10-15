@@ -7,7 +7,8 @@ model-agnostic). This module pins the client side of that seam:
 * the card renderer reproduces the FROZEN ``B_noprov`` bytes byte-for-byte (the
   golden anchor is the shipped test bundle), and carries NO query examples,
   NO provenance/``evidence:`` line, NO ``matched_example:`` line;
-* the frozen REJECT card rides as the 4th criterion (the V2 4-slot contract);
+* the frozen REJECT card rides as the LAST criterion after however many
+  capability cards the candidate set carries (variable-length option list);
 * a valid capability choice becomes ``ROUTE_SELECTED`` with the model's
   probability; the REJECT label becomes ``ROUTE_REJECT``;
 * EVERY other outcome — no endpoint, timeout, transport error, HTTP status,
@@ -205,7 +206,7 @@ async def test_valid_choice_selects_with_the_model_probability(monkeypatch):
     assert client.seen["url"] == URL + "/v1/systemone"
     q = client.seen["payload"]["questions"][QID]
     assert q["type"] == "choice" and q["instructions"] == INSTRUCTIONS
-    # the candidate with a card + the frozen REJECT card (the 4-slot contract)
+    # the shown candidate with a card + the frozen REJECT card (N cards + REJECT)
     assert set(q["criteria"]) == {"cap-a", REJECT_LABEL}
     assert q["criteria"][REJECT_LABEL] == REJECT_CARD
     assert client.seen["payload"]["state"] == "q"

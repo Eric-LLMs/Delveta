@@ -49,7 +49,6 @@ from .contract import (
     REASON_BIND_AMBIGUOUS,
     REASON_BIND_INVALID,
     REASON_BIND_MISSING,
-    REASON_CAP_ROUTER_INELIGIBLE,
     REASON_CAP_ROUTER_NONE,
     REASON_CAP_ROUTER_REJECT,
     REASON_CAP_ROUTER_UNAVAILABLE,
@@ -328,68 +327,59 @@ async def run_nodes(ctx, deps, requirements, trace, *,
             trace["fallback"] = REASON_CAP_ROUTER_UNAVAILABLE
             return None
         # Business-layer K normalization (§26.2) — the SAME rule for every
-        # backend: the selector only ever sees a list of at most K candidates, and
-        # a K=1 turn is executed by the business layer directly (the selector is
-        # never consulted, so no model is called and no confidence is invented).
-        # Applied AFTER the backend is resolved, so an unknown backend can never
-        # be laundered into a K=1 direct selection. backend=off never reaches here.
+        # backend: the selector only ever sees a list of at most K candidates.
+        # There is NO K=1 direct path and NO K=2 ineligibility: EVERY non-empty
+        # candidate set (K >= 1) is handed to the selector, which may SELECT one
+        # of the shown cards or legitimately REJECT; the business layer never
+        # selects a capability on the model's behalf and never fabricates a
+        # confidence. Applied AFTER the backend is resolved, so an unknown
+        # backend can never be laundered into a direct selection. backend=off
+        # never reaches here.
+        raw_k = len(cands)
         norm = candidate_aggregation.normalize_top_k(cands)
-        # V2 4-slot HARD invariant accounting: the true slot count the model is
-        # (or would be) handed — capability cards + the frozen REJECT card. Only
-        # a 3-capability candidate set is V2-eligible (3 + REJECT = 4 slots).
-        # K=1 is business-direct (0 slots handed over); K=2 is V2-INELIGIBLE and
-        # must NEVER be padded with a fake 3rd capability nor sent as a 3-slot
-        # payload. K<3 is a degradation metric only — the frozen V2 training
-        # distribution is never touched.
-        option_slots = 0 if norm.direct is not None else len(norm.candidates) + 1
-        v2_ineligible_reason = None
-        if norm.direct is not None:
-            v2_ineligible_reason = "K=1"
-        elif len(norm.candidates) < 3:
-            v2_ineligible_reason = "K<3"
+        effective_k = len(norm.candidates)
+        # Variable-length option accounting: the model is handed ``effective_k``
+        # capability cards plus the frozen REJECT card appended by the card
+        # renderer. The selector is consulted for EVERY K >= 1; there is no
+        # special-cased slot count.
+        option_slots = effective_k + 1
+        trace["raw_k"] = raw_k
+        trace["post_gate_k"] = raw_k
+        trace["effective_k"] = effective_k
         trace["option_slots"] = option_slots
-        if v2_ineligible_reason is not None:
-            trace["v2_ineligible_reason"] = v2_ineligible_reason
-        if norm.direct is not None:
-            route = cap_router.CapabilityRoute(
-                cap_router.ROUTE_SELECTED, norm.direct.capability_id,
-                provenance="K=1 business-layer direct selection")
-        else:
-            if len(norm.candidates) < 3:
-                # V2-INELIGIBLE degradation: exit to the Agent via the same
-                # fail-open path an unavailable service uses. No model call, no
-                # fabricated card — the turn is recorded as degraded, not served.
-                if capture is not None:
-                    capture["cap_router"] = {
-                        "decision": None, "capability_id": None, "confidence": None,
-                        "provenance": "", "option_slots": option_slots,
-                        "v2_ineligible_reason": v2_ineligible_reason,
-                    }
-                trace["cap_router"] = f"INELIGIBLE:{len(norm.candidates)}"
-                trace["fallback"] = REASON_CAP_ROUTER_INELIGIBLE
-                return None
-            try:
-                _t_select = time.monotonic()
-                route = await selector.select(message, list(norm.candidates),
-                                              entries_by_id=entries_by_id, facts=facts)
-                _mark(capture, "selection_ms", _t_select)
-            except cap_router.CapabilityRouterUnavailable:
-                # ruling: a selector that cannot serve exits to the
-                # Agent; selection NEVER falls back to another model (the metric
-                # would be polluted).
-                trace["fallback"] = REASON_CAP_ROUTER_UNAVAILABLE
-                return None
+        if capture is not None:
+            # K telemetry recorded BEFORE the selector call, so a turn that
+            # times out or finds the service unavailable still exposes exactly
+            # what it was handed (raw/effective K, option slots). Overwritten
+            # below with the decision once the selector returns.
+            capture["cap_router"] = {
+                "decision": None, "capability_id": None, "confidence": None,
+                "provenance": "", "raw_k": raw_k, "post_gate_k": raw_k,
+                "effective_k": effective_k, "option_slots": option_slots,
+            }
+        try:
+            _t_select = time.monotonic()
+            route = await selector.select(message, list(norm.candidates),
+                                          entries_by_id=entries_by_id, facts=facts)
+            _mark(capture, "selection_ms", _t_select)
+        except cap_router.CapabilityRouterUnavailable:
+            # ruling: a selector that cannot serve exits to the
+            # Agent; selection NEVER falls back to another model (the metric
+            # would be polluted).
+            trace["fallback"] = REASON_CAP_ROUTER_UNAVAILABLE
+            return None
         trace["cap_router"] = f"{route.decision}:{route.capability_id or '-'}"
         if capture is not None:
             capture["cap_router"] = {
                 "decision": route.decision, "capability_id": route.capability_id,
                 "confidence": route.confidence, "provenance": route.provenance,
-                "option_slots": option_slots, "v2_ineligible_reason": v2_ineligible_reason,
+                "raw_k": raw_k, "post_gate_k": raw_k, "effective_k": effective_k,
+                "option_slots": option_slots,
             }
         if not route.selected:
-            # REJECT is the NORMAL 4th decision → the system's REAL no-capability
-            # path (Agent). NONE is a separate, distinct outcome. Neither ever
-            # enters the argument chain.
+            # REJECT is a NORMAL decision → the system's REAL no-capability path
+            # (Agent). NONE is a separate, distinct outcome. Neither ever enters
+            # the argument chain.
             trace["fallback"] = (REASON_CAP_ROUTER_REJECT if route.rejected
                                  else REASON_CAP_ROUTER_NONE)
             return None

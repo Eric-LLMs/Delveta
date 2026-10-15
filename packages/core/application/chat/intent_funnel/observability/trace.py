@@ -19,7 +19,7 @@ def trace_json(capture: dict | None, ctx) -> dict | None:
     what it decided, rebuilt from the capture seam. None = capture off.
 
     ``cap_router`` carries the selection decision (decision / capability_id /
-    confidence / option_slots / v2_ineligible_reason) and ``acquisition`` the
+    confidence / raw_k / effective_k / option_slots) and ``acquisition`` the
     Argument Path Router's outcome (declared / strategy / model_slots /
     system_slots / bundle_source / readiness). ``timings`` carries the
     per-stage milliseconds the funnel measured. The row shape is a JSONB blob,

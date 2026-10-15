@@ -113,13 +113,13 @@ REASON_CAP_ROUTER_TIMEOUT = "CAP_ROUTER_TIMEOUT"           # selector exceeded t
 # answered the frozen REJECT label, so the turn routes to the system's REAL
 # no-capability path (Agent) — never a fake tool, never the argument chain.
 REASON_CAP_ROUTER_REJECT = "CAP_ROUTER_REJECT"             # selector answered REJECT
-# The V2 4-slot contract is a HARD invariant: the selector may only be called on
-# exactly 3 capability candidates (+REJECT = 4 slots). A K<3 turn is V2-
-# INELIGIBLE (never padded with a fake 3rd capability, never sent as a 3-slot
-# payload); it is a DEGRADATION only and exits to the Agent like an unavailable
-# service. Distinct from UNAVAILABLE: this is a business-layer eligibility rule,
-# not a service fault, so the two must never be conflated in the loss ladder.
-REASON_CAP_ROUTER_INELIGIBLE = "CAP_ROUTER_INELIGIBLE"     # K<3: V2 not eligible
+# RETIRED (§26.2 same-rule ruling): the selector is now defined over a
+# VARIABLE-length candidate set, so there is no K<3 ineligibility — every K >= 1
+# candidate set is handed to the selector. This reason code is no longer emitted
+# by the runtime; it is retained only so offline tooling that reads historical
+# capture traces can still name the retired outcome, and must NEVER be emitted on
+# a live turn.
+REASON_CAP_ROUTER_INELIGIBLE = "CAP_ROUTER_INELIGIBLE"     # retired: no K<3 gate
 # Phase 4 argument-acquisition lane — the Argument Path Router's
 # downward exits on the new lane (backend=stub|cap_router). Kept DISTINCT from
 # the Binder's BIND_* codes: the node that produced these is the ARP, not the Binder.

@@ -184,8 +184,9 @@ async def test_hidden_recall_hit_never_enters_the_candidate_pool(monkeypatch, ca
     out = await _route(_ctx(), req)
 
     assert rec.aggregated_ids == [{"cap-a"}]          # cap-bash dropped pre-aggregation
-    # cap-a (K=1, business-direct) → ARP needs its MODEL slot → Agent, NOT a
-    # VERSION_MISMATCH from selecting the hidden cap-bash.
+    # cap-a (K=1) → the selector (stub) selects the single trusted card → ARP
+    # needs its MODEL slot → Agent, NOT a VERSION_MISMATCH from selecting the
+    # hidden cap-bash.
     assert out is req and _fallback(caplog) == REASON_ACQUISITION_MODEL_PENDING
 
 
