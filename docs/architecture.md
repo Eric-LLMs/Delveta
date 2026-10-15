@@ -47,6 +47,7 @@
   - [12.4 Business logic — per-user LLM-key assignment & the disable (Tokens module)](#124-business-logic--per-user-llm-key-assignment--the-disable-tokens-module)
   - [12.5 Session & message deletion](#125-session--message-deletion)
   - [12.6 LLM Dispatch Gateway — one funnel, shell workers, Job-level fail-fast](#126-llm-dispatch-gateway--one-funnel-shell-workers-job-level-fail-fast)
+  - [12.7 Chat attachments — `scope='chat'`, the `chat_attachments` authority, and GC](#127-chat-attachments--scopechat-the-chat_attachments-authority-and-gc)
 - [13. Multi-Tenancy and Deployment Strategy](#13-multi-tenancy-and-deployment-strategy)
 - [14. Cloud Drive Module](#14-cloud-drive-module)
   - [14.1 Database](#141-database)
@@ -164,12 +165,12 @@
 | Edge gateway | **Traefik** as the single public entrypoint: `:80` strips `/api` onto the host-run FastAPI and also fronts the web console (`/admin` + `/audio` `/images` `/avatars` static mounts); retrieval gRPC rides its own entryPoint (`:15052` → `h2c://retrieval:50051`); the host API is reached by **explicit IPv4** (`192.168.65.254:8300` — `host.docker.internal` also yields a ULA IPv6 the host never answers, which hangs Go's dialer); file-provider config in `deploy/traefik/`, LAN-IP published — [§13](#13-multi-tenancy-and-deployment-strategy) |
 | Async enrichment | gateway + arq worker split; `jobs` table is the source of truth; frontend polls `GET /jobs/{id}`; daily `session_events` retention cron in `WorkerSettings.cron_jobs`; `run_agent_turn` job reuses the shared `AgentKernel` composition (`apps/api/agent_factory.py`) for scheduled background turns; `toolkit_generate` runs the 5-stage toolkit pipeline (file mode → workspace output; session / cloud-file modes → caller's Cloud Drive, with a custom `prompt` + `name`) |
 | Session memory | PG-backed `sessions` / `messages` / `session_events`; **client Live State (summary + tail) is the normal-turn context source — zero SQL reads on hot turns**; threshold compaction folds raw rows into one 5-section structured summary behind a dual persistence barrier (`sessions.compaction` JSONB = durable checkpoint, revision CAS); per-session async write queue (one batch INSERT/turn); deferred finalize = incremental embed + first-time-only sidebar summary/title; trigger-gated proactive recall (Lane-1 brief always on) + RRF recency weighting + importance-weighted file recall + supersede-in-place user directives + 30-day audit-event retention — see [§22](#22-chat-session-memory-v2--client-live-state-authority--zero-read-turns) |
-| Migrations | single canonical init script `migrations/0001_init.sql` (final schema + reference seeds) applied once by the asyncpg runner (replaces Alembic); dev-time incremental migrations deliberately squashed |
+| Migrations | the asyncpg runner (`init_db()`) applies **every** `migrations/*.sql` in sorted order — one transaction per file, each stem recorded in `schema_migrations` (replaces Alembic); `0001_init.sql` is the base install and the rest are `IF NOT EXISTS`-guarded deltas, incl. the Chat Assets migration `0024_chat_assets.sql` (§12.7) |
 | Chat | agent loop with tool use, SSE streaming; over a pure control plane — `TurnOrchestrator` resolves every turn to one `ExecutionPlan` (DIRECT / VIEWER / LOCAL_RAG / ACTION / COMPOSITE / AGENT): the L0 lexical pass, then the nodeized **Intent Funnel** chain over the LIVE capability Registry — Matcher → Recall → Capability Aggregation → `cap_router` selection (`SELECTED` / `REJECT` / `NONE`) → Argument Acquisition → Binder (§25–§28); a non-selected turn (REJECT / NONE / K<3) falls open to the Agent — then policy mapping. Single formal path (ruling): the funnel chain is always-live and a certified ACTION turn dispatches on certification alone; the four experimental L0 lanes each ride their own lane switch (all default-off, dark); every fallback is byte-identical to the Agent — [§24](#24-chat-control-plane--plan-resolution-fast-paths--intent-routing), [§25](#25-chat-intent-funnel--nodeized-routing-toolintentmodel--shared-tool-runtime) |
 | Viewer context | chat answers about the **open viewer**: focus chip (file · page / playhead), ±20 s media-time subtitle window with video-only FOCUS / FULL / NONE classification and honest `too_large` / `unavailable` short-circuit, pinned selections / ROI / frames as explicit P0 context (image blocks carry the captured asset's id and ship a REQUIRED `vision` directive), clickable `[Vn]` citations; **documents are never intent-matched server-side** — every followed document reaches the model as a trusted **Viewer Access Context** stub routing it to `read_document` by asset id, with the page window settled **upstream** from the viewer context (the model never passes `pages`; `pages` spec, ACL-before-storage, ≤16 pages) and a post-turn `viewer.reads` trace incl. failed calls — zero changes to RAG / agent runtime / memory ([§23](#23-viewer-context-provider--the-open-document-as-reference-context), features.md *Desktop Workbench*) |
 | Research OS | tasks created atomically from the desktop chat (**＋ Research**): a cloud task folder under a picked My Drive parent — `materials/` / `outputs/` / `temp/` all guaranteed at creation — with live `task_spec.json` / `session_history.json` mirrors over authoritative scratch state; session isolation (research sessions bound 1:1 to a task, DB-marked `sessions.type=1`, hidden from the Sessions sidebar); 409-guarded cascade delete (RUNNING / RAG-INDEXED blocked, cloud folder → Trash, scratch hard-removed, bound type-1 sessions deleted); **server-owned runs** (`begin_run`/`end_run` mutex with stale-window crash recovery — a client disconnect no longer cancels a research turn) with `is_running` surfaced in every task view; `POST /research/tasks` + `GET/DELETE /research/tasks/{id}` + artifact read/promote API; **deterministic execution engine** — Python owns control flow through a 10-stage contract pipeline (`DISCOVER → FRAME → EVIDENCE → DESIGN → EXECUTE → EXPLAIN → WRITE → REVIEW → REPRODUCE → PUBLISH`) with repair-once bounded attempts, per-stage declared LLM call budgets + run-level turn/cost/no-progress caps, and guard gates at the transition fence: **strict** mode (default) parks a failed gate on a PENDING human override with zero rework on resume, lenient mode records it and continues; structural violations halt terminally (`BLOCKED`); lease-based crash recovery makes interrupted runs resumable; publication finality is the `PROMOTED` record (report + compiled PDF, optional slides via toolkit); desktop Research tab + two-layer chat header; web console read-only mirror — see [§17](#17-research-os-module), [§20](#20-research-execution-from-agent-driven-control-flow-to-a-deterministic-pipeline) |
 | Workflow core (`packages/workflow`) | domain-free run engine behind Research OS: declarative `workflow_spec` (transitions / activities / cap dimensions / hooks) + state machine with lease contest, crash recovery, retry, loop-cap grading and definition-drift detection; adapter pattern (ports + ledger/lease persistence supplied by the plugin) — [§19](#19-workflow-core-packagesworkflow) |
-| Image handling | two image classes: chat screenshots (📷 region-select capture → `chat/temp/` upload → `messages.attach_asset_id` owned link → inline bubble thumbnails → folder-agnostic cascade delete — the `chat/temp/` copy dies with its chat; RAG import **copies** it to `RAG/images/` keeping a separate stable copy that survives the delete) and RAG document images (PDF/DOCX/PPTX package scans and `.doc` magic-header recovery → `RAG 图片/<doc>/` via `assets.source_asset_id` + content-hash dedup, page/para state machine → chunk `meta.image_ids`, cascade delete/purge/restore with the source); attached screenshots are **inlined as a multimodal image part** when the routed chat model is vision-capable, otherwise the `vision` tool reads any attached asset by id — see [§18](#18-image-handling-screenshots--document-images) |
+| Image handling | two image classes: chat screenshots (📷 region-select capture → `scope='chat'` asset via `POST /sessions/attachments` → owned `chat_attachments` link → inline bubble thumbnails → logical delete + hourly GC — the chat copy dies with its chat; RAG import **copies** it to `RAG/images/` as a separate stable copy that survives the delete) and RAG document images (PDF/DOCX/PPTX package scans and `.doc` magic-header recovery → `RAG 图片/<doc>/` via `assets.source_asset_id` + content-hash dedup, page/para state machine → chunk `meta.image_ids`, cascade delete/purge/restore with the source); attached screenshots are **inlined as a multimodal image part** when the routed chat model is vision-capable, otherwise the `vision` tool reads any attached asset by id — see [§18](#18-image-handling-screenshots--document-images) |
 | Auth / RBAC | opaque `login_tokens` login credentials (hashed `dd_` user + Tokens-page API tokens; **admin console login is stateless** — signed `cc_` session token, never persisted) + `access_tokens` per-user LLM-key grants + `user_roles` (regular/pro/vip/admin/anonymous) + role quota + `/auth/*` login + **self-service accounts** (`/auth/register` with an email-verification gate, `/auth/forgot-password` + `/auth/reset-password`, editable `/auth/me` profile with avatar upload). Auth endpoints are Redis **rate-limited per client IP** (login/register/recovery, fixed window, fail-open); `enforce_secure_secrets` fails fast at startup when the legacy `JWT_SECRET` default is untouched |
 | Per-role LLM channels | `role_credentials` (role ↔ `llm_credentials` N:M); login pins a random active channel to the token, chat routes through it with failover. The Tokens page disables a user's access to a key per (user, channel); a user with no usable key degrades to the anonymous tier (guest quota) instead of losing login. **Guest access**: anonymous chat rides the `anonymous` role's channels with a per-day Redis limit (`guest_daily_limit`), 429 → prompt login — [§12.4](#124-business-logic--per-user-llm-key-assignment--the-disable-tokens-module) |
 | Admin console | single-file SPA at `/admin` with 5 modules (Providers / Roles / Users / Tokens / **Tools config**): credential/model/routing CRUD, role↔channel bindings, wallet topup, per-user usage + transactions. The Tokens module splits into *LLM Keys* (the per-user key-grant matrix, masked `sk-***` + copy) and *Login Credentials* (who can sign in, each shown as a masked sha256 fingerprint). The **Tools config** module edits the generic `tools` namespace (web-search provider, SMTP, free-form key/value params) with a one-click *Test email*; the Chat Test user picker is a fuzzy-autocomplete text box; a **RAG** module adds live pipeline testing (per-node trace), chunking preview, node-topology editing, and golden-set eval |
@@ -1608,7 +1609,7 @@ over exactly those hits, so a rating survives reopen without re-querying retriev
 | Mount the research OS plugin | factory-built `plugins/research/` Cordis plugin (`build_research_plugin(ctx)`), lazy capability resolution over `drive` / `research_scratch`; 7 tools: `research_project` / `artifact` / `state` / `evidence` / `gate` / `run` / `scrape` — see [docs/research/](research/) |
 | Close a research stage in ONE call | server-side atomic closures instead of per-claim/per-page retail loops: EVIDENCE = `research_evidence adjudicate` (fetch → deterministic chunk → one streaming LLM pass → one `verify_batch` commit), REVIEW = `research_artifact review_draft` (one LLM pass emits `{"changes": […]}` patch rows, pre-checked under the unique-match iron rule, committed all-or-nothing) — see §17 |
 | Govern a research stage | mechanical `research_gate` checks (deterministic, no LLM judgment); a FAIL override always spawns a PENDING `ResearchApproval` that only a human resolves (never self-approve) — see [docs/research/](research/) |
-| Delete a message's owned screenshot | `messages.attach_asset_id` → cascade soft-delete by id (folder-agnostic); `?delete_assets=0` on edit-reask keeps it; the stable `RAG/images` copy an imported Q&A references is a separate asset row that survives the delete (§18.2) |
+| Delete a message's owned screenshot | its `chat_attachments` row (`ownership='owned'`) → the `scope='chat'` asset is logically deleted and its byte reclaimed by the hourly GC; `?delete_assets=0` on edit-reask keeps it; the stable `RAG/images` copy an imported Q&A references is a separate asset row that survives the delete (§18.2) |
 | Save a derived asset with its source | `assets.source_asset_id` (FK `ON DELETE CASCADE`) + content-hash dedup (`get_by_source_content`) |
 | Attach document images to RAG chunks | page/slide/para markers → chunk `meta.pages` / `meta.image_ids` (union across pages, state machine covers unmarked blocks); optional vision-LLM `image_caption` leaf chunk per unique image (§18.3) |
 | Route the vision tool to a model | the caller's role-authorized DB set only (`vision_caption.resolve_vision_channels`): vision-marked names first, the rest as a gamble; guests → anonymous tier under the existing daily quota, model-less role → guest-allowance downgrade; never a config/global key (§18.5) |
@@ -1620,15 +1621,16 @@ over exactly those hits, so a rating survives reopen without re-querying retriev
 
 ## 12. Data Model
 
-> **Migration note:** the schema is defined **only** in the single canonical
-> `migrations/0001_init.sql` — applied once by `init_db()` via asyncpg inside a transaction
-> and tracked in the `schema_migrations` table (no Alembic, no `create_all`). This document
-> does not repeat the DDL; that file is the single source of truth. The development-time
-> incremental migrations (0002 … 0019) were deliberately squashed into it — a fresh install
-> runs one initialization script and gets the final schema; existing databases already record
-> `0001_init` and skip re-application. Table names below are the implemented ones
-> (`sessions`, `messages`, `jobs` …), not the earlier design names
-> (`conversations`, `job_logs` …).
+> **Migration note:** the schema is applied by `init_db()` (asyncpg), which runs **every**
+> `migrations/*.sql` file in sorted order — one transaction per file — and records each file's
+> stem in the `schema_migrations` table (no Alembic, no `create_all`). `0001_init.sql` is the
+> base `pg_dump`-derived install; the remaining files are `IF NOT EXISTS`-guarded so
+> re-application is a no-op. This includes the Chat Assets migration
+> `0024_chat_assets.sql` and the fresh-install seed files
+> `0012a_registry_lane_seed.sql` / `0013a_draft_lane_parameter_seed.sql` (§12.7). This
+> document does not repeat the DDL; the migration files are the single source of truth. Table
+> names below are the implemented ones (`sessions`, `messages`, `jobs` …), not the earlier
+> design names (`conversations`, `job_logs` …).
 
 The core learning + chat tables that run today (`migrations/0001_init.sql`):
 
@@ -1968,22 +1970,22 @@ already imported to knowledge is removed via the admin **RAG → Repository** pe
 (`DELETE /admin/rag/repository/{chunk_id}`) or by re-importing a changed source, not by deleting the
 session.
 
-**Image attachments are folder-agnostic.** A user message that created a chat screenshot carries
-`messages.attach_asset_id` — the asset the message *owns*,
-stored under the purely-UI `chat/temp/` folder — the **temporary** chat zone a user may empty
-at will. `DELETE /sessions/{id}` and
-`DELETE /sessions/{id}/messages/{mid}` (with `?delete_assets=1`, the default) soft-delete that
-asset **by id, not by folder**, so the file is cleaned up wherever the user moved it; a
-referential attachment (🔗 cloud asset / 📎 local file) that was never `owned` is never touched.
-The edit-reask flow passes `?delete_assets=0` so re-generating an answer does not destroy the
-screenshot it was built around. A screenshot is **temporary**: it dies with its chat (deleting
-the message/session soft-deletes the owned `chat/temp/` asset by id, folder-agnostic). A Q&A
-pair **imported into RAG** is the one that outlives the chat: the import **copies** the asset
-to `RAG/images/` while **keeping the `chat/temp/` copy** (content-addressed storage means two
-rows sharing one blob cost nothing extra), so clearing `chat/temp/` can't remove the corpus
-image; deleting the chat afterwards still removes the `chat/temp/` copy while the stable
-`RAG/images/` copy — a separate asset row referenced by the chunk `meta.image_ids` — survives.
-See [§18.2](#182-chat-screenshot-pipeline).
+**Chat attachments resolve through `chat_attachments`, not a folder.** Every chat attachment —
+an owned screenshot/upload, or a *reference* to a drive file the user opened in the viewer — is
+a row in `chat_attachments`, the authority for "this asset belongs to this chat" (§12.7). An
+`owned` row points at a `scope='chat'` asset (invisible to the drive plane, §14); a `reference`
+row points at a normal `scope='drive'` file and must never delete it. `DELETE /sessions/{id}`
+and `DELETE /sessions/{id}/messages/{mid}` (with `?delete_assets=1`, the default) **logically
+delete** the message's `owned` assets — the asset row stays as a tombstone (`deleted_at` set,
+its ref-count share freed) and the byte is reclaimed later by the hourly `chat_asset_gc` sweep
+(§12.7); the `reference` links are simply dropped and the drive file is untouched. The
+edit-reask flow passes `?delete_assets=0` so re-generating an answer keeps the screenshot, and a
+message edit **detaches** (re-pins the link to its session) rather than deletes. A screenshot is
+**temporary** — it dies with its chat. A Q&A pair **imported into RAG** is the one that outlives
+the chat: the import **copies** the image into `RAG/images/` (content-addressed storage means
+the copy only bumps the object's `ref_count`) and the chunk's `meta.image_ids` references that
+copy, so it survives the later session/message delete. See
+[§18.2](#182-chat-screenshot-pipeline).
 
 ### 12.6 LLM Dispatch Gateway — one funnel, shell workers, Job-level fail-fast
 
@@ -2053,6 +2055,70 @@ core business clients (chat / research / toolkit / worker / retrieval) must pass
 stay `False`, and a construction outside it fails CI — reintroducing a resident-key client is a
 test failure, not a review miss.
 
+### 12.7 Chat attachments — `scope='chat'`, the `chat_attachments` authority, and GC
+
+A chat turn may carry documents, images and viewer frame/roi captures as **attachments**. They
+share the same content-addressed store as the drive (§14) but are **invisible to the drive
+plane**: reachable only through the Session they belong to, enforced on the server.
+
+**Data model.** Three schema elements, added by migration `0024_chat_assets.sql`:
+
+- **`assets.scope`** — `'drive'` (default) | `'chat'` (CHECK-constrained, partial-indexed
+  `assets_chat_owner_idx`). The drive plane's predicate (`asset_visible_expr` /
+  `asset_visibility_sql`, `visibility.py`) requires `scope='drive'`, so a chat asset resolves to
+  **404** — never 403 — on every by-id drive endpoint (get / download / content / move / copy /
+  share / import / delete), exactly like a missing id (§14.3).
+- **`chat_attachments`** — the authority for "this asset belongs to this chat" (§3 authority
+  replaces the retired `messages.attach_asset_id` column). Columns: `asset_id`, `user_id`,
+  `session_id` / `message_id` (NULL while `status='draft'`), `ownership` (`owned` | `reference`),
+  `source` (`upload` / `screenshot` / `frame` / `roi` / `viewer`), `status` (`draft` | `bound`),
+  `locator` (frame/roi/page coordinates), `created_at`, `bound_at`, `expires_at`, plus the
+  `chat_attach_bound_needs_session` CHECK (`status='draft' OR session_id IS NOT NULL`). Indexes
+  cover session, message, asset, and open drafts.
+- **`global_objects.state` / `pending_since`** — the CAS object's physical lifecycle state
+  (`'live'` | `'pending_delete'`, partial-indexed), paired with `ref_count` (§14.2).
+
+**Ownership and reads.** `owned` rows point at a `scope='chat'` asset created for (and dying
+with) the chat; `reference` rows mount an existing drive file and never delete it. Every read is
+a **double check**: the `chat_attachments` row must be in the caller's session *and* the
+underlying asset must still authorize (owned → still `scope='chat'`; reference → owner / member /
+ACL). Either failing → not found (`ChatAssetService.read_bytes`).
+
+**Lifecycle.** A pre-Send **draft** link is TTL-bounded (`expires_at`); Send **binds** it (via
+the same transaction as the message insert). Deleting a Session/Message logically deletes its
+`owned` assets (tombstone + ref-count free) and drops its `reference` links; a message *edit*
+**detaches** (re-pins the link to its session) instead. The physical byte is reclaimed
+asynchronously (below).
+
+**CAS safety (`drive_repositories.py`).** `upsert_and_increment` and `collect` take a
+session-level advisory lock `pg_advisory_lock(hashtextextended(sha,0))` around the
+file operation (which runs **outside** any transaction; the row transition is a short separate
+transaction), with the bytes written **before** the live transition. `free` is a single guarded
+`UPDATE` (`ref_count > 0`) — no lock, no file. `collect` re-checks the actual `assets` rows
+under `FOR UPDATE` before deleting, so a live asset (or any non-chat asset) still holding the
+byte revives the object instead of collecting it. Together these give: no live row without a
+file, no collection of a still-referenced object, mutual exclusion of revive vs. delete, and
+crash recovery (a mid-flight collection is replayed idempotently by the sweep). Proven by
+`tests/test_chat_assets_integration.py` against real PostgreSQL.
+
+**Background GC.** The `chat_asset_gc` arq cron (`apps/worker/tasks.py`, schedule
+`23 * * * *`, `run_at_startup=True`) runs every hour and calls
+`ChatAssetService.gc(grace_seconds=chat_asset_gc_grace_seconds)` in three phases: reap expired
+draft `chat_attachments`, `purge_deleted_chat_assets` (hard-delete chat tombstones past the
+grace window), and `sweep_pending` (collect `global_objects` left `pending_delete` past the
+grace window). It logs success (`drafts` / `assets_reaped` / `objects`) and, on failure, logs
+and re-raises so arq retries.
+
+**DB evolution.** `0024_chat_assets.sql` is a **single** file the runner applies automatically in
+one `BEGIN … COMMIT`: it does the additive DDL above **and** a guarded `DO` block that carries
+classifiable legacy `messages.attach_asset_id` rows into `chat_attachments` (aborting atomically
+on a missing / soft-deleted / cross-user asset), then drops the column, its index, and its FK.
+`0012a_registry_lane_seed.sql` and `0013a_draft_lane_parameter_seed.sql` are fresh-install
+**seed** files (registry-lane capability shells and draft-lane parameter bodies) that sort between
+`0012`/`0013` so a from-scratch install reproduces the curated Registry; on an already-migrated
+database they are no-ops. Tests: `tests/test_chat_assets.py` (14 fake-backed) and
+`tests/test_chat_assets_integration.py` (8 real-PostgreSQL).
+
 [↑ Back to top](#table-of-contents)
 
 ## 13. Multi-Tenancy and Deployment Strategy
@@ -2077,7 +2143,7 @@ groups). A *file* is a logical **asset** that points at a physical, SHA-256-dedu
 the trash keeps soft-deleted assets for a retention window; and every mutation lands in a
 no-FK audit trail.
 
-Source: canonical schema `migrations/0001_init.sql`;
+Source: the migration chain `migrations/*.sql` (starting at `0001_init.sql`);
 `packages/core/application/drive_service.py` (service), `packages/core/infrastructure/drive_repositories.py`
 (SQL repos), `packages/core/infrastructure/visibility.py` (tenant predicate),
 `apps/api/routers/drive.py` (REST), `apps/web/src/CloudDrive.tsx` (file manager).
@@ -2086,11 +2152,12 @@ Source: canonical schema `migrations/0001_init.sql`;
 
 | Table | Purpose |
 |------|------|
-| `global_objects` | One physical file per SHA-256 (primary key), shared across all users. `ref_count` = how many logical assets point at it; the bytes are freed when the count reaches 0. `storage_key` shards as `{root}/objects/{sha[0:2]}/{sha[2:4]}/{sha}`. |
+| `global_objects` | One physical file per SHA-256 (primary key), shared across all users. `ref_count` = how many logical assets point at it; the bytes are freed when the count reaches 0. The physical lifecycle state `state` (`live` \| `pending_delete`) + `pending_since` (partial-indexed) drive the deferred GC (§12.7). `storage_key` shards as `{root}/objects/{sha[0:2]}/{sha[2:4]}/{sha}`. |
 | `workspaces` | User-owned group (`owner_id`, `name`). Ownership is **not** a member row. |
 | `workspace_members` | `(workspace_id, user_id)` PK + `role` (`admin` / `editor` / `viewer`). Membership is the sharing mechanism. |
 | `folders` | One row per folder path inside a scope; `workspace_id` NULL = My Drive. `path` is the full `/`-separated relative path (`"English/Vocab"`), so ancestors are implicit — no parent FK. Uniqueness per scope via `folders_unique_ws` (partial) and `folders_unique_personal`. |
-| `assets` | Logical file: `user_id` (owner), nullable `workspace_id`, `object_sha256` → `global_objects`, `name`, `folder_path`, `file_status` (`uploading/processing/ready/deleted`), `rag_status` (`pending/parsing/chunking/embedding/indexed/failed`), `domain_id` (nullable → `domains`, drives the RAG domain filter), `meta` JSONB (carries COW lineage keys `cow_of` / `cow_retired_by`, §14.2), `deleted_at`. |
+| `assets` | Logical file: `user_id` (owner), nullable `workspace_id`, `object_sha256` → `global_objects`, `name`, `folder_path`, `file_status` (`uploading/processing/ready/deleted`), `rag_status` (`pending/parsing/chunking/embedding/indexed/failed`), `domain_id` (nullable → `domains`, drives the RAG domain filter), `meta` JSONB (carries COW lineage keys `cow_of` / `cow_retired_by`, §14.2), `deleted_at`, and `scope` (`drive` \| `chat` — the drive plane sees only `drive`; §12.7). |
+| `chat_attachments` | Chat-attachment authority (§12.7): one row per (asset, chat) link — `asset_id`, `user_id`, `session_id` / `message_id`, `ownership` (`owned` \| `reference`), `source`, `status` (`draft` \| `bound`), `locator`, `expires_at`. Replaces the retired `messages.attach_asset_id` column. |
 | `asset_acl` | Asset-level sharing: `(asset_id, grantee_user_id)` PK; `grantee_user_id` NULL = public link (`asset_acl_public_uniq` unique partial index). `permission` = `read` / `write`. |
 | `upload_sessions` | Chunked-upload state: expected `sha256`, `size`, `chunk_size`, `num_chunks`, `received_chunks` (boolean array) → resumable uploads. |
 | `chunks` | RAG chunks rebuilt with denormalized `asset_id` / `user_id` / `workspace_id` for filtered recall; `embedding vector(1024)` with an HNSW index; the schema carries `parent_chunk_id` + `chunk_kind` (parent/child indexing, recall searches `leaf` only) and `content_search` (jieba-segmented CJK keywords, GIN-indexed). |
@@ -2115,7 +2182,9 @@ Source: canonical schema `migrations/0001_init.sql`;
   removes the physical bytes (and the `global_objects` row) when the count hits 0, so a
   deduplicated file is freed exactly once. Order matters: the asset row is dropped *before* the
   object row (FK `assets.object_sha256` → `global_objects`), with a CAS so a concurrent upload
-  that re-incremented is not clobbered.
+  that re-incremented is not clobbered. Chat tombstones (`scope='chat'`, `deleted_at` set) are
+  hard-deleted by the deferred `chat_asset_gc` (§12.7); the drive plane's trashed rows still own
+  their bytes and are never collected there.
 - **Text notes (read / in-place update)** — text files (`.md`, `.txt`, code, data) can be read
   and rewritten without a re-upload. A text guard accepts a `text/*` MIME or a name matching
   `_TEXT_EXT_RE` (`.txt .md .markdown .text .log .json .csv .yaml .yml .toml .ini .xml .html .py
@@ -2195,20 +2264,23 @@ Source: canonical schema `migrations/0001_init.sql`;
   the derived set with the source. Dedup on ingest (`get_by_source_content`) reuses an existing
   derived asset by `(source_asset_id, object_sha256)`, so re-ingesting a document never
   duplicates images — see [§18.4](#184-derived-image-lifecycle-delete--trash--purge--restore).
-- **Message-owned assets** — a chat message that created a screenshot stores
-  `messages.attach_asset_id` → `assets.id` (`ON DELETE SET NULL`); the `sessions.py` delete
-  handlers soft-delete that asset by id when the message/session goes away, independent of the
-  folder it sits in — **unless the message was imported into RAG**, whose `imported_rag` gate
-  keeps the image alongside the query-repo text — see [§18.2](#182-chat-screenshot-pipeline).
+- **Message-owned assets** — a chat message that created a screenshot **owns** it through a
+  `chat_attachments` row (`ownership='owned'`; §12.7), not a column. The `sessions.py` delete
+  handlers resolve the message's owned attachments from that table and logically delete the
+  `scope='chat'` asset (tombstone + ref-count free; the byte is reclaimed by the hourly GC) —
+  **unless the message was imported into RAG**, whose `imported_rag` gate keeps the image
+  alongside the query-repo text — see [§18.2](#182-chat-screenshot-pipeline).
 - **Audit trail** — every mutation calls `_log(...)` writing who / what / when / target. The
   row has no FKs so it survives its subjects; the API lists it with actor/target fuzzy search,
   date bounds, and pagination (admin / owner only).
 
 ### 14.3 Permission management
 
-Three channels grant access to an asset (`asset_visible_expr` in
-`packages/core/infrastructure/visibility.py`, mirrored as raw SQL `asset_visibility_sql` for the
-RAG recallers):
+The drive plane sees only `scope='drive'` rows, so a `scope='chat'` asset is excluded from Files /
+search / picker / trash / download even for its owner — it is reached through the session plane
+(`chat_attachments`, §12.7) instead. Within that plane, three channels grant access to an asset
+(`asset_visible_expr` in `packages/core/infrastructure/visibility.py`, mirrored as raw SQL
+`asset_visibility_sql` for the RAG recallers):
 
 1. **Ownership** — `assets.user_id == me`.
 2. **Workspace visibility** — `assets.workspace_id` in the workspaces I own **or** am a member
@@ -2476,10 +2548,10 @@ profile, and the **My Drive cloud panel** need the FastAPI gateway on `localhost
     running the same flow:
     the `capture-window` IPC grabs the app's own window via `webContents.capturePage()`, then
     the renderer overlays a **drag-to-select region** (double-click = whole frame, Esc =
-    cancel) and crops the selection. The PNG is uploaded with a real MIME type to the
-    `chat/temp/` folder (temporary — a Q&A imported into RAG is *also copied* to `RAG/images/`,
-    keeping the `chat/temp/` copy, §18.2) and marked **owned**; the API prefixes an
-    `[Attached: …]` note to the
+    cancel) and crops the selection. The PNG is uploaded with a real MIME type as a
+    `scope='chat'` asset (`POST /sessions/attachments` → a draft `chat_attachments` row; a Q&A
+    imported into RAG is *also copied* to `RAG/images/`, §18.2) and marked **owned**; the API
+    prefixes an `[Attached: …]` note to the
     user message that names the reader for the type — `read_document` for documents (§18.6),
     `vision` for images (§18.5) — so the agent fetches the bytes by `asset_id`. The chat-header
     also carries a **⋯** session menu (pin / rename / **Import to Knowledge** / delete, plus
@@ -2536,7 +2608,7 @@ profile, and the **My Drive cloud panel** need the FastAPI gateway on `localhost
     is no server-side message-edit endpoint; the client rewrites the history). **Import to
     Knowledge** writes the Q&A pair to the query repository (§10.8) and flips to a disabled
     **✓ Imported** once covered, driven by `GET /chat/imported` per user message. A message that
-    created a screenshot carries `messages.attach_asset_id`, returned as `attach` on
+    created a screenshot carries an `owned` `chat_attachments` row, surfaced as `attach` on
     `GET /sessions/{id}`; `appendMessage` renders it as an **inline image thumbnail** in the
     bubble (blob fetch via `/api/files/{id}/download`, CSS-bounded), with a `📎` chip fallback
     for non-image or unreadable assets (§18.2). Sessions are **renamed** inline (click the
@@ -3219,9 +3291,9 @@ sessions** with it: `delete_task` returns the session ids from the routing index
 removes every one of those rows that is owned by the caller — the type flag is **not** a filter
 here (the binding in the index is the authority; a session bound to the task is deleted whether it
 was ever marked `type=1` or still carries `type=0`, while the ownership re-check keeps another
-user's session untouchable). Messages + `session_events` cascade via the FK; screenshots owned by
-those messages are soft-deleted best-effort, folder-agnostic as in §12.5; a per-session failure is
-logged without failing the task delete. Restoring the Trash folder never resurrects the task. Two **409** guards
+user's session untouchable). Messages + `session_events` cascade via the FK; the `owned`
+attachments of those messages are logically deleted best-effort (§12.7 — the byte is reclaimed by
+the hourly GC); a per-session failure is logged without failing the task delete. Restoring the Trash folder never resurrects the task. Two **409** guards
 refuse deletion: a task with a live run (the `active_run`
 slot — an orphaned per-tool RUNNING execution left by a run that stopped mid-step does not block,
 it is wiped by teardown) and a report the Knowledge Base has already indexed ("Please remove from
@@ -3242,32 +3314,31 @@ frame → evidence → cross-verify → synthesize → write → review → publ
 ## 18. Image Handling (screenshots & document images)
 
 Two image classes flow through the system, sharing one storage and lifecycle backbone. Both are
-**Cloud Drive assets** (§14), so they inherit dedup, sharing, trash, and the RAG corpus; what
-differs is how each one is *bound*:
+**Cloud Drive assets** (§14), so they inherit dedup, sharing, and the RAG corpus; what differs is
+how each one is *bound*:
 
-| Class | Origin | Folder | Binding |
-|---|---|---|---|
-| Chat screenshots | desktop 📷 region capture | `chat/temp/` (temporary — user may empty) **and** `RAG/images/` once imported | `messages.attach_asset_id` — the message **owns** it |
-| RAG document images | PDF/DOCX/PPTX embedded images + `.doc` magic-scan recovery at ingest | `RAG 图片/<doc>/` | `assets.source_asset_id` — derived from the document |
+| Class | Origin | Binding |
+|---|---|---|
+| Chat screenshots | desktop 📷 region capture / viewer frame·roi | a `chat_attachments` row (`ownership='owned'` → a `scope='chat'` asset) on the message; the RAG import copies it to `RAG/images/` |
+| RAG document images | PDF/DOCX/PPTX embedded images + `.doc` magic-scan recovery at ingest | `assets.source_asset_id` — derived from the document |
 
-A folder is pure UI organization: deletion and lifecycle decisions key off these bindings,
-never off a folder path, so moving a file in the drive never breaks cleanup. `chat/temp/` is
-deliberately **temporary** (a scratch zone the user may empty at will). A chat screenshot
-**imported into RAG lives in both folders**: the `chat/temp/` copy stays until its chat is
-deleted (deleting the session/message removes it), and a stable `RAG/images/` copy is created
-sharing the same object bytes — a separate asset row the chat delete never touches, so the
-query-repo text keeps referencing an image that survives both clearing `chat/temp/` and
-deleting the chat.
+A chat screenshot is bound **by the `chat_attachments` row, never by a folder path**, so moving a
+file in the drive never breaks cleanup. It is **temporary**: it lives as a `scope='chat'` asset
+(invisible to the drive plane) until its chat is deleted — deleting the session/message logically
+deletes the owned asset and the hourly GC reclaims the byte (§12.7). A chat screenshot **imported
+into RAG** outlives the chat: the import creates a stable `RAG/images/` copy — a separate
+`scope='drive'` asset row sharing the same object bytes — that the chat delete never touches, so
+the query-repo text keeps referencing an image that survives the delete.
 
 ### 18.1 Asset relationship model (save/delete backbone)
 
-Three columns carry the image semantics (canonical schema):
+Three bindings carry the image semantics (canonical schema):
 
-- **`messages.attach_asset_id`** (UUID NULL → `assets.id`, `ON DELETE SET NULL`) — set only on a
-  `user` message whose turn created a chat attachment (📷 screenshot). It answers "which cloud
-  asset does this message own?", and the delete handlers cascade on it. Referential attaches
-  (🔗 cloud asset / 📎 local file) never set it, so deleting a message can never touch a
-  document the user merely referenced.
+- **`chat_attachments`** (the chat-attachment authority, §12.7) — one row per (asset, chat) link.
+  An `ownership='owned'` row answers "which cloud asset does this chat/message own?" and its
+  delete handlers cascade on it; the asset it points at is `scope='chat'`. A `reference` row
+  mounts a drive file the user merely referenced (🔗 cloud asset / 📎 local file) and never
+  deletes it. This replaces the retired `messages.attach_asset_id` column.
 - **`assets.source_asset_id`** (UUID NULL → `assets.id`, `ON DELETE CASCADE`) — a derived asset
   (RAG image) points back to the document it was extracted from. The FK cascades the hard
   delete; the service layer mirrors that cascade for the soft-delete (trash) path so derived
@@ -3283,32 +3354,33 @@ Three columns carry the image semantics (canonical schema):
    unrelated window on Windows). The renderer overlays the frozen frame with a **drag-to-select
    region** (double-click = whole frame, Esc = cancel) and crops the selection from the
    full-resolution image client-side.
-2. **Upload** — the cropped PNG is uploaded with a real MIME (`image/png`) to the `chat/temp/`
-   folder — the **temporary** chat scratch zone the user may empty at will. The stored MIME fixes
-   the download `Content-Type`, which the bubble renderer relies on.
+2. **Upload** — the cropped PNG is uploaded with a real MIME (`image/png`) as a `scope='chat'`
+   asset via `POST /sessions/attachments`, which returns a draft `chat_attachments` row. The
+   stored MIME fixes the download `Content-Type`, which the bubble renderer relies on.
 3. **Stage** — the asset becomes the pending attachment marked **owned**
    (`setPendingAttach({kind:"asset", asset_id, name, owned:true})`) and rides on the next send —
    never auto-sent.
-4. **Persist** — `SessionMemoryStore.append_message` writes `attach_asset_id` for a `user`
-   message; `GET /sessions/{id}` LEFT JOINs the asset so `load_session_detail` returns
-   `attach {asset_id, name, mime}` per message.
+4. **Persist** — on Send the draft `chat_attachments` rows **bind** to the freshly-inserted user
+   message (same transaction as the insert, `status='bound'`); `GET /sessions/{id}` joins
+   `chat_attachments` to `assets` so `load_session_detail` returns `attach {asset_id, name, mime}`
+   per message.
 5. **Render** — the desktop bubble shows the image as an **inline thumbnail** (blob fetch via
    `/api/files/{id}/download`, CSS-bounded) above the text — a Gemini/ChatGPT-style image list.
    A non-image or unreadable asset falls back to a `📎` chip; an `application/octet-stream`
    Content-Type (older assets stored without a MIME) is still accepted when the name looks like
    an image.
-6. **Delete** — deleting the message/session soft-deletes the owned asset **by
-   `attach_asset_id`, regardless of folder**; the edit-reask flow sends `?delete_assets=0` so
-   re-generating an answer keeps the screenshot (§12.5). A chat screenshot is **temporary**: it
-   dies with its message/session — even after the Q&A is imported into RAG, deleting the chat
-   still removes the `chat/temp/` copy. What survives is the stable **`RAG/images/` copy** the
-   import created via `DriveService.copy_to_folder` (single-pair and whole-session imports
-   both): it is a **separate asset row** referenced by the chunk `meta.image_ids`, so the
-   session/message delete — which only follows `attach_asset_id` — never touches it and the
-   image stays with the query-repo text. Both rows share one `object_sha256` (the blob is
-   content-addressed — the copy only bumps the object's `ref_count`), and
-   `get_by_folder_content(user, "RAG/images", hash)` dedupes a re-import so no second copy row
-   is created (§18.3).
+6. **Delete** — deleting the message/session resolves the message's owned `chat_attachments`
+   rows and **logically deletes** the `scope='chat'` asset (tombstone + ref-count free; the byte
+   is reclaimed later by the hourly `chat_asset_gc`, §12.7); the edit-reask flow sends
+   `?delete_assets=0` so re-generating an answer keeps the screenshot (§12.5). A chat screenshot
+   is **temporary**: it dies with its message/session — even after the Q&A is imported into RAG.
+   What survives is the stable **`RAG/images/` copy** the import created via
+   `DriveService.copy_to_folder` (single-pair and whole-session imports both): it is a
+   **separate asset row** referenced by the chunk `meta.image_ids`, so the session/message delete
+   — which only follows the owned attachment — never touches it and the image stays with the
+   query-repo text. Both rows share one `object_sha256` (the blob is content-addressed — the copy
+   only bumps the object's `ref_count`), and `get_by_folder_content(user, "RAG/images", hash)`
+   dedupes a re-import so no second copy row is created (§18.3).
 
 ### 18.3 RAG document-image pipeline (extraction & meta annotation)
 
@@ -4533,7 +4605,7 @@ message. Hard invariants:
   the blocks' *role*: on-screen material is answered from the blocks themselves with `[Vn]` citations —
   retrieval or `read_document` re-fetch is off-limits (text viewer blocks are not drive assets and carry no
   tool-usable `asset_id`). The one exception is **captured imagery**: an ROI/frame block whose `image_asset_id`
-  names an owned `chat/temp/` picture is the only block that carries a tool-usable id, and since a picture's
+  names an owned `scope='chat'` picture is the only block that carries a tool-usable id, and since a picture's
   pixels are *not* in the prompt, such a block ships an app-generated **REQUIRED `vision` directive** naming
   that id (answer only from the vision result, never recite earlier material, never claim the image is
   missing), with the header's image note appearing **only when such a block exists** — a text-only turn's
@@ -4606,7 +4678,7 @@ snapshot per send (paging/playing afterwards never mutates an in-flight request)
 is the citation-jump sink, called only from citation clicks. `app.js` renders the focus chip (👁
 `name · p.12` / `· 22:44`) in the chat bar independently of attachments and pinned selections, shows a
 "📌 加入对话" pin on in-viewer text selections, and reuses the region-capture overlay (ROI) plus
-canvas frame capture (video, auto-paired with the subtitles at that moment) to upload owned `chat/temp/`
+canvas frame capture (video, auto-paired with the subtitles at that moment) to upload owned `scope='chat'`
 image assets referenced by `image_asset_id`. `[Vn]` tags in the streamed answer decorate to clickable
 `sup` elements that jump the viewer to the cited locator when the citation points at the currently open
 asset (same asset only; otherwise a toast — never an automatic jump under the user's feet). `too_large` /

@@ -55,14 +55,23 @@ def folder_visible_expr(user_id: UUID):
 
 
 def asset_visible_expr(user_id: UUID):
-    """SQLAlchemy boolean expression selecting ``assets`` rows the user may see."""
+    """SQLAlchemy boolean expression selecting ``assets`` rows the user may see.
+
+    The drive plane sees only ``scope='drive'`` rows: chat-only assets (``scope='chat'``)
+    are owned by their user but are invisible here — Files / search / picker / trash /
+    download all read through this predicate. They are reached through the chat session
+    plane instead (``chat_attachments``).
+    """
     acl_ok = select(AssetAclModel.asset_id).where(
         or_(AssetAclModel.grantee_user_id == user_id, AssetAclModel.grantee_user_id.is_(None))
     )
-    return or_(
-        AssetModel.user_id == user_id,
-        AssetModel.workspace_id.in_(_visible_workspaces(user_id)),
-        AssetModel.id.in_(acl_ok),
+    return and_(
+        AssetModel.scope == "drive",
+        or_(
+            AssetModel.user_id == user_id,
+            AssetModel.workspace_id.in_(_visible_workspaces(user_id)),
+            AssetModel.id.in_(acl_ok),
+        ),
     )
 
 
@@ -98,11 +107,14 @@ def asset_visibility_sql(user_id: UUID, chunk_alias: str = "c") -> str:
     chunks — it matches for guests too, where ``:uid`` is NULL and never equals anything).
     """
     return (
+        f"(("
         f"({chunk_alias}.source_type = 'manual' AND {chunk_alias}.user_id IS NULL) "
         f"OR {chunk_alias}.user_id = :uid "
         f"OR {chunk_alias}.workspace_id IN "
         f"(SELECT workspace_id FROM workspace_members WHERE user_id = :uid) "
         f"OR {chunk_alias}.workspace_id IN (SELECT id FROM workspaces WHERE owner_id = :uid) "
         f"OR EXISTS (SELECT 1 FROM asset_acl x WHERE x.asset_id = {chunk_alias}.asset_id "
-        f"AND (x.grantee_user_id = :uid OR x.grantee_user_id IS NULL))"
+        f"AND (x.grantee_user_id = :uid OR x.grantee_user_id IS NULL))) "
+        f"AND ({chunk_alias}.asset_id IS NULL OR EXISTS ("
+        f"SELECT 1 FROM assets a WHERE a.id = {chunk_alias}.asset_id AND a.scope = 'drive')))"
     )

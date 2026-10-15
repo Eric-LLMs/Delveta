@@ -28,6 +28,10 @@ class Settings(BaseSettings):
     # Only the audit log is swept; messages (the recall corpus) and sessions (summaries) stay.
     session_events_retention_days: int = 30
     retention_cron: str = "17 4 * * *"   # arq cron schedule for the purge (daily 04:17 local)
+    # Chat-asset background GC (design §9.7): a periodic sweep reaps expired drafts,
+    # chat tombstones past the grace window, and pending_delete CAS objects past grace.
+    chat_asset_gc_grace_seconds: int = 3600   # grace before a tombstone/object is reclaimed
+    chat_asset_gc_cron: str = "23 * * * *"    # hourly at :23 (off the daily purge)
 
     # ── LLM (via LiteLLM gateway; the gateway routes the virtual model name) ──
     llm_api_key: str = ""

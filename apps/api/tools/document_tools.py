@@ -124,9 +124,8 @@ async def _save_pptx_to_drive(pptx_bytes: bytes, src_name: str, ctx: Context) ->
 
     storage = ctx.resolve("storage")
     session_factory = ctx.resolve("session_factory")
-    await storage.put(object_key(sha), pptx_bytes)
-    await SqlGlobalObjectRepository(session_factory).upsert_and_increment(
-        sha, len(pptx_bytes), object_key(sha), _PPTX_MIME
+    await SqlGlobalObjectRepository(session_factory, storage=storage).upsert_and_increment(
+        sha, len(pptx_bytes), object_key(sha), _PPTX_MIME, data=pptx_bytes
     )
     asset = await SqlAssetRepository(session_factory).create(
         user_id,

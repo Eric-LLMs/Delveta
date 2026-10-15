@@ -1,11 +1,15 @@
--- Delveta canonical database initialization -- the single install script.
+-- Delveta database initialization -- the START of the migration chain.
 --
--- Fresh installs: the asyncpg runner (packages/core/infrastructure/db.py) applies
--- this file once inside a transaction and records "0001_init" in schema_migrations.
--- The development-time incremental migrations 0002-0019 were deliberately squashed
--- into this final schema; existing databases that already applied them carry the
--- "0001_init" version and skip re-application. Do not add dev-history deltas here
--- as new numbered files -- extend this schema instead.
+-- This file is the first migration, not a standalone final schema: executing it alone
+-- does NOT yield the current database structure. The asyncpg runner
+-- (packages/core/infrastructure/db.py::init_db) applies every file in migrations/*.sql
+-- in sorted order, one transaction per file, and records each file stem in
+-- schema_migrations so re-runs are no-ops. A fresh install must therefore run the FULL
+-- chain (0001 -> 0002 -> ... -> the latest) before the schema is complete.
+--
+-- Add new schema changes as new, higher-numbered migration files. Never edit an
+-- already-applied migration in place: the runner has no checksum, so an edit to a
+-- recorded file is a silent no-op on every database that already applied it.
 --
 -- Generated from the live PostgreSQL 16 schema (pg_dump --schema-only), plus the
 -- curated reference seeds at the bottom.

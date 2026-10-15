@@ -7,18 +7,21 @@ of transaction grouping.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import hashlib
+from datetime import datetime, timedelta, timezone
 from typing import Callable
 from uuid import UUID
 
-from sqlalchemy import Text, cast, delete, func, or_, select, update
+from sqlalchemy import Text, cast, delete, func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import JSONB, insert as pg_insert
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 from sqlalchemy.exc import IntegrityError
 
 from core.infrastructure.db import (
     AssetAclModel,
     AssetModel,
+    ChatAttachmentModel,
     ChunkModel,
     FolderModel,
     GlobalObjectModel,
@@ -28,6 +31,7 @@ from core.infrastructure.db import (
     WorkspaceMemberModel,
     WorkspaceModel,
 )
+from core.infrastructure.storage import Storage, get_storage
 from core.infrastructure.visibility import asset_visible_expr, folder_visible_expr
 
 
@@ -35,70 +39,261 @@ class RepositoryConflict(Exception):
     """A unique constraint was violated (e.g. the folder path already exists)."""
 
 
-class SqlGlobalObjectRepository:
-    """Physical objects: one row per unique SHA-256, shared across users (ref-counted)."""
+# Per-SHA physical-op lock. A SESSION-level advisory lock (``pg_advisory_lock``), held on a
+# dedicated connection for the whole physical critical section — the state recheck, the file
+# delete, and the final row delete — and released explicitly in a ``finally``. The lock must
+# outlive the transaction: the file op is not transactional (design §9.1), so a row lock
+# released at COMMIT cannot serialize it. The key MUST be identical for the reviving
+# create/increment and for physical collection (Invariant C/P4).
+_ADVISORY_LOCK_SQL = "SELECT pg_advisory_lock(hashtextextended(:sha, 0))"
+_ADVISORY_UNLOCK_SQL = "SELECT pg_advisory_unlock(hashtextextended(:sha, 0))"
 
-    def __init__(self, session_factory: Callable) -> None:
+# The guarded free: row-atomic, never touches the file. ``ref_count`` on the right-hand
+# side is the pre-update value, so the state flip keys off the value being written.
+_FREE_SQL = """
+    UPDATE global_objects SET
+        ref_count     = ref_count - 1,
+        state         = CASE WHEN ref_count - 1 <= 0 THEN 'pending_delete' ELSE state END,
+        pending_since = CASE WHEN ref_count - 1 <= 0 THEN now() ELSE pending_since END
+     WHERE sha256 = :sha AND ref_count > 0
+     RETURNING ref_count
+"""
+
+
+class SqlGlobalObjectRepository:
+    """Physical objects: one row per unique SHA-256, shared across users (ref-counted).
+
+    The rows form a crash-safe state machine (``state ∈ {live, pending_delete}``):
+
+    - a ``live`` object always has its bytes on disk;
+    - the last reference free flips the row to ``pending_delete`` (no file I/O);
+    - physical collection (delete the file, then the row) runs only against
+      ``pending_delete`` and holds a per-SHA advisory lock.
+
+    The advisory lock is what keeps *writing/deleting the bytes* from interleaving with
+    *flipping the row*: a row lock alone cannot, because :meth:`upsert_and_increment`
+    writes the bytes before it touches the row. Both operations therefore take the lock
+    inside the very transaction that performs their file I/O, and the transaction is
+    short-lived (a local file put/delete), so nothing holds a DB tx across slow work.
+    """
+
+    def __init__(
+        self,
+        session_factory: Callable,
+        storage: Storage | None = None,
+        *,
+        engine=None,
+    ) -> None:
         self.session_factory = session_factory
+        self.storage = storage or get_storage()
+        # A dedicated connection from this engine holds the session-level advisory lock and
+        # runs the short transactions of the critical section. Derived from ``session_factory``
+        # when not given, so existing constructors keep working unchanged.
+        self.engine = engine
+
+    @property
+    def _engine(self):
+        if self.engine is not None:
+            return self.engine
+        bind = getattr(self.session_factory, "kw", {}).get("bind")
+        if bind is None:
+            raise RuntimeError(
+                "SqlGlobalObjectRepository needs an engine (or a session_factory bound to one)"
+                " to take the per-SHA advisory lock"
+            )
+        return bind
 
     async def get(self, sha256: str) -> GlobalObjectModel | None:
         async with self.session_factory() as session:
             return await session.get(GlobalObjectModel, sha256)
 
     async def upsert_and_increment(
-        self, sha256: str, size: int, storage_key: str, mime_type: str | None
+        self,
+        sha256: str,
+        size: int,
+        storage_key: str,
+        mime_type: str | None,
+        *,
+        data: bytes | None = None,
     ) -> GlobalObjectModel:
-        """Create the object (ref_count=1) or bump its ref_count atomically.
+        """Create the object (ref_count=1) or revive+increment it, under the per-SHA lock.
 
-        Two users uploading the same digest concurrently both get ref_count+1; the row is
-        created exactly once. Returns the authoritative row.
+        Design §9.3(1): the session-level advisory lock is taken on a dedicated connection and
+        spans the whole operation, with the bytes (re)written **before** the live transition
+        and the row transition committed in a short transaction — the file op runs outside any
+        transaction, so a crash rolls back only the row (Invariant A). Callers pass
+        ``data=None`` only on a pure re-reference (秒传 dedup / copy) where the bytes are
+        already on disk.
+        """
+        async with self._engine.connect() as conn:
+            await conn.execute(text(_ADVISORY_LOCK_SQL), {"sha": sha256})
+            # End the transaction the lock SELECT autobegan. The advisory lock is
+            # SESSION-level, so committing does not release it; but leaving the connection
+            # inside a transaction would make the bound session open a savepoint instead of
+            # its own transaction, so ``session.commit()`` would only release the savepoint
+            # and the connection's rollback-on-exit would discard the row change.
+            await conn.commit()
+            try:
+                if data is not None:
+                    await self.storage.put(storage_key, data)
+                async with AsyncSession(bind=conn, expire_on_commit=False) as session:
+                    stmt = (
+                        pg_insert(GlobalObjectModel)
+                        .values(
+                            sha256=sha256,
+                            size=size,
+                            storage_key=storage_key,
+                            mime_type=mime_type,
+                            ref_count=1,
+                            state="live",
+                        )
+                        .on_conflict_do_update(
+                            index_elements=[GlobalObjectModel.sha256],
+                            set_={
+                                "ref_count": GlobalObjectModel.ref_count + 1,
+                                "state": "live",
+                                "pending_since": None,
+                            },
+                        )
+                        .returning(GlobalObjectModel)
+                    )
+                    row = (await session.execute(stmt)).scalar_one()
+                    await session.commit()
+                return row
+            finally:
+                await self._unlock(conn, sha256)
+
+    async def free(self, sha256: str) -> int | None:
+        """Drop one reference; flip the object to ``pending_delete`` at zero.
+
+        A single guarded UPDATE (row-atomic): concurrent frees on the same object serialize
+        on the row, and the ``ref_count > 0`` guard makes a double free a no-op rather than
+        a negative count. Deliberately takes **no** advisory lock and touches **no** file —
+        the exclusive physical work is deferred to :meth:`collect`, which rechecks under the
+        lock. Returns the new ref_count, or ``None`` when the row is absent / already zero.
         """
         async with self.session_factory() as session:
-            stmt = (
-                pg_insert(GlobalObjectModel)
-                .values(
-                    sha256=sha256,
-                    size=size,
-                    storage_key=storage_key,
-                    mime_type=mime_type,
-                    ref_count=1,
-                )
-                .on_conflict_do_update(
-                    index_elements=[GlobalObjectModel.sha256],
-                    set_={"ref_count": GlobalObjectModel.ref_count + 1},
-                )
-                .returning(GlobalObjectModel)
-            )
-            row = (await session.execute(stmt)).scalar_one()
-            await session.commit()
-            return row
-
-    async def decrement(self, sha256: str) -> int | None:
-        """Decrement ref_count, returning the new value (None if the row was already gone)."""
-        async with self.session_factory() as session:
-            row = await session.execute(
-                update(GlobalObjectModel)
-                .where(GlobalObjectModel.sha256 == sha256, GlobalObjectModel.ref_count > 0)
-                .values(ref_count=GlobalObjectModel.ref_count - 1)
-                .returning(GlobalObjectModel.ref_count)
-            )
+            row = await session.execute(text(_FREE_SQL), {"sha": sha256})
             await session.commit()
             return row.scalar_one_or_none()
 
-    async def delete_if_zero(self, sha256: str) -> str | None:
-        """Retire the row iff ref_count reached 0; returns its storage_key for physical delete.
+    async def collect(self, sha256: str) -> str | None:
+        """Physically collect one object iff it is genuinely unreferenced (design §9.3(3)).
 
-        If a concurrent upload re-increments between the decrement and this statement, the
-        DELETE matches 0 rows and the file is retained.
+        The session-level advisory lock is held (on a dedicated connection) across the whole
+        critical section: (tx A) recheck the row ``FOR UPDATE`` and decide; (**outside any
+        transaction**) delete the file; (tx B) delete the row. The file op runs between two
+        short transactions, so a crash rolls back only the row and the sweep replays it
+        idempotently (Invariant D: file-first ordering, every step idempotent).
+
+        The reference recheck counts a *live* asset, or any non-chat asset (a trashed drive
+        file still owns its bytes), as a surviving reference → the row is revived to ``live``
+        and nothing is deleted (Invariant B). A soft-deleted ``scope='chat'`` asset does not
+        hold the object: its ref was freed at logical-delete time, so its row is reclaimed
+        here (before the object row, so the ``object_sha256`` FK never blocks the delete).
+
+        Returns the deleted storage_key, or ``None`` when there was nothing to collect.
         """
+        async with self._engine.connect() as conn:
+            await conn.execute(text(_ADVISORY_LOCK_SQL), {"sha": sha256})
+            # Commit the lock SELECT's implicit transaction so the connection is not inside
+            # one; the session-scoped advisory lock is unaffected, and the bound sessions
+            # below then own and commit their own short transactions (see upsert_and_increment).
+            await conn.commit()
+            try:
+                # ── tx A: decide, under the lock ────────────────────────────────
+                async with AsyncSession(bind=conn, expire_on_commit=False) as session:
+                    row = (
+                        await session.execute(
+                            select(GlobalObjectModel)
+                            .where(GlobalObjectModel.sha256 == sha256)
+                            .with_for_update()
+                        )
+                    ).scalar_one_or_none()
+                    if row is None or row.state != "pending_delete" or row.ref_count > 0:
+                        await session.commit()
+                        return None
+                    references = (
+                        await session.execute(
+                            select(func.count())
+                            .select_from(AssetModel)
+                            .where(
+                                AssetModel.object_sha256 == sha256,
+                                or_(
+                                    AssetModel.deleted_at.is_(None),
+                                    AssetModel.scope != "chat",
+                                ),
+                            )
+                        )
+                    ).scalar_one()
+                    if references > 0:
+                        row.state = "live"
+                        row.pending_since = None
+                        await session.commit()
+                        return None
+                    key = row.storage_key
+                    await session.commit()  # row lock released; advisory lock STILL held
+
+                # ── file op: OUTSIDE any transaction (design §9.1) ──────────────
+                await self.storage.delete(key)
+
+                # ── tx B: reclaim soft-deleted chat rows, then drop the object ──
+                async with AsyncSession(bind=conn, expire_on_commit=False) as session:
+                    await session.execute(
+                        delete(AssetModel).where(
+                            AssetModel.object_sha256 == sha256,
+                            AssetModel.scope == "chat",
+                            AssetModel.deleted_at.is_not(None),
+                        )
+                    )
+                    await session.execute(
+                        delete(GlobalObjectModel).where(
+                            GlobalObjectModel.sha256 == sha256,
+                            GlobalObjectModel.state == "pending_delete",
+                        )
+                    )
+                    await session.commit()
+                return key
+            finally:
+                await self._unlock(conn, sha256)
+
+    async def _unlock(self, conn, sha256: str) -> None:
+        """Release the session advisory lock; never mask the in-flight result.
+
+        On the normal path this is the only release. If it fails (the connection is already
+        broken) the lock is not leaked: PostgreSQL drops every session advisory lock when the
+        backend ends, and the connection is discarded to the pool's invalidation path.
+        """
+        try:
+            await conn.execute(text(_ADVISORY_UNLOCK_SQL), {"sha": sha256})
+        except Exception:
+            # The connection is unusable; closing it releases the lock server-side.
+            await conn.close()
+
+    async def sweep_pending(self, grace_seconds: int = 3600) -> dict:
+        """Collect every object left ``pending_delete`` past the grace window.
+
+        The recovery path for a collection that crashed mid-flight or whose work was lost,
+        and the periodic orphan sweep. Idempotent: replays are no-ops.
+        """
+        # The grace cutoff is computed on the DATABASE clock: ``pending_since`` is written
+        # with ``now()`` in ``free``, so comparing against the app clock would let a small
+        # app/DB skew hide a just-freed object at ``grace_seconds=0``.
+        cutoff = func.now() - timedelta(seconds=grace_seconds)
         async with self.session_factory() as session:
-            row = await session.execute(
-                delete(GlobalObjectModel)
-                .where(GlobalObjectModel.sha256 == sha256, GlobalObjectModel.ref_count == 0)
-                .returning(GlobalObjectModel.storage_key)
-            )
-            await session.commit()
-            return row.scalar_one_or_none()
+            shas = (
+                await session.execute(
+                    select(GlobalObjectModel.sha256).where(
+                        GlobalObjectModel.state == "pending_delete",
+                        GlobalObjectModel.pending_since <= cutoff,
+                    )
+                )
+            ).scalars().all()
+        collected = 0
+        for sha in shas:
+            if await self.collect(sha) is not None:
+                collected += 1
+        return {"pending": len(shas), "collected": collected}
 
 
 class SqlAssetRepository:
@@ -120,6 +315,7 @@ class SqlAssetRepository:
         source_asset_id: UUID | None = None,
         file_status: str = "uploading",
         rag_status: str = "pending",
+        scope: str = "drive",
         meta: dict | None = None,
     ) -> AssetModel:
         async with self.session_factory() as session:
@@ -134,6 +330,7 @@ class SqlAssetRepository:
                 source_asset_id=source_asset_id,
                 file_status=file_status,
                 rag_status=rag_status,
+                scope=scope,
                 meta=meta or {},
             )
             session.add(obj)
@@ -146,11 +343,21 @@ class SqlAssetRepository:
             return await session.get(AssetModel, asset_id)
 
     async def get_active(self, asset_id: UUID) -> AssetModel | None:
+        """Resolve an ACTIVE **drive-plane** asset by id (``deleted_at IS NULL``).
+
+        A ``scope='chat'`` asset is invisible to the drive plane (design §5.1): every by-id
+        drive endpoint (get / download / content / move / copy / share / import / delete)
+        resolves its asset here, so filtering ``scope='drive'`` makes them all report the
+        same 404 as a missing id — never a 403, which would confirm the asset exists. Chat
+        assets are reached through the session plane (``chat_attachments``) instead.
+        """
         async with self.session_factory() as session:
             return (
                 await session.execute(
                     select(AssetModel).where(
-                        AssetModel.id == asset_id, AssetModel.deleted_at.is_(None)
+                        AssetModel.id == asset_id,
+                        AssetModel.deleted_at.is_(None),
+                        AssetModel.scope == "drive",
                     )
                 )
             ).scalar_one_or_none()
@@ -263,8 +470,8 @@ class SqlAssetRepository:
     ) -> AssetModel | None:
         """Active asset matching (folder, content hash) — RAG-copy dedupe key.
 
-        A chat screenshot that joins RAG is copied into ``RAG/images`` (keeping the original
-        ``chat/temp`` row intact). Re-importing the same Q&A reuses the existing copy instead
+        A chat screenshot that joins RAG is copied into ``RAG/images`` (the original owned
+        chat asset is left intact). Re-importing the same Q&A reuses the existing copy instead
         of duplicating rows, keyed on the physical content hash since both copies share it.
         """
         async with self.session_factory() as session:
@@ -477,6 +684,25 @@ class SqlAssetRepository:
             await session.execute(delete(AssetModel).where(AssetModel.id == asset_id))
             await session.commit()
 
+    async def purge_deleted_chat_assets(self, cutoff: datetime) -> int:
+        """Hard-delete chat tombstones soft-deleted at/before ``cutoff`` (background GC).
+
+        An owned chat asset is soft-deleted at logical-delete time and its ref-count share
+        freed then, so once the grace window passes the row is a pure tombstone. Reaping it
+        here (never the drive plane's trashed rows, which still own their bytes) keeps the
+        tombstone bounded. Returns the number of rows removed.
+        """
+        async with self.session_factory() as session:
+            result = await session.execute(
+                delete(AssetModel).where(
+                    AssetModel.scope == "chat",
+                    AssetModel.deleted_at.is_not(None),
+                    AssetModel.deleted_at <= cutoff,
+                )
+            )
+            await session.commit()
+            return result.rowcount or 0
+
     async def nullify_workspace(self, workspace_id: UUID) -> None:
         """Detach every asset from a workspace (used before deleting the workspace row)."""
         async with self.session_factory() as session:
@@ -486,6 +712,272 @@ class SqlAssetRepository:
                 .values(workspace_id=None)
             )
             await session.commit()
+
+
+class SqlChatAttachmentRepository:
+    """The authority for "this asset belongs to this chat" — one row per (asset, chat) link.
+
+    ``owned`` rows point at a ``scope='chat'`` asset created for (and dying with) the chat;
+    ``reference`` rows mount a normal drive file and must never delete it. A row starts as
+    ``draft`` (no session/message, TTL-bounded) and is ``bound`` on Send.
+    """
+
+    def __init__(self, session_factory: Callable) -> None:
+        self.session_factory = session_factory
+
+    async def create_draft(
+        self,
+        user_id: UUID,
+        asset_id: UUID,
+        *,
+        ownership: str = "owned",
+        source: str = "upload",
+        locator: dict | None = None,
+        ttl_seconds: int = 86400,
+    ) -> ChatAttachmentModel:
+        """Open a pre-Send draft link; ``expires_at`` bounds how long an abandoned one lives."""
+        async with self.session_factory() as session:
+            obj = ChatAttachmentModel(
+                user_id=user_id,
+                asset_id=asset_id,
+                session_id=None,
+                message_id=None,
+                ownership=ownership,
+                source=source,
+                status="draft",
+                locator=locator or {},
+                expires_at=datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds),
+            )
+            session.add(obj)
+            await session.commit()
+            await session.refresh(obj)
+            return obj
+
+    async def create_reference(
+        self,
+        user_id: UUID,
+        asset_id: UUID,
+        session_id: UUID,
+        message_id: UUID,
+        *,
+        source: str = "viewer",
+        locator: dict | None = None,
+    ) -> ChatAttachmentModel:
+        """Mount an existing drive file into a chat as a bound ``reference`` link (no copy)."""
+        async with self.session_factory() as session:
+            obj = ChatAttachmentModel(
+                user_id=user_id,
+                asset_id=asset_id,
+                session_id=session_id,
+                message_id=message_id,
+                ownership="reference",
+                source=source,
+                status="bound",
+                locator=locator or {},
+                bound_at=datetime.now(timezone.utc),
+                expires_at=None,
+            )
+            session.add(obj)
+            await session.commit()
+            await session.refresh(obj)
+            return obj
+
+    async def bind(
+        self,
+        attachment_ids: list[UUID],
+        user_id: UUID,
+        session_id: UUID,
+        message_id: UUID,
+    ) -> list[ChatAttachmentModel]:
+        """Bind the caller's own drafts to a session+message on Send.
+
+        Only rows that belong to ``user_id`` and are still ``draft`` are bound — an unknown,
+        foreign, or already-bound id is silently left alone, so one request can never claim
+        another user's attachment. Returns the rows that were bound.
+        """
+        if not attachment_ids:
+            return []
+        async with self.session_factory() as session:
+            rows = (
+                await session.execute(
+                    update(ChatAttachmentModel)
+                    .where(
+                        ChatAttachmentModel.id.in_(attachment_ids),
+                        ChatAttachmentModel.user_id == user_id,
+                        ChatAttachmentModel.status == "draft",
+                    )
+                    .values(
+                        status="bound",
+                        session_id=session_id,
+                        message_id=message_id,
+                        bound_at=datetime.now(timezone.utc),
+                        expires_at=None,
+                    )
+                    .returning(ChatAttachmentModel)
+                )
+            ).scalars().all()
+            await session.commit()
+            return list(rows)
+
+    async def get(self, attachment_id: UUID) -> ChatAttachmentModel | None:
+        async with self.session_factory() as session:
+            return await session.get(ChatAttachmentModel, attachment_id)
+
+    async def get_for_session(
+        self, attachment_id: UUID, session_id: UUID
+    ) -> ChatAttachmentModel | None:
+        """Resolve one attachment scoped to its session (the §4 double-check entry point)."""
+        async with self.session_factory() as session:
+            return (
+                await session.execute(
+                    select(ChatAttachmentModel).where(
+                        ChatAttachmentModel.id == attachment_id,
+                        ChatAttachmentModel.session_id == session_id,
+                    )
+                )
+            ).scalar_one_or_none()
+
+    async def find_draft_ids(self, user_id: UUID, asset_ids: list[UUID]) -> list[UUID]:
+        """Ids of the caller's still-unbound draft links for these owned assets.
+
+        A viewer frame/roi reaches Send as the ASSET id (``image_asset_id``, design §7);
+        this maps it back to the draft opened at upload so Send can bind it. Foreign,
+        already-bound, or unknown assets simply contribute nothing.
+        """
+        if not asset_ids:
+            return []
+        async with self.session_factory() as session:
+            rows = (
+                await session.execute(
+                    select(ChatAttachmentModel.id).where(
+                        ChatAttachmentModel.user_id == user_id,
+                        ChatAttachmentModel.asset_id.in_(asset_ids),
+                        ChatAttachmentModel.status == "draft",
+                    )
+                )
+            ).scalars().all()
+            return list(rows)
+
+    async def list_for_session(self, session_id: UUID) -> list[ChatAttachmentModel]:
+        async with self.session_factory() as session:
+            rows = (
+                await session.execute(
+                    select(ChatAttachmentModel)
+                    .where(ChatAttachmentModel.session_id == session_id)
+                    .order_by(ChatAttachmentModel.created_at, ChatAttachmentModel.id)
+                )
+            ).scalars().all()
+            return list(rows)
+
+    async def list_for_message(self, message_id: UUID) -> list[ChatAttachmentModel]:
+        async with self.session_factory() as session:
+            rows = (
+                await session.execute(
+                    select(ChatAttachmentModel)
+                    .where(ChatAttachmentModel.message_id == message_id)
+                    .order_by(ChatAttachmentModel.created_at, ChatAttachmentModel.id)
+                )
+            ).scalars().all()
+            return list(rows)
+
+    async def list_for_session_with_assets(
+        self, session_id: UUID
+    ) -> list[tuple[ChatAttachmentModel, AssetModel]]:
+        """Attachments of a session joined to their assets (session reopen / restore)."""
+        async with self.session_factory() as session:
+            rows = (
+                await session.execute(
+                    select(ChatAttachmentModel, AssetModel)
+                    .join(AssetModel, AssetModel.id == ChatAttachmentModel.asset_id)
+                    .where(ChatAttachmentModel.session_id == session_id)
+                    .order_by(ChatAttachmentModel.created_at, ChatAttachmentModel.id)
+                )
+            ).all()
+            return [(att, asset) for att, asset in rows]
+
+    async def delete(self, attachment_id: UUID) -> ChatAttachmentModel | None:
+        """Delete one link; returns the removed row so the caller can free an owned asset."""
+        async with self.session_factory() as session:
+            row = (
+                await session.execute(
+                    delete(ChatAttachmentModel)
+                    .where(ChatAttachmentModel.id == attachment_id)
+                    .returning(ChatAttachmentModel)
+                )
+            ).scalar_one_or_none()
+            await session.commit()
+            return row
+
+    async def delete_for_message(self, message_id: UUID) -> list[ChatAttachmentModel]:
+        """Delete a message's links; returns them so owned assets can be freed."""
+        async with self.session_factory() as session:
+            rows = (
+                await session.execute(
+                    delete(ChatAttachmentModel)
+                    .where(ChatAttachmentModel.message_id == message_id)
+                    .returning(ChatAttachmentModel)
+                )
+            ).scalars().all()
+            await session.commit()
+            return list(rows)
+
+    async def delete_for_session(self, session_id: UUID) -> list[ChatAttachmentModel]:
+        """Delete a session's links (both bound and draft); returns them for asset freeing."""
+        async with self.session_factory() as session:
+            rows = (
+                await session.execute(
+                    delete(ChatAttachmentModel)
+                    .where(ChatAttachmentModel.session_id == session_id)
+                    .returning(ChatAttachmentModel)
+                )
+            ).scalars().all()
+            await session.commit()
+            return list(rows)
+
+    async def list_expired_drafts(self, now: datetime | None = None) -> list[ChatAttachmentModel]:
+        """Draft links whose TTL has passed (an abandoned upload never bound to a turn)."""
+        cutoff = now or datetime.now(timezone.utc)
+        async with self.session_factory() as session:
+            rows = (
+                await session.execute(
+                    select(ChatAttachmentModel).where(
+                        ChatAttachmentModel.status == "draft",
+                        ChatAttachmentModel.expires_at <= cutoff,
+                    )
+                )
+            ).scalars().all()
+            return list(rows)
+
+    async def delete_by_ids(self, attachment_ids: list[UUID]) -> list[ChatAttachmentModel]:
+        """Delete a specific set of links; returns them for asset freeing."""
+        if not attachment_ids:
+            return []
+        async with self.session_factory() as session:
+            rows = (
+                await session.execute(
+                    delete(ChatAttachmentModel)
+                    .where(ChatAttachmentModel.id.in_(attachment_ids))
+                    .returning(ChatAttachmentModel)
+                )
+            ).scalars().all()
+            await session.commit()
+            return list(rows)
+
+    async def detach_message(self, message_id: UUID) -> int:
+        """Move a message's links to session scope (``message_id=NULL``), keeping the asset.
+
+        The edit-and-regenerate path: the message row is about to be deleted, but the
+        attachment it was built around must survive. The link is re-pinned to its session so
+        the owned asset keeps a reference (no orphan) and dies with the session instead.
+        """
+        async with self.session_factory() as session:
+            result = await session.execute(
+                update(ChatAttachmentModel)
+                .where(ChatAttachmentModel.message_id == message_id)
+                .values(message_id=None)
+            )
+            await session.commit()
+            return result.rowcount or 0
 
 
 class SqlAssetAclRepository:

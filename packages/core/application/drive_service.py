@@ -81,7 +81,7 @@ class DriveService:
         logs=None,
     ) -> None:
         self.storage = storage or get_storage()
-        self.objects = objects or SqlGlobalObjectRepository(session_factory)
+        self.objects = objects or SqlGlobalObjectRepository(session_factory, storage=self.storage)
         self.assets = assets or SqlAssetRepository(session_factory)
         self.uploads = uploads or SqlUploadSessionRepository(session_factory)
         self.acl = acl or SqlAssetAclRepository(session_factory)
@@ -323,10 +323,11 @@ class DriveService:
                 "sha256 mismatch: client re-uploads the bad chunk and completes again", 400
             )
 
+        # Bytes are written under the per-SHA CAS lock (inside ``upsert_and_increment``),
+        # before the object is marked live — see SqlGlobalObjectRepository.
         storage_key = object_key(digest)
-        await self.storage.put(storage_key, data)
         await self.objects.upsert_and_increment(
-            digest, len(data), storage_key, asset.mime_type
+            digest, len(data), storage_key, asset.mime_type, data=data
         )
         await self.assets.set_object(asset.id, digest)
         ready = await self.assets.set_status(asset.id, file_status=READY, rag_status=RAG_NOT_STARTED)
@@ -354,8 +355,9 @@ class DriveService:
         name = await self._unique_name(user_id, workspace_id, folder_path, name)
         digest = hashlib.sha256(content).hexdigest()
         storage_key = object_key(digest)
-        await self.storage.put(storage_key, content)
-        await self.objects.upsert_and_increment(digest, len(content), storage_key, mime_type)
+        await self.objects.upsert_and_increment(
+            digest, len(content), storage_key, mime_type, data=content
+        )
         return await self.assets.create(
             user_id,
             name,
@@ -473,10 +475,12 @@ class DriveService:
     async def _purge_asset(self, asset) -> dict:
         """Permanently remove an asset and its share of the physical object.
 
-        The asset row must be dropped BEFORE the global object row: ``assets.object_sha256``
-        is a foreign key to ``global_objects``, so retiring the object while the asset still
-        points at it would violate the FK. Order: decrement → drop the asset row → retire the
-        object at 0 (CAS keeps it if a concurrent upload re-incremented).
+        The asset row must be dropped BEFORE the global object is physically collected:
+        ``assets.object_sha256`` is a foreign key to ``global_objects``, and the object's
+        collection rechecks that no asset still references it. Order: ``free`` (row-atomic
+        ref_count decrement, flipping the object to ``pending_delete`` at zero) → drop the
+        asset row → ``collect`` the object (physical delete under the per-SHA lock; it
+        revives the object if a concurrent upload re-incremented it).
 
         Derived RAG images (``source_asset_id``) are purged FIRST so each decrements its own
         refcount before the source row drops; the DB ``ON DELETE CASCADE`` on
@@ -486,14 +490,15 @@ class DriveService:
             await self._purge_asset(derived)
         removed_storage_key = None
         if asset.object_sha256:
-            new_count = await self.objects.decrement(asset.object_sha256)
+            # Order matters: drop the asset row BEFORE collecting the object, so the CAS
+            # recheck sees no straggler reference. ``free`` only decrements + flips the row
+            # (never touches the file); ``collect`` does the physical delete under the lock.
+            new_count = await self.objects.free(asset.object_sha256)
             await self.assets.hard_delete(asset.id)
             if new_count is not None and new_count <= 0:
-                removed_storage_key = await self.objects.delete_if_zero(asset.object_sha256)
+                removed_storage_key = await self.objects.collect(asset.object_sha256)
         else:
             await self.assets.hard_delete(asset.id)
-        if removed_storage_key:
-            await self.storage.delete(removed_storage_key)
         return {"purged": True, "physical_removed": removed_storage_key is not None}
 
     async def download(self, user_id: UUID, asset_id: UUID) -> tuple[str, str, bytes | None]:
@@ -548,9 +553,8 @@ class DriveService:
             return {"asset": self._asset_dict(asset), "content_changed": False}
 
         storage_key = object_key(digest)
-        await self.storage.put(storage_key, data)
         await self.objects.upsert_and_increment(
-            digest, len(data), storage_key, asset.mime_type or "text/plain"
+            digest, len(data), storage_key, asset.mime_type or "text/plain", data=data
         )
 
         updated = await self.assets.set_content_meta(
@@ -558,11 +562,9 @@ class DriveService:
         )
         # FK order: repoint the asset to the new object before retiring the old one.
         if asset.object_sha256 and asset.object_sha256 != digest:
-            new_count = await self.objects.decrement(asset.object_sha256)
+            new_count = await self.objects.free(asset.object_sha256)
             if new_count is not None and new_count <= 0:
-                removed_key = await self.objects.delete_if_zero(asset.object_sha256)
-                if removed_key:
-                    await self.storage.delete(removed_key)
+                await self.objects.collect(asset.object_sha256)
         await self.assets.set_status(asset.id, file_status=READY, rag_status=RAG_NOT_STARTED)
         await self._log(
             user_id, asset.workspace_id, "file.update", "file", asset.id, asset.name,
@@ -627,9 +629,8 @@ class DriveService:
         # Copy-on-write: put the new object, then create the editor's successor row.
         data = content.encode("utf-8")
         digest = hashlib.sha256(data).hexdigest()
-        await self.storage.put(object_key(digest), data)
         await self.objects.upsert_and_increment(
-            digest, len(data), object_key(digest), asset.mime_type or "text/plain"
+            digest, len(data), object_key(digest), asset.mime_type or "text/plain", data=data
         )
         if asset.user_id == user_id:
             # Owner keeps the same logical location; get_by_path/list_visible hide the
@@ -1087,8 +1088,8 @@ class DriveService:
 
         The original asset is left untouched; the copy references the same ``object_sha256`` so
         the physical blob is shared (``global_objects.ref_count`` + 1). Used when a chat
-        screenshot joins RAG: the temporary ``chat/temp`` copy stays and a stable ``RAG/images``
-        copy is created for the corpus, so emptying ``chat/temp`` never removes an image the
+        screenshot joins RAG: the owned chat asset stays with the chat and a stable ``RAG/images``
+        copy is created for the corpus, so retiring the chat never removes an image the
         repo still references. Re-running is a no-op — a live copy with the same content in that
         folder is reused instead of duplicating rows.
         """

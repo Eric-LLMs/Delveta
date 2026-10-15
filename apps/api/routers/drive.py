@@ -5,7 +5,6 @@ through the visibility checks in :mod:`api.permissions`.
 """
 from __future__ import annotations
 
-import urllib.parse
 from uuid import UUID
 
 from api.auth import AuthUser, require_user
@@ -16,6 +15,8 @@ from api.permissions import (
     require_workspace_member,
     require_workspace_owner,
 )
+from api.routers._shared import byte_stream as _stream
+from api.routers._shared import disposition_header as _disposition
 from api.schemas_drive import (
     ContentUpdate,
     CopyRequest,
@@ -42,11 +43,6 @@ files = APIRouter(prefix="/files", tags=["files"])
 folders = APIRouter(prefix="/folders", tags=["folders"])
 trash = APIRouter(prefix="/trash", tags=["trash"])
 users = APIRouter(prefix="/users", tags=["users"])
-
-
-def _disposition(name: str) -> str:
-    quoted = urllib.parse.quote(name)
-    return f"attachment; filename*=UTF-8''{quoted}"
 
 
 # ── Workspaces ───────────────────────────────────────────────────────────────────
@@ -305,12 +301,6 @@ async def update_content(
         response["job_id"] = str(job_id)
         response["rag_status"] = "queued"
     return response
-
-
-def _stream(data: bytes):
-    chunk = 256 * 1024
-    for i in range(0, len(data), chunk):
-        yield data[i : i + chunk]
 
 
 @files.patch("/{asset_id}")

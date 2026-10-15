@@ -27,6 +27,7 @@ from core.application.drive_service import READY, DriveError, DriveService
 from core.config import settings
 from core.infrastructure import media
 from core.infrastructure.db import (
+    ChatAttachmentModel,
     ChunkModel,
     MessageModel,
     SessionEventModel,
@@ -299,6 +300,33 @@ async def prune_session_events(ctx) -> dict:
         )
         await session.commit()
         return {"deleted": result.rowcount}
+
+
+async def chat_asset_gc(ctx) -> dict:
+    """Periodic chat-asset GC (design §8, §9.7): drafts, tombstones, and CAS objects.
+
+    arq cron jobs run as ``(ctx)`` (no job_id/payload) and are not user-facing, so no
+    ``jobs`` row is created. Delegates to :meth:`ChatAssetService.gc`, which is idempotent —
+    a replayed run is a no-op — and is the recovery path for a lost per-delete GC job.
+    Every outcome is logged: the collected counts on success, the traceback on failure
+    (re-raised so arq retries it — no state is consumed before the durable delete, so a
+    retry re-runs the same idempotent sweep).
+    """
+    from core.application.chat_asset_service import ChatAssetService
+
+    service = ChatAssetService(
+        ctx["session_factory"], storage=ctx.get("storage"),
+    )
+    try:
+        result = await service.gc(grace_seconds=settings.chat_asset_gc_grace_seconds)
+    except Exception:
+        logger.exception("chat_asset_gc sweep failed; it will be retried")
+        raise
+    logger.info(
+        "chat_asset_gc sweep: drafts=%s assets_reaped=%s objects=%s",
+        result.get("drafts"), result.get("assets_reaped"), result.get("objects"),
+    )
+    return result
 
 
 def _build_media(payload: dict) -> dict:
@@ -944,21 +972,21 @@ def _pair_covered_ids(pair: dict, messages) -> list[str]:
     return cov
 
 
-def _pair_image_ids(pair: dict, messages) -> list[str]:
-    """Cloud-drive screenshot assets owned by the user messages a Q&A entry covers.
+def _pair_image_ids(pair: dict, messages, owned_by_message: dict[str, str]) -> list[str]:
+    """Chat-asset screenshot ids owned by the user messages a Q&A entry covers.
 
-    Returns the owned ``chat/temp`` asset ids (one per covered user message with a screenshot).
-    The caller mirrors each into a stable ``RAG/images`` copy and puts the *copy* ids into the
-    chunk's ``meta.image_ids`` so retrieval returns them for the vision tool; the stable copy is
-    a separate asset row that survives the session/message delete cascade (the ``chat/temp``
-    original dies with its chat).
+    ``owned_by_message`` maps a user-message id → its ``owned`` chat-asset asset id (from the
+    ``chat_attachments`` authority table). The caller mirrors each into a stable ``RAG/images``
+    copy and puts the *copy* ids into the chunk's ``meta.image_ids`` so retrieval returns them
+    for the vision tool; the stable copy is a separate asset row that survives the chat-asset
+    free (the owned original dies with its chat).
     """
     ids: list[str] = []
     for i in pair.get("indices") or []:
         if i < len(messages) and messages[i].role == "user":
-            aid = messages[i].attach_asset_id
-            if aid is not None and str(aid) not in ids:
-                ids.append(str(aid))
+            aid = owned_by_message.get(str(messages[i].id))
+            if aid and aid not in ids:
+                ids.append(aid)
     return ids
 
 
@@ -1032,6 +1060,20 @@ async def chat_session_import(ctx, job_id: str, payload: dict) -> dict:
                     .order_by(MessageModel.created_at)
                 )
             ).scalars().all()
+            # The message → owned chat-asset map, read from the chat_attachments authority
+            # (replaces the retired messages.attach_asset_id). Only ``owned`` rows carry a
+            # screenshot to mirror into the RAG corpus; references point at drive files.
+            atts = (
+                await session.execute(
+                    select(ChatAttachmentModel).where(
+                        ChatAttachmentModel.session_id == session_id,
+                        ChatAttachmentModel.ownership == "owned",
+                    )
+                )
+            ).scalars().all()
+        owned_by_message = {
+            str(a.message_id): str(a.asset_id) for a in atts if a.message_id is not None
+        }
 
         # Fast path: every chat message is already imported → there is nothing to embed, so
         # skip the LLM segment call entirely. That call is the slow part (minutes when the
@@ -1057,16 +1099,16 @@ async def chat_session_import(ctx, job_id: str, payload: dict) -> dict:
 
         total = 0
         flag_ids: set[str] = set()
-        rag_copy: dict[str, str] = {}  # chat/temp asset id → stable RAG/images copy id
+        rag_copy: dict[str, str] = {}  # owned chat-asset id → stable RAG/images copy id
         chunks_repo = SqlChunkRepository(ctx["session_factory"])
         drive = DriveService(ctx["session_factory"])
         for pair, (start, end) in zip(pairs, spans):
             if _span_imported(messages, (start, end), flagged):
                 continue  # already in the repo — never re-embed
             covered = _pair_covered_ids(pair, messages)
-            image_ids = _pair_image_ids(pair, messages)
-            # Each owned screenshot stays in chat/temp AND gets a stable RAG/images copy sharing
-            # the same object bytes (so emptying chat/temp never loses a repo-referenced image).
+            image_ids = _pair_image_ids(pair, messages, owned_by_message)
+            # Each owned chat asset stays owned by the chat AND gets a stable RAG/images copy
+            # sharing the same object bytes (so retiring the chat never loses a repo-referenced image).
             # The chunk meta references the copy; best-effort, falling back to the owned asset.
             rag_image_ids = []
             for aid in image_ids:
@@ -1076,7 +1118,7 @@ async def chat_session_import(ctx, job_id: str, payload: dict) -> dict:
                             (await drive.copy_to_folder(user_id, UUID(aid), "RAG/images")).id
                         )
                     except DriveError:
-                        rag_copy[aid] = aid  # degraded: reference the owned chat/temp copy
+                        rag_copy[aid] = aid  # degraded: reference the owned chat asset directly
                 rag_image_ids.append(rag_copy[aid])
             key = covered[0] if covered else f"{session_id}:{start}"
             text = f"{pair['question']}\n\n{pair['answer']}"

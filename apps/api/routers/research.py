@@ -32,9 +32,10 @@ import uuid
 from api.auth import AuthUser, require_user
 from api.deps import get_drive_service, get_task_queue
 from api.schemas_research import TaskBriefUpdate, TaskCreateRequest
+from core.application.chat_asset_service import ChatAssetService
 from core.application.drive_service import DriveError, DriveService
 from core.config import settings
-from core.infrastructure.db import MessageModel, SessionLocal, SessionModel
+from core.infrastructure.db import SessionLocal, SessionModel
 from core.infrastructure.jobs import RESEARCH_DRIVE, TaskQueue
 from core.infrastructure.memory import create_session
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -42,7 +43,6 @@ from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-from sqlalchemy import select
 from sse_starlette.sse import EventSourceResponse
 
 from plugins.research.monitor import task_channel
@@ -246,23 +246,16 @@ async def delete_task(
                     sess = await db.get(SessionModel, uuid.UUID(sid))
                     if sess is None or sess.user_id != user.user_id:
                         continue
-                    attach = (
-                        await db.execute(
-                            select(MessageModel.attach_asset_id).where(
-                                MessageModel.session_id == sess.id,
-                                MessageModel.attach_asset_id.is_not(None),
-                            )
-                        )
-                    ).scalars().all()
-                    await db.delete(sess)
-                    await db.commit()
-                for aid in attach:
-                    if aid is None:
-                        continue
-                    try:
-                        await drive.delete_asset(user.user_id, aid)
-                    except DriveError:
-                        pass
+                # Tear down the session's chat attachments through the authority table (frees
+                # owned assets, drops reference links), then delete the session row.
+                await ChatAssetService(SessionLocal, storage=drive.storage).delete_for_session(
+                    uuid.UUID(sid)
+                )
+                async with SessionLocal() as db:
+                    sess = await db.get(SessionModel, uuid.UUID(sid))
+                    if sess is not None:
+                        await db.delete(sess)
+                        await db.commit()
             except Exception:
                 logger.warning("research delete: session cascade failed for %s", sid, exc_info=True)
         return result

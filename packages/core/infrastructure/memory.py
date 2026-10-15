@@ -47,13 +47,14 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import insert, or_, select, tuple_
+from sqlalchemy import func, insert, or_, select, tuple_, update
 
 logger = logging.getLogger(__name__)
 
 from core.config import settings
 from core.infrastructure.db import (
     AssetModel,
+    ChatAttachmentModel,
     MessageModel,
     SessionEventModel,
     SessionModel,
@@ -209,7 +210,6 @@ class _SessionWriteQueue:
                     "session_id": it["session_id"],
                     "role": it["role"],
                     "text": it["text"],
-                    "attach_asset_id": it.get("attach_asset_id"),
                 }
                 for it in items
             ]
@@ -224,6 +224,7 @@ class _SessionWriteQueue:
                                 .returning(MessageModel.id, MessageModel.created_at, MessageModel.role)
                             )
                         ).all()
+                        await _bind_draft_attachments(session, items, rows)
                         await session.commit()
                     self._pending = self._pending[len(items):]
                     return [
@@ -238,6 +239,36 @@ class _SessionWriteQueue:
                     last_error = exc
                     await asyncio.sleep(0.2 * (_attempt + 1))
             raise last_error  # type: ignore[misc]
+
+
+async def _bind_draft_attachments(session, items: list[dict], rows: list) -> None:
+    """Bind this turn's draft ``chat_attachments`` in the SAME tx as the message INSERT (§6.2).
+
+    Each enqueued user item may carry ``attachment_ids`` — the draft rows the client created
+    before Send. They are flipped to ``bound`` with the freshly-inserted message id, session,
+    and ``bound_at``; a draft belonging to another user or already bound is left untouched
+    (only this user's ``draft`` rows move). The multi-row ``INSERT ... RETURNING`` yields rows
+    in VALUES order, so ``rows`` lines up with ``items``.
+    """
+    for it, row in zip(items, rows):
+        ids = it.get("attachment_ids")
+        if not ids:
+            continue
+        await session.execute(
+            update(ChatAttachmentModel)
+            .where(
+                ChatAttachmentModel.id.in_(ids),
+                ChatAttachmentModel.user_id == it["user_id"],
+                ChatAttachmentModel.status == "draft",
+            )
+            .values(
+                status="bound",
+                session_id=it["session_id"],
+                message_id=row.id,
+                bound_at=func.now(),
+                expires_at=None,
+            )
+        )
 
 
 _write_queues: dict[UUID, _SessionWriteQueue] = {}
@@ -581,16 +612,17 @@ class SessionMemoryStore:
         llm,
         session_id: UUID,
         user_id: UUID,
-        attach_asset_id: UUID | None = None,
+        attachment_ids: list[UUID] | None = None,
     ) -> None:
         self.session_factory = session_factory
         self.embedder = embedder
         self.llm = llm
         self.session_id = session_id
         self.user_id = user_id
-        # Cloud-drive asset the current turn's user message OWNS (📷 screenshot). None for
-        # referential attaches. Written to MessageModel.attach_asset_id on append_message.
-        self._attach_asset_id = attach_asset_id
+        # Draft ``chat_attachments`` rows this turn's user message carries (upload / screenshot
+        # / frame / roi). Bound to the freshly-inserted message id on the next flush; None for
+        # a turn with no attachment.
+        self._attachment_ids = list(attachment_ids) if attachment_ids else []
         self._events: list[tuple[str, dict]] = []
         # Written rows collected by flushes on this store; the router drains them via
         # ``take_written`` to put this turn's message ids in the done frame (no text scan).
@@ -606,11 +638,10 @@ class SessionMemoryStore:
     async def append_message(self, role: str, text: str) -> None:
         """Enqueue one message write (non-blocking; batched by the per-session queue).
 
-        The user message of a turn records ``attach_asset_id`` — the cloud-drive asset the
-        message OWNS (a 📷 chat screenshot). It is written only for ``role == "user"`` and
-        only when the store was built with a value, so assistant/tool messages and
-        referential attaches never populate it. Deleting the message/session later cascades a
-        soft-delete of that asset (folder-agnostic).
+        The user message of a turn carries this turn's draft ``chat_attachments`` (upload /
+        screenshot / frame / roi). The ids are bound to the message row in the same INSERT
+        transaction on flush; assistant/tool messages and a turn with no attachment carry
+        none.
 
         Persistence is async and lossless-by-retry: the row lands on the next
         :meth:`flush_writes` (every turn end) with 2 retries; a final failure sets
@@ -623,7 +654,7 @@ class SessionMemoryStore:
                 "session_id": self.session_id,
                 "role": role,
                 "text": text,
-                "attach_asset_id": self._attach_asset_id if role == "user" else None,
+                "attachment_ids": self._attachment_ids if role == "user" else None,
             }
         )
 
@@ -884,7 +915,7 @@ async def load_session_messages(
 async def append_messages_batch(
     session_factory, user_id: UUID, session_id: UUID, items: list[dict]
 ) -> list[dict]:
-    """Batch-insert ``[{role, text, attach_asset_id?}]`` with ``RETURNING``.
+    """Batch-insert ``[{role, text}]`` with ``RETURNING``.
 
     The write queue's primitive: one INSERT for the whole turn, returning the
     created rows' ``{message_id, created_at, role}`` so the done frame can carry
@@ -898,7 +929,6 @@ async def append_messages_batch(
             "session_id": session_id,
             "role": it["role"],
             "text": it["text"],
-            "attach_asset_id": it.get("attach_asset_id"),
         }
         for it in items
     ]
@@ -992,9 +1022,10 @@ async def load_session_detail(session_factory, session_id: UUID) -> dict:
 
     Messages carry their ``id`` so the client can delete a single message, plus the
     per-message ``imported_rag`` flag so the "✓ Imported" button state comes straight from
-    the row instead of a separate coverage query. A user message that created a chat
-    attachment carries ``attach`` (``{asset_id, name, mime}``) so the client can render the
-    image/file inline in the bubble. ``compaction`` is the durable checkpoint inlined for
+    the row instead of a separate coverage query. A user message that carries a chat
+    attachment resolves it through the ``chat_attachments`` authority table (joined to
+    ``assets``) and surfaces ``attach`` (``{asset_id, name, mime}``) so the client can render
+    the image/file inline in the bubble. ``compaction`` is the durable checkpoint inlined for
     Live-State RECOVERY (a client that lost its in-memory state rebuilds ``[summary] +
     [tail]`` from here and returns to zero-read turns) — recovery is the only reason a
     normal path touches this. The shape of :func:`load_session_messages` (used by the
@@ -1007,15 +1038,23 @@ async def load_session_detail(session_factory, session_id: UUID) -> dict:
         rows = (
             await session.execute(
                 select(MessageModel, AssetModel)
-                .outerjoin(AssetModel, AssetModel.id == MessageModel.attach_asset_id)
+                .outerjoin(
+                    ChatAttachmentModel, ChatAttachmentModel.message_id == MessageModel.id
+                )
+                .outerjoin(AssetModel, AssetModel.id == ChatAttachmentModel.asset_id)
                 .where(MessageModel.session_id == session_id)
                 .order_by(MessageModel.created_at, MessageModel.id)
             )
         ).all()
-        return {
-            "title": sess.title if sess is not None else None,
-            "compaction": sess.compaction if sess is not None else None,
-            "messages": [
+        # A message with N attachments joins to N rows; the inline bubble shows one, so keep
+        # the first attachment seen per message (set, not an ordered list, per the design).
+        messages: list[dict] = []
+        seen: set = set()
+        for m, asset in rows:
+            if m.id in seen:
+                continue
+            seen.add(m.id)
+            messages.append(
                 {
                     "id": str(m.id),
                     "role": m.role,
@@ -1035,8 +1074,11 @@ async def load_session_detail(session_factory, session_id: UUID) -> dict:
                     # {hits, queries} so the client re-renders the 👍/👎 row after reopen.
                     "retrieval": (m.meta or {}).get("retrieval") if m.meta else None,
                 }
-                for m, asset in rows
-            ],
+            )
+        return {
+            "title": sess.title if sess is not None else None,
+            "compaction": sess.compaction if sess is not None else None,
+            "messages": messages,
         }
 
 

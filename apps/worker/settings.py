@@ -135,6 +135,8 @@ class WorkerSettings:
     # Match arq's retry budget to PG: FAILED is only written on the final attempt.
     max_tries = settings.worker_max_tries
     # Daily audit-event retention (purges only session_events; runs once at startup too).
+    # Hourly chat-asset GC: expired drafts, tombstones, and pending_delete CAS objects.
     cron_jobs: ClassVar[list] = [
         cron(tasks.prune_session_events, run_at_startup=True, **_cron_parts(settings.retention_cron)),
+        cron(tasks.chat_asset_gc, run_at_startup=True, **_cron_parts(settings.chat_asset_gc_cron)),
     ]

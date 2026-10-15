@@ -220,12 +220,15 @@ def test_segment_chat_degrades_to_default_grouping_on_llm_failure():
 
 # ── chat_session_import: incremental, flag-driven (no delete-and-rebuild) ──
 class _Msg:
-    def __init__(self, id, role, text, imported_rag=False, attach_asset_id=None):
+    def __init__(self, id, role, text, imported_rag=False, message_id=None):
         self.id = id
         self.role = role
         self.text = text
         self.imported_rag = imported_rag
-        self.attach_asset_id = attach_asset_id
+        # ``chat_attachments`` fake shape: the import maps message id → owned asset id. These
+        # plain transcript rows carry no attachment (message_id None), like a chat with none.
+        self.message_id = message_id
+        self.asset_id = None
 
 
 class _RebuildResult:

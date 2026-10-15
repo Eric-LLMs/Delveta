@@ -5269,6 +5269,24 @@
     return created;
   }
 
+  // Upload a chat-ONLY asset (screenshot / video frame / region crop) through the session
+  // plane: it lands as a scope='chat' asset the drive plane never sees, tied to a draft
+  // ``chat_attachment`` that the next Send binds to the message. Returns the created row
+  // { attachment_id, asset_id, name }.
+  async function uploadChatAsset(bytes, name, { source = "upload", locator = null, mime_type = null } = {}) {
+    const q = new URLSearchParams({ name, source });
+    if (mime_type) q.set("mime_type", mime_type);
+    if (locator) q.set("locator", JSON.stringify(locator));
+    const res = await fetch(`/api/sessions/attachments?${q.toString()}`, {
+      method: "POST",
+      headers: { ...authHeaders(), "Content-Type": "application/octet-stream" },
+      body: new Blob([bytes]),
+    });
+    if (res.status === 401) { openAccount(); throw new Error("Session expired — sign in again."); }
+    if (!res.ok) throw new Error(`Chat asset upload failed (${res.status})`);
+    return await res.json();
+  }
+
   // Frozen-window region selection: show the captured frame fitted (centered, aspect kept) in
   // the window, let the user drag a rectangle over it, and crop that region from the original
   // data URL via canvas. Double-click selects the whole frame; Esc (or a click without a drag)
@@ -5418,11 +5436,14 @@
           bytes = await imageSourceToBytes(region.dataUrl);
           locator = { ...(payload.baseLocator || {}), ...region.locator };
         }
-        created = await uploadBytesToCloud(
-          bytes, `${mode}_${Date.now()}.png`, "chat/temp", "image/png");
+        // A frame/roi capture is a chat-only asset (never drive-visible); the Send binds
+        // its draft by asset id (the selection carries ``image_asset_id``, design §7).
+        created = await uploadChatAsset(bytes, `${mode}_${Date.now()}.png`, {
+          source: mode, locator, mime_type: "image/png",
+        });
         addPendingSelection({
           kind: mode === "frame" ? "frame" : "roi",
-          image_asset_id: created.id,
+          image_asset_id: created.asset_id,
           locator,
         });
         Viewer.toast(mode === "frame" ? "Frame pinned to chat." : "Region pinned to chat.");
@@ -5439,13 +5460,18 @@
         const bin = atob(b64);
         const bytes = new Uint8Array(bin.length);
         for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-        created = await uploadBytesToCloud(bytes, `screenshot_${Date.now()}.png`, "chat/temp", "image/png");
-        // A screenshot is staged as a pending attachment and rides on the NEXT message the
-        // user actively sends — never auto-sent. ``owned`` marks the asset as created FOR
-        // this message: the server records it on the message so deleting the message/session
-        // cleans it up (folder-agnostic). The "chat/temp" folder is UI organization only —
-        // the delete decision keys off the owned link.
-        setPendingAttach({ kind: "asset", asset_id: created.id, name: created.name, owned: true });
+        // A screenshot is a chat-only asset (scope='chat', never drive-visible), staged as a
+        // pending attachment and riding on the NEXT message the user actively sends — never
+        // auto-sent. The draft's ``attachment_id`` binds it to that message on Send;
+        // ``owned`` marks the asset as created FOR this message, so deleting the
+        // message/session frees it.
+        created = await uploadChatAsset(bytes, `screenshot_${Date.now()}.png`, {
+          source: "screenshot", mime_type: "image/png",
+        });
+        setPendingAttach({
+          kind: "asset", attachment_id: created.attachment_id,
+          asset_id: created.asset_id, name: created.name, owned: true,
+        });
         return;
       } else {
         // A cloud asset opened in the viewer attaches directly by id; a local file is

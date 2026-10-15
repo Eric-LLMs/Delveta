@@ -4,20 +4,31 @@ delete a single message, resolve a human-in-the-loop approval, revert a workspac
 from __future__ import annotations
 
 import asyncio
+import json
 from uuid import UUID
 
 from agent.security.approvals import get_approval_bridge
 from agent.tools.checkpoints import CheckpointError
 from api.auth import AuthUser, require_user
 from api.deps import get_agent, get_drive_service
+from api.routers._shared import byte_stream as _stream
+from api.routers._shared import disposition_header as _disposition
 from api.schemas import ApprovalResolveRequest, ReconcileRequest, SessionRenameRequest
-from core.application.drive_service import DriveError, DriveService
+from core.application.chat_asset_service import ChatAssetService
+from core.application.drive_service import DriveService
 from core.infrastructure.db import ChunkModel, MessageModel, SessionLocal, SessionModel
 from core.infrastructure.memory import list_sessions, load_session_detail, reconcile_messages
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi.responses import StreamingResponse
 from sqlalchemy import select, update
 
 router = APIRouter(tags=["sessions"])
+
+# Chat-asset uploads are screenshots / video frames / roi crops — small PNGs — so a bounded
+# single-shot body is enough (no chunked upload). The cap stops an accidental large file from
+# being buffered whole; source is closed to the four shapes the design names (§6, §7).
+_MAX_CHAT_ATTACHMENT_BYTES = 32 * 1024 * 1024
+_CHAT_ATTACHMENT_SOURCES = {"upload", "screenshot", "frame", "roi"}
 
 
 async def _backfill_imported_rag(session_factory, user_id: UUID, session_id: UUID) -> None:
@@ -98,6 +109,86 @@ async def get_sessions(
     return {"sessions": [s for s in sessions if s.get("type") != 1]}
 
 
+@router.post("/sessions/attachments")
+async def create_chat_attachment(
+    request: Request,
+    name: str,
+    user: AuthUser = Depends(require_user),
+    drive: DriveService = Depends(get_drive_service),
+    mime_type: str | None = None,
+    source: str = "upload",
+    locator: str | None = None,
+) -> dict:
+    """Upload a chat-only draft asset (design §5.2, §6.1): screenshot / frame / roi / file.
+
+    The bytes land in the shared CAS as a ``scope='chat'`` asset that the drive plane can
+    never see; a ``draft`` ``chat_attachments`` row (TTL-bounded) links it to the caller. The
+    Send that follows binds it to the session + message. ``locator`` is the optional
+    ``{t_ms,x,y,w,h}`` (frame/roi) or ``{page}`` (document) JSON, stored verbatim.
+    """
+    data = await request.body()
+    if not data:
+        raise HTTPException(status_code=400, detail="empty attachment")
+    if len(data) > _MAX_CHAT_ATTACHMENT_BYTES:
+        raise HTTPException(status_code=413, detail="attachment too large")
+    if source not in _CHAT_ATTACHMENT_SOURCES:
+        raise HTTPException(status_code=400, detail="unknown attachment source")
+    loc: dict | None = None
+    if locator:
+        try:
+            loc = json.loads(locator)
+        except (ValueError, TypeError):
+            raise HTTPException(status_code=400, detail="locator must be JSON")
+        if not isinstance(loc, dict):
+            raise HTTPException(status_code=400, detail="locator must be a JSON object")
+    safe_name = (name or "").strip()[:255] or "attachment"
+    row = await ChatAssetService(SessionLocal, storage=drive.storage).create_owned_draft(
+        user.user_id, safe_name, data, mime_type, source=source, locator=loc,
+    )
+    return {
+        "attachment_id": str(row.id),
+        "asset_id": str(row.asset_id),
+        "name": safe_name,
+        "mime_type": mime_type,
+        "size": len(data),
+    }
+
+
+@router.get("/sessions/{session_id}/attachments/{attachment_id}/content")
+async def download_chat_attachment(
+    session_id: UUID,
+    attachment_id: UUID,
+    user: AuthUser = Depends(require_user),
+    drive: DriveService = Depends(get_drive_service),
+):
+    """Stream a chat attachment's bytes (design §5.2).
+
+    Authorizes on **session ownership** first (404 for a foreign/missing session), then goes
+    through :meth:`ChatAssetService.read_bytes` — the §4 double check that also re-verifies a
+    ``reference`` link's drive ACL at read time. No drive-plane route ever serves a
+    ``scope='chat'`` asset, and this one never resolves an id outside its own session.
+    """
+    async with SessionLocal() as session:
+        sess = (
+            await session.execute(select(SessionModel).where(SessionModel.id == session_id))
+        ).scalar_one_or_none()
+    if sess is None or sess.user_id != user.user_id:
+        raise HTTPException(status_code=404, detail="session not found")
+    chat_assets = ChatAssetService(SessionLocal, storage=drive.storage)
+    data = await chat_assets.read_bytes(attachment_id, session_id)
+    if data is None:
+        raise HTTPException(status_code=404, detail="attachment not found")
+    att = await chat_assets.get_for_session(attachment_id, session_id)
+    asset = await chat_assets.assets.get(att.asset_id) if att is not None else None
+    mime = (asset.mime_type if asset else None) or "application/octet-stream"
+    filename = (asset.name if asset else None) or "attachment"
+    return StreamingResponse(
+        _stream(data),
+        media_type=mime,
+        headers={"Content-Disposition": _disposition(filename), "Content-Length": str(len(data))},
+    )
+
+
 @router.get("/sessions/{session_id}")
 async def get_session_messages(session_id: UUID, user: AuthUser = Depends(require_user)):
     """Return a session's title + messages (with ids) if it belongs to the current user."""
@@ -146,12 +237,10 @@ async def delete_session(
 ):
     """Delete a session (cascade removes its messages + events) if it belongs to the user.
 
-    Chat screenshots owned by the session's messages (``MessageModel.attach_asset_id``) are
-    soft-deleted too. A screenshot is temporary — it dies with its chat — while the stable
-    ``RAG/images`` copy that an imported Q&A references is a separate asset row the delete
-    never touches, so the query-repo text keeps its image. The link is folder-agnostic: the
-    ``chat/temp`` folder is UI-only, so a screenshot the user moved elsewhere is still cleaned
-    up.
+    The session's chat attachments (``chat_attachments``) are torn down first: an ``owned``
+    asset is freed (its ref-count share of the CAS object released), a ``reference`` link to a
+    drive file is only dropped — the drive file is never touched. The stable ``RAG/images``
+    copy an imported Q&A references is a separate asset row this delete never touches.
     """
     async with SessionLocal() as session:
         sess = (
@@ -159,24 +248,13 @@ async def delete_session(
         ).scalar_one_or_none()
         if sess is None or sess.user_id != user.user_id:
             raise HTTPException(status_code=404, detail="session not found")
-        owned_rows = (
-            await session.execute(
-                select(MessageModel.attach_asset_id).where(
-                    MessageModel.session_id == session_id,
-                    MessageModel.attach_asset_id.is_not(None),
-                )
-            )
-        ).all()
-        await session.delete(sess)
-        await session.commit()
-    owned = [aid for (aid,) in owned_rows if aid is not None]
-    for asset_id in owned:
-        # Best-effort: an asset may already be trashed from the drive → skip, never fail the
-        # session delete because of an orphaned cleanup.
-        try:
-            await drive.delete_asset(user.user_id, asset_id)
-        except DriveError:
-            pass
+    chat_assets = ChatAssetService(SessionLocal, storage=drive.storage)
+    await chat_assets.delete_for_session(session_id)
+    async with SessionLocal() as session:
+        sess = await session.get(SessionModel, session_id)
+        if sess is not None:
+            await session.delete(sess)
+            await session.commit()
     return Response(status_code=204)
 
 
@@ -190,12 +268,11 @@ async def delete_session_message(
 ):
     """Delete a single message (no truncation) if its session belongs to the user.
 
-    When ``delete_assets`` is true (default) and the message owns a screenshot
-    (``attach_asset_id``), that asset is soft-deleted too — folder-agnostic. A screenshot is
-    temporary and dies with its chat; the stable ``RAG/images`` copy an imported Q&A references
-    is a separate asset row this delete never touches. The client's edit-and-regenerate flow
-    passes ``delete_assets=0`` so re-asking a question does not destroy the screenshot it was
-    built around.
+    Its chat attachments are resolved through ``chat_attachments``. When ``delete_assets`` is
+    true (default) an ``owned`` asset is freed and the links dropped; when false (the client's
+    edit-and-regenerate flow) the links are re-pinned to the session so the screenshot the
+    question was built around survives (and dies with the session later), never orphaned. A
+    ``reference`` link to a drive file is only ever dropped, never followed.
     """
     async with SessionLocal() as session:
         sess = (
@@ -208,16 +285,16 @@ async def delete_session_message(
         ).scalar_one_or_none()
         if message is None or message.session_id != session_id:
             raise HTTPException(status_code=404, detail="message not found")
-        # A screenshot is temporary and dies with its chat; the stable RAG/images copy an
-        # imported Q&A references is a separate asset row this delete never touches.
-        owned = message.attach_asset_id if delete_assets else None
-        await session.delete(message)
-        await session.commit()
-    if owned is not None:
-        try:
-            await drive.delete_asset(user.user_id, owned)
-        except DriveError:
-            pass
+    chat_assets = ChatAssetService(SessionLocal, storage=drive.storage)
+    if delete_assets:
+        await chat_assets.delete_for_message(message_id)
+    else:
+        await chat_assets.detach_message(message_id)
+    async with SessionLocal() as session:
+        message = await session.get(MessageModel, message_id)
+        if message is not None:
+            await session.delete(message)
+            await session.commit()
     return Response(status_code=204)
 
 

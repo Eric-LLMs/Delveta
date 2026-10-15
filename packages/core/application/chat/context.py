@@ -19,6 +19,7 @@ from typing import Any
 from uuid import UUID
 
 from core.application.chat.executors.base import ChatDeps, ViewerDeps
+from core.application.chat_asset_service import ChatAssetService
 from core.application.drive_service import DriveError, DriveService
 from core.config import settings
 from core.infrastructure.memory import (
@@ -115,6 +116,54 @@ def _attach_asset_id(body: Any) -> str:
     return ""
 
 
+def _frame_selection_asset_ids(body: Any) -> list[UUID]:
+    """Asset ids of the viewer's frame/roi captures that carry an uploaded image (design §7)."""
+    ids: list[UUID] = []
+    for sel in getattr(getattr(body, "viewer", None), "selections", None) or []:
+        if getattr(sel, "kind", None) in ("roi", "frame") and getattr(sel, "image_asset_id", None):
+            try:
+                ids.append(UUID(str(sel.image_asset_id)))
+            except (ValueError, TypeError):
+                continue
+    return ids
+
+
+async def _draft_attachment_ids(body: Any, service: ChatAssetService, user_id: Any) -> list[UUID]:
+    """Resolve the draft ``chat_attachments`` ids this turn's user message carries (design §6).
+
+    An ``owned`` upload (screenshot / file) arrives as a draft ``attachment_id`` the client
+    created against the chat-asset upload route. A ``＋``-picked drive file arrives as a bare
+    ``asset_id`` and is mounted here as a ``reference`` draft (no copy, never deleted with the
+    chat). A viewer frame/roi arrives as the capture's ASSET id on the selection
+    (``image_asset_id``, design §7); its upload-time draft is resolved back by asset id and
+    bound here too. Unknown / unreadable references resolve to nothing — never an error, never
+    a partial turn.
+    """
+    ids: list[UUID] = []
+    attach = body.attach or {}
+    if attach.get("attachment_id"):
+        try:
+            ids.append(UUID(str(attach["attachment_id"])))
+        except (ValueError, TypeError):
+            pass
+    elif attach.get("asset_id"):
+        try:
+            ref = await service.mount_reference_draft(
+                user_id,
+                UUID(str(attach["asset_id"])),
+                source="screenshot" if attach.get("owned") else "viewer",
+                locator=attach.get("locator"),
+            )
+        except (ValueError, TypeError):
+            ref = None
+        if ref is not None:
+            ids.append(ref.id)
+    frame_asset_ids = _frame_selection_asset_ids(body)
+    if frame_asset_ids:
+        ids.extend(await service.draft_ids_for_assets(user_id, frame_asset_ids))
+    return ids
+
+
 # A drive path named in the sentence: "My Drive/a/b/x.pdf" / "我的云盘/…".
 # Explicit root prefix only — a bare "报告.pdf" is NOT a path fact (too many
 # false-positive shapes), it stays the Agent's to clarify.
@@ -194,7 +243,11 @@ async def attach_note(
 
 
 async def resolve_inline_image(
-    body: Any, drive: DriveService, user_id: Any, model: str | None
+    body: Any,
+    drive: DriveService,
+    user_id: Any,
+    model: str | None,
+    chat_assets: ChatAssetService | None = None,
 ) -> str | None:
     """A ``data:`` URL for the attached image when it should be INLINED this turn.
 
@@ -215,11 +268,22 @@ async def resolve_inline_image(
     suffix = name[name.rfind("."):].lower() if "." in name else ""
     if not (suffix in IMAGE_SUFFIXES or mime.startswith("image/")):
         return None
+    asset_mime = None
+    data = None
     try:
         _name, asset_mime, data = await drive.download(user_id, UUID(asset_id))
-    except DriveError as exc:
-        logger.warning("inline image: download failed (%s); using vision tool", exc)
-        return None
+    except DriveError:
+        # An owned upload (screenshot / file) is a ``scope='chat'`` asset the drive plane
+        # refuses (404 by design §5.1), and at this point it is still an unbound draft, so
+        # the session-plane reader cannot resolve it either. Read it owner-only through the
+        # chat-asset plane; any failure keeps the turn on the ``vision`` tool path.
+        if attach.get("owned") and chat_assets is not None:
+            try:
+                got = await chat_assets.read_owned_bytes(user_id, UUID(asset_id))
+            except (ValueError, TypeError):
+                got = None
+            if got is not None:
+                asset_mime, data = got
     except Exception:  # noqa: BLE001 - malformed id / storage hiccup → tool path, never fail the turn
         return None
     if not data or len(data) > INLINE_IMAGE_MAX_BYTES:
@@ -283,6 +347,34 @@ async def asset_readable(drive: DriveService, user_id: Any, asset_id: Any) -> bo
         return False
 
 
+async def _frame_asset_readable(drive: DriveService, user_id: Any, asset_id: Any) -> bool:
+    """True when the caller may read a frame/roi capture image (design §4/§7).
+
+    Two shapes: a normal drive file (the pre-chat-asset legacy path, via the drive read
+    check), or an OWNED ``scope='chat'`` asset the caller uploaded. Chat assets are
+    invisible to the drive plane (``ensure_asset_readable`` reports 404), so they are
+    authorized here directly on ``scope='chat' AND assets.user_id = caller`` — the same
+    check the session-plane read path applies.
+    """
+    if await asset_readable(drive, user_id, asset_id):
+        return True
+    if user_id is None or not asset_id:
+        return False
+    try:
+        asset = await drive.assets.get(UUID(str(asset_id)))
+    except (ValueError, TypeError):
+        return False
+    except Exception:
+        logger.warning("viewer: unexpected chat-asset check failure", exc_info=True)
+        return False
+    return bool(
+        asset is not None
+        and asset.deleted_at is None
+        and (asset.scope or "drive") == "chat"
+        and asset.user_id == user_id
+    )
+
+
 async def build_viewer_assembly(body: Any, drive: DriveService, user_id: Any, deps: ViewerDeps) -> dict | None:
     """Permission-check the viewer's asset identities, then run the pure assembler."""
     if body.viewer is None:
@@ -293,7 +385,7 @@ async def build_viewer_assembly(body: Any, drive: DriveService, user_id: Any, de
     for sel in viewer.selections:
         # Legacy shape kept: only the awaitable check nests; the dedupe guard stays outer.
         if sel.image_asset_id and str(sel.image_asset_id) not in frame_readable:  # noqa: SIM102
-            if await asset_readable(drive, user_id, sel.image_asset_id):
+            if await _frame_asset_readable(drive, user_id, sel.image_asset_id):
                 frame_readable.add(str(sel.image_asset_id))
     return deps.build_blocks(
         viewer, body.message,
@@ -478,13 +570,30 @@ async def build_turn_context(
     """
     drive = deps.drive
     user_text = body.message
-    # Only attaches the client flagged ``owned`` (a 📷 screenshot created for this message)
-    # own a drive asset. Referential attaches leave the link NULL so deleting the message
-    # never touches a referenced document.
+    # Only attaches the client flagged ``owned`` (a 📷 / file asset created for this message)
+    # name "the turn's asset" for capability resolution; a referential attach does not.
+    # A viewer frame/roi is the same shape — a user-owned capture created for this message —
+    # so its image asset id names the turn's asset too (design §7: the vision lane must be
+    # able to reach a selection-backed capture). Persistence is separate (attachment_ids).
+    frame_asset_ids = _frame_selection_asset_ids(body)
     owned_asset_id = (
         body.attach.get("asset_id") if body.attach and body.attach.get("owned") else None
     )
-    inline_image = await resolve_inline_image(body, drive, user_id, model)
+    if not owned_asset_id and frame_asset_ids:
+        owned_asset_id = str(frame_asset_ids[0])
+    # Chat attachments (design §6): the client uploads a chat asset (scope='chat') and sends
+    # its draft ``attachment_id``; the send binds it to the user message. A ``+``-picked
+    # drive file (or a viewer payload) is mounted as a ``reference`` draft (no copy), and a
+    # viewer frame/roi's upload-time draft is bound by asset id. All are bound on flush,
+    # inside the message-INSERT transaction.
+    attachment_ids: list[UUID] = []
+    chat_assets: ChatAssetService | None = None
+    if user_id is not None and (body.attach or frame_asset_ids):
+        chat_assets = ChatAssetService(
+            deps.session_factory, storage=getattr(deps.drive, "storage", None)
+        )
+        attachment_ids = await _draft_attachment_ids(body, chat_assets, user_id)
+    inline_image = await resolve_inline_image(body, drive, user_id, model, chat_assets)
     if body.attach:
         note = await attach_note(body, drive, user_id, inline=inline_image is not None)
         if note:
@@ -546,7 +655,7 @@ async def build_turn_context(
 
     ctx.session_memory = SessionMemoryStore(
         deps.session_factory, deps.embedder(), deps.llm, ctx.session_id, user_id,
-        attach_asset_id=owned_asset_id,
+        attachment_ids=attachment_ids,
     )
     ctx.history, ctx.compaction_payload, ctx.compaction_deferred = await assemble_turn_history(
         body, ctx.session_memory, ctx.session_id, ctx.user_text,

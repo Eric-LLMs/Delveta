@@ -84,7 +84,10 @@ from core.infrastructure.db import (
     SessionLocal,
     SessionModel,
 )
-from core.infrastructure.drive_repositories import SqlChunkRepository
+from core.infrastructure.drive_repositories import (
+    SqlChatAttachmentRepository,
+    SqlChunkRepository,
+)
 from core.infrastructure.ingest import build_chunks, write_query_repo_chunks
 from core.infrastructure.jobs import CHAT_SESSION_IMPORT, TaskQueue
 from core.infrastructure.memory import SessionMemoryStore
@@ -385,19 +388,19 @@ async def chat_import_pair(
 
     from rag.config_store import load_config  # lazy: rag is a sibling package
 
-    # A chat Q&A that joins RAG keeps its screenshot in BOTH folders: the temporary chat/temp
-    # copy stays (it dies with its chat when the session/message is deleted), and a stable
-    # RAG/images copy is created for the corpus sharing the same object bytes — so emptying
-    # chat/temp never removes an image the repo still references. The chunk meta references
-    # the stable copy; best-effort, falling back to the owned chat/temp asset if copying fails.
+    # A chat Q&A that joins RAG keeps its screenshot in BOTH places: the chat asset stays
+    # (it dies with its chat when the session/message is deleted), and a stable RAG/images
+    # drive copy is created for the corpus sharing the same object bytes — so freeing the
+    # chat asset never removes an image the repo still references. The source is the message's
+    # ``chat_attachments`` row (authority); best-effort, falling back to the chat asset id.
     rag_image_id: str | None = None
-    if user_msg.attach_asset_id is not None:
+    _atts = await SqlChatAttachmentRepository(SessionLocal).list_for_message(user_msg.id)
+    owned = next((a.asset_id for a in _atts if a.ownership == "owned"), None)
+    if owned is not None:
         try:
-            rag_image_id = str(
-                (await drive.copy_to_folder(user.user_id, user_msg.attach_asset_id, "RAG/images")).id
-            )
+            rag_image_id = str((await drive.copy_to_folder(user.user_id, owned, "RAG/images")).id)
         except DriveError:
-            rag_image_id = str(user_msg.attach_asset_id)
+            rag_image_id = str(owned)
 
     content = f"{user_msg.text}\n\n{asst_msg.text}"
     cfg = await load_config(SessionLocal)

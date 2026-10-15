@@ -15,37 +15,63 @@ from core.infrastructure.storage import LocalStorage
 
 
 class FakeObjects:
-    def __init__(self) -> None:
+    """Mirror SqlGlobalObjectRepository's state machine (live / pending_delete)."""
+
+    def __init__(self, storage=None) -> None:
         self.rows: dict[str, GlobalObjectModel] = {}
+        self.storage = storage
 
     async def get(self, sha: str) -> GlobalObjectModel | None:
         return self.rows.get(sha)
 
-    async def upsert_and_increment(self, sha, size, storage_key, mime_type):
+    async def upsert_and_increment(self, sha, size, storage_key, mime_type, *, data=None):
+        if data is not None and self.storage is not None:
+            await self.storage.put(storage_key, data)
         obj = self.rows.get(sha)
         if obj:
             obj.ref_count += 1
+            obj.state = "live"
+            obj.pending_since = None
             return obj
         obj = GlobalObjectModel(
-            sha256=sha, size=size, storage_key=storage_key, mime_type=mime_type, ref_count=1
+            sha256=sha, size=size, storage_key=storage_key, mime_type=mime_type,
+            ref_count=1, state="live",
         )
         self.rows[sha] = obj
         return obj
 
-    async def decrement(self, sha: str) -> int | None:
+    async def free(self, sha: str) -> int | None:
         obj = self.rows.get(sha)
         if obj is None or obj.ref_count <= 0:
             return None
         obj.ref_count -= 1
+        if obj.ref_count <= 0:
+            obj.state = "pending_delete"
+            obj.pending_since = datetime.now(timezone.utc)
         return obj.ref_count
 
-    async def delete_if_zero(self, sha: str) -> str | None:
+    async def collect(self, sha: str) -> str | None:
         obj = self.rows.get(sha)
-        if obj is None or obj.ref_count != 0:
+        if obj is None or obj.state != "pending_delete" or obj.ref_count > 0:
             return None
         key = obj.storage_key
+        if self.storage is not None:
+            await self.storage.delete(key)
         del self.rows[sha]
         return key
+
+    async def sweep_pending(self, grace_seconds: int = 3600) -> dict:
+        cutoff = datetime.now(timezone.utc) - timedelta(seconds=grace_seconds)
+        stale = [
+            s for s, o in self.rows.items()
+            if o.state == "pending_delete" and o.pending_since is not None
+            and o.pending_since <= cutoff
+        ]
+        collected = 0
+        for sha in stale:
+            if await self.collect(sha) is not None:
+                collected += 1
+        return {"pending": len(stale), "collected": collected}
 
 
 class FakeAssets:
@@ -55,12 +81,12 @@ class FakeAssets:
 
     async def create(self, user_id, name, *, workspace_id=None, folder_path=None,
                      mime_type=None, size=None, object_sha256=None, source_asset_id=None,
-                     file_status="uploading", rag_status="pending", meta=None):
+                     file_status="uploading", rag_status="pending", scope="drive", meta=None):
         obj = AssetModel(
             id=uuid4(), user_id=user_id, name=name, workspace_id=workspace_id,
             folder_path=folder_path, mime_type=mime_type, size=size,
             object_sha256=object_sha256, source_asset_id=source_asset_id,
-            file_status=file_status, rag_status=rag_status,
+            file_status=file_status, rag_status=rag_status, scope=scope,
             meta=meta if meta is not None else {},
         )
         self.rows[obj.id] = obj
@@ -85,8 +111,12 @@ class FakeAssets:
         return self.rows.get(asset_id)
 
     async def get_active(self, asset_id):
+        # Mirror SqlAssetRepository.get_active: active AND drive-plane (scope='drive'), so a
+        # scope='chat' asset resolves to None here → every by-id drive endpoint 404s (§5.1).
         obj = self.rows.get(asset_id)
-        return obj if obj is not None and obj.deleted_at is None else None
+        if obj is None or obj.deleted_at is not None:
+            return None
+        return obj if (obj.scope or "drive") == "drive" else None
 
     @staticmethod
     def _cow_retired_for(o, user_id) -> bool:
@@ -105,6 +135,7 @@ class FakeAssets:
         return [
             o for o in self.rows.values()
             if o.deleted_at is None and not self._cow_retired_for(o, user_id)
+            and (o.scope or "drive") == "drive"
             and (o.user_id == user_id or o.workspace_id in visible_ws)
         ]
 
@@ -229,7 +260,8 @@ class FakeAssets:
     async def list_trash(self, user_id):
         return [
             o for o in self.rows.values()
-            if o.deleted_at is not None and o.user_id == user_id
+            if o.deleted_at is not None and (o.scope or "drive") == "drive"
+            and o.user_id == user_id
         ]
 
     async def get_including_trash(self, asset_id):
@@ -245,6 +277,17 @@ class FakeAssets:
 
     async def hard_delete(self, asset_id):
         self.rows.pop(asset_id, None)
+
+    async def purge_deleted_chat_assets(self, cutoff):
+        """Mirror SqlAssetRepository.purge_deleted_chat_assets (chat tombstones past grace)."""
+        removed = [
+            aid for aid, o in self.rows.items()
+            if (o.scope or "drive") == "chat"
+            and o.deleted_at is not None and o.deleted_at <= cutoff
+        ]
+        for aid in removed:
+            self.rows.pop(aid, None)
+        return len(removed)
 
     async def nullify_workspace(self, workspace_id):
         for o in self.rows.values():
@@ -544,10 +587,11 @@ def make_drive(tmp_path, users=None):
 
     users = users or {}
     workspaces = FakeWorkspaces()
+    storage = LocalStorage(tmp_path)
     return DriveService(
         session_factory=None,  # unused by the fakes
-        storage=LocalStorage(tmp_path),
-        objects=FakeObjects(),
+        storage=storage,
+        objects=FakeObjects(storage),
         assets=FakeAssets(workspaces),
         uploads=FakeUploads(),
         acl=FakeAcl(),

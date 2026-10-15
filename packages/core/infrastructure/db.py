@@ -153,6 +153,12 @@ class GlobalObjectModel(Base):
     storage_key: Mapped[str] = mapped_column(String, nullable=False)
     mime_type: Mapped[str | None] = mapped_column(String)
     ref_count: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    # Durable retirement state for physical CAS GC: 'live' while referenced,
+    # 'pending_delete' once the last reference is freed. The physical file is removed
+    # only against 'pending_delete', under a per-sha advisory lock, so a crash between
+    # "logically freed" and "physically removed" is recovered by a sweeper.
+    state: Mapped[str] = mapped_column(String, nullable=False, server_default="live", default="live")
+    pending_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -275,6 +281,10 @@ class AssetModel(Base):
     )
     name: Mapped[str] = mapped_column(String, nullable=False)
     folder_path: Mapped[str | None] = mapped_column(String)
+    # Visibility dimension, not a UI category: 'drive' = a normal drive file;
+    # 'chat' = a chat-only asset hidden from the whole drive plane (Files / search /
+    # picker / trash / download). The shared visibility predicate keys on this.
+    scope: Mapped[str] = mapped_column(String, nullable=False, server_default="drive", default="drive")
     mime_type: Mapped[str | None] = mapped_column(String)
     # The source document (PDF/DOCX) this asset was derived from during RAG image extraction.
     # Enables re-ingest dedupe (same source + object_sha256 = content hash) and lifecycle
@@ -761,13 +771,6 @@ class MessageModel(Base):
     imported_rag: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default="false", default=False
     )
-    # The cloud-drive asset this message OWNS (a 📷 chat screenshot). Only set for attaches
-    # flagged ``owned`` — referential attaches (🔗 drive file / local file) leave it NULL so
-    # deleting the message never touches a referenced document. Cascade deletes of the
-    # message/session soft-delete this asset (folder-agnostic; the chat/temp folder is UI).
-    attach_asset_id: Mapped[uuid.UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("assets.id", ondelete="SET NULL"), nullable=True
-    )
     # Generic per-message metadata (JSONB). First use: the retrieval-feedback
     # snapshot ``{"retrieval": {"hits": [{id, score, text?}], "queries": [...]}}`` written
     # on an assistant turn that ran rag_search, so the client can offer a persistent
@@ -776,6 +779,44 @@ class MessageModel(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+
+
+class ChatAttachmentModel(Base):
+    """The authority for "this asset belongs to this chat" — one row per (asset, chat) link.
+
+    Replaces ``messages.attach_asset_id`` (single-valued, no ownership/source). ``owned``
+    rows point at a ``scope='chat'`` asset that is created for the chat and dies with it;
+    ``reference`` rows point at a normal ``scope='drive'`` file the chat merely mounts and
+    must never delete. ``status='draft'`` rows are pre-Send (``session_id`` NULL) and are
+    reaped by TTL; ``bound`` rows carry their session + message.
+    """
+
+    __tablename__ = "chat_attachments"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
+    )
+    asset_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("assets.id", ondelete="CASCADE")
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE")
+    )
+    session_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("sessions.id", ondelete="CASCADE")
+    )
+    message_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("messages.id", ondelete="CASCADE")
+    )
+    ownership: Mapped[str] = mapped_column(String, nullable=False, default="owned")
+    source: Mapped[str] = mapped_column(String, nullable=False, default="upload")
+    status: Mapped[str] = mapped_column(String, nullable=False, default="draft")
+    locator: Mapped[dict] = mapped_column(JSONB, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    bound_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class SessionEventModel(Base):
@@ -1145,17 +1186,22 @@ def _asyncpg_dsn(database_url: str) -> str:
     return database_url.replace("postgresql+asyncpg://", "postgresql://", 1)
 
 
-async def init_db() -> None:
-    """Apply the canonical init SQL (replaces Alembic).
+async def init_db(database_url: str | None = None) -> None:
+    """Apply the migration chain (replaces Alembic).
 
-    Fresh installs run ``migrations/0001_init.sql`` once, inside a transaction; applied
-    versions are recorded in ``schema_migrations`` so re-runs are no-ops. The
-    dev-time incremental migrations were squashed — new schema changes extend the
-    canonical file (for fresh installs); existing DBs are migrated out-of-band if needed.
+    Every file in ``migrations/*.sql`` is applied in sorted order, one transaction per
+    file, each file stem recorded in ``schema_migrations`` so re-runs are no-ops. The
+    first file, ``0001_init.sql``, is the chain's starting point — not a standalone final
+    schema: a fresh install reaches the final structure only after the full chain has run.
+    New schema changes are added as higher-numbered files; recorded files are never edited
+    in place (the runner has no checksum, so such an edit is a silent no-op).
+
+    ``database_url`` overrides the configured target (used by tests against a throwaway
+    database); it defaults to ``settings.database_url``.
     """
     import asyncpg
 
-    conn = await asyncpg.connect(_asyncpg_dsn(settings.database_url))
+    conn = await asyncpg.connect(_asyncpg_dsn(database_url or settings.database_url))
     try:
         await conn.execute(
             "CREATE TABLE IF NOT EXISTS schema_migrations ("
@@ -1172,6 +1218,13 @@ async def init_db() -> None:
                 continue
             sql = path.read_text(encoding="utf-8")
             async with conn.transaction():
+                # 0001_init.sql is a pg_dump that pins ``SET search_path = ''`` for the
+                # connection (session-level). The hand-written 0002+ migrations use
+                # unqualified table names, so restore the canonical schema for every file.
+                # Harmless for 0001, whose own objects are all schema-qualified.
+                await conn.execute(
+                    "SELECT pg_catalog.set_config('search_path', 'public', false)"
+                )
                 await conn.execute(sql)
                 # 0001_init.sql (pg_dump) leaves search_path='' for this connection,
                 # so the bookkeeping INSERT must be schema-qualified.

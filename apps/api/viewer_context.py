@@ -517,7 +517,13 @@ def viewer_snapshot(viewer: ViewerPayload, blocks: list[ViewerBlock]) -> dict:
         "full_chars": viewer.full_chars, "full_trusted": viewer.full_trusted,
         "selection_count": len(viewer.selections),
         "injected": [
-            {"tag": b.tag, "kind": b.kind, "locator": b.locator, "excerpt": b.excerpt()}
+            {
+                "tag": b.tag, "kind": b.kind, "locator": b.locator,
+                # Keep the capture's image asset (design §7) so a reopened session can
+                # restore a frame/roi and re-run vision; it is the asset the message owns.
+                "image_asset_id": b.image_asset_id,
+                "excerpt": b.excerpt(),
+            }
             for b in blocks
         ],
     }

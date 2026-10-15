@@ -10,6 +10,7 @@ paths; ``_masked_model`` is the catalog view.
 from __future__ import annotations
 
 import logging
+import urllib.parse
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
@@ -65,6 +66,22 @@ from fastapi import HTTPException, Request
 from sqlalchemy import func, select
 
 logger = logging.getLogger(__name__)
+
+
+def disposition_header(name: str) -> str:
+    """RFC 5987 ``Content-Disposition`` for a download filename (UTF-8 safe).
+
+    Shared by the drive-plane download and the session-plane chat-attachment download so
+    both name files identically.
+    """
+    return f"attachment; filename*=UTF-8''{urllib.parse.quote(name)}"
+
+
+def byte_stream(data: bytes, chunk: int = 256 * 1024):
+    """Yield ``data`` in bounded chunks for a ``StreamingResponse`` (never re-buffer)."""
+    for i in range(0, len(data), chunk):
+        yield data[i : i + chunk]
+
 
 _AUTH_LIMITS = {
     "login": "auth_login_rpm",

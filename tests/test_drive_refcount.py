@@ -69,7 +69,12 @@ async def test_purge_last_reference_removes_physical_object(tmp_path):
 
 
 async def test_concurrent_reincrement_keeps_file(tmp_path):
-    """If a concurrent upload re-increments between decrement and the CAS delete, the file is kept."""
+    """If a concurrent upload re-increments between free and collection, the file is kept.
+
+    The last reference is freed (row → pending_delete), but before the physical collection
+    runs a concurrent instant-upload revives the object (ref_count 1, state live). The
+    collection recheck must then skip it and leave the bytes on disk.
+    """
     svc = make_drive(tmp_path)
     content = b"shared bytes"
     a, b, sha, asset_a, asset_b = await _shared_pair(svc, content)
@@ -77,13 +82,14 @@ async def test_concurrent_reincrement_keeps_file(tmp_path):
     await svc.delete_asset(a, asset_a)
     await svc.delete_asset(b, asset_b)
 
-    # Decrement happens inside purge_trash; simulate a concurrent instant-upload by
-    # making the CAS delete see a fresh reference (delete_if_zero then returns None).
-    async def _reincrement_delete_if_zero(s):
-        svc.objects.rows[s].ref_count = 1  # concurrent upload landed between the two steps
-        return None
+    real_free = svc.objects.free
 
-    svc.objects.delete_if_zero = _reincrement_delete_if_zero  # shadow instance method
+    async def _free_then_reincrement(s):
+        new_count = await real_free(s)
+        svc.objects.rows[s].ref_count = 1  # concurrent upload landed between free and collect
+        return new_count
+
+    svc.objects.free = _free_then_reincrement  # shadow instance method
     r = await svc.purge_trash(a, asset_a)
 
     assert r["physical_removed"] is False

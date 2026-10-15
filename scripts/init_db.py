@@ -1,7 +1,10 @@
-"""Initialize the database from the canonical schema (migrations/0001_init.sql).
+"""Initialize the database by applying the migration chain (migrations/*.sql).
 
 Equivalent to init_db inside the FastAPI lifespan, split out for convenient script/CI use.
-Usage: python scripts/init_db.py   # or: psql -f migrations/0001_init.sql directly
+The runner applies every not-yet-registered migration file in sorted order, so a fresh
+install must run the full chain to reach the final schema; ``0001_init.sql`` alone is only
+the chain's starting point, not a standalone final schema.
+Usage: python scripts/init_db.py
 """
 import asyncio
 

@@ -106,15 +106,17 @@ async def test_doc_slides_saves_pptx_to_drive(monkeypatch, tmp_path):
     set_request_user(user_id)
     assets = FakeAssets()
     asset = await assets.create(user_id, "notes.md", object_sha256="b" * 64)
-    objects = FakeObjects()
+    ctx = _ctx(tmp_path)
+    objects = FakeObjects(ctx.resolve("storage"))
     monkeypatch.setattr(document_tools, "SqlAssetRepository", lambda sf: assets)
-    monkeypatch.setattr(document_tools, "SqlGlobalObjectRepository", lambda sf: objects)
+    monkeypatch.setattr(
+        document_tools, "SqlGlobalObjectRepository", lambda sf, storage=None: objects
+    )
     monkeypatch.setattr(
         document_tools, "_load_asset_bytes",
         lambda asset_id, ctx: b"# Title\n\nSome body text.",
     )
 
-    ctx = _ctx(tmp_path)
     runtime = ToolRuntime()
     document_tools.register(runtime, ctx, _FakeLLM())
 
