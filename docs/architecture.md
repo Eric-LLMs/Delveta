@@ -5109,6 +5109,80 @@ over the existing corpus by re-shaping the query↔corpus similarity geometry, s
 same corpus is scored more discriminatively. The two are complementary rather than
 substitutes, and both keep the threshold stable.
 
+The fine-tuned model is evaluated on a merged set of **3,963** action queries
+(queries that invoke a capability) and **6,000** non-action queries (queries that
+invoke no capability).
+
+**Recall-only evaluation statistics** (fine-tuned model). All Recall metrics use the **3,625** chat-plane-recallable action queries as the denominator; the False-Admission side of the quality gate uses the **6,000** non-action queries.
+
+*Raw Recall (before the quality gate)*
+
+| Metric | Result |
+|---|---:|
+| Model | Delveta-BGE-M3-v1 INT8 |
+| Raw Recall Top-1 | 89.71% (3,252 / 3,625) |
+| Raw Recall Top-3 | 96.55% (3,500 / 3,625) |
+| Gold candidate recall | 100.00% (3,625 / 3,625) |
+
+*Threshold sweep (0.60–1.00, step 0.01)*
+
+| Threshold | Action Recall@1 | Action Recall@3 | Non-Action FA@3 | NonActionFA=0 | NonActionFA=1 | NonActionFA=2 | NonActionFA=3 |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 0.60 | 89.71% | 96.55% | 100.00% | 0.00% | 0.00% | 0.00% | 100.00% |
+| 0.61 | 89.71% | 96.55% | 100.00% | 0.00% | 0.00% | 0.00% | 100.00% |
+| 0.62 | 89.71% | 96.55% | 100.00% | 0.00% | 0.00% | 0.00% | 100.00% |
+| 0.63 | 89.71% | 96.55% | 100.00% | 0.00% | 0.00% | 0.00% | 100.00% |
+| 0.64 | 89.71% | 96.55% | 100.00% | 0.00% | 0.00% | 0.00% | 100.00% |
+| 0.65 | 89.71% | 96.55% | 100.00% | 0.00% | 0.00% | 0.02% | 99.98% |
+| 0.66 | 89.71% | 96.55% | 100.00% | 0.00% | 0.00% | 0.05% | 99.95% |
+| 0.67 | 89.71% | 96.55% | 100.00% | 0.00% | 0.00% | 0.12% | 99.88% |
+| 0.68 | 89.71% | 96.55% | 100.00% | 0.00% | 0.03% | 0.12% | 99.85% |
+| 0.69 | 89.71% | 96.55% | 100.00% | 0.00% | 0.05% | 0.47% | 99.48% |
+| 0.70 | 89.71% | 96.55% | 99.98% | 0.02% | 0.18% | 0.83% | 98.97% |
+| 0.71 | 89.71% | 96.52% | 99.85% | 0.15% | 0.35% | 1.40% | 98.10% |
+| 0.72 | 89.71% | 96.52% | 99.73% | 0.27% | 0.57% | 2.17% | 97.00% |
+| 0.73 | 89.71% | 96.50% | 99.52% | 0.48% | 0.92% | 3.58% | 95.02% |
+| 0.74 | 89.71% | 96.44% | 99.08% | 0.92% | 2.03% | 5.93% | 91.12% |
+| 0.75 | 89.71% | 96.36% | 98.27% | 1.73% | 4.82% | 9.50% | 83.95% |
+| 0.76 | 89.68% | 96.28% | 96.65% | 3.35% | 8.90% | 15.67% | 72.08% |
+| 0.77 | 89.68% | 96.08% | 93.32% | 6.68% | 15.78% | 20.47% | 57.07% |
+| 0.78 | 89.68% | 96.00% | 87.13% | 12.87% | 23.42% | 22.20% | 41.52% |
+| 0.79 | 89.60% | 95.78% | 78.48% | 21.52% | 29.82% | 20.85% | 27.82% |
+| 0.80 | 89.54% | 95.56% | 67.47% | 32.53% | 32.15% | 17.93% | 17.38% |
+| 0.81 | 89.38% | 95.20% | 55.07% | 44.93% | 30.97% | 14.47% | 9.63% |
+| 0.82 | 89.13% | 94.54% | 43.65% | 56.35% | 28.10% | 10.37% | 5.18% |
+| 0.83 | 88.80% | 93.66% | 33.62% | 66.38% | 23.83% | 6.80% | 2.98% |
+| 0.84 | 88.11% | 92.44% | 25.25% | 74.75% | 19.27% | 4.22% | 1.77% |
+| 0.85 | 87.17% | 91.06% | 19.07% | 80.93% | 15.33% | 2.77% | 0.97% |
+| 0.86 | 85.63% | 88.66% | 14.40% | 85.60% | 12.32% | 1.68% | 0.40% |
+| 0.87 | 84.11% | 86.46% | 11.02% | 88.98% | 10.20% | 0.75% | 0.07% |
+| **0.88** | **81.19%** | **82.98%** | **8.58%** | **91.42%** | **8.30%** | **0.28%** | **0.00%** |
+| 0.89 | 78.07% | 79.50% | 6.80% | 93.20% | 6.73% | 0.07% | 0.00% |
+| 0.90 | 74.62% | 75.72% | 4.83% | 95.17% | 4.83% | 0.00% | 0.00% |
+| 0.91 | 70.73% | 71.39% | 3.27% | 96.73% | 3.27% | 0.00% | 0.00% |
+| 0.92 | 66.15% | 66.54% | 2.10% | 97.90% | 2.10% | 0.00% | 0.00% |
+| 0.93 | 61.24% | 61.46% | 1.12% | 98.88% | 1.12% | 0.00% | 0.00% |
+| 0.94 | 55.70% | 55.81% | 0.45% | 99.55% | 0.45% | 0.00% | 0.00% |
+| 0.95 | 49.46% | 49.49% | 0.15% | 99.85% | 0.15% | 0.00% | 0.00% |
+| 0.96 | 42.51% | 42.51% | 0.08% | 99.92% | 0.08% | 0.00% | 0.00% |
+| 0.97 | 34.21% | 34.21% | 0.00% | 100.00% | 0.00% | 0.00% | 0.00% |
+| 0.98 | 24.50% | 24.50% | 0.00% | 100.00% | 0.00% | 0.00% | 0.00% |
+| 0.99 | 19.53% | 19.53% | 0.00% | 100.00% | 0.00% | 0.00% | 0.00% |
+| 1.00 | 19.42% | 19.42% | 0.00% | 100.00% | 0.00% | 0.00% | 0.00% |
+
+*Threshold 0.88 — operating point*
+
+| Metric | Result | Description |
+|---|---:|---|
+| Action Recall@1 | 81.19% | Share of action queries whose gold capability is ranked #1 after the quality gate. |
+| Action Recall@3 | 82.98% | Share of action queries whose gold capability is within the Top-3 after the quality gate. |
+| Positive zero-candidate rate | 13.99% (507 / 3,625) | Share of action queries that end with an empty candidate pool (no card ≥ threshold). |
+| Non-Action FA@3 | 8.58% | Share of non-action queries with at least one admitted tool card (`K≥1`). |
+| NonActionFA=0 | 91.42% | Non-action queries where exactly `0/3` aggregated tool cards pass — pool empty, correctly rejected. |
+| NonActionFA=1 | 8.30% | Non-action queries where exactly `1/3` aggregated tool cards pass. |
+| NonActionFA=2 | 0.28% | Non-action queries where exactly `2/3` aggregated tool cards pass. |
+| NonActionFA=3 | 0.00% | Non-action queries where all `3/3` aggregated tool cards pass (`K≥3`). |
+
 For the BGE-M3 fine-tuning methodology and the Formal-500 frozen blind-test results
 (retrieval / threshold layer), see
 [§29 BGE-M3 Embedding Fine-tuning](#29-bge-m3-embedding-fine-tuning). Those results
@@ -6345,7 +6419,7 @@ the model itself. What ships is the quality/safety surface plus one exposure
 default:
 
 ```
-chat_funnel_timeout_seconds=5.0    chat_funnel_min_score=0.82   chat_funnel_margin=0.06
+chat_funnel_timeout_seconds=5.0    chat_funnel_min_score=0.88   chat_funnel_margin=0.06
 chat_funnel_trace_capture=False    (Phase-6 observability: per-event trace_json on demand)
 chat_funnel_hidden_capabilities="cap-edit-file,cap-artifact,cap-bash"
                                     (chat-plane routing-view hiding, §24/§25.7; pairs with
@@ -7125,7 +7199,9 @@ similarity score >= threshold
 
 The adopted production threshold is:
 
-> **Recall threshold = 0.60**
+> **Recall threshold = 0.88**
+
+> **Calibration basis.** `0.88` is calibrated on the **real-query distribution** (the recall-only regression run: 3,625 action / 6,000 non-action queries). The 900-query table below is a **synthetic** LayaChoice benchmark whose similarity scale is lower, so its rows at high thresholds are not the production operating point. On the real distribution `0.88` retains `Action Recall@3 = 82.98%` while reducing `Non-Action FA@3` to `8.58%`.
 
 The threshold is a **quality gate**, not a capability selector. A higher threshold removes more low-similarity candidates but can also remove the correct capability before it reaches the downstream discriminator. A lower threshold preserves more potentially correct capabilities but admits more non-action candidates.
 
@@ -7187,7 +7263,7 @@ For a curated non-action query, Recall performs **capability deduplication/aggre
 
 `NonActionFA=0`, `NonActionFA=1`, `NonActionFA=2` and `NonActionFA=3` form a **partition**: for every threshold the four values sum to 100%.
 
-The threshold therefore controls the trade-off between **Action Recall Coverage** and **Non-Action False Admission**. The selected value is **0.60** — the architecture's adopted design decision, not a mathematically optimal or globally optimal threshold.
+The threshold therefore controls the trade-off between **Action Recall Coverage** and **Non-Action False Admission**. The selected value is **0.88** — the architecture's adopted design decision, not a mathematically optimal or globally optimal threshold.
 
 ---
 
