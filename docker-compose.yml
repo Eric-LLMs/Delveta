@@ -7,7 +7,7 @@
 # enabled by RERANKER_MODEL — see the reranker service note below.)
 #
 # Model services:
-#   - embedding   TEI serving BAAI/bge-m3            -> POST /embed   (port 18080)
+#   - embedding   Delveta-BGE-M3-v1 INT8 (onnxruntime)-> POST /embed   (port 18080)
 #   - reranker    LEGACY TEI container — not wired (rerank runs in-process)   (port 18081)
 #   - tts         Kokoro-FastAPI (OpenAI-compatible)  -> /v1/audio/speech (port 18880)
 #   - stt         FunASR serving SenseVoiceSmall      -> /v1/audio/transcriptions (port 18881, loopback only)
@@ -51,32 +51,35 @@ services:
       timeout: 5s
       retries: 5
 
-  # ── Embedding (BGE-M3 via TEI) ────────────────────────────────────────
+  # ── Embedding (Delveta-BGE-M3-v1 INT8, onnxruntime) ───────────────────
+  # The DEFAULT embedding backend, on the SAME POST /embed contract the retired
+  # TEI container spoke (port 18080), so core.infrastructure.vector.TEIEmbedder
+  # is unchanged. Backed by the validated fine-tuned INT8 ONNX graph (CLS pooling
+  # + L2 norm inside the graph, 1024-dim). Weights are bind-mounted READ-ONLY from
+  # the host model store (the same pattern as the cap-router checkpoint) and
+  # pointed at by MODEL_DIR — they are deliberately NOT baked into the image.
+  # There is NO fallback to BAAI/bge-m3: a missing/unreadable model.onnx aborts
+  # the container at boot (onnxruntime raises while the module is imported).
+  # Build source: deploy/embedding_int8 (rebuild only if the image is missing).
   embedding:
-    image: ghcr.io/huggingface/text-embeddings-inference:cpu-latest
+    image: delveta-embedding-int8:latest
     container_name: delveta-embedding
-    # max-batch-tokens kept at 2048 (not the model's 8192 cap): a higher budget speeds
-    # up batch embedding (fewer internal passes) but the warmup pre-allocation crashes on
-    # memory-constrained hosts (~5.5 GiB for 4096). Embedding parent chunks is skipped in
-    # the worker instead (parents are never vector-recalled), which removes the big batches.
-    command: --model-id BAAI/bge-m3 --port 80 --max-batch-tokens 2048 --max-concurrent-requests 16
+    command: uvicorn server:app --host 0.0.0.0 --port 80
     ports:
       - "18080:80"
     volumes:
-      - embedding-cache:/data
-    restart: unless-stopped
+      # Host model store, overridable via .env (EMBEDDING_MODEL_DIR).
+      - ${EMBEDDING_MODEL_DIR:-F:/WorkSpace/Delveta/.tmp/delveta-bge-m3-v1-int8/INT8}:/model:ro
     environment:
-      # Override via .env (gitignored), e.g. HF_ENDPOINT=https://hf-mirror.com for faster CN downloads.
-      HF_ENDPOINT: ${HF_ENDPOINT:-https://huggingface.co}
+      MODEL_DIR: /model     # exact-validated protocol: batch=1, truncation=64
+      MAX_LEN: "64"
+    restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:80/health"]
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:80/health').status==200 else 1)"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 60s
-    # GPU variant (requires WSL2 + NVIDIA container toolkit):
-    #   image: ghcr.io/huggingface/text-embeddings-inference:cuda-latest
-    #   deploy: { resources: { reservations: { devices: [{ driver: nvidia, count: 1, capabilities: [gpu] }] } } }
 
   # ── Reranker (BGE-reranker-v2-m3 via TEI) ─────────────────────────────
   # NOTE: not currently wired into the app — rag.rank.cross_encoder uses sentence-transformers
@@ -327,7 +330,6 @@ services:
 volumes:
   pgdata:
   redisdata:
-  embedding-cache:
   reranker-cache:
   kokoro-cache:
   funasr-cache:

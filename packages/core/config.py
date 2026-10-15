@@ -45,7 +45,7 @@ class Settings(BaseSettings):
 
     # ── Embedding (TEI service) ──
     embedding_base_url: str = "http://localhost:18080"   # TEI /embed
-    embedding_model: str = "BAAI/bge-m3"
+    embedding_model: str = "Delveta-BGE-M3"
     embedding_dim: int = 1024
 
     # ── RAG ──
