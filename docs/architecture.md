@@ -7173,7 +7173,7 @@ The threshold sweep is evaluated using two independent dimensions:
 
 **Action Recall@3** is the fraction of action queries for which the gold capability is ranked within the Top-3 after threshold filtering, capability aggregation, and sorting by the aggregated score.
 
-**Non-Action FA@3** (FA = False Admission) is the fraction of curated non-action queries for which the raw Top-1 candidate passes the threshold and is therefore incorrectly admitted as an action candidate.
+**Non-Action FA@3** (FA = False Admission) is the fraction of curated non-action queries for which the raw Top-1 candidate, among the three retrieved candidates, passes the threshold and is therefore incorrectly admitted as an action candidate.
 
 **NonActionFA=3** (FA = False Admission) is the fraction of curated non-action queries for which **all three** of the Top-3 candidates are adjudicated as an incorrect tool recall.
 
