@@ -143,18 +143,19 @@ services:
   # BOTH ends of the provider seam are config, never code:
   #   provider       = ollama (today; vLLM / llama.cpp server are drop-ins —
   #                  same OpenAI wire, zero business-logic change)
-  #   model          = qwen3-tools  — swap via TOOL_INTENT_OLLAMA_MODEL
+  #   model          = delveta-pe  — the fine-tuned Delveta-Qwen3-0.6B-PE-v1
+  #                  checkpoint; swap via TOOL_INTENT_OLLAMA_MODEL
   #   quantization   = Q5_K_M (current; Ollama encodes it in the tag, so the
-  #                  full current tag is qwen3-tools:q5_k_m)
+  #                  full current tag is delveta-pe:q5km)
   # Weight/config live in the named volume only; the app never references a
   # model name in business logic (config.py chat_tool_intent_local_model +
   # this env var are the ONLY places the tag appears). Host wiring (app .env,
   # gitignored):
   #   CHAT_TOOL_INTENT_BACKEND=auto
   #   CHAT_TOOL_INTENT_LOCAL_URL=http://localhost:18091/v1
-  #   CHAT_TOOL_INTENT_LOCAL_MODEL=qwen3-tools:q5_k_m   (config default; set only to deviate)
+  #   CHAT_TOOL_INTENT_LOCAL_MODEL=delveta-pe:q5km   (config default; set only to deviate)
   # One-time after first boot:
-  #   docker exec delveta-tool-intent ollama pull qwen3-tools:q5_k_m
+  #   docker exec delveta-tool-intent ollama pull delveta-pe:q5km
   tool-intent:
     image: ollama/ollama:latest
     container_name: delveta-tool-intent
@@ -166,7 +167,7 @@ services:
       - toolintent-cache:/root/.ollama
     environment:
       OLLAMA_KEEP_ALIVE: "24h"     # ms-level first hop needs a warm model in RAM
-      OLLAMA_MODEL: ${TOOL_INTENT_OLLAMA_MODEL:-qwen3-tools:q5_k_m}   # pull-tag documentation only
+      OLLAMA_MODEL: ${TOOL_INTENT_OLLAMA_MODEL:-delveta-pe:q5km}   # pull-tag documentation only
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "ollama", "list"]

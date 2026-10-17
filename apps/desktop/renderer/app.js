@@ -1842,12 +1842,29 @@
     // Frozen copy for the approval flow (below): the generation dialog must offer the SAME
     // source the question was about, even if the user navigates the viewer mid-turn.
     state.lastSentViewer = viewerPayload ? JSON.parse(JSON.stringify(viewerPayload)) : null;
+    // Attachments ride one-shot, but a PRE-STREAM rejection (409 conflict / 429 limit / !ok /
+    // connection error) persists no message: keep the consumed chips so the send can be retried
+    // with the SAME drafts (re-bound, not re-uploaded) — never an orphan asset or a second
+    // message. A mid-stream drop (responseOk) may have persisted, so it is NOT restored.
+    let consumedSelections = [];
+    let consumedAttach = null;
+    let responseOk = false;
+    const restoreAttachments = () => {
+      if (consumedSelections.length) {
+        pendingSelections = consumedSelections.concat(pendingSelections).slice(0, 8);
+        consumedSelections = [];
+        renderAttachBar();
+      }
+      if (consumedAttach) { pendingAttach = consumedAttach; consumedAttach = null; renderAttachBar(); }
+    };
     if (viewerPayload && viewerPayload.selections) {
+      consumedSelections = pendingSelections.slice();
       pendingSelections.length = 0; // consumed by this send (one-shot, per spec)
       renderAttachBar();
     }
     if (pendingAttach) {
       payload.attach = pendingAttach;
+      consumedAttach = pendingAttach;
       pendingAttach = null;
       renderAttachBar();
     }
@@ -2021,6 +2038,7 @@
         const body = await res.json().catch(() => ({}));
         userMsgEl.remove();
         appendMsg("error", body.detail || "The research task is currently running.");
+        restoreAttachments();
         return;
       }
       if (res.status === 429) {
@@ -2028,11 +2046,13 @@
         if (!state.token) {
           appendMsg("error", body.detail || "Guest limit reached — sign in to keep chatting.");
           openAccount();
+          restoreAttachments();
           return;
         }
         throw new Error(body.detail || "Daily chat limit reached.");
       }
       if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+      responseOk = true;
 
       // The activity line now starts with the stream instead of waiting for the first
       // thinking/tool event: FOCUS turns (a document/video open on screen) have the
@@ -2072,6 +2092,7 @@
         else appendMsg("error", "连接中断,未收到完整回答。");
       }
     } catch (err) {
+      if (!responseOk) restoreAttachments();
       appendMsg("error", `Request failed: ${err.message}`);
     } finally {
       chatSend.disabled = false;
@@ -5174,6 +5195,10 @@
     if (key && key !== lastFocusKey) viewerFollow = true;
     lastFocusKey = key;
     renderAttachBar();
+    // A scroll/page change re-evaluates the staged page content: moving off the page whose
+    // text/screenshot is pinned drops those chips, so the new page's request never carries
+    // the previous page's content.
+    maybeStagePageContext();
   });
 
   // ── P0 text selection: explicit 「加入对话」 button, never auto-collected ──
@@ -5494,6 +5519,79 @@
   }
 
   Viewer.setAttachHandler(attachCurrent);
+
+  // ── Viewer page → Message: attach the CURRENT page's content ──
+  // When the user asks about the page on screen (「总结本页」/「解释这张表」/…), stage the
+  // current page's TEXT as a pinned text selection and — when the page's meaning is not in
+  // the text stream (a scan, or a page drawing pictures / table-chart line-work) — also its
+  // rendered screenshot as an owned chat asset (a pinned region selection). Both land as
+  // removable chips under the input so the user reviews/edits them BEFORE Send; nothing is
+  // auto-sent. Staging is deduplicated by (asset, page) so a re-trigger cannot upload or pin
+  // a second copy, and stale page chips are dropped the moment the page or message changes.
+  const PAGE_DEICTIC = /本[页张]|这[一]?[页张]|当前[页张]|这一页|这[个张]?[表图]|这[个张]?(表|图)|第\s*[0-9一二三四五六七八九十]+\s*页|page\s*\d|this (page|table|chart|figure|image)|current page/i;
+  let stagedPageKey = null; // `${asset_id||name}#${page}` the current auto page chips belong to
+
+  function clearAutoPageCtx() {
+    const kept = pendingSelections.filter((s) => !s._pageCtx);
+    if (kept.length !== pendingSelections.length) { pendingSelections = kept; renderAttachBar(); }
+    stagedPageKey = null;
+  }
+
+  async function stageViewerPage({ silent = true } = {}) {
+    if (!state.token) {
+      if (!silent) { appendMsg("error", "Sign in to attach the page."); openAccount(); }
+      return 0;
+    }
+    const f = Viewer.getFocus ? Viewer.getFocus() : null;
+    if (!f || f.kind !== "pdf" || !f.page) return 0;
+    const page = f.page;
+    let content;
+    try { content = await Viewer.getPageContent(page); } catch { content = null; }
+    if (!content) return 0;
+    const hasText = pendingSelections.some(
+      (s) => s._pageCtx && s.kind === "text" && s.locator && s.locator.page === page);
+    const hasImage = pendingSelections.some(
+      (s) => s._pageCtx && (s.kind === "roi" || s.kind === "frame") && s.locator && s.locator.page === page);
+    let added = 0;
+    // Plain extractable text → the text alone rides with the message.
+    if (content.hasText && !hasText) {
+      addPendingSelection({ kind: "text", text: content.text, locator: { page }, _pageCtx: true });
+      added++;
+    }
+    // Scan / table / chart / picture page → text AND a screenshot both ride.
+    if (content.needsImage && !hasImage) {
+      const url = Viewer.capturePageDataUrl(page);
+      if (url) {
+        try {
+          const bytes = await imageSourceToBytes(url);
+          const created = await uploadChatAsset(bytes, `page_${page}_${Date.now()}.png`, {
+            source: "screenshot", locator: { page }, mime_type: "image/png",
+          });
+          addPendingSelection({
+            kind: "roi", image_asset_id: created.asset_id, locator: { page }, _pageCtx: true,
+          });
+          added++;
+        } catch (err) {
+          if (!silent) appendMsg("error", `Page screenshot failed: ${err.message || err}`);
+        }
+      }
+    }
+    if (added) stagedPageKey = `${f.asset_id || f.name}#${page}`;
+    if (added && !silent) Viewer.toast(`P${page} 内容已加入对话 (${content.reason}).`);
+    return added;
+  }
+
+  // Keep the staged page chips in step with the composer + the viewer: stage on a page-deictic
+  // message, and DROP stale chips the moment the message stops asking about the page OR the
+  // viewer moved to a different page (so a previous page's text/screenshot is never attached
+  // to a new-page request).
+  function maybeStagePageContext() {
+    const f = Viewer.getFocus ? Viewer.getFocus() : null;
+    const key = f && f.kind === "pdf" && f.page ? `${f.asset_id || f.name}#${f.page}` : null;
+    const wants = PAGE_DEICTIC.test(chatInput.value || "");
+    if (!wants || !key) { if (stagedPageKey) clearAutoPageCtx(); return; }
+    if (key !== stagedPageKey) { clearAutoPageCtx(); stageViewerPage({ silent: true }); }
+  }
 
   // The subtitle overlay's 📋 button drops the caption text into the chat input, ready
   // to edit or send — a quick way to ask the agent about a specific subtitle line.
@@ -6742,6 +6840,9 @@
       chatForm.requestSubmit();
     }
   });
+
+  // Stage the on-screen page's content as soon as the composer asks about it (Viewer→Message).
+  chatInput.addEventListener("input", () => { maybeStagePageContext(); });
 
   // ── Toolbar: generate summary / mindmap / slides from the current conversation ──
   const chatGenTools = [

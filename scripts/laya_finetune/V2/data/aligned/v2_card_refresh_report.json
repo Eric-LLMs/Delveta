@@ -3,9 +3,9 @@
   "entry_source": "registry.store.list_capabilities (normalized CapabilityEntry)",
   "generator": "v2_refresh_cards_from_registry.py",
   "generator_version": 2,
-  "source_commit": "37f0a9195a2a81e118a21a3217e6b153eb07371d",
+  "source_commit": "40f9da09a00445655968367c80e62d537ada7687",
   "registry_snapshot": "v2_registry_snapshot.json",
-  "registry_snapshot_sha256": "a3842054c8cf3afbc7ef64ed645255c607df6cc6d668f19772c4f651e2fc0c41",
+  "registry_snapshot_sha256": "e79f7853df9bd91421d314446c6cc97393e6ee17f27692d34fd2d97080d69734",
   "frozen_bundle": {
     "dir": "data",
     "note": "unchanged; cards re-rendered from the live Registry, frozen rows preserved byte-for-byte except `options`"
@@ -20,10 +20,15 @@
     "cap-read-file",
     "cap-social-search",
     "cap-translate",
+    "cap-vision",
     "cap-web-search"
   ],
-  "n_drifted": 10,
+  "n_drifted": 11,
   "drift": {
+    "cap-vision": {
+      "frozen": "### cap-vision\ntool: vision\ndoes: Analyze an image such as a screenshot, chart, photo, or diagram. Use it when the user asks what an image contains or what the image means. It does not apply to reading text documents or extracting text from PDFs.\n\n中文：分析附件或阅读器中打开的图片（截图、图表、照片、示意图），回答图里有什么或这张图表达什么。当用户要“看图／识别这张图／这张图什么意思”时适用。它只处理图片，PDF 或文本文档不属于它。\nnegative examples:\n- (none curated)\nparams:\n- asset_id (string, required, max_len=64): asset id of the attached/opened image (from turn facts, not the sentence)\n- question (string, optional): optional question about the image, copied from the sentence",
+      "live": "### cap-vision\ntool: vision\ndoes: Analyze an image such as a screenshot, chart, photo, or diagram. Use it when the user asks what an image contains or what the image means. It does not apply to reading text documents or extracting text from PDFs.\n\n中文：分析附件或阅读器中打开的图片（截图、图表、照片、示意图），回答图里有什么或这张图表达什么。当用户要“看图／识别这张图／这张图什么意思”时适用。它只处理图片，PDF 或文本文档不属于它。\nnegative examples:\n- (none curated)\nparams:\n- page (integer, optional): 1-based PDF page to render and read; omitted -> the page open in the viewer (a multi-page PDF with no page in view is refused, never a silent page 1)\n- region (object, optional): optional sub-region of the rendered page as fractions {x, y, w, h} (0..1, top-left origin), to focus a table/chart/figure; omitted -> the whole page\n- asset_id (string, required, max_len=64): asset id of the attached/opened image (from turn facts, not the sentence)\n- question (string, optional): optional question about the image, copied from the sentence"
+    },
     "cap-artifact": {
       "frozen": "### cap-artifact\ntool: artifact\ndoes: Compile a research artifact into a formally published PDF. Use it when the user explicitly asks to compile, generate, or publish research results as a final PDF artifact. It does not apply to ordinary slide decks, summaries, or mind maps.\n\n中文：将研究成果物编译为正式发布的 PDF。当用户明确要求将研究成果编译、生成或发布为正式 PDF 成果物时适用。普通幻灯片、摘要、思维导图不属于它。\nnegative examples:\n- (none curated)\nparams:\n- type (string, optional)\n- required (string, optional)\n- properties (string, optional)",
       "live": "### cap-artifact\ntool: artifact\ndoes: Compile a research artifact into a formally published PDF. Use it when the user explicitly asks to compile, generate, or publish research results as a final PDF artifact. It does not apply to ordinary slide decks, summaries, or mind maps.\n\n中文：将研究成果物编译为正式发布的 PDF。当用户明确要求将研究成果编译、生成或发布为正式 PDF 成果物时适用。普通幻灯片、摘要、思维导图不属于它。\nnegative examples:\n- (none curated)\nparams:\n- action (string, required): Which action to run. One of: compile_pdf, status.\n- run_id (string, optional): status: the compile run id; compile_pdf: optional replay id override.\n- project_id (string, optional): compile_pdf: research project whose primary manuscript is compiled."
@@ -66,8 +71,8 @@
     }
   },
   "aligned_files": {
-    "v2_train.aligned.jsonl": "ff05ad452d0fc6815888ad1bc67efc9040aa8b9f2e4ed5b8e1b5dc8d3d8728df",
-    "v2_val.aligned.jsonl": "22f5ad2f32f483769fd844cb513382edb9fe8951b54d4654b978ddd5bcdac7de",
-    "v2_test.aligned.jsonl": "1ff2ba1e2d387b318054a63211f65ae198e019288e583612a57e8585fa4d4736"
+    "v2_train.aligned.jsonl": "1f54530255fa762b077a5ff9fe0092380a9d6d6e12cfc415d2eece6026584184",
+    "v2_val.aligned.jsonl": "fc2e0a4ff348256ee8171f7271244565471578d5b7a127d04b90f7552a851742",
+    "v2_test.aligned.jsonl": "25d3902fee33339e35cdf1026a716e84a18df4d412ed50852e75789a801047f0"
   }
 }

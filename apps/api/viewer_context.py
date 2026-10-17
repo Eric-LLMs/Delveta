@@ -20,6 +20,10 @@ Hard rules:
 - Video uses **media time**: the window is ``[t - 20s, t]`` extended to overlapping cue
   boundaries, the active cue (``start <= t <= end``) is always included, and future cues
   are dropped. No playbackRate math, no lookahead.
+- Document intent IS matched — but only to decide a chat ATTACHMENT, never to inject body
+  text. When a turn explicitly names the on-screen document (:func:`requests_viewer_document`),
+  a ``reference`` link to ``viewer.asset_id`` is mounted on the message (chat_assets §6.3);
+  the document's content still reaches the model only through the tool/stub channel.
 - Video FULL short-circuits honestly: over ``VIEWER_TOKEN_BUDGET`` → ``too_large``;
   untrusted capture → ``unavailable``. The router aborts before the agent runs — never a
   silent downgrade or a RAG fallback.
@@ -63,8 +67,8 @@ def estimate_tokens(text: str) -> int:
 # about content with the viewer open is about the content on screen. Only an unmatched
 # question (or an imperative/task request) → NONE.
 _LOCAL_WORDS = re.compile(
-    r"[这那][一]?(?:段|页|部分|句话?|小节)|第[一二三四五六七八九十百千\d]+(?:\s*(?:[-–~]|到)\s*[一二三四五六七八九十百千\d]+)?[页张]|本[页张]|(?:这|那)[一]?篇(?!章|目|节|论文|文章)|这[一]?个?图|这张图|当前|现在|此时|这会儿|刚才|上面|下方|文中提到|此刻|这几[个张]?"
-    r"|\bthis (?:page|passage|paragraph|section|figure|image|chart|part|one)\b"
+    r"[这那][一]?(?:段|页|部分|句话?|小节)|第[一二三四五六七八九十百千\d]+(?:\s*(?:[-–~]|到)\s*[一二三四五六七八九十百千\d]+)?[页张]|本[页张]|(?:这|那)[一]?篇(?!章|目|节|论文|文章)|这[一]?[个张]?[图表]|当前|现在|此时|这会儿|刚才|上面|下方|文中提到|此刻|这几[个张]?"
+    r"|\bthis (?:page|passage|paragraph|section|figure|image|chart|table|part|one)\b"
     r"|\bhere\b|\bcurrent(?:ly)? (?:page|section|slide|frame)\b|\bjust now|\babove\b|\bbelow\b"
     r"|\b(?:it|they|them|they'?re)\b",
     re.IGNORECASE,
@@ -107,6 +111,31 @@ def classify_viewer_mode(message: str, viewer: ViewerPayload | None) -> str:
     if _INTERROGATIVE_WORDS.search(message):
         return "FOCUS"
     return "NONE"
+
+
+def requests_viewer_document(message: str, viewer: ViewerPayload | None) -> bool:
+    """True when THIS turn explicitly names the on-screen document as its subject.
+
+    Open ≠ Inject (chat_assets design §6.3): a viewer payload rides on EVERY turn while a
+    file is open, but by itself it must NOT become a chat attachment. Only a turn that
+    POINTS at the on-screen content — local deixis (``这一页`` / ``这一张表`` / ``这段`` /
+    ``this table``) or whole-document scope (``这篇文章`` / ``总结全文``) — refers to the
+    document, so only such a turn mounts a ``reference`` link to ``viewer.asset_id``.
+
+    Deliberately narrower than :func:`classify_viewer_mode`: the bare-interrogative tier
+    ("为什么…" with a document merely open) is NOT an explicit request to use the document
+    and is excluded, so a question that happens to be asked while a file is on screen stays
+    attachment-free. Task phrasing is likewise excluded. Requires a tracked viewer
+    (``follow`` on, ``mode != "none"``) and an identity-bearing ``asset_id``.
+    """
+    if viewer is None or viewer.asset_id is None:
+        return False
+    if viewer.mode == "none" or not viewer.follow:
+        return False
+    text = message or ""
+    if _TASK_WORDS.search(text):
+        return False
+    return bool(_LOCAL_WORDS.search(text) or _FULL_WORDS.search(text))
 
 
 # Viewer kinds the ``read_document`` tool can actually open — the stub router only fires for

@@ -164,6 +164,24 @@ async def _draft_attachment_ids(body: Any, service: ChatAssetService, user_id: A
     return ids
 
 
+async def _viewer_reference_ids(
+    service: ChatAssetService, user_id: Any, asset_id: Any, attach: dict | None
+) -> list[UUID]:
+    """Mount the open viewer document as a ``reference`` link for THIS message (§6.3).
+
+    Called only when the turn explicitly names the on-screen document. Dedupe: the same
+    drive file may arrive BOTH as the explicit ``attach`` and as the viewer's open document
+    — only ONE link may result, so when the attach already names this asset the mount is
+    skipped (the ``attach`` path in :func:`_draft_attachment_ids` already created it).
+    Non-drive / foreign / unreadable assets resolve to nothing
+    (``mount_reference_draft`` returns ``None``) — never an error, never a row.
+    """
+    if attach and str(attach.get("asset_id") or "") == str(asset_id):
+        return []
+    ref = await service.mount_reference_draft(user_id, asset_id, source="viewer")
+    return [ref.id] if ref is not None else []
+
+
 # A drive path named in the sentence: "My Drive/a/b/x.pdf" / "我的云盘/…".
 # Explicit root prefix only — a bare "报告.pdf" is NOT a path fact (too many
 # false-positive shapes), it stays the Agent's to clarify.
@@ -212,10 +230,20 @@ async def attach_note(
     asset_id = attach.get("asset_id")
     if not asset_id:
         return None
-    try:
-        await drive.ensure_asset_readable(user_id, UUID(asset_id))
-    except DriveError as exc:
-        raise PermissionError(f"no access to the attached file: {exc}")
+    if attach.get("owned"):
+        # An owned upload (screenshot / file / viewer page or region capture) is a
+        # ``scope='chat'`` asset the drive plane refuses with 404 by design (§5.1), so the
+        # drive-only check below would wrongly reject it and abort the whole turn. Authorize
+        # it as a drive file OR an owned chat asset — the same chat-aware check the viewer
+        # frame/roi path uses (design §4/§7). A ``reference`` attach still goes through the
+        # drive ACL check, which is the only correct check for a shared drive asset.
+        if not await _frame_asset_readable(drive, user_id, asset_id):
+            raise PermissionError("no access to the attached file: asset not found")
+    else:
+        try:
+            await drive.ensure_asset_readable(user_id, UUID(asset_id))
+        except DriveError as exc:
+            raise PermissionError(f"no access to the attached file: {exc}")
     name = attach.get("name") or "document"
     suffix = name[name.rfind("."):].lower() if "." in name else ""
     mime = (attach.get("mime_type") or "").lower()
@@ -583,16 +611,29 @@ async def build_turn_context(
         owned_asset_id = str(frame_asset_ids[0])
     # Chat attachments (design §6): the client uploads a chat asset (scope='chat') and sends
     # its draft ``attachment_id``; the send binds it to the user message. A ``+``-picked
-    # drive file (or a viewer payload) is mounted as a ``reference`` draft (no copy), and a
-    # viewer frame/roi's upload-time draft is bound by asset id. All are bound on flush,
-    # inside the message-INSERT transaction.
+    # drive file is mounted as a ``reference`` draft (no copy), and a viewer frame/roi's
+    # upload-time draft is bound by asset id. All are bound on flush, inside the
+    # message-INSERT transaction.
+    # chat_assets §6.3 — Open ≠ Inject: a viewer payload alone NEVER becomes an attachment.
+    # Only a turn that explicitly names the open document (server-classified by the injected
+    # predicate, never the client) mounts a ``reference`` link to ``viewer.asset_id``.
+    viewer_ref_requested = (
+        user_id is not None
+        and body.viewer is not None
+        and body.viewer.asset_id is not None
+        and deps.viewer.requested_reference(body.message, body.viewer)
+    )
     attachment_ids: list[UUID] = []
     chat_assets: ChatAssetService | None = None
-    if user_id is not None and (body.attach or frame_asset_ids):
+    if user_id is not None and (body.attach or frame_asset_ids or viewer_ref_requested):
         chat_assets = ChatAssetService(
             deps.session_factory, storage=getattr(deps.drive, "storage", None)
         )
         attachment_ids = await _draft_attachment_ids(body, chat_assets, user_id)
+        if viewer_ref_requested:
+            attachment_ids += await _viewer_reference_ids(
+                chat_assets, user_id, body.viewer.asset_id, body.attach
+            )
     inline_image = await resolve_inline_image(body, drive, user_id, model, chat_assets)
     if body.attach:
         note = await attach_note(body, drive, user_id, inline=inline_image is not None)

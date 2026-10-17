@@ -122,16 +122,9 @@ FROZEN_PARAMETERS: dict[str, dict] = {
     },
     "cap-rag-search": {
         "query": {"type": "string", "required": True,
-                  "description": "the search query — the user's search TOPIC, copied "
-                                 "verbatim from the sentence: remove ONLY the execution-"
-                                 "instruction frame AND an explicit result-count control "
-                                 "(a phrase that says how many RESULTS to return, e.g. "
-                                 "\"top 3 results\", \"10 results\"); KEEP a number that "
-                                 "is part of the TOPIC itself (e.g. \"top 3 retrieval "
-                                 "methods\"); if you cannot tell, keep it; keep the user's "
-                                 "own wording and language and any qualifiers (time range, "
-                                 "domain, material type) as stated; never translate, "
-                                 "summarize, expand or paraphrase"},
+                  "description": "the user's search TOPIC, extracted from the "
+                                 "sentence and kept VERBATIM — do not rewrite, "
+                                 "translate, summarize, expand or paraphrase"},
         "top_k": {"type": "integer", "required": False,
                   "description": "optional result count; only when the sentence states one"},
         "domain": {"type": "string", "required": False,
@@ -141,31 +134,17 @@ FROZEN_PARAMETERS: dict[str, dict] = {
     },
     "cap-web-search": {
         "query": {"type": "string", "required": True,
-                  "description": "the search query — the user's search TOPIC, copied "
-                                 "verbatim from the sentence: remove ONLY the execution-"
-                                 "instruction frame AND an explicit result-count control "
-                                 "(a phrase that says how many RESULTS to return, e.g. "
-                                 "\"top 3 results\", \"10 results\"); KEEP a number that "
-                                 "is part of the TOPIC itself (e.g. \"top 3 retrieval "
-                                 "methods\"); if you cannot tell, keep it; keep the user's "
-                                 "own wording and language and any qualifiers (time range, "
-                                 "domain, material type) as stated; never translate, "
-                                 "summarize, expand or paraphrase"},
+                  "description": "the user's search TOPIC, extracted from the "
+                                 "sentence and kept VERBATIM — do not rewrite, "
+                                 "translate, summarize, expand or paraphrase"},
         "top_k": {"type": "integer", "required": False,
                   "description": "optional number of results; only when the sentence states one"},
     },
     "cap-social-search": {
         "query": {"type": "string", "required": True,
-                  "description": "the search query — the user's search TOPIC, copied "
-                                 "verbatim from the sentence: remove ONLY the execution-"
-                                 "instruction frame AND an explicit result-count control "
-                                 "(a phrase that says how many RESULTS to return, e.g. "
-                                 "\"top 3 results\", \"10 results\"); KEEP a number that "
-                                 "is part of the TOPIC itself (e.g. \"top 3 retrieval "
-                                 "methods\"); if you cannot tell, keep it; keep the user's "
-                                 "own wording and language and any qualifiers (time range, "
-                                 "domain, material type) as stated; never translate, "
-                                 "summarize, expand or paraphrase"},
+                  "description": "the user's search TOPIC, extracted from the "
+                                 "sentence and kept VERBATIM — do not rewrite, "
+                                 "translate, summarize, expand or paraphrase"},
         "platform": {"type": "string", "required": False,
                      "description": "optional platform (reddit / x / zhihu); only "
                                     "when the sentence names one; OMIT when no "
@@ -192,6 +171,16 @@ FROZEN_PARAMETERS: dict[str, dict] = {
                                     "(from turn facts, not the sentence)"},
         "question": {"type": "string", "required": False,
                      "description": "optional question about the image, copied from the sentence"},
+        # post-0025: the tool renders a PDF page/sub-region locally, so the schema
+        # gained these two optional, context-sourced slots (mirrored by 0025).
+        "page": {"type": "integer", "required": False,
+                 "description": "1-based PDF page to render and read; omitted -> the "
+                                "page open in the viewer (a multi-page PDF with no page "
+                                "in view is refused, never a silent page 1)"},
+        "region": {"type": "object", "required": False,
+                   "description": "optional sub-region of the rendered page as fractions "
+                                  "{x, y, w, h} (0..1, top-left origin), to focus a "
+                                  "table/chart/figure; omitted -> the whole page"},
     },
     "cap-read-document": {
         "asset_id": {"type": "string", "max_len": 64, "required": True,

@@ -1,0 +1,45 @@
+# Docker build context hygiene.
+#
+# The `.`-context services (worker, retrieval) copy `packages/`, `apps/`, `plugins/` and the
+# dependency manifest. Without this file `COPY apps ./apps` drags in `apps/desktop/node_modules`
+# (~355 MB) and `apps/web/node_modules` (~84 MB) — none of which any Python service needs — and
+# every code edit re-uploads the whole context. Keep the context to what the Python images
+# actually consume.
+
+# VCS / editor / agent state
+.git
+.gitignore
+.claude
+
+# Python caches
+**/__pycache__
+**/*.pyc
+.mypy_cache
+.ruff_cache
+.pytest_cache
+
+# Local virtualenvs (never part of any image; deps come from uv.lock in-image)
+.venv
+.venv-*
+**/.venv
+**/.venv-*
+
+# ML training workspaces under scripts/ (datasets, checkpoints, their own venvs).
+# scripts/ is only copied so gen_proto.sh can run; these workspaces are multi-GB and
+# never used by any image. Without this the build context balloons to ~8 GB.
+scripts/*_finetune
+
+# JS deps (the Electron/web clients are built on the host, never inside a Python image)
+**/node_modules
+
+# Runtime state and scratch (mounted at run time where needed, never baked in)
+data
+logs
+.output
+
+# Local backup snapshot (a nested working tree, ~36k files) — never part of any image and
+# not referenced by any Dockerfile COPY. Excluding it also keeps the build context small.
+.delveta-snapshots
+
+# Misc scratch artifacts
+*.stackdump

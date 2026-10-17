@@ -35,6 +35,7 @@ from api.schemas import ChatImportRequest, ChatRequest, ChatSessionImportRequest
 from api.viewer_context import (
     build_viewer_blocks,
     render_viewer_reference,
+    requests_viewer_document,
     validate_viewer_citations,
     viewer_citation_map,
     viewer_snapshot,
@@ -116,6 +117,7 @@ _VIEWER_DEPS = ViewerDeps(
     citation_map=viewer_citation_map,
     snapshot=viewer_snapshot,
     render_reference=render_viewer_reference,
+    requested_reference=requests_viewer_document,
 )
 
 

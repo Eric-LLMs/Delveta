@@ -1471,14 +1471,20 @@ wrapping pure functions in `core/infrastructure/pdf.py`:
 1. `page.get_text("text")` extracts the body text page by page (PyMuPDF).
 2. `page.find_tables()` detects tables (no torch / Table-Transformer); each table's bounding box is
    rendered to a PNG (`get_pixmap(clip=bbox)`).
-3. Each table PNG goes to the vision LLM as an `image_url` content part (`OpenAILLM.chat` passes it
-   through to any vision-capable model, e.g. `gpt-4o-mini`) → transcribed text. A per-table failure
-   is logged and skipped — enrichment never fails the ingest.
+3. The table PNG(s) go to the vision LLM as an `image_url` content part (`OpenAILLM.chat` passes it
+   through to any vision-capable model, e.g. `gpt-4o-mini`) → transcribed text. The **chat**
+   `pdf_table_to_text` tool composites every detected region into ONE image locally and reads it in a
+   SINGLE call (Local Data Preparation → Single LLM Call — no call per table); the **ingest** worker
+   (`extract_pdf_document`) keeps one call per table and skips a failed table — enrichment never fails
+   the ingest.
 
 The tools (`apps/api/tools/pdf_tools.py`: `pdf_extract_text_tool`, `pdf_table_to_text_tool`) resolve
 the asset's bytes via `ctx.resolve("storage")` / `ctx.resolve("session_factory")`; the worker calls the
-shared `extract_pdf_document` directly (same function body). `.docx` extracts paragraphs + table cells
-via `python-docx`; `.txt`/`.md`/subtitles use the existing `extract_text` dispatch.
+shared `extract_pdf_document` directly. `.docx` extracts paragraphs + table cells
+via `python-docx`; `.txt`/`.md`/subtitles use the existing `extract_text` dispatch. The `vision` tool
+(`apps/api/tools/vision_tool.py`) authorizes a drive asset through `DriveService.ensure_asset_readable`
+BEFORE reading any bytes, renders a PDF page/region to a PNG locally (`pdf.render_page_png`) when the
+asset is a PDF, and otherwise sends the stored image bytes — exactly ONE vision call either way.
 
 **Recall visibility** — both recallers `LEFT JOIN assets` instead of `JOIN`:
 

@@ -279,6 +279,16 @@
     "description": "Analyze an image such as a screenshot, chart, photo, or diagram. Use it when the user asks what an image contains or what the image means. It does not apply to reading text documents or extracting text from PDFs.\n\n中文：分析附件或阅读器中打开的图片（截图、图表、照片、示意图），回答图里有什么或这张图表达什么。当用户要“看图／识别这张图／这张图什么意思”时适用。它只处理图片，PDF 或文本文档不属于它。",
     "negatives": [],
     "parameters": {
+      "page": {
+        "type": "integer",
+        "required": false,
+        "description": "1-based PDF page to render and read; omitted -> the page open in the viewer (a multi-page PDF with no page in view is refused, never a silent page 1)"
+      },
+      "region": {
+        "type": "object",
+        "required": false,
+        "description": "optional sub-region of the rendered page as fractions {x, y, w, h} (0..1, top-left origin), to focus a table/chart/figure; omitted -> the whole page"
+      },
       "asset_id": {
         "type": "string",
         "max_len": 64,

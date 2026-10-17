@@ -94,6 +94,89 @@ def detect_tables(
     return images
 
 
+def page_count(content: bytes) -> int:
+    """The PDF's page count (LOCAL, no model) — so a caller can decide whether a lone
+    page is unambiguous before defaulting a page-scoped render."""
+    doc = pymupdf.open(stream=content, filetype="pdf")
+    try:
+        return doc.page_count
+    finally:
+        doc.close()
+
+
+def render_tables_png(
+    content: bytes, *, max_tables: int = MAX_TABLES, pages: list[int] | None = None
+) -> bytes | None:
+    """Composite EVERY detected table region into ONE PNG (top→bottom), or ``None``.
+
+    Local data preparation only (no model): the "render once, read once" path for the chat
+    table tool — all detected tables travel to the vision model in a SINGLE image, so a
+    table request costs exactly ONE model call regardless of table count (never one call
+    per table). Returns ``None`` when the document has no detectable tables. ``pages``
+    (1-based) restricts detection; an out-of-range page raises before any page is scanned.
+    """
+    from io import BytesIO
+
+    from PIL import Image
+
+    pngs = detect_tables(content, max_tables=max_tables, pages=pages)
+    if not pngs:
+        return None
+    images = [Image.open(BytesIO(p)).convert("RGB") for p in pngs]
+    gap = 8
+    width = max(im.width for im in images)
+    height = sum(im.height for im in images) + gap * (len(images) - 1)
+    canvas = Image.new("RGB", (width, height), "white")
+    y = 0
+    for im in images:
+        canvas.paste(im, (0, y))
+        y += im.height + gap
+    out = BytesIO()
+    canvas.save(out, format="PNG")
+    return out.getvalue()
+
+
+def render_page_png(
+    content: bytes,
+    page: int,
+    *,
+    region: dict | None = None,
+    dpi: int = 200,
+) -> bytes:
+    """Render ONE 1-based page — optionally a sub-region — to a PNG for the vision LLM.
+
+    This is the LOCAL data-preparation step of the "render the page, then make ONE vision
+    call" strategy: no model is consulted to locate content or choose an extraction method,
+    so a table/chart/page question costs exactly one downstream vision request.
+
+    ``region`` is ``{x, y, w, h}`` in FRACTIONS of the page (0..1, top-left origin), so a
+    caller reports a table/bbox without knowing the page's point size. A page out of range
+    raises (fail-closed) — a page-scoped render must never silently fall back to page 1.
+    """
+    doc = pymupdf.open(stream=content, filetype="pdf")
+    try:
+        count = doc.page_count
+        if page < 1 or page > count:
+            raise ValueError(f"page {page} out of range: this PDF has {count} page(s)")
+        pg = doc[page - 1]
+        clip = None
+        if region:
+            r = pg.rect
+            x = float(region.get("x", 0.0))
+            y = float(region.get("y", 0.0))
+            w = float(region.get("w", 1.0))
+            h = float(region.get("h", 1.0))
+            clip = pymupdf.Rect(
+                r.x0 + x * r.width,
+                r.y0 + y * r.height,
+                r.x0 + (x + w) * r.width,
+                r.y0 + (y + h) * r.height,
+            )
+        return pg.get_pixmap(clip=clip, dpi=dpi).tobytes("png")
+    finally:
+        doc.close()
+
+
 def _data_url(png: bytes) -> str:
     return "data:image/png;base64," + base64.b64encode(png).decode("ascii")
 

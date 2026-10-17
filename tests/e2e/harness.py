@@ -203,6 +203,12 @@ class FakePdfLib:
         self.table_calls.append(pages)
         return [b"png-table"]
 
+    def render_tables_png(self, data, pages=None):
+        # The chat table tool composites all detected regions into ONE image locally,
+        # then makes a SINGLE vision call (Local Data Preparation → Single LLM Call).
+        self.table_calls.append(pages)
+        return b"png-strip"
+
     async def pdf_table_to_text(self, png, llm, prompt):
         self.transcribe_calls.append(prompt)
         return "[table text]"
@@ -436,7 +442,9 @@ def build_stack(
     pdf_asset = FakeAsset(id=str(uuid4()), name="report.pdf", mime_type="application/pdf")
     vision_seam, read_doc_seam, pdf_seam = VisionSeam(), ReadDocSeam(), FakePdfLib()
 
-    monkeypatch.setattr(vision_mod, "SqlAssetRepository", _asset_repo(image_asset))
+    # The vision tool now authorizes through ``DriveService.ensure_asset_readable`` (ACL
+    # before bytes) and reads the object via the shared storage — same seams as read_document.
+    monkeypatch.setattr(vision_mod, "DriveService", _read_drive(image_asset))
     monkeypatch.setattr(vision_mod, "_mime_for", lambda asset: "image/png")
     monkeypatch.setattr(vision_mod, "describe_image", vision_seam.describe)
     monkeypatch.setattr(read_document_mod, "DriveService", _read_drive(pdf_asset))

@@ -1,0 +1,11 @@
+# Temporary compose override — pins the retrieval service to the ALREADY-BUILT image so
+# the container can be recreated without building anything:
+#
+#   docker compose -f docker-compose.yml -f deploy/retrieval/docker-compose.deploy.yml \
+#     up -d --no-deps --no-build --force-recreate retrieval
+#
+# The committed docker-compose.yml is unchanged. Remove this file once the permanent
+# layered Dockerfile (deploy/retrieval/Dockerfile) is the normal build path again.
+services:
+  retrieval:
+    image: delveta-retrieval:latest

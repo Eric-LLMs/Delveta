@@ -10,7 +10,20 @@ const Viewer = (() => {
 
   // Live refs the focus extractors need after their renderer finished mounting.
   let videoEl = null;
-  const pdfState = { numPages: 0, wraps: [] };
+  const pdfState = {
+    numPages: 0, wraps: [],
+    // Per-page content captured at render time so the Viewer→Message flow can attach the
+    // current page's TEXT (and decide whether a screenshot is needed) without re-reading
+    // the file. ``pageText`` is the extracted text layer; ``pageSignals`` records whether
+    // the page carries images / vector drawings (table or chart borders) — computed lazily
+    // from the operator list, not at render, to keep mounting cheap.
+    pdf: null, pageText: {}, pageSignals: {},
+  };
+  // Operator codes that mean "this page draws a picture" (raster image on the page).
+  const PAGE_IMAGE_OPS = new Set([
+    "paintImageXObject", "paintImageXObjectRepeat", "paintJpegXObject",
+    "paintInlineImageXObject", "paintInlineImageXObjectGroup", "paintImageMaskXObject",
+  ]);
   let pageObserver = null;
   // app.js registers this to refresh the focus chip whenever the open doc / page /
   // playhead changes (fires on render, close, scroll, timeupdate, subtitle load).
@@ -26,6 +39,9 @@ const Viewer = (() => {
     videoEl = null;
     pdfState.numPages = 0;
     pdfState.wraps = [];
+    pdfState.pdf = null;
+    pdfState.pageText = {};
+    pdfState.pageSignals = {};
     if (pageObserver) { pageObserver.disconnect(); pageObserver = null; }
   }
 
@@ -839,6 +855,7 @@ const Viewer = (() => {
       const pdfjs = window.pdfjsLib;
       pdfjs.GlobalWorkerOptions.workerSrc = "vendor/pdf.worker.min.js";
       const pdf = await pdfjs.getDocument(localUrl(filePath)).promise;
+      pdfState.pdf = pdf;  // kept for lazy per-page signal reads (getPageContent)
       const scale = 1.5 * state.zoom;
       const pageCanvases = [];
       const pageOverlays = [];
@@ -1004,6 +1021,9 @@ const Viewer = (() => {
         wrap.appendChild(textLayer);
         try {
           const textContent = await page.getTextContent();
+          // Keep the extracted text so the Viewer→Message flow can attach this page's
+          // content on demand (the renderer itself still never ships it implicitly).
+          pdfState.pageText[i] = textContent.items.map((it) => it.str).join(" ").trim();
           const textTask = pdfjs.renderTextLayer({
             textContentSource: textContent,
             container: textLayer,
@@ -1924,6 +1944,43 @@ const Viewer = (() => {
     return canvas ? canvas.toDataURL("image/png") : null;
   }
 
+  // ── current-page content for the Viewer→Message flow (text + screenshot decision) ──
+  // Read lazily from the saved page text and (once) the page's operator list. The signal
+  // pass only runs when a page is actually staged, so opening a document stays as cheap as
+  // before. "needs_image" is TRUE when the page's meaning is not in the text stream: a
+  // scan (little/no extractable text), or a page that draws pictures or vector line-work
+  // (tables/charts render their grid as drawing ops) — those get a screenshot too.
+  async function ensurePageSignals(page) {
+    if (pdfState.pageSignals[page] || !pdfState.pdf) return pdfState.pageSignals[page] || null;
+    let signals = { hasImages: false, hasDrawings: false };
+    try {
+      const lib = window.pdfjsLib;
+      const OPS = (lib && lib.OPS) || {};
+      const imageOps = new Set(
+        Object.keys(OPS).filter((k) => PAGE_IMAGE_OPS.has(k)).map((k) => OPS[k])
+      );
+      const p = await pdfState.pdf.getPage(page);
+      const ops = await p.getOperatorList();
+      for (const fn of (ops.fnArray || [])) {
+        if (imageOps.has(fn)) signals.hasImages = true;
+        else if (fn === OPS.constructPath) signals.hasDrawings = true;
+      }
+    } catch { /* unreadable page → treat as text-only, never block the turn */ }
+    pdfState.pageSignals[page] = signals;
+    return signals;
+  }
+
+  async function getPageContent(page) {
+    const n = page || state.currentPage || 1;
+    const text = (pdfState.pageText[n] || "").trim();
+    const sig = await ensurePageSignals(n) || { hasImages: false, hasDrawings: false };
+    // The content-type decision (rule §1.3) is pure and lives in page_content.js so it can be
+    // unit-tested; this function only gathers the page's text + render signals.
+    const decision = window.PageContent.classifyPageContent(text, sig);
+    return { page: n, ...decision };
+  }
+
+
   // Jump the viewer to a citation locator — invoked ONLY from a user click (S4), never
   // automatically while an answer is streaming.
   function navigateTo(loc) {
@@ -1940,5 +1997,5 @@ const Viewer = (() => {
     }
   }
 
-  return { render, renderFolder, kindFor, localUrl, toast, close, setAttachHandler, setSubtitleCopyHandler, setSubtitleActions, setSubtitleBusy, setDocGenerateBusy, setDocumentActions, isOpen, getFocus, setOnFocusChanged, navigateTo, captureFrameDataUrl, capturePageDataUrl };
+  return { render, renderFolder, kindFor, localUrl, toast, close, setAttachHandler, setSubtitleCopyHandler, setSubtitleActions, setSubtitleBusy, setDocGenerateBusy, setDocumentActions, isOpen, getFocus, getPageContent, setOnFocusChanged, navigateTo, captureFrameDataUrl, capturePageDataUrl };
 })();

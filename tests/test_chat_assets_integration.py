@@ -333,6 +333,69 @@ async def test_session_delete_retires_owned_logically_and_gc_reclaims_later(pg):
         assert await s.get(GlobalObjectModel, sha) is None
 
 
+# ── 5b. viewer reference persist→restore: card survives reopen, ACL re-checked (§6.3) ──
+
+async def test_viewer_reference_survives_reload_and_rechecks_acl(pg):
+    """A viewer-mounted reference binds in the message tx and comes back on reopen (§6.3).
+
+    Persist → restore (scenario 5): ``load_session_detail`` rebuilds the bubble from the
+    ``chat_attachments`` authority table — never a transient in-memory chip — so a reopened
+    session renders the attachment card. Reading that reference re-checks the drive ACL at
+    read time, so revoking the grant revokes chat access too (§5.2) while the bytes are
+    untouched (a reference frees no drive asset).
+    """
+    from core.infrastructure.memory import load_session_detail
+
+    objects = _objects(pg)
+    assets = SqlAssetRepository(pg.maker)
+    attachments = SqlChatAttachmentRepository(pg.maker)
+    acl = SqlAssetAclRepository(pg.maker)
+    svc = ChatAssetService(
+        pg.maker, storage=pg.storage, objects=objects, assets=assets,
+        attachments=attachments, acl=acl,
+    )
+
+    owner_id = await _seed_user(pg.maker)
+    viewer_id = await _seed_user(pg.maker)          # the user asking about the doc
+    session_id = await _seed_session(pg.maker, viewer_id)
+    message_id = await _seed_message(pg.maker, viewer_id, session_id)
+
+    # A drive file with real bytes, owned by ``owner`` and shared read to ``viewer``.
+    sha, data = uuid.uuid4().hex, b"on-screen-pdf-bytes"
+    key = object_key(sha)
+    async with pg.maker() as s:
+        s.add(GlobalObjectModel(sha256=sha, size=len(data), storage_key=key,
+                                mime_type="application/pdf", ref_count=1, state="live"))
+        await s.commit()
+    await pg.storage.put(key, data)
+    doc = await assets.create(
+        owner_id, "on-screen.pdf", scope="drive", file_status="READY",
+        object_sha256=sha, mime_type="application/pdf",
+    )
+    await acl.grant(doc.id, viewer_id, "read")
+
+    # Open the doc + explicitly name it → mount a reference draft, bound at Send (same tx).
+    ref = await svc.mount_reference_draft(viewer_id, doc.id, source="viewer")
+    assert ref is not None and ref.ownership == "reference"
+    await attachments.bind([ref.id], viewer_id, session_id, message_id)
+
+    # Reopen: the card is rebuilt from the authority table, not a live viewer chip.
+    detail = await load_session_detail(pg.maker, session_id)
+    assert len(detail["messages"]) == 1
+    assert detail["messages"][0]["attach"] == {
+        "asset_id": str(doc.id), "name": "on-screen.pdf", "mime": "application/pdf",
+    }
+
+    # Readable while the shared grant holds…
+    assert await svc.read_bytes(ref.id, session_id) == data
+
+    # …but a revoked grant revokes chat access at read time (§5.2 recheck); bytes intact.
+    await acl.revoke(doc.id, viewer_id)
+    assert await svc.read_bytes(ref.id, session_id) is None
+    assert await pg.storage.get(key) == data              # a reference frees no drive asset
+    assert await assets.get_active(doc.id) is not None
+
+
 # ── 6. legacy upgrade: bidirectional carry, atomic rollback on failure (§10.3) ─────
 
 @pytest.fixture

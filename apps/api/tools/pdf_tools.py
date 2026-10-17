@@ -1,8 +1,8 @@
 """``pdf_extract_text`` / ``pdf_table_to_text``: pull searchable text out of drive PDFs.
 
-Body text comes from PyMuPDF; tables are located by ``page.find_tables()``, rendered to
-images, and transcribed by the vision LLM — the table → image → read → text strategy from
-the LLMs-Lab/RAG reference, minus the torch table-transformer. Both tools read the asset's
+Body text comes from PyMuPDF; tables are located by ``page.find_tables()``, all detected
+table regions are composited into ONE image locally, and that image is transcribed by the
+vision LLM in a single call (Local Data Preparation → Single LLM Call). Both tools read the asset's
 stored bytes via the shared storage + session_factory provided in ``deps.py``, so an agent
 can inspect a drive PDF that the ingest worker would otherwise handle automatically.
 """
@@ -67,22 +67,17 @@ def register(runtime: ToolRuntime, ctx: Context, llm) -> None:
     async def pdf_table_to_text(args: dict, exec: ToolExecution) -> str:
         pages = _window(args)
         data = await _load_asset_bytes(args["asset_id"], ctx)
-        tables = await asyncio.to_thread(pdf_lib.detect_tables, data, pages=pages)
-        if not tables:
+        # LOCAL data preparation: every detected table region is composited into ONE image
+        # (no model), then the vision model reads it in a SINGLE call — a table request is
+        # exactly ONE downstream request, never one call per table.
+        strip = await asyncio.to_thread(pdf_lib.render_tables_png, data, pages=pages)
+        if strip is None:
             return "No tables detected in this PDF."
-
-        sem = asyncio.Semaphore(4)
-
-        async def one(png: bytes) -> str:
-            async with sem:
-                try:
-                    return await pdf_lib.pdf_table_to_text(png, llm, _TABLE_PROMPT)
-                except Exception as exc:  # noqa: BLE001 - skip a table, never error out
-                    log.warning("pdf table transcription failed, skipped: %s", exc)
-                    return ""
-
-        transcribed = await asyncio.gather(*(one(p) for p in tables))
-        text = "\n\n".join(t for t in transcribed if t)
+        try:
+            text = await pdf_lib.pdf_table_to_text(strip, llm, _TABLE_PROMPT)
+        except Exception as exc:  # noqa: BLE001 - never fail the call on a transcription error
+            log.warning("pdf table transcription failed: %s", exc)
+            return "Table transcription returned no text."
         return text or "Table transcription returned no text."
 
     runtime.register(
@@ -111,8 +106,9 @@ def register(runtime: ToolRuntime, ctx: Context, llm) -> None:
     runtime.register(
         define_tool(
             name="pdf_table_to_text",
-            description="Detect tables in a cloud-drive PDF, render each table to an image, "
-            "and transcribe it to text with a vision LLM. Returns the table text.",
+            description="Detect tables in a cloud-drive PDF, render all detected tables into "
+            "ONE image, and transcribe it to text with a vision LLM in a single call. "
+            "Returns the table text.",
             parameters={
                 "type": "object",
                 "properties": {

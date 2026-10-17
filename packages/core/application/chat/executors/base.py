@@ -34,6 +34,10 @@ class ViewerDeps:
     # Renders the injected reference blocks into the grounded-prompt section (the
     # viewer fast path reuses the SAME renderer the Agent path's DYNAMIC_SUFFIX uses).
     render_reference: Callable[..., str] = lambda blocks: ""
+    # Does THIS turn explicitly name the on-screen document (chat_assets §6.3)? Decides
+    # whether to mount a ``reference`` attachment for the viewer's open file. Default
+    # False so a core-only wiring never attaches merely because a viewer is open.
+    requested_reference: Callable[..., bool] = lambda message, viewer: False
 
 
 @dataclass

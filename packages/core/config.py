@@ -173,11 +173,11 @@ class Settings(BaseSettings):
     # "not deployed -> ToolIntentUnavailable -> fall through the ladder" semantics.
     chat_tool_intent_local_url: str = ""               # deployed local tool-intent model endpoint ("" = none)
     # Provider config (NOT business logic): which concrete model the local
-    # service serves. Current default = the tool-tuned Qwen3 checkpoint the
-    # deployed ``tool-intent`` service serves (Q5_K_M) — Ollama encodes the
-    # quantization in the tag; swap provider/model via this key +
+    # service serves. Current default = the fine-tuned Delveta-Qwen3-0.6B-PE-v1
+    # checkpoint the deployed ``tool-intent`` service serves (Q5_K_M) — Ollama
+    # encodes the quantization in the tag; swap provider/model via this key +
     # TOOL_INTENT_OLLAMA_MODEL (compose), never by touching the chain.
-    chat_tool_intent_local_model: str = "qwen3-tools:q5_k_m"
+    chat_tool_intent_local_model: str = "delveta-pe:q5km"
     # Output discipline of the LOCAL provider (Adapter-layer, NOT chain logic):
     #   "prompt_json" — the original card contract: SYSTEM asks for a JSON reply
     #                   and the adapter brace-parses it (what a base instruct model
