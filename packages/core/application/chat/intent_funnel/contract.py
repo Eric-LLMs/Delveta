@@ -49,6 +49,16 @@ class TurnFacts:
     attachment_asset_id: str = ""
     path_asset_id: str = ""
     has_turn_context: bool = False  # a session-bound turn: prior context exists
+    # Viewer resource identity settled upstream from the ViewerPayload. The deferred
+    # capture lane needs to know WHERE the picture must come from: a local file lives
+    # only on the user's PC, so no server-side asset can be read for it — the client
+    # must capture the page/frame once the funnel certifies ``vision``. Video always
+    # needs the client's playhead frame (the vision tool cannot read a video file).
+    viewer_provenance: str = ""     # "cloud" | "local"
+    viewer_kind: str = ""           # pdf | video | image | text | markdown | office
+    viewer_name: str = ""
+    viewer_t_ms: int | None = None
+    viewer_duration_ms: int | None = None
 
     @classmethod
     def of(cls, ctx) -> TurnFacts:
@@ -88,6 +98,11 @@ class TurnFacts:
             attachment_asset_id=attachment_asset_id,
             path_asset_id=str(getattr(ctx, "path_asset_id", "") or ""),
             has_turn_context=bool(getattr(ctx, "session_id", None)),
+            viewer_provenance=str(getattr(viewer, "provenance", "") or ""),
+            viewer_kind=str(getattr(viewer, "kind", "") or ""),
+            viewer_name=str(getattr(viewer, "name", "") or ""),
+            viewer_t_ms=getattr(viewer, "t_ms", None),
+            viewer_duration_ms=getattr(viewer, "duration_ms", None),
         )
 
 # ── 8.10 fallback reason codes (prefixed, never bare words) ───────────────────────

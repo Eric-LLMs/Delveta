@@ -135,6 +135,13 @@ class Settings(BaseSettings):
     # fail-open Agent fallback. The QIR legacy cascade was deleted with migration
     # 0014 — this is the only table-driven routing lane.
     chat_funnel_timeout_seconds: float = 5.0     # whole-cascade wall clock, then Agent
+    # Deferred client capture (funnel-certified vision only): the streaming turn pauses
+    # after the funnel has decided ``vision`` and waits this long for the PC client to
+    # upload the page/frame capture; a failed attempt is surfaced as a recoverable
+    # ``capture-failed`` frame and retried up to the attempt cap. On exhaustion the turn
+    # ends honestly with NO tool/LLM call and no session write.
+    chat_capture_timeout_seconds: float = 30.0
+    chat_capture_max_attempts: int = 2
     chat_funnel_min_score: float = 0.88          # Recall quality gate — EVERY hit >= it reaches the
                                                  # model; no width cap (ruling), and an
                                                  # EMPTY set short-circuits to NO_CANDIDATE (Agent)

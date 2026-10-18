@@ -769,18 +769,19 @@ pre.text-viewer {
   white-space: pre-line;
   word-break: break-word;
 }
-.msg-bubble { padding: 8px 12px 30px; border-radius: 10px; white-space: normal; word-break: break-word; max-width: 100%; }
+.msg-bubble { padding: 8px 12px 26px; border-radius: 10px; white-space: normal; word-break: break-word; max-width: 100%; }
 .msg.user .msg-bubble { background: var(--accent); color: #fff; }
 .msg.assistant .msg-bubble { background: var(--bg-soft-2); }
 /* Per-message actions pinned to the bubble's bottom-right corner; hidden until hover/focus.
-   Each button is an icon + text chip so the controls are clearly labeled and harder to
-   misclick; delete opens a checkbox selection mode instead of deleting right away. */
+   Icon-only chips (label is the tooltip) so the row stays small and never covers the text
+   or grows past the bubble on a narrow window. A button in a stateful label ("Importing…",
+   "✓ Imported", "Failed — retry") shows its text. */
 .msg-actions {
   position: absolute;
   right: 6px;
-  bottom: 6px;
+  bottom: 4px;
   display: flex;
-  gap: 6px;
+  gap: 3px;
   opacity: 0;
   transition: opacity .15s;
 }
@@ -789,17 +790,19 @@ pre.text-viewer {
 .msg-actions button {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
   background: var(--bg-soft);
   border: 1px solid var(--border);
   cursor: pointer;
-  font-size: 11px;
-  line-height: 1.4;
-  padding: 3px 9px;
-  border-radius: 12px;
+  font-size: 12px;
+  line-height: 1;
+  padding: 3px 5px;
+  border-radius: 8px;
   color: var(--fg-dim);
   transition: color .12s, background .12s, border-color .12s;
 }
+.msg-actions button .lbl { display: none; }
+.msg-actions button[data-state] .lbl { display: inline; font-size: 11px; }
 .msg-actions button:hover { color: var(--accent); background: var(--bg-soft-2); border-color: var(--accent); }
 .msg-actions button[data-a="delete"]:hover { color: #ff6b6b; background: rgba(255, 80, 80, 0.12); border-color: #ff6b6b; }
 /* On the accent user bubble the buttons sit on white — keep them readable. */
@@ -885,6 +888,25 @@ pre.text-viewer {
   object-fit: contain;
   border: 1px solid var(--border);
   background: var(--bg-soft-2);
+  cursor: zoom-in;
+}
+/* Full-size view for any chat image (attachment, prepared page/frame, capture). */
+.img-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.85);
+  cursor: zoom-out;
+}
+.img-lightbox img {
+  max-width: 96vw;
+  max-height: 96vh;
+  object-fit: contain;
+  border-radius: 8px;
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.55);
 }
 .msg-attach-chip {
   display: inline-block;
@@ -894,6 +916,36 @@ pre.text-viewer {
   background: rgba(127, 127, 127, 0.18);
 }
 .msg.user .msg-attach-chip { background: rgba(255, 255, 255, 0.22); }
+/* Prepared context shown with a user message: the document/video card plus the text excerpt
+   and page/frame thumbnails that were sent to the model. */
+.msg-prepared { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+.msg-prepared-card {
+  flex-basis: 100%;
+  font-size: 12px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: rgba(127, 127, 127, 0.16);
+}
+.msg.user .msg-prepared-card { background: rgba(255, 255, 255, 0.2); }
+.msg-prepared-text {
+  flex-basis: 100%;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  padding: 4px 8px;
+  border-left: 3px solid rgba(127, 127, 127, 0.45);
+  background: rgba(127, 127, 127, 0.08);
+  border-radius: 4px;
+  max-height: 120px;
+  overflow: hidden;
+  cursor: zoom-in;
+}
+.msg-prepared-text.expanded { max-height: none; cursor: zoom-out; }
+.msg.user .msg-prepared-text {
+  background: rgba(255, 255, 255, 0.14);
+  border-left-color: rgba(255, 255, 255, 0.5);
+}
+.msg-prepared .msg-attach-img { max-height: 160px; }
 
 /* Screenshot region-selection overlay: frozen frame + drag-to-select box. The overlay
    dims the window, the frame sits centered at full opacity, the box marks the selection. */

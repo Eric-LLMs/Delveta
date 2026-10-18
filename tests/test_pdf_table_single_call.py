@@ -118,3 +118,52 @@ async def test_tool_reports_no_tables_without_a_model_call(monkeypatch):
     out = await _run(monkeypatch, llm, [])
     assert out == "No tables detected in this PDF."
     assert llm.calls == 0
+
+
+# ── permission before bytes ────────────────────────────────────────────────────────
+
+class _Ctx:
+    def __init__(self, storage) -> None:
+        self._storage = storage
+
+    def resolve(self, name):
+        return self._storage if name == "storage" else object()
+
+
+async def _register_asset(monkeypatch, tmp_path, *, owner):
+    import hashlib
+    from uuid import uuid4
+
+    from core.infrastructure.request_context import set_request_user
+    from core.infrastructure.storage import LocalStorage, object_key
+    from tests._drive_fakes import make_drive
+
+    data = b"%PDF-fake-bytes"
+    storage = LocalStorage(tmp_path)
+    sha = hashlib.sha256(data).hexdigest()
+    await storage.put(object_key(sha), data)
+    drive = make_drive(tmp_path)
+    asset = await drive.assets.create(owner, "x.pdf", object_sha256=sha)
+    monkeypatch.setattr(pdf_tools, "DriveService", lambda sf: drive)
+    set_request_user(owner)
+    return asset, storage
+
+
+async def test_load_asset_bytes_reads_the_callers_asset(monkeypatch, tmp_path):
+    from uuid import uuid4
+
+    owner = uuid4()
+    asset, storage = await _register_asset(monkeypatch, tmp_path, owner=owner)
+    data = await pdf_tools._load_asset_bytes(str(asset.id), _Ctx(storage))
+    assert data == b"%PDF-fake-bytes"
+
+
+async def test_load_asset_bytes_denies_a_foreign_asset(monkeypatch, tmp_path):
+    from uuid import uuid4
+
+    asset, storage = await _register_asset(monkeypatch, tmp_path, owner=uuid4())
+    # A different request user must be refused BEFORE any bytes are read.
+    from core.infrastructure.request_context import set_request_user
+    set_request_user(uuid4())
+    with pytest.raises(ValueError, match="not readable"):
+        await pdf_tools._load_asset_bytes(str(asset.id), _Ctx(storage))

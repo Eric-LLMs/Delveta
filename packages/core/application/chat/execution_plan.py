@@ -69,6 +69,10 @@ class ExecutionPlan:
     subrequests: tuple[str, ...] = ()
     reason: str = ""
     source_policy: str | None = None
+    # Deferred client capture (ACTION only): the funnel already certified the tool,
+    # but its picture must be captured by the PC client. The orchestrator pauses the
+    # stream, then resumes the SAME plan with the uploaded asset — never a re-route.
+    capture_request: dict | None = None
 
 
 def _source_policy(requirements, kind: PlanKind) -> str | None:
@@ -162,6 +166,7 @@ def build_execution_plan(
         return _plan(
             requirements, PlanKind.ACTION, action=dict(requirements.requested_action),
             requires_memory=False,
+            capture_request=requirements.capture_request,
             reason="phase5a: certified single registered tool, args fully determined -> action",
         )
 

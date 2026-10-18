@@ -1903,17 +1903,24 @@ const Viewer = (() => {
       name: state.name, kind: state.kind,
       provenance: cloud && cloud.id ? "cloud" : "local",
       asset_id: cloud && cloud.id ? String(cloud.id) : null,
-      page: null, t_ms: null, focus_text: null,
+      page: null, t_ms: null, duration_ms: null, focus_text: null,
       cues: null, full_text: null, full_chars: null, full_trusted: false,
     };
     if (state.kind === "video") {
       f.t_ms = state.videoTimeMs || 0;
+      // Real media duration lets the server clip the ±5s subtitle window at the end.
+      const dur = videoEl && isFinite(videoEl.duration) ? Math.round(videoEl.duration * 1000) : 0;
+      f.duration_ms = dur > 0 ? dur : null;
       const all = state.subtitleCues || [];
       if (all.length) {
         // The server only windows [t-20s, t] for FOCUS; ship the recent slice (schema
         // cap is 300 cues) plus the complete transcript as FULL-eligible full_text.
+        // Bounded on BOTH sides: a lower bound alone keeps every later cue, so
+        // slice(-300) would ship the END of a long transcript and starve the ±5s
+        // capture window of the words spoken around the captured frame.
         const lo = Math.max(0, f.t_ms - 60_000);
-        f.cues = all.filter((c) => c.end_ms >= lo).slice(-300);
+        const hi = f.t_ms + 15_000;
+        f.cues = all.filter((c) => c.end_ms >= lo && c.start_ms <= hi).slice(-300);
         const full = all.map((c) => c.text).join("\n");
         f.full_chars = full.length;
         if (full.length <= 100_000) { f.full_text = full; f.full_trusted = true; }
@@ -1942,6 +1949,27 @@ const Viewer = (() => {
     const wrap = pdfState.wraps[(page || state.currentPage || 1) - 1];
     const canvas = wrap && wrap.querySelector("canvas");
     return canvas ? canvas.toDataURL("image/png") : null;
+  }
+
+  // The open local image's pixels, as a PNG data URL. The file is read through the same
+  // local:// fetch the attach flow uses (never a tainted canvas), so the bytes the server
+  // receives are exactly the picture on screen.
+  async function captureImageDataUrl() {
+    const img = viewerEl().querySelector(".viewer-body img");
+    if (!img || !img.src) return null;
+    try {
+      const res = await fetch(img.src);
+      if (!res.ok) return null;
+      const bitmap = await createImageBitmap(await res.blob());
+      const canvas = document.createElement("canvas");
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+      canvas.getContext("2d").drawImage(bitmap, 0, 0);
+      bitmap.close?.();
+      return canvas.toDataURL("image/png");
+    } catch {
+      return null;
+    }
   }
 
   // ── current-page content for the Viewer→Message flow (text + screenshot decision) ──
@@ -1997,5 +2025,5 @@ const Viewer = (() => {
     }
   }
 
-  return { render, renderFolder, kindFor, localUrl, toast, close, setAttachHandler, setSubtitleCopyHandler, setSubtitleActions, setSubtitleBusy, setDocGenerateBusy, setDocumentActions, isOpen, getFocus, getPageContent, setOnFocusChanged, navigateTo, captureFrameDataUrl, capturePageDataUrl };
+  return { render, renderFolder, kindFor, localUrl, toast, close, setAttachHandler, setSubtitleCopyHandler, setSubtitleActions, setSubtitleBusy, setDocGenerateBusy, setDocumentActions, isOpen, getFocus, getPageContent, setOnFocusChanged, navigateTo, captureFrameDataUrl, capturePageDataUrl, captureImageDataUrl };
 })();

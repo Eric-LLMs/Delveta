@@ -170,7 +170,10 @@ class ViewerPayload(BaseModel):
     mode: Literal["none", "focus", "full"] | None = None
     provenance: Literal["cloud", "local"] = "local"
     asset_id: UUID | None = None       # cloud binding; identity/citation metadata only, never a retrieval key
-    name: str
+    # Optional on purpose: the deferred-data client sends only the viewer's kind and
+    # provenance at send time. A filename is NOT collected before a tool needs it — the
+    # client supplies the live name with the capture submission instead.
+    name: str = ""
     kind: str = "text"                 # pdf|video|image|text|markdown|office
     page: int | None = None
     # Optional explicit page RANGE (documents): the low/high bound of what the viewer
@@ -179,6 +182,7 @@ class ViewerPayload(BaseModel):
     page_from: int | None = None
     page_to: int | None = None
     t_ms: int | None = None
+    duration_ms: int | None = None     # video: real media duration, clips the subtitle window
     focus_text: str | None = None      # current-page text (documents) — FOCUS payload
     cues: list[dict] | None = None    # video: [{start_ms,end_ms,text}] full list; the server computes the window
     full_text: str | None = None      # full document / full subtitles, only when it fits the caps below
@@ -277,6 +281,34 @@ class ChatRequest(BaseModel):
         if cap and sum(len(t.content) for t in self.tail) > cap:
             raise ValueError("tail exceeds the per-request character budget")
         return self
+
+
+class CaptureSubmit(BaseModel):
+    """The PC client's answer to a ``capture-request`` SSE frame.
+
+    ``status="ok"`` carries the uploaded owned chat asset (``asset_id`` /
+    ``attachment_id``) plus the locally prepared text (page text, ±5s subtitles).
+    ``status="failed"`` carries a reason (capture/upload failure) so the paused turn
+    can surface a recoverable state instead of calling a model with an empty image.
+
+    ``name`` and ``t_ms`` are resolved by the client at capture time (the live
+    playhead/current page), not pre-collected at send time.
+
+    The same ticket channel also answers a ``transcript-request`` (video FULL): the
+    client sends ``full_text`` — the complete transcript it already parsed — instead of
+    an uploaded picture.
+    """
+
+    status: Literal["ok", "failed"] = "ok"
+    asset_id: str | None = None
+    attachment_id: str | None = None
+    name: str | None = Field(default=None, max_length=512)
+    text: str | None = None
+    full_text: str | None = Field(default=None, max_length=100_000)
+    full_trusted: bool | None = None
+    page: int | None = None
+    t_ms: int | None = None
+    reason: str | None = None
 
 
 class ReconcileRequest(BaseModel):

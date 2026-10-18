@@ -147,14 +147,15 @@ class _DetailSession:
 async def test_load_session_detail_carries_imported_rag_flag():
     mid1, mid2 = uuid.uuid4(), uuid.uuid4()
     sess = SimpleNamespace(title="Chat", imported_rag=None, compaction={"revision": 1})
-    # (message, asset) rows: the join resolves the attachment asset; messages without an
-    # attach_asset_id come back with a NULL asset.
+    # (message, asset, attachment_id) rows: the join resolves the attachment asset; messages
+    # without an attach_asset_id come back with a NULL asset (and therefore no attachment id).
     msgs = [
         (
             SimpleNamespace(
                 id=mid1, role="user", text="Q", imported_rag=True, meta=None,
                 created_at=SimpleNamespace(isoformat=lambda: "2026-08-28T10:00:00+00:00"),
             ),
+            None,
             None,
         ),
         (
@@ -163,6 +164,7 @@ async def test_load_session_detail_carries_imported_rag_flag():
                 meta={"retrieval": {"hits": [{"id": "h1", "score": 0.9, "text": "t"}], "queries": ["q"]}},
                 created_at=SimpleNamespace(isoformat=lambda: "2026-08-28T10:00:01+00:00"),
             ),
+            None,
             None,
         ),
     ]
@@ -173,6 +175,9 @@ async def test_load_session_detail_carries_imported_rag_flag():
     assert detail["messages"][0]["id"] == str(mid1)
 
     assert detail["messages"][0]["attach"] is None  # no attachment on these messages
+    # No attachment ⇒ no id for the session-plane content endpoint; no snapshot ⇒ no viewer.
+    assert detail["messages"][0]["attachment_id"] is None
+    assert detail["messages"][0]["viewer"] is None
     # ``meta.retrieval`` surfaces as a first-class ``retrieval`` field (👍/👎 feedback UI).
     assert detail["messages"][0]["retrieval"] is None
     assert detail["messages"][1]["retrieval"]["queries"] == ["q"]

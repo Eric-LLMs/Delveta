@@ -25,7 +25,8 @@ Hard rules:
   a ``reference`` link to ``viewer.asset_id`` is mounted on the message (chat_assets §6.3);
   the document's content still reaches the model only through the tool/stub channel.
 - Video FULL short-circuits honestly: over ``VIEWER_TOKEN_BUDGET`` → ``too_large``;
-  untrusted capture → ``unavailable``. The router aborts before the agent runs — never a
+  missing/untrusted transcript → ``transcript_deferred`` (the streaming orchestrator
+  asks the client for the complete transcript, then resumes the same turn). Never a
   silent downgrade or a RAG fallback.
 - Security: injected blocks are **untrusted reference data** — objective descriptions
   only, never instructions. We must not tell the model to call tools from inside a
@@ -45,8 +46,9 @@ from api.schemas import ViewerPayload
 # Hard ceiling for the whole viewer injection (token estimate). Conservative against the
 # 128K windows the platform runs on; prompt_max_chars (~30k tokens) covers conversation.
 VIEWER_TOKEN_BUDGET = 24_000
-# Subtitle window (media time, ms): past lookback + a hard cue/count cap.
-SUBTITLE_LOOKBACK_MS = 20_000
+# Subtitle window (media time, ms): ±5s around the playhead + hard cue/count caps.
+SUBTITLE_LOOKBACK_MS = 5_000
+SUBTITLE_LOOKAHEAD_MS = 5_000
 SUBTITLE_MAX_CUES = 30
 SUBTITLE_MAX_CHARS = 4_000
 
@@ -146,20 +148,29 @@ _STUB_DOC_KINDS = frozenset({"pdf", "office", "text", "markdown"})
 
 # ── subtitle window (media time) ──────────────────────────────────────────────
 def subtitle_window(
-    cues: list[dict], t_ms: int, *, lookback_ms: int = SUBTITLE_LOOKBACK_MS
+    cues: list[dict],
+    t_ms: int,
+    *,
+    lookback_ms: int = SUBTITLE_LOOKBACK_MS,
+    lookahead_ms: int = SUBTITLE_LOOKAHEAD_MS,
+    duration_ms: int | None = None,
 ) -> tuple[list[dict], bool]:
-    """Cues overlapping ``[t - lookback, t]``, plus the active cue, never the future.
+    """Cues overlapping ``[t - 5s, t + 5s]`` around the playhead.
 
-    Overlap (``start_ms <= t and end_ms >= lo``) naturally extends the raw window to cue
-    boundaries so a sentence is never cut mid-way. Returns ``(window_cues, truncated)``
-    with the oldest cues dropped first if the caps are hit (truncated=True when anything
-    was dropped).
+    The window is clipped to the actual media range: the lower bound never goes below 0,
+    and the upper bound stops at ``duration_ms`` when the client knows the media duration.
+    Overlap (``start_ms <= hi and end_ms >= lo``) naturally extends to cue boundaries so a
+    sentence is never cut mid-way. Returns ``(window_cues, truncated)`` with the oldest
+    cues dropped first if the caps are hit (truncated=True when anything was dropped).
     """
     lo = max(0, t_ms - lookback_ms)
+    hi = t_ms + lookahead_ms
+    if duration_ms is not None and duration_ms >= 0:
+        hi = min(hi, duration_ms)
     in_window = [
         c
         for c in cues
-        if int(c["start_ms"]) <= t_ms and int(c["end_ms"]) >= lo  # overlap OR active
+        if int(c["start_ms"]) <= hi and int(c["end_ms"]) >= lo  # overlap with [lo, hi]
     ]
     in_window.sort(key=lambda c: int(c["start_ms"]))
     truncated = False
@@ -186,6 +197,11 @@ class ViewerBlock:
     asset_id: str | None = None
     image_asset_id: str | None = None  # for roi/frame: drive asset of the captured picture
     header: str = ""              # descriptive header used by the renderer (built by the assembler)
+    # Text prepared locally for an image in this same turn (page text + page screenshot,
+    # subtitle window + video frame). It is NOT injected into the main prompt; the vision
+    # tool reads it from the turn assembly and sends it together with the image in ONE
+    # content-understanding request.
+    feeds_image: bool = False
 
     def excerpt(self, limit: int = 200) -> str:
         t = " ".join(self.text.split())
@@ -215,9 +231,10 @@ def build_viewer_blocks(
 ) -> dict:
     """Assemble the turn's viewer reference context. Returns the turn assembly dict:
 
-    ``{mode, status, blocks, rejected, stub, asset}`` with ``status ∈ {"none","injected",
-    "stub","too_large","unavailable"}``. Permission results are passed in as plain
-    booleans/ids (the chat router owns drive access checks — this function stays DB-free).
+    ``{mode, status, blocks, rejected, stub, asset, transcript_request}`` with ``status ∈
+    {"none","injected","stub","too_large","transcript_deferred"}``. Permission results are
+    passed in as plain booleans/ids (the chat router owns drive access checks — this
+    function stays DB-free).
 
     Documents are never intent-matched here: they always reach the ``"stub"`` path (when a
     readable, followed, document asset is open and no P0 block survived) or plain ``"none"``.
@@ -227,10 +244,10 @@ def build_viewer_blocks(
     - ``asset_readable=False`` → the implicit viewport content (focus/full/subtitles) is
       dropped and recorded in ``rejected``; user-typed selection text survives.
     - frame/roi selections whose ``image_asset_id`` is not readable → dropped (rejected).
-    - video FULL short-circuits: over budget → ``too_large``; untrusted capture →
-      ``unavailable``. Both inject NO main content block (P0 blocks survive in too_large,
-      matching the frozen NONE/FOCUS/FULL + P0 orthogonality) and the router aborts the
-      agent run on ``too_large``/``unavailable``.
+    - video FULL short-circuits: over budget → ``too_large``; missing/untrusted
+      transcript → ``transcript_deferred`` (the streaming orchestrator asks the client
+      for it, then resumes). Neither injects a main content block (P0 blocks survive),
+      matching the frozen NONE/FOCUS/FULL + P0 orthogonality.
     """
     frame_readable_ids = frame_readable_ids or set()
     rejected: list[str] = []
@@ -309,9 +326,17 @@ def build_viewer_blocks(
         if viewer.full_chars and viewer.full_chars > VIEWER_TOKEN_BUDGET * 4:
             return _finish(mode, blocks, viewer, rejected, status="too_large")
         if not viewer.full_text or not viewer.full_trusted:
-            # Untrusted or missing full capture: never substitute partial pages, never
-            # route around it via retrieval. Honest stop.
-            return _finish(mode, blocks, viewer, rejected, status="unavailable")
+            # The question needs the whole transcript, but the deferred-data client sent
+            # no content (it never pre-collects viewer data). Ask for it AFTER the intent
+            # is known: the streaming orchestrator pauses the turn, the client returns the
+            # transcript it already parsed locally, and the SAME turn resumes. Partial
+            # content is still never substituted.
+            return _finish(
+                mode, blocks, viewer, rejected, status="transcript_deferred",
+                transcript_request={
+                    "kind": "transcript", "name": viewer.name, "question": message,
+                },
+            )
         est = estimate_tokens(viewer.full_text) + sum(estimate_tokens(b.text) for b in blocks)
         if est > VIEWER_TOKEN_BUDGET:
             return _finish(mode, blocks, viewer, rejected, status="too_large")
@@ -331,7 +356,9 @@ def build_viewer_blocks(
 
     # FOCUS: current page (documents) or subtitle window (video).
     if viewer.kind == "video" and viewer.cues and isinstance(viewer.t_ms, (int, float)):
-        win, truncated = subtitle_window(viewer.cues, int(viewer.t_ms))
+        win, truncated = subtitle_window(
+            viewer.cues, int(viewer.t_ms), duration_ms=viewer.duration_ms
+        )
         if win:
             lo = min(int(c["start_ms"]) for c in win)
             hi = max(int(c["end_ms"]) for c in win)
@@ -343,7 +370,7 @@ def build_viewer_blocks(
                 locator={"t_ms": int(viewer.t_ms), "window_start_ms": lo, "window_end_ms": hi},
                 asset_id=usable_asset_id,
                 header=f"subtitles from \"{viewer.name}\" around {_fmt_ts(int(viewer.t_ms))}, "
-                       f"window {_fmt_ts(lo)}–{_fmt_ts(hi)} (past + active cue only)",
+                       f"window {_fmt_ts(lo)}–{_fmt_ts(hi)} (±5s around the playhead)",
             ))
     elif viewer.focus_text and viewer.focus_text.strip():
         blocks.append(ViewerBlock(
@@ -357,8 +384,32 @@ def build_viewer_blocks(
     return _finish(mode, blocks, viewer, rejected)
 
 
+def _mark_image_context(blocks: list[ViewerBlock]) -> None:
+    """Mark text blocks that are the SAME prepared input as an image block.
+
+    When the client prepared both text and a picture for one page (local PDF) or a video
+    frame (playhead subtitles), the text must not become a separate content-understanding
+    request in the main prompt. Marking it ``feeds_image`` lets the renderer omit it and
+    lets the ``vision`` tool carry it in the image's single request instead.
+    """
+    images = [b for b in blocks if b.kind in ("roi", "frame") and b.image_asset_id]
+    if not images:
+        return
+    pages = {
+        (b.locator or {}).get("page") for b in images if (b.locator or {}).get("page") is not None
+    }
+    has_frame = any(b.kind == "frame" for b in images)
+    for b in blocks:
+        if b.kind == "selection" and (b.locator or {}).get("page") in pages:
+            b.feeds_image = True
+        elif b.kind == "subtitle_window" and has_frame:
+            b.feeds_image = True
+
+
 def _finish(mode: str, blocks: list[ViewerBlock], viewer: ViewerPayload, rejected: list[str],
-            status: str | None = None, stub: dict | None = None) -> dict:
+            status: str | None = None, stub: dict | None = None,
+            transcript_request: dict | None = None) -> dict:
+    _mark_image_context(blocks)
     for i, b in enumerate(blocks, start=1):
         b.tag = f"V{i}"
     if status is None:
@@ -372,7 +423,109 @@ def _finish(mode: str, blocks: list[ViewerBlock], viewer: ViewerPayload, rejecte
         "asset": {"asset_id": str(viewer.asset_id) if viewer.asset_id else None,
                   "name": viewer.name, "kind": viewer.kind,
                   "page": viewer.page, "t_ms": viewer.t_ms},
+        "transcript_request": transcript_request,
     }
+
+
+def viewer_assembly_with_capture(assembly: dict | None, capture: dict | None) -> dict | None:
+    """Merge a completed client capture into the turn's viewer assembly.
+
+    Called on the deferred-capture resume path: the funnel already certified ``vision``
+    and the PC client captured the current page / video frame. The picture arrives as
+    an owned ``chat`` asset; its locally prepared text (page text, ±5s subtitles) rides
+    a ``feeds_image`` block so the ``vision`` tool sends text + image + question in ONE
+    request. Existing P0 blocks survive (the user's explicit selections still belong to
+    the turn); a previous capture block is replaced, so a retry never duplicates it.
+    """
+    if not isinstance(capture, dict):
+        return assembly
+    asset_id = str(capture.get("asset_id") or "").strip()
+    if not asset_id:
+        return assembly
+    kind = str(capture.get("kind") or "page").lower()
+    page = capture.get("page")
+    t_ms = capture.get("t_ms")
+    name = str(capture.get("name") or (assembly or {}).get("asset", {}).get("name") or "")
+    text = str(capture.get("text") or "").strip()
+    if assembly is None:
+        # A deferred-data client sent no viewer content, so the pre-funnel assembly is
+        # empty. The capture itself is the turn's only viewer input — build the base
+        # assembly here instead of dropping the block.
+        assembly = {
+            "mode": "none", "status": "none", "blocks": [], "rejected": [],
+            "stub": None,
+            "asset": {"asset_id": None, "name": name, "kind": kind,
+                      "page": page, "t_ms": t_ms},
+        }
+
+    blocks = [
+        b for b in (assembly.get("blocks") or [])
+        if not (getattr(b, "kind", None) in ("roi", "frame")
+                and getattr(b, "image_asset_id", None))
+    ]
+    if kind == "frame":
+        image_kind = "frame"
+        locator = {"t_ms": int(t_ms)} if isinstance(t_ms, (int, float)) else {}
+        when = f" at {_fmt_ts(int(t_ms))}" if isinstance(t_ms, (int, float)) else ""
+        header = f"captured video frame from \"{name}\"{when}"
+        text_kind, text_header = (
+            "subtitle_window",
+            f"subtitles prepared by the client from \"{name}\" around the captured frame",
+        )
+    else:
+        image_kind = "roi"
+        locator = {"page": int(page)} if isinstance(page, int) else {}
+        where = f", page {page}" if isinstance(page, int) else ""
+        header = f"captured image from \"{name}\"{where}"
+        text_kind, text_header = (
+            "selection", f"text prepared by the client from \"{name}\"{where}",
+        )
+    if text:
+        blocks.append(ViewerBlock(
+            tag="", kind=text_kind, name=name, text=text, locator=dict(locator),
+            feeds_image=True, header=text_header,
+        ))
+    blocks.append(ViewerBlock(
+        tag="", kind=image_kind, name=name,
+        text="(image captured by the client — its pixels are NOT in this prompt; "
+             "read it with the vision tool)",
+        locator=dict(locator), image_asset_id=asset_id, header=header,
+    ))
+    for i, b in enumerate(blocks, start=1):
+        b.tag = f"V{i}"
+    return {**assembly, "mode": "focus", "status": "injected", "blocks": blocks}
+
+
+def viewer_assembly_with_transcript(assembly: dict | None, payload: dict | None) -> dict | None:
+    """Complete a ``transcript_deferred`` assembly with the client's full transcript.
+
+    The client already parsed the subtitle cues locally; it sends them only after the
+    server asked (the FULL-video intent was known, the transcript was not). The budget is
+    re-checked HERE — the client is never trusted to know it — and the result is the same
+    ``full_subtitles`` block the pre-collected path would have produced. Any other
+    assembly state is returned unchanged: a transcript can never rewrite a turn that did
+    not ask for one.
+    """
+    if not isinstance(assembly, dict) or assembly.get("status") != "transcript_deferred":
+        return assembly
+    text = str((payload or {}).get("full_text") or "").strip()
+    if not text:
+        return assembly
+    blocks = list(assembly.get("blocks") or [])
+    est = estimate_tokens(text) + sum(estimate_tokens(b.text) for b in blocks)
+    if est > VIEWER_TOKEN_BUDGET:
+        return {**assembly, "status": "too_large", "blocks": blocks,
+                "transcript_request": None}
+    asset = assembly.get("asset") or {}
+    name = str(asset.get("name") or (payload or {}).get("name") or "")
+    blocks.append(ViewerBlock(
+        tag=f"V{len(blocks) + 1}", kind="full_subtitles", name=name, text=text,
+        locator={}, asset_id=asset.get("asset_id"),
+        header=f"full subtitles of \"{name}\" (complete transcript, viewer content)",
+    ))
+    _mark_image_context(blocks)
+    return {**assembly, "status": "injected", "blocks": blocks,
+            "transcript_request": None}
 
 
 # ── prompt rendering ──────────────────────────────────────────────────────────
@@ -452,6 +605,12 @@ def render_viewer_reference(blocks: list[ViewerBlock]) -> str:
     )
     parts = [_HEADER + (_IMAGE_HEADER_NOTE if has_image else "")]
     for b in blocks:
+        if b.feeds_image:
+            # Prepared FOR the image's single vision request (page text + page capture,
+            # subtitles + video frame). Keeping it out of this prompt prevents a second,
+            # separate text-understanding request; the `vision` tool reads it from the
+            # turn assembly and sends text + picture together.
+            continue
         if b.kind in ("subtitle_window",):
             parts.append(f"[{b.tag}] {b.header}:\n{b.text}")
         elif b.kind in ("roi", "frame") and b.image_asset_id:
@@ -537,11 +696,24 @@ def viewer_citation_map(blocks: list[ViewerBlock]) -> dict:
 
 
 def viewer_snapshot(viewer: ViewerPayload, blocks: list[ViewerBlock]) -> dict:
-    """Sanitized echo persisted on the user row: what the model was shown at Send time."""
+    """Sanitized echo persisted on the user row: what the model was shown at Send time.
+
+    A deferred-data client sends no name/page/playhead, so identity is recovered from
+    the blocks the turn ACTUALLY bound (the capture's locator/name); nothing is inferred
+    from the current viewer state.
+    """
+    locators = [b.locator or {} for b in blocks]
+    page = viewer.page
+    if page is None:
+        page = next((loc["page"] for loc in locators if loc.get("page") is not None), None)
+    t_ms = viewer.t_ms
+    if t_ms is None:
+        t_ms = next((loc["t_ms"] for loc in locators if loc.get("t_ms") is not None), None)
+    name = viewer.name or next((b.name for b in blocks if b.name), "")
     return {
-        "name": viewer.name, "kind": viewer.kind, "provenance": viewer.provenance,
+        "name": name, "kind": viewer.kind, "provenance": viewer.provenance,
         "asset_id": str(viewer.asset_id) if viewer.asset_id else None,
-        "page": viewer.page, "t_ms": viewer.t_ms,
+        "page": page, "t_ms": t_ms,
         "mode": viewer.mode, "follow": viewer.follow,
         "full_chars": viewer.full_chars, "full_trusted": viewer.full_trusted,
         "selection_count": len(viewer.selections),
@@ -551,7 +723,9 @@ def viewer_snapshot(viewer: ViewerPayload, blocks: list[ViewerBlock]) -> dict:
                 # Keep the capture's image asset (design §7) so a reopened session can
                 # restore a frame/roi and re-run vision; it is the asset the message owns.
                 "image_asset_id": b.image_asset_id,
-                "excerpt": b.excerpt(),
+                # Enough of the actual prepared text to re-render the message after a
+                # reopen (the default 200-char citation excerpt is too short for that).
+                "excerpt": b.excerpt(2000),
             }
             for b in blocks
         ],

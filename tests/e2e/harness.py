@@ -449,7 +449,9 @@ def build_stack(
     monkeypatch.setattr(vision_mod, "describe_image", vision_seam.describe)
     monkeypatch.setattr(read_document_mod, "DriveService", _read_drive(pdf_asset))
     monkeypatch.setattr(read_document_mod, "extract_document_text", read_doc_seam.extract)
-    monkeypatch.setattr(pdf_mod, "SqlAssetRepository", _asset_repo(pdf_asset))
+    # pdf_extract_text / pdf_table_to_text authorize through DriveService before bytes,
+    # then read the stored object — same seams as read_document.
+    monkeypatch.setattr(pdf_mod, "DriveService", _read_drive(pdf_asset))
     monkeypatch.setattr(pdf_mod, "pdf_lib", pdf_seam)
 
     # Register the REAL tool bodies (create_folder/add_term/web_search were already

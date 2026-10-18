@@ -459,6 +459,50 @@ def _certify(requirements, entry, args, *, facts, view, trace, capture):
                      stage="tool_intent")
 
 
+def _certify_capture(requirements, entry, deferred, *, facts, view, trace, capture):
+    """Certify a DEFERRED vision ACTION: the capability is decided, the picture is owed.
+
+    The capture request rides ``TurnRequirements.capture_request``; the action carries
+    the final ``question`` but NO ``asset_id`` yet — the orchestrator patches it in
+    from the client's uploaded capture before the executor runs. The kind gate is
+    still enforced here (入表≠开闸 holds for the deferred lane too); the Binder is
+    bypassed only because its one missing slot is the picture itself, which the
+    capture resolution supplies. The funnel is NOT re-entered on resume.
+    """
+    from core.application.chat.understanding import (
+        Complexity,
+        Confidence,
+        Signal,
+        TurnRequirements,
+    )
+
+    if not policy.kind_enabled(entry.intent_kind):  # P3: in the table, but not ON
+        trace["fallback"] = REASON_KIND_DISABLED
+        return None
+    if capture is not None:
+        capture["entry"] = {"intent_kind": entry.intent_kind,
+                            "tool_binding": entry.tool_binding}
+    trace["stage"] = "certified"
+    args: dict[str, object] = {}
+    if deferred.question:
+        args["question"] = deferred.question
+    action = {
+        "tool": entry.tool_binding, "args": args,
+        "capability_id": entry.capability_id,
+        "funnel_registry_version": view.fingerprint,
+        "funnel_stage": "capture",
+        "funnel_kind": entry.intent_kind,
+    }
+    return TurnRequirements(
+        needs_action=Signal.HIGH, requested_action=action,
+        capture_request=deferred.request(),
+        complexity=Complexity.LOW, confidence=Confidence.HIGH,
+        needs_web=requirements.needs_web,
+        private_only=requirements.private_only,
+        external_ok=requirements.external_ok,
+    )
+
+
 async def _acquisition_hop(requirements, deps, entry, *, query, facts, view, trace,
                            capture, provider=None, history=()):
     """Argument Path Router hop for a DECIDED capability (Phase 4 Step 2/3).
@@ -508,8 +552,34 @@ async def _acquisition_hop(requirements, deps, entry, *, query, facts, view, tra
     # nothing and calls no model — byte-identical to before.
     handler = handler_for(entry.capability_id)
     if handler is not None:
-        args = await handler.acquire(query=query, facts=facts)
+        capture_for = getattr(handler, "capture_for", None)
+        deferred = None
+        # A VIDEO viewer always needs a client frame: the vision tool cannot read a
+        # video file, so a cloud asset id must not win over the capture. For every
+        # other kind the asset is tried first (a cloud document is readable server-side).
+        if (callable(capture_for)
+                and str(getattr(facts, "viewer_kind", "") or "").lower() == "video"):
+            deferred = capture_for(query=query, facts=facts)
+        args = (None if deferred is not None
+                else await handler.acquire(query=query, facts=facts))
         if args is None:
+            # Deferred capture: the capability is ALREADY decided (vision) but its
+            # picture must come from the PC client (local page / video frame). The
+            # turn is certified now with a capture request; the orchestrator pauses
+            # and resumes THIS turn once the client supplies the asset. The funnel is
+            # never re-run and no argument is extracted a second time.
+            if deferred is None and callable(capture_for):
+                deferred = capture_for(query=query, facts=facts)
+            if deferred is not None:
+                trace["acquisition"] = "DEFERRED_CAPTURE"
+                if capture is not None:
+                    capture["acquisition"] = {
+                        "declared": True, "strategy": "DEFERRED_CAPTURE",
+                        "handler": type(handler).__name__,
+                        "capture": deferred.request(),
+                    }
+                return _certify_capture(requirements, entry, deferred, facts=facts,
+                                        view=view, trace=trace, capture=capture)
             trace["fallback"] = REASON_ACQUISITION_MISSING
             return None
         trace["acquisition"] = "CAP_HANDLER"

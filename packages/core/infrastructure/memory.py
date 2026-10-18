@@ -631,6 +631,22 @@ class SessionMemoryStore:
         # ``persist_failed``; the client's Live State is never affected.
         self.persist_failed = False
 
+    def add_attachment_ids(self, ids: list) -> None:
+        """Bind draft attachments created AFTER context build to this turn's user row.
+
+        The deferred-capture lane uploads the page/frame screenshot mid-turn, after
+        ``build_turn_context`` already constructed the store. Adding the draft id here
+        (before the executor appends the user message) keeps it owned by the message —
+        identical to an upload that was present at send time. Bad ids are ignored.
+        """
+        for raw in ids or []:
+            try:
+                uid = raw if isinstance(raw, UUID) else UUID(str(raw))
+            except (ValueError, TypeError, AttributeError):
+                continue
+            if uid not in self._attachment_ids:
+                self._attachment_ids.append(uid)
+
     def record_event(self, type_: str, payload: dict) -> None:
         """Buffer a session event (flushed on :meth:`close`)."""
         self._events.append((type_, payload or {}))
@@ -1037,7 +1053,7 @@ async def load_session_detail(session_factory, session_id: UUID) -> dict:
         ).scalar_one_or_none()
         rows = (
             await session.execute(
-                select(MessageModel, AssetModel)
+                select(MessageModel, AssetModel, ChatAttachmentModel.id)
                 .outerjoin(
                     ChatAttachmentModel, ChatAttachmentModel.message_id == MessageModel.id
                 )
@@ -1046,35 +1062,49 @@ async def load_session_detail(session_factory, session_id: UUID) -> dict:
                 .order_by(MessageModel.created_at, MessageModel.id)
             )
         ).all()
-        # A message with N attachments joins to N rows; the inline bubble shows one, so keep
-        # the first attachment seen per message (set, not an ordered list, per the design).
+        # A message with N attachments joins to N rows. ``attach`` stays the FIRST one (the
+        # single inline bubble media) while ``attachments`` lists every link, so the client
+        # can resolve the images a turn prepared as viewer selections by asset id.
         messages: list[dict] = []
-        seen: set = set()
-        for m, asset in rows:
-            if m.id in seen:
-                continue
-            seen.add(m.id)
-            messages.append(
-                {
+        by_id: dict = {}
+        for m, asset, attachment_id in rows:
+            msg = by_id.get(m.id)
+            if msg is None:
+                msg = {
                     "id": str(m.id),
                     "role": m.role,
                     "content": m.text,
                     "imported_rag": m.imported_rag,
                     "created_at": m.created_at.isoformat() if m.created_at else None,
-                    "attach": (
-                        {
-                            "asset_id": str(asset.id),
-                            "name": asset.name,
-                            "mime": asset.mime_type,
-                        }
-                        if asset is not None
-                        else None
-                    ),
+                    "attach": None,
+                    "attachments": [],
                     # Retrieval-feedback snapshot (assistant messages that ran rag_search):
                     # {hits, queries} so the client re-renders the 👍/👎 row after reopen.
                     "retrieval": (m.meta or {}).get("retrieval") if m.meta else None,
+                    # Top-level (NOT inside ``attach``): the chat-attachment id lets the client
+                    # fetch chat-scope bytes from the session endpoint — the drive download
+                    # route only serves drive assets, so a capture would stay a dead chip.
+                    "attachment_id": None,
+                    # The viewer snapshot frozen on this turn so reopening the session can
+                    # re-render the prepared document context (text excerpt, page image).
+                    "viewer": (m.meta or {}).get("viewer") if m.meta else None,
                 }
-            )
+                by_id[m.id] = msg
+                messages.append(msg)
+            if asset is None:
+                continue
+            link = {
+                "attachment_id": str(attachment_id),
+                "asset_id": str(asset.id),
+                "name": asset.name,
+                "mime": asset.mime_type,
+            }
+            msg["attachments"].append(link)
+            if msg["attach"] is None:
+                msg["attach"] = {
+                    "asset_id": link["asset_id"], "name": link["name"], "mime": link["mime"],
+                }
+                msg["attachment_id"] = link["attachment_id"]
         return {
             "title": sess.title if sess is not None else None,
             "compaction": sess.compaction if sess is not None else None,

@@ -38,6 +38,13 @@ class ViewerDeps:
     # whether to mount a ``reference`` attachment for the viewer's open file. Default
     # False so a core-only wiring never attaches merely because a viewer is open.
     requested_reference: Callable[..., bool] = lambda message, viewer: False
+    # Merge a deferred client capture (page/frame screenshot + prepared text) into the
+    # turn assembly on resume. Identity by default so a core-only wiring never rewrites
+    # the assembly; the API layer injects the real pure function.
+    with_capture: Callable[..., dict] = lambda assembly, capture: assembly
+    # Merge a deferred full transcript (video FULL, client-parsed subtitles) into the
+    # turn assembly on resume. Identity by default for the same reason as ``with_capture``.
+    with_transcript: Callable[..., dict] = lambda assembly, payload: assembly
 
 
 @dataclass
@@ -97,6 +104,11 @@ class ChatDeps:
     # existing tests green). It is turn-independent: the cascade calls it at the
     # acquisition hop with the turn's context bundle.
     argument_extractor: Any = None
+    # Deferred-capture seam (funnel-certified vision): the in-process broker that
+    # pauses ONE streaming turn until the PC client uploads the page/frame capture.
+    # None = not wired → a capture-required plan degrades honestly (the ACTION then
+    # lacks its asset and the executor's schema gate decides), never a silent wait.
+    capture_broker: Any = None
 
 
 class EscalateToAgent(Exception):

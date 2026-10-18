@@ -1,10 +1,10 @@
 """Viewer Context Provider — pure assembly logic.
 
-Covers: media-time subtitle window arithmetic (past-only + active cue), the video-only
+Covers: media-time subtitle window arithmetic (±5s around the playhead), the video-only
 strict-priority classifier (local > full-scope > interrogative > NONE — documents bypass
 classification entirely and land on the stub path), block assembly (P0-first [Vn] tags,
-permission rejection paths), video FULL short-circuits (too_large / unavailable — never a
-RAG or partial-page fallback), the trusted Viewer Access Context routing for stubs, the
+permission rejection paths), video FULL short-circuits (too_large / transcript_deferred —
+never a RAG or partial-page fallback), the trusted Viewer Access Context routing for stubs, the
 dynamic-suffix renderer, and the core compatibility invariant: a kernel WITHOUT a viewer
 turn assembles a byte-identical prompt. Router-level wiring is in test_viewer_chat.py.
 """
@@ -24,6 +24,7 @@ from api.viewer_context import (
     render_viewer_reference,
     subtitle_window,
     validate_viewer_citations,
+    viewer_assembly_with_transcript,
     viewer_reference_section,
 )
 
@@ -43,31 +44,48 @@ def _cue(start_s, end_s, text):
 
 # ── subtitle window (media time) ──────────────────────────────────────────────
 
-def test_window_past_20s_boundary_extension_and_active_cue():
+def test_window_is_five_seconds_before_and_after_the_playhead():
     cues = [
-        _cue(30, 40, "too old"),         # ends before lo=55 → out
-        _cue(53, 56, "overlap start"),   # crosses lo → included (boundary extension)
-        _cue(68, 73, "just before"),
-        _cue(74, 80, "ACTIVE"),          # straddles t=75: full inclusion
-        _cue(76, 82, "future"),          # starts after t → FORBIDDEN
+        _cue(62, 69, "too old"),          # ends before lo=70 → out
+        _cue(69, 71, "overlap start"),    # crosses lo → included (boundary extension)
+        _cue(72, 74, "just before"),
+        _cue(74, 80, "ACTIVE"),           # straddles t=75: full inclusion
+        _cue(76, 82, "lookahead"),        # starts before hi=80 → INCLUDED now
+        _cue(81, 90, "too late"),         # starts after hi=80 → out
     ]
     win, truncated = subtitle_window(cues, 75_000)
-    assert [c["text"] for c in win] == ["overlap start", "just before", "ACTIVE"]
+    assert [c["text"] for c in win] == [
+        "overlap start", "just before", "ACTIVE", "lookahead",
+    ]
     assert truncated is False
 
 
-def test_window_lookback_uses_media_time_not_playback_rate():
-    # Same cues, t exactly at a cue start → that cue is active, nothing after it.
-    cues = [_cue(0, 5, "a"), _cue(5, 10, "b"), _cue(10, 15, "c")]
-    win, _ = subtitle_window(cues, 5_000)
-    assert [c["text"] for c in win] == ["a", "b"]
+def test_window_clips_at_the_start_of_the_media():
+    # t=2s: the raw t-5s bound would be negative; it clamps to 0.
+    cues = [_cue(0, 3, "opening"), _cue(8, 12, "after lookahead")]
+    win, _ = subtitle_window(cues, 2_000)  # window [0, 7]
+    assert [c["text"] for c in win] == ["opening"]
+
+
+def test_window_clips_at_the_media_duration():
+    # t=75s in a 77s clip: t+5s is clamped to the real end, so a cue starting at 78s
+    # (beyond the media) never enters the window.
+    cues = [_cue(74, 80, "ACTIVE"), _cue(76, 80, "tail"), _cue(78, 85, "beyond end")]
+    win, _ = subtitle_window(cues, 75_000, duration_ms=77_000)
+    assert [c["text"] for c in win] == ["ACTIVE", "tail"]
+
+
+def test_window_lookahead_uses_media_time_not_playback_rate():
+    cues = [_cue(0, 5, "a"), _cue(5, 10, "b"), _cue(10, 15, "c"), _cue(20, 25, "d")]
+    win, _ = subtitle_window(cues, 5_000)  # window [0, 10]
+    assert [c["text"] for c in win] == ["a", "b", "c"]
 
 
 def test_window_caps_drop_oldest_and_flag_truncated():
     cues = [_cue(i * 5, i * 5 + 4, f"c{i}") for i in range(50)]
     win, truncated = subtitle_window(cues, 245_000, lookback_ms=300_000)  # all in window
     assert len(win) == SUBTITLE_MAX_CUES and truncated is True
-    assert win[-1]["text"] == "c49"  # newest kept — future still impossible
+    assert win[-1]["text"] == "c49"  # newest kept, oldest dropped first
 
 
 # ── intent classification (VIDEO ONLY; the classifier function itself is payload-kind
@@ -164,7 +182,8 @@ def test_subtitle_focus_block_around_playhead():
     a = build_viewer_blocks(v, "刚才说的什么意思")
     b = a["blocks"][0]
     assert b.kind == "subtitle_window"
-    assert "left" in b.text and "active straddle" in b.text and "future" not in b.text
+    # ±5s around t=75s → [70, 80]: the lookahead cue (starts at 76) is included.
+    assert "left" in b.text and "active straddle" in b.text and "future" in b.text
     assert b.locator["window_end_ms"] == 80_000
 
 
@@ -197,12 +216,47 @@ def test_full_char_hint_over_budget_short_circuits_without_text():
     assert a["status"] == "too_large"
 
 
-def test_full_untrusted_capture_is_unavailable_not_partial():
+def test_full_untrusted_capture_asks_for_the_transcript_not_partial():
     v = _viewer(kind="video", focus_text=None, page=None,
                 full_text="partial transcript only", full_chars=21, full_trusted=False)
     a = build_viewer_blocks(v, "总结整个视频")
-    assert a["status"] == "unavailable"
+    assert a["status"] == "transcript_deferred"
+    assert a["transcript_request"]["kind"] == "transcript"
+    assert a["transcript_request"]["question"] == "总结整个视频"
     assert not any(b.kind in ("full_subtitles", "subtitle_window", "page") for b in a["blocks"])
+    # A deferred assembly is NOT an abort: the streaming turn must keep running to ask.
+    assert not any(b.kind == "full_subtitles" for b in a["blocks"])
+
+
+def test_deferred_transcript_completes_the_assembly_after_the_ask():
+    v = _viewer(kind="video", name="talk.mp4", focus_text=None, page=None)
+    a = build_viewer_blocks(v, "总结整个视频")
+    assert a["status"] == "transcript_deferred"
+    done = viewer_assembly_with_transcript(a, {"full_text": "line one\nline two"})
+    assert done["status"] == "injected" and done["transcript_request"] is None
+    full = next(b for b in done["blocks"] if b.kind == "full_subtitles")
+    assert full.text == "line one\nline two" and full.tag == "V1"
+    assert full.name == "talk.mp4"
+    # The original assembly is never mutated.
+    assert a["status"] == "transcript_deferred" and a["blocks"] == []
+
+
+def test_deferred_transcript_over_budget_is_too_large():
+    v = _viewer(kind="video", focus_text=None, page=None)
+    a = build_viewer_blocks(v, "总结整个视频")
+    big = "X" * (VIEWER_TOKEN_BUDGET * 4 + 1)
+    assert len(big) <= 100_000
+    done = viewer_assembly_with_transcript(a, {"full_text": big})
+    assert done["status"] == "too_large"
+    assert not any(b.kind == "full_subtitles" for b in done["blocks"])
+
+
+def test_transcript_cannot_rewrite_a_turn_that_did_not_ask():
+    v = _viewer(kind="video", focus_text=None, page=None, t_ms=1000,
+                cues=[_cue(0, 2, "hi")])
+    a = build_viewer_blocks(v, "这个字幕什么意思")
+    assert a["status"] == "injected"
+    assert viewer_assembly_with_transcript(a, {"full_text": "late"}) is a
 
 
 # ── renderer + citation validation ────────────────────────────────────────────
@@ -306,9 +360,10 @@ def test_frame_payload_is_consumable_by_vision_path():
     assert str(UUID(b.image_asset_id)) == str(frame_id)
 
 
-def test_frame_and_subtitle_coexist():
-    """(7) video FOCUS with cues AND a pinned frame → both blocks ship, frame keeps its id,
-    subtitle ships as text; render tags both."""
+def test_frame_and_subtitle_coexist_in_one_vision_input():
+    """(7) video FOCUS with cues AND a pinned frame → both blocks ship in the assembly,
+    the frame keeps its id, and the subtitle text is marked as input for the SAME vision
+    request (it is never injected into the main prompt as a separate text task)."""
     frame_id = uuid4()
     v = _frame_viewer(
         follow=True,
@@ -316,10 +371,29 @@ def test_frame_and_subtitle_coexist():
         t_ms=75_000, cues=[_cue(68, 73, "left"), _cue(74, 80, "active")],
     )
     a = build_viewer_blocks(v, "刚才这一帧配的这句什么意思", frame_readable_ids={str(frame_id)})
-    kinds = [b.kind for b in a["blocks"]]
-    assert "frame" in kinds and "subtitle_window" in kinds
+    by_kind = {b.kind: b for b in a["blocks"]}
+    assert "frame" in by_kind and "subtitle_window" in by_kind
+    assert by_kind["subtitle_window"].feeds_image is True
     out = render_viewer_reference(a["blocks"])
-    assert f'asset_id="{frame_id}"' in out and "left" in out and "active" in out
+    assert f'asset_id="{frame_id}"' in out
+    assert "left" not in out and "active" not in out  # text goes to vision, not the main LLM
+
+
+def test_local_page_text_and_capture_form_one_vision_input():
+    """A local PDF page prepares text AND a capture. The text must not be injected into
+    the main prompt as a separate content-understanding task — it is marked as input for
+    the single ``vision`` request that also carries the picture."""
+    img = uuid4()
+    v = _viewer(provenance="local", asset_id=None, page=7, selections=[
+        ViewerSelection(kind="text", text="PAGE TEXT", locator={"page": 7}),
+        ViewerSelection(kind="roi", image_asset_id=img, locator={"page": 7}),
+    ])
+    a = build_viewer_blocks(v, "这一页的表格说明什么", frame_readable_ids={str(img)})
+    text_b = next(b for b in a["blocks"] if b.kind == "selection")
+    img_b = next(b for b in a["blocks"] if b.kind == "roi")
+    assert text_b.feeds_image is True and img_b.image_asset_id == str(img)
+    out = render_viewer_reference(a["blocks"])
+    assert "PAGE TEXT" not in out and f'asset_id="{img}"' in out
 
 
 def test_invalid_frame_asset_degrades_without_leaking():
@@ -485,11 +559,10 @@ def test_full_mode_never_downgrades_to_stub():
                       full_chars=400_000, full_trusted=True)
     a = build_viewer_blocks(v, "总结整个视频")
     assert a["status"] == "too_large" and a["stub"] is None
-    # Video FULL + untrusted capture → unavailable, never stub
-    v2 = ViewerPayload(name="v.mp4", kind="video", asset_id=AID,
-                       full_text="x" * 10, full_chars=10, full_trusted=False)
+    # Video FULL + missing transcript → transcript_deferred (ask the client), never stub
+    v2 = ViewerPayload(name="v.mp4", kind="video", asset_id=AID)
     a2 = build_viewer_blocks(v2, "总结整个视频")
-    assert a2["status"] == "unavailable" and a2["stub"] is None
+    assert a2["status"] == "transcript_deferred" and a2["stub"] is None
 
 
 # ── render_viewer_access_context: trusted section contract ───────────────────

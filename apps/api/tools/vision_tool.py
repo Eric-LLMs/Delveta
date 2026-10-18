@@ -12,7 +12,12 @@ page — or a sub-``region`` of it — is rendered to an image LOCALLY with PyMu
 the model call: locating/rendering content is deterministic CPU work, never a model
 request, so a table/chart/figure page question costs exactly ONE downstream vision call
 (the "Local Data Preparation → Single LLM Call" rule). No second model request is made to
-extract or transcribe first.
+extract or transcribe first. The page's own TEXT layer is extracted locally too (PyMuPDF,
+no model) and travels in the SAME request as the rendered image, so one call always
+carries both the text and the visual layout — a table/chart page is never read as
+image-only, and text is never fetched by a second, separate call. Any piece that cannot
+be extracted is simply left out; it is never fabricated and never triggers an extra LLM
+call to fill it.
 
 Access is checked against the drive ACL (``DriveService.ensure_asset_readable``) BEFORE
 any bytes are read, so a forged ``asset_id`` for another user's file is refused, never
@@ -59,6 +64,27 @@ def _is_pdf(asset: Any) -> bool:
     return mime == "application/pdf" or ext in _PAGE_RENDER_EXTS
 
 
+def _build_prompt(question: str, page_text: str) -> str:
+    """Assemble the ONE vision request's text part from every locally-prepared piece.
+
+    The rendered image rides as a separate content part; this only builds the text side.
+    Both the page's extracted text (when the page had any) and the caller's question are
+    included so a single call carries the full prepared input — never text in one call and
+    the image in another. Missing pieces are simply omitted, never invented.
+    """
+    parts: list[str] = []
+    if page_text:
+        parts.append(
+            "本地准备的相关文字内容如下（仅供参考；表格、图形等视觉内容以所附图片为准）:\n"
+            + page_text
+        )
+    if question:
+        parts.append("基于所附图片与上述文字回答以下问题：" + question)
+    else:
+        parts.append(_DEFAULT_PROMPT)
+    return "\n\n".join(parts)
+
+
 def _viewer_page_from_turn() -> int | None:
     """The open viewer's current page for THIS turn, or ``None``.
 
@@ -76,17 +102,75 @@ def _viewer_page_from_turn() -> int | None:
         return None
 
 
+def _turn_prepared_text(image_asset_id: str) -> str:
+    """The locally prepared text paired with THIS image in the turn assembly.
+
+    A local PDF page arrives as text selection + page capture; a video frame as a
+    subtitle window + captured frame. The viewer assembler marks that text ``feeds_image``
+    and keeps it OUT of the main prompt, so the text and the picture can be understood in
+    ONE dedicated request: this function recovers the text for the ``vision`` call. Returns
+    ``""`` when this image has no paired text (e.g. a plain screenshot), in which case the
+    call carries the image alone.
+    """
+    turn = current_turn()
+    ctx_dict = getattr(turn, "context", None) or {}
+    blocks = (ctx_dict.get("viewer") or {}).get("blocks") or []
+    image = next(
+        (b for b in blocks
+         if str(getattr(b, "image_asset_id", "") or "") == str(image_asset_id)),
+        None,
+    )
+    if image is None:
+        return ""
+    page = (getattr(image, "locator", None) or {}).get("page")
+    pieces: list[str] = []
+    for b in blocks:
+        if not getattr(b, "feeds_image", False):
+            continue
+        if page is not None and (getattr(b, "locator", None) or {}).get("page") != page:
+            continue
+        text = (getattr(b, "text", "") or "").strip()
+        if text:
+            pieces.append(text)
+    return "\n\n".join(pieces)
+
+
+async def _owned_chat_asset(drive: DriveService, user_id: UUID, asset_id: UUID) -> Any:
+    """The caller's OWNED ``scope='chat'`` capture, or ``None``.
+
+    Screenshots, page/region captures and video frames live in the chat plane, which the
+    drive plane deliberately refuses (404) — but they are exactly what the ``vision``
+    tool is asked to read. Authorize owner-only on ``scope='chat' AND user_id = caller``
+    (the same check ``attach_note`` / ``_frame_asset_readable`` use) BEFORE any bytes are
+    read. Any other scope, owner or deleted row returns ``None``.
+    """
+    try:
+        asset = await drive.assets.get(asset_id)
+    except Exception:  # noqa: BLE001 — an unreadable row is simply not authorized
+        return None
+    if asset is None or asset.deleted_at is not None:
+        return None
+    if (asset.scope or "drive") != "chat" or asset.user_id != user_id:
+        return None
+    return asset
+
+
 async def _load_asset(asset_id: str, ctx: Context, user_id: UUID) -> tuple[Any, bytes]:
-    """Fetch a drive asset's stored bytes plus its row, after the drive ACL check.
+    """Fetch an asset's stored bytes plus its row, after the ACL check.
 
     Permission is decided up-front (mirrors ``read_document``): a foreign/unknown asset
     raises here, so no bytes are ever read for an asset the request user may not see.
+    A drive file goes through the drive ACL; an owned chat capture is authorized
+    owner-only in the chat plane (it is invisible to the drive plane by design).
     """
     drive = DriveService(ctx.resolve("session_factory"))
+    aid = UUID(str(asset_id))
     try:
-        asset = await drive.ensure_asset_readable(user_id, UUID(str(asset_id)))
+        asset = await drive.ensure_asset_readable(user_id, aid)
     except DriveError as exc:
-        raise ValueError(f"asset {asset_id} not readable: {exc}") from None
+        asset = await _owned_chat_asset(drive, user_id, aid)
+        if asset is None:
+            raise ValueError(f"asset {asset_id} not readable: {exc}") from None
     if not asset.object_sha256:
         raise ValueError(f"asset {asset_id} not found or has no stored object")
     data = await ctx.resolve("storage").get(object_key(asset.object_sha256))
@@ -103,9 +187,16 @@ def register(runtime: ToolRuntime, ctx: Context, llm) -> None:
         if user_id is None:
             raise ValueError("vision requires an authenticated request user context")
         asset, raw = await _load_asset(asset_id, ctx, user_id)
+        if not raw:
+            # A deferred capture that produced an empty upload must NEVER reach the
+            # multimodal model: fail honestly so the client can retry the screenshot.
+            raise ValueError(
+                f"capture image is empty for asset {asset_id} — capture it again"
+            )
 
         # ── LOCAL data preparation: a page-scoped PDF becomes an image here (a model is
         # never asked to locate or transcribe first). Everything else is its own bytes.
+        page_text = ""
         if _is_pdf(asset):
             page = args.get("page")
             if page is None:
@@ -128,10 +219,25 @@ def register(runtime: ToolRuntime, ctx: Context, llm) -> None:
                 pdf_lib.render_page_png, raw, page_num, region=region
             )
             mime = "image/png"
+            # Same LOCAL prep pass, no model: the page's own text layer joins the rendered
+            # image in the ONE request below, so a table/chart page is read with both text
+            # and layout in a single call. A page with no text layer (a scan) adds nothing
+            # — the image alone still carries it; we never fabricate text or call again.
+            try:
+                page_text = (
+                    await asyncio.to_thread(
+                        pdf_lib.extract_pdf_text, raw, pages=[page_num]
+                    )
+                ).strip()
+            except Exception:  # noqa: BLE001 — text is a bonus, never fail the turn for it
+                page_text = ""
         else:
             data, mime = raw, (_mime_for(asset) or "")
+            # A local page/frame capture: the viewer assembler kept its paired text (page
+            # text or playhead subtitles) out of the main prompt; it belongs to THIS call.
+            page_text = _turn_prepared_text(str(asset_id))
 
-        prompt = f"基于所附图片回答以下问题：{question}" if question else _DEFAULT_PROMPT
+        prompt = _build_prompt(question, page_text)
         try:
             return await describe_image(
                 data,

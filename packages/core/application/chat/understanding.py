@@ -81,6 +81,12 @@ class TurnRequirements:
     # escalated private-first turn; without it the escalated answer must disclose
     # the corpus gap honestly and stay on private sources.
     external_ok: bool = False
+    # DEFERRED CAPTURE (funnel-certified vision only): the picture the turn needs is
+    # not on the server — the PC client must capture the current page / video frame.
+    # ``None`` on every ordinary turn; its presence means the ACTION must pause until
+    # the client supplies the asset. It carries no execution authority: the certified
+    # capability/tool/kind already live in ``requested_action``.
+    capture_request: dict | None = None
 
 
 # ── L0 signal engine (in-process, no I/O) ──────────────────────────────────────────

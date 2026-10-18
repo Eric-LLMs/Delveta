@@ -148,19 +148,29 @@ async def viewer_post_turn(
     """Persist the sent-time snapshot (user row) + citation map/validation (assistant
     row) — both under dedicated ``meta`` keys, fully separate from ``meta["retrieval"]``.
 
-    ``status=="stub"`` instead traces the tool-driven read: the Viewer Access Context
-    section told the model to call ``read_document``, and we record which calls it actually
-    made (incl. failures) against that asset on the assistant row."""
+    ``status=="stub"`` records the sent-time viewer snapshot on the user row ONLY when
+    the turn actually read the document (the assistant's ``read_document`` calls are
+    non-empty): an unrelated turn made while a document was merely open must not be
+    restored as if that document were part of it. The assistant row keeps the
+    tool-driven read trace: the Viewer Access Context section told the model to call
+    ``read_document``, and we record which calls it actually made (incl. failures)."""
     if not assembly:
         return None
     if assembly["status"] == "stub":
         stub = assembly.get("stub") or {}
+        body_viewer = getattr(body, "viewer", None)
         reads = _viewer_stub_reads(messages, stub.get("asset_id"))
         payload = {
             "mode": assembly["mode"], "status": "stub",
             "asset_id": stub.get("asset_id"), "current_page": stub.get("page"),
             "reads": reads,
         }
+        # Actual use only: no read means no viewer data reached this turn.
+        if user_message_id and body_viewer is not None and reads:
+            await deps.persist_turn_meta(
+                user_message_id, "viewer",
+                deps.viewer.snapshot(body_viewer, assembly.get("blocks") or []),
+            )
         if assistant_message_id:
             await deps.persist_turn_meta(assistant_message_id, "viewer", payload)
         return payload

@@ -13,9 +13,10 @@ import logging
 from uuid import UUID
 
 from agent import Context, ToolExecution, ToolOutput, ToolRuntime, define_tool, text_block
+from core.application.drive_service import DriveError, DriveService
 from core.infrastructure import pdf as pdf_lib
-from core.infrastructure.drive_repositories import SqlAssetRepository
 from core.infrastructure.pdf_pages import parse_pages_spec
+from core.infrastructure.request_context import request_user
 from core.infrastructure.storage import object_key
 
 log = logging.getLogger(__name__)
@@ -46,10 +47,21 @@ def _window(args: dict) -> list[int] | None:
 
 
 async def _load_asset_bytes(asset_id: str, ctx: Context) -> bytes:
-    """Fetch a drive asset's stored object bytes by ``asset_id``."""
-    repo = SqlAssetRepository(ctx.resolve("session_factory"))
-    asset = await repo.get(UUID(asset_id))
-    if asset is None or not asset.object_sha256:
+    """Fetch a drive asset's stored object bytes by ``asset_id``, after the ACL check.
+
+    Permission is decided before any bytes are read (the same rule ``read_document``
+    and ``vision`` follow): a foreign/unknown asset id raises here, so an arbitrary
+    UUID cannot be used to read another user's file.
+    """
+    uid = request_user.get()
+    if uid is None:
+        raise ValueError("pdf tools require an authenticated request user context")
+    drive = DriveService(ctx.resolve("session_factory"))
+    try:
+        asset = await drive.ensure_asset_readable(uid, UUID(str(asset_id)))
+    except DriveError as exc:
+        raise ValueError(f"asset {asset_id} not readable: {exc}") from None
+    if not asset.object_sha256:
         raise ValueError(f"asset {asset_id} not found or has no stored object")
     data = await ctx.resolve("storage").get(object_key(asset.object_sha256))
     if data is None:

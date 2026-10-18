@@ -31,12 +31,19 @@ from api.routers._shared import (
     _resolve_chat_route,
     resolve_guest_identity,
 )
-from api.schemas import ChatImportRequest, ChatRequest, ChatSessionImportRequest
+from api.schemas import (
+    CaptureSubmit,
+    ChatImportRequest,
+    ChatRequest,
+    ChatSessionImportRequest,
+)
 from api.viewer_context import (
     build_viewer_blocks,
     render_viewer_reference,
     requests_viewer_document,
     validate_viewer_citations,
+    viewer_assembly_with_capture,
+    viewer_assembly_with_transcript,
     viewer_citation_map,
     viewer_snapshot,
 )
@@ -59,6 +66,15 @@ from core.application.chat.context import (
 )
 from core.application.chat.context import (
     viewer_abort as _viewer_abort,  # noqa: F401
+)
+from core.application.chat.capture import (
+    STATUS_CLOSED,
+    STATUS_FORBIDDEN,
+    STATUS_NOT_FOUND,
+    CaptureBroker,
+)
+from core.application.chat.context import (
+    _frame_asset_readable as _capture_asset_readable,
 )
 from core.application.chat.executors.base import ChatDeps, ViewerDeps
 from core.application.chat.intent_funnel.argument_acquisition.extractor import (
@@ -118,7 +134,14 @@ _VIEWER_DEPS = ViewerDeps(
     snapshot=viewer_snapshot,
     render_reference=render_viewer_reference,
     requested_reference=requests_viewer_document,
+    with_capture=viewer_assembly_with_capture,
+    with_transcript=viewer_assembly_with_transcript,
 )
+
+# Deferred-capture broker: ONE in-process instance for the API's single event loop.
+# The SSE generator (paused turn) and POST /chat/captures/{ticket_id} (resume) are the
+# two halves of the same handoff; both run on this loop, so no locking is needed.
+_CAPTURE_BROKER = CaptureBroker()
 
 
 async def _persist_turn_meta(message_id: str | None, key: str, value) -> None:
@@ -354,6 +377,9 @@ def _build_chat_deps(queue: TaskQueue, drive: DriveService) -> ChatDeps:
         # acquisition provider is NOT wired here — the cascade builds the production
         # one per turn from the live Registry (it needs the turn's ctx/facts).
         argument_extractor=_extract_arguments,
+        # Deferred client capture: funnel-certified vision pauses the stream until the
+        # PC client uploads the page/frame; the same turn then resumes (no re-funnel).
+        capture_broker=_CAPTURE_BROKER,
     )
 
 
@@ -583,3 +609,39 @@ async def chat_stream(
             yield frame
 
     return EventSourceResponse(gen())
+
+
+@router.post("/chat/captures/{ticket_id}")
+async def chat_capture_submit(
+    ticket_id: str,
+    body: CaptureSubmit,
+    user: AuthUser | None = Depends(require_user_optional),
+    drive: DriveService = Depends(get_drive_service),
+):
+    """Resume a turn paused on a ``capture-request`` (deferred client capture).
+
+    The funnel already certified ``vision``; this endpoint only carries the PC client's
+    captured asset into the waiting turn. The asset must be readable by the caller
+    (owner-only chat capture or a drive file) BEFORE the ticket is resolved, so a
+    forged id can never reach the vision tool. The turn itself is already in flight on
+    the SSE stream — this response only reports the handoff.
+    """
+    if user is None:
+        raise HTTPException(
+            status_code=403, detail="capture requires an authenticated user"
+        )
+    # A capture carries an uploaded image; a transcript carries the client-parsed text
+    # instead. Only an image submission has an asset to authorize.
+    if body.status == "ok" and body.asset_id:
+        if not await _capture_asset_readable(drive, user.user_id, body.asset_id):
+            raise HTTPException(status_code=403, detail="capture asset is not readable")
+    status = _CAPTURE_BROKER.submit(
+        ticket_id, user_id=user.user_id, payload=body.model_dump(exclude_none=True)
+    )
+    if status == STATUS_NOT_FOUND:
+        raise HTTPException(status_code=404, detail="capture ticket not found or expired")
+    if status == STATUS_FORBIDDEN:
+        raise HTTPException(status_code=403, detail="capture ticket belongs to another user")
+    if status == STATUS_CLOSED:
+        raise HTTPException(status_code=409, detail="capture ticket already resolved")
+    return {"status": "submitted"}

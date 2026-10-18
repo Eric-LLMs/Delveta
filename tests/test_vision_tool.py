@@ -92,14 +92,15 @@ async def _turn(context: dict):
         _TURN_CTX.reset(token)
 
 
-async def _register(monkeypatch, tmp_path, name: str, data: bytes):
+async def _register(monkeypatch, tmp_path, name: str, data: bytes, *, scope="drive",
+                    owner=None):
     """Store ``data`` as an asset named ``name``; return (runtime, asset_id, drive, uid)."""
     storage = LocalStorage(tmp_path)
     sha = hashlib.sha256(data).hexdigest()
     await storage.put(object_key(sha), data)
     drive = make_drive(tmp_path)
     uid = uuid4()
-    asset = await drive.assets.create(uid, name, object_sha256=sha)
+    asset = await drive.assets.create(owner or uid, name, object_sha256=sha, scope=scope)
     monkeypatch.setattr(vision_tool, "DriveService", lambda sf: drive)
     request_user.set(uid)
     runtime = ToolRuntime()
@@ -212,6 +213,61 @@ async def test_image_asset_sends_stored_bytes(monkeypatch, tmp_path):
     assert calls[0]["mime"] == "image/png"
 
 
+async def test_owned_chat_capture_is_readable(monkeypatch, tmp_path):
+    # A chat-scope capture (screenshot / page / frame) is invisible to the drive plane,
+    # but it is exactly what the vision tool is asked to read. Owner-only authorization
+    # must let it through with its REAL bytes.
+    png = b"\x89PNG\r\n\x1a\n" + b"\x11" * 24
+    runtime, asset_id, _, _ = await _register(
+        monkeypatch, tmp_path, "page_5.png", png, scope="chat")
+    calls = _stub_describe(monkeypatch, answer="chart")
+
+    res = await _call(runtime, asset_id)
+    assert res.is_error is False and len(calls) == 1
+    assert calls[0]["data"] == png
+
+
+async def test_foreign_chat_capture_denied_before_bytes(monkeypatch, tmp_path):
+    # Another user's chat capture must be refused, and the stored object is deleted so
+    # an ACL hole would surface as "bytes missing" instead of "not readable".
+    png = b"\x89PNG\r\n\x1a\n" + b"\x22" * 24
+    runtime, asset_id, _, _ = await _register(
+        monkeypatch, tmp_path, "theirs.png", png, scope="chat", owner=uuid4())
+    calls = _stub_describe(monkeypatch)
+    sha = hashlib.sha256(png).hexdigest()
+    await LocalStorage(tmp_path).delete(object_key(sha))
+
+    res = await _call(runtime, asset_id)
+    assert res.is_error is True
+    assert "not readable" in _err(res)
+    assert "bytes missing" not in _err(res)
+    assert calls == []
+
+
+async def test_locally_prepared_page_text_joins_the_single_vision_request(monkeypatch, tmp_path):
+    # A local page prepares its text + capture for ONE content-understanding request. The
+    # assembler keeps the text out of the main prompt; the tool must recover it from the
+    # turn's viewer assembly and send it with the image in exactly one call.
+    png = b"\x89PNG\r\n\x1a\n" + b"\x33" * 24
+    runtime, asset_id, _, _ = await _register(
+        monkeypatch, tmp_path, "page_7.png", png, scope="chat")
+    calls = _stub_describe(monkeypatch)
+    image_block = SimpleNamespace(
+        kind="roi", image_asset_id=asset_id, locator={"page": 7},
+        feeds_image=False, text="", header="")
+    text_block = SimpleNamespace(
+        kind="selection", image_asset_id=None, locator={"page": 7},
+        feeds_image=True, text="PREPARED PAGE TEXT", header="")
+
+    async with _turn({"viewer": {"blocks": [text_block, image_block]}}):
+        res = await _call(runtime, asset_id, question="这张表有几个字段")
+    assert res.is_error is False
+    assert len(calls) == 1                                  # ONE content-understanding call
+    assert "PREPARED PAGE TEXT" in calls[0]["prompt"]       # text...
+    assert "这张表有几个字段" in calls[0]["prompt"]         # ...question...
+    assert calls[0]["data"] == png                          # ...and the picture, together
+
+
 async def test_question_is_forwarded_into_the_prompt(monkeypatch, tmp_path):
     png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
     runtime, asset_id, _, _ = await _register(monkeypatch, tmp_path, "shot.png", png)
@@ -219,6 +275,44 @@ async def test_question_is_forwarded_into_the_prompt(monkeypatch, tmp_path):
 
     await _call(runtime, asset_id, question="这张表有几个字段")
     assert "这张表有几个字段" in calls[0]["prompt"]
+
+
+# ── PDF page: text + image prepared together, still ONE call ─────────────────────────
+
+async def test_pdf_page_prepares_that_pages_text_and_image_in_one_call(monkeypatch, tmp_path):
+    # The page's own text layer and its rendered image travel in the SAME call — never a
+    # text-only call followed by an image call. Only the requested page's text is included.
+    raw = _pdf_pages(["page one body", "page two body"])
+    runtime, asset_id, _, _ = await _register(monkeypatch, tmp_path, "paper.pdf", raw)
+    calls = _stub_describe(monkeypatch)
+
+    await _call(runtime, asset_id, page=2)
+    assert len(calls) == 1
+    assert calls[0]["data"] == pdf_lib.render_page_png(raw, 2)   # the image
+    assert "page two body" in calls[0]["prompt"]                 # THIS page's text
+    assert "page one body" not in calls[0]["prompt"]             # not the other page's
+
+
+async def test_pdf_page_prompt_carries_both_text_and_question(monkeypatch, tmp_path):
+    raw = _pdf_pages(["alpha beta gamma", "delta epsilon zeta"])
+    runtime, asset_id, _, _ = await _register(monkeypatch, tmp_path, "paper.pdf", raw)
+    calls = _stub_describe(monkeypatch)
+
+    await _call(runtime, asset_id, page=1, question="这一页在讲什么")
+    p = calls[0]["prompt"]
+    assert "alpha beta gamma" in p and "这一页在讲什么" in p
+
+
+async def test_scanned_page_still_one_call_with_no_text(monkeypatch, tmp_path):
+    # A page with no extractable text (a scan) sends the image alone in ONE call — no
+    # fabricating text, no second call to try to fill it.
+    raw = _pdf_pages([""])   # one blank page, no text layer
+    runtime, asset_id, _, _ = await _register(monkeypatch, tmp_path, "scan.pdf", raw)
+    calls = _stub_describe(monkeypatch)
+
+    res = await _call(runtime, asset_id, page=1)
+    assert res.is_error is False and len(calls) == 1
+    assert calls[0]["data"] == pdf_lib.render_page_png(raw, 1)
 
 
 # ── ACL before any bytes are read ─────────────────────────────────────────────────────

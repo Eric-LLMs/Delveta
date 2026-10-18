@@ -2,8 +2,9 @@
 
 Helper-level coverage of the router seam (the /chat and /chat/stream entry points share
 these): permission checks own the drive here (``viewer_context`` stays pure), forged asset
-ids drop the identity but never 403 the request, ``too_large``/``unavailable`` abort
-before the agent runs, the user message is NEVER prefixed with viewer content, and the
+ids drop the identity but never 403 the request, ``too_large`` aborts before the agent
+runs (a missing transcript is deferred to the client instead), the user message is NEVER
+prefixed with viewer content, and the
 per-turn metadata lands under dedicated ``meta["viewer"]`` / ``meta["viewer_citations"]``
 keys that cannot collide with ``meta["retrieval"]``.
 """
@@ -114,11 +115,13 @@ def test_viewer_abort_only_for_short_circuit_statuses():
         "总结整个视频")
     ab = chat_mod._viewer_abort(tl)
     assert ab == {"mode": "full", "status": "too_large", "rejected": []}
+    # A missing transcript is NOT an abort anymore: the streaming orchestrator asks the
+    # client for it (deferred data) instead of stopping before the turn can run.
     un = build_viewer_blocks(
-        ViewerPayload(name="v.mp4", kind="video", asset_id=AID, full_text="partial",
-                      full_chars=7, full_trusted=False),
+        ViewerPayload(name="v.mp4", kind="video", asset_id=AID),
         "总结整个视频")
-    assert chat_mod._viewer_abort(un)["status"] == "unavailable"
+    assert un["status"] == "transcript_deferred"
+    assert chat_mod._viewer_abort(un) is None
     # a stub never aborts: the whole point is that the agent runs and reads the doc
     stub = build_viewer_blocks(
         ViewerPayload(name="p.pdf", kind="pdf", asset_id=AID, page=3), "这一页讲什么")
@@ -163,6 +166,26 @@ async def test_post_turn_skips_non_injected(monkeypatch):
     assert await chat_mod._viewer_post_turn(a, ChatRequest(message="今天天气怎么样", viewer=v),
                                             "sunny", [], "u", "x") is None
     assert calls == []
+
+
+async def test_post_turn_stub_without_any_read_persists_no_user_context(monkeypatch):
+    """An unrelated turn with a document merely open must not be restored as if the
+    document were part of it: no ``read_document`` call → no sent-time snapshot."""
+    saved: list[tuple] = []
+
+    async def fake_persist(message_id, key, value):
+        saved.append((message_id, key, value))
+
+    monkeypatch.setattr(chat_mod, "_persist_turn_meta", fake_persist)
+    v = ViewerPayload(name="paper.pdf", kind="pdf", provenance="cloud", asset_id=AID,
+                      page=3)
+    a = build_viewer_blocks(v, "今天天气怎么样")
+    assert a["status"] == "stub"
+    p = await chat_mod._viewer_post_turn(
+        a, ChatRequest(message="今天天气怎么样", viewer=v), "sunny", [], "uid-2", "aid-2")
+    # The assistant row still records the (empty) read trace; the USER row gets nothing.
+    assert [row[:2] for row in saved] == [("aid-2", "viewer")]
+    assert saved[0][2]["reads"] == [] and p["status"] == "stub"
 
 
 async def test_post_turn_tolerates_missing_ids(monkeypatch):
@@ -214,7 +237,15 @@ async def test_post_turn_stub_trace_captures_failed_reads(monkeypatch):
                  "current_page": 3,
                  "reads": [{"tool_call_id": "c1", "pages": "0"},
                            {"tool_call_id": "c3", "pages": None}]}
-    assert saved == [("aid-9", "viewer", p)]  # assistant row only; user snapshot is injected-only
+    # The USER row carries the sent-time snapshot (name/provenance/page) so a reopened
+    # session restores what the message was about without inferring it from the assistant.
+    assert saved[0][0] == "uid-9" and saved[0][1] == "viewer"
+    snap = saved[0][2]
+    assert snap["name"] == "paper.pdf" and snap["provenance"] == "cloud"
+    assert snap["asset_id"] == str(AID) and snap["page"] == 3
+    assert snap["injected"] == []
+    # The ASSISTANT row keeps the tool-driven read trace.
+    assert saved[1] == ("aid-9", "viewer", p)
 
 
 # ── streaming E2E: /chat/stream stub routing + failed-read trace in done ─────

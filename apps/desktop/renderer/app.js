@@ -770,6 +770,30 @@
     return markdownIt.render(src);
   }
 
+  // Click any chat image (attachment, prepared page/frame, live capture) to see it at full
+  // size; click anywhere or press Esc to close.
+  function openImageLightbox(src) {
+    if (!src) return;
+    const overlay = document.createElement("div");
+    overlay.className = "img-lightbox";
+    const img = document.createElement("img");
+    img.alt = "image";
+    img.src = src;
+    overlay.appendChild(img);
+    const onKey = (e) => { if (e.key === "Escape") close(); };
+    const close = () => {
+      overlay.remove();
+      window.removeEventListener("keydown", onKey, true);
+    };
+    overlay.addEventListener("click", close);
+    window.addEventListener("keydown", onKey, true);
+    document.body.appendChild(overlay);
+  }
+  chatLog.addEventListener("click", (e) => {
+    const img = e.target.closest && e.target.closest(".msg-attach-img");
+    if (img && img.src) openImageLightbox(img.src);
+  });
+
   // Plain message for error/notice rows (no per-message actions).
   function appendMsg(role, text, id) {
     if (id) state.renderedMsgIds.add(id); // tracked so live refresh never re-renders it
@@ -936,6 +960,9 @@
     if (lbl) lbl.textContent = text;
     else btn.textContent = text;
     btn.title = text;
+    // Stateful labels (Importing… / ✓ Imported / Failed — retry) stay readable; ordinary
+    // icon-only buttons keep their label hidden (tooltip only) so the row stays compact.
+    btn.dataset.state = "1";
   }
 
   // Push one Q&A pair (the preceding user question + this reply) into the query repo.
@@ -1184,7 +1211,7 @@
   // message created (a 📷 screenshot or an attached file). When present, the media is
   // rendered inside the bubble above the text — images show as an inline thumbnail, other
   // files as a chip — mirroring how Gemini/ChatGPT display sent images.
-  function appendMessage(id, role, text, attach, retrieval) {
+  function appendMessage(id, role, text, attach, retrieval, viewer, attachments) {
     if (role !== "user" && role !== "assistant") return appendMsg(role, text);
     const div = document.createElement("div");
     div.className = `msg ${role}`;
@@ -1200,6 +1227,11 @@
       const media = buildAttachMedia(attach);
       if (media) bubble.appendChild(media);
     }
+    // The prepared context the turn was built from (doc/video card, text excerpt, page/frame
+    // thumbnails) — the USER message must show what was actually sent, never inferred from
+    // a later assistant row.
+    const prepared = role === "user" ? buildPreparedContext(viewer, attachments) : null;
+    if (prepared) bubble.appendChild(prepared);
     const body = document.createElement("div");
     body.innerHTML = renderMarkdown(text);
     bubble.appendChild(body);
@@ -1225,7 +1257,14 @@
   function appendMsgRow(m) {
     if (m.role === "tool") return;
     if (m.role === "system") { appendMsg("system", m.content, m.id); return; }
-    appendMessage(m.id, m.role === "assistant" ? "assistant" : "user", m.content, m.attach, m.retrieval);
+    // The top-level ``attachment_id`` is the FIRST link's chat-attachment id; carry it into
+    // the inline media so a scope='chat' capture loads through the session route (the drive
+    // download route deliberately refuses chat-scope assets).
+    const attach = m.attach
+      ? { ...m.attach, attachment_id: m.attachment_id || undefined }
+      : null;
+    appendMessage(m.id, m.role === "assistant" ? "assistant" : "user", m.content,
+      attach, m.retrieval, m.viewer, m.attachments);
   }
 
   // Build the inline media element for a message attachment. Images are fetched from the
@@ -1249,7 +1288,19 @@
     const img = document.createElement("img");
     img.className = "msg-attach-img";
     img.alt = name;
-    fetch(`/api/files/${attach.asset_id}/download`, { headers: authHeaders() })
+    // A chat-scope capture (screenshot / frame / region) is invisible to the drive plane, so
+    // it loads through the session attachment route; a drive asset uses the file download.
+    // The live send already holds the captured bytes — show them without a round trip.
+    const live = previewByAsset.get(String(attach.asset_id));
+    if (live) {
+      img.src = live;
+      wrap.appendChild(img);
+      return wrap;
+    }
+    const src = attach.attachment_id && state.sessionId
+      ? `/api/sessions/${state.sessionId}/attachments/${attach.attachment_id}/content`
+      : `/api/files/${attach.asset_id}/download`;
+    fetch(src, { headers: authHeaders() })
       .then((r) => {
         if (!r.ok) throw new Error(String(r.status));
         const ct = (r.headers.get("Content-Type") || "").toLowerCase();
@@ -1268,6 +1319,73 @@
       .catch(() => chip());
     wrap.appendChild(img);
     return wrap;
+  }
+
+  // Render the context a turn was prepared from: the document/video card plus the text and
+  // image selections that rode with it. Live payloads carry ``selections``; a reopened row
+  // carries the persisted viewer snapshot (``injected`` blocks, or the stub-read trace on
+  // the assistant row). Images come from the live capture map, or — after reopen — from the
+  // message's bound chat attachments through the session content endpoint (the drive route
+  // never serves ``scope='chat'`` assets).
+  function buildPreparedContext(viewer, attachments) {
+    if (!viewer || typeof viewer !== "object") return null;
+    const sels = Array.isArray(viewer.selections) ? viewer.selections
+      : Array.isArray(viewer.injected) ? viewer.injected : [];
+    const isStub = viewer.status === "stub";
+    const name = viewer.name || null;
+    const page = viewer.page ?? viewer.current_page ?? null;
+    const tMs = viewer.t_ms ?? null;
+    if (!name && !isStub && page == null && tMs == null && !sels.length) return null;
+    const wrap = document.createElement("div");
+    wrap.className = "msg-prepared";
+    if (name || isStub) {
+      const card = document.createElement("div");
+      card.className = "msg-prepared-card";
+      let label = name || `document ${viewer.asset_id || ""}`;
+      if (page != null) label += ` · p.${page}`;
+      if (tMs != null) label += ` · ${fmtClock(tMs)}`;
+      const prov = viewer.provenance === "cloud" ? "☁ server"
+        : viewer.provenance ? "💻 local" : "";
+      card.textContent = `📄 ${label}${prov ? ` · ${prov}` : ""}`;
+      if (isStub) card.title = "The server read this document during the turn (read_document).";
+      wrap.appendChild(card);
+    }
+    // Live selections carry ``text``; the persisted snapshot carries ``excerpt``. Text
+    // selections persist as kind "selection"; video subtitle windows persist as
+    // "subtitle_window" — all of them are real prepared content shown to the user.
+    const textKinds = new Set(["text", "selection", "subtitle_window", "page"]);
+    sels.filter((s) => textKinds.has(s.kind) && (s.text || s.excerpt)).forEach((s) => {
+      const t = document.createElement("div");
+      t.className = "msg-prepared-text";
+      // Show the full prepared text (a table's extracted lines must be readable); the CSS
+      // caps the height and a click expands it, so long pages never swamp the bubble.
+      t.textContent = String(s.text || s.excerpt);
+      t.title = "Click to expand / collapse";
+      t.addEventListener("click", () => t.classList.toggle("expanded"));
+      wrap.appendChild(t);
+    });
+    sels.filter((s) => s.image_asset_id).forEach((s) => {
+      const img = document.createElement("img");
+      img.className = "msg-attach-img";
+      img.alt = s.kind === "frame" ? "video frame" : "page region";
+      const live = previewByAsset.get(String(s.image_asset_id));
+      if (live) { img.src = live; wrap.appendChild(img); return; }
+      const link = (attachments || []).find(
+        (a) => String(a.asset_id) === String(s.image_asset_id));
+      if (!link || !link.attachment_id || !state.sessionId) return;
+      img.alt = link.name || img.alt;
+      fetch(`/api/sessions/${state.sessionId}/attachments/${link.attachment_id}/content`,
+        { headers: authHeaders() })
+        .then((r) => (r.ok ? r.blob() : null))
+        .then((b) => {
+          if (!b) return;
+          img.src = URL.createObjectURL(b);
+          img.addEventListener("load", () => URL.revokeObjectURL(img.src), { once: true });
+        })
+        .catch(() => img.remove());
+      wrap.appendChild(img);
+    });
+    return wrap.childElementCount ? wrap : null;
   }
 
   // Streaming assistant message: same DOM as appendMessage, but the copy/speak buttons close
@@ -1795,7 +1913,17 @@
     // Render the user message with the staged attachment (if any) so the image/file shows
     // inline immediately; the pendingAttach payload is consumed below for the request.
     const pending = pendingAttach;
-    const userMsgEl = appendMessage(null, "user", message, pending);
+    // Freeze the live viewer state BEFORE rendering the bubble. The wire payload carries
+    // only the minimal descriptor; the bubble shows NO viewer context until a tool actually
+    // binds data to this turn (a successful capture appends it live in place).
+    // ``liveFocus`` is also what the generation-approval dialog pre-fills — never the
+    // minimal wire payload.
+    const liveFocus = Viewer.getFocus ? Viewer.getFocus() : null;
+    const viewerPayload = buildViewerPayload(liveFocus);
+    const carried = viewerPayload && Array.isArray(viewerPayload.selections)
+      && viewerPayload.selections.length
+      ? { selections: viewerPayload.selections } : null;
+    const userMsgEl = appendMessage(null, "user", message, pending, null, carried, null);
     const hadSession = !!state.sessionId;
     chatSend.disabled = true;
     // A message sent while a research task's session is active drives THAT task: attach the
@@ -1834,14 +1962,13 @@
     // never bound to any task), so an unbound chat is effectively not recorded. Only
     // task-bound research chats persist in a user-visible way.
     if (state.researchBlankChat) payload.ephemeral = true;
-    // Viewer focus: frozen NOW — scrolling/pausing after this line never affects the
-    // in-flight request. The server assembles it as reference context; it is NOT
-    // spliced into ``message``.
-    const viewerPayload = buildViewerPayload();
+    // Minimal viewer descriptor only (kind/provenance/cloud asset + page). It is NOT
+    // spliced into ``message`` and it is not viewer CONTENT: the funnel decides first,
+    // then the client collects data for the selected tool.
     if (viewerPayload) payload.viewer = viewerPayload;
     // Frozen copy for the approval flow (below): the generation dialog must offer the SAME
     // source the question was about, even if the user navigates the viewer mid-turn.
-    state.lastSentViewer = viewerPayload ? JSON.parse(JSON.stringify(viewerPayload)) : null;
+    state.lastSentViewer = liveFocus ? JSON.parse(JSON.stringify(liveFocus)) : null;
     // Attachments ride one-shot, but a PRE-STREAM rejection (409 conflict / 429 limit / !ok /
     // connection error) persists no message: keep the consumed chips so the send can be retried
     // with the SAME drafts (re-bound, not re-uploaded) — never an orphan asset or a second
@@ -1930,6 +2057,37 @@
           }
           break;
         }
+        case "capture-request": {
+          // The funnel certified ``vision`` and the stream is paused server-side until this
+          // ticket is answered. Capture/upload/prepare now — never before the decision.
+          if (!statusBar) statusBar = makeStatusBar();
+          const c = evt.data || {};
+          statusBar.setPhase(
+            c.kind === "frame" ? "📷 Capturing the video frame…"
+              : c.kind === "image" ? "📷 Capturing the image…"
+                : "📷 Capturing the page image…");
+          performCapture(c, (info) => appendCapturedContext(userMsgEl, info));
+          break;
+        }
+        case "capture-failed": {
+          // Recoverable: the server retries with a fresh ticket, or ends the turn honestly.
+          const c = evt.data || {};
+          appendMsg("notice", `Capture failed (${c.reason || "unknown"}).${c.retryable ? " Retrying…" : " Send the message again to retry."}`);
+          break;
+        }
+        case "transcript-request": {
+          // The question needs the WHOLE video; only now, after the server classified
+          // that intent, does the client send the transcript it already parsed.
+          if (!statusBar) statusBar = makeStatusBar();
+          statusBar.setPhase("📄 Reading the video transcript…");
+          provideTranscript(evt.data || {}, (info) => appendTranscriptContext(userMsgEl, info));
+          break;
+        }
+        case "transcript-failed": {
+          const c = evt.data || {};
+          appendMsg("notice", `Transcript could not be captured (${c.reason || "unknown"}).${c.retryable ? " Retrying…" : " Send the message again to retry."}`);
+          break;
+        }
         case "approval-request": {
           // The turn is blocked server-side until we resolve the approval's future. Fire-and-
           // forget keeps the SSE pump spinning while the confirm dialog is up; the agent
@@ -1943,6 +2101,11 @@
           gotDone = true;
           researchContinuing = !!evt.data.research_continuing;
           if (statusBar) statusBar.done(); // settle the label even on tool-only rounds
+          if (evt.data.capture && evt.data.capture.status === "failed") {
+            // The turn ended without a picture: nothing was sent to any model and no
+            // message was persisted, so resending the same question is the safe recovery.
+            appendMsg("notice", "The screenshot could not be captured, so the question was not sent to the model. Send it again to retry.");
+          }
           state.sessionId = evt.data.session_id ?? state.sessionId;
           // A research turn that just created/bound its session: record it so the session is
           // recognized as a task's dedicated chat (hidden from the sidebar, chip shown) and
@@ -5059,6 +5222,9 @@
   let lastFocus = null; // last non-null snapshot: lets P0 chips keep their source name
                         // even after the viewer closed or ✕ — the text is the user's own.
   let pendingSelections = []; // P0 chips (≤8), orthogonal to follow/mode
+  // Live thumbnails for prepared context images (chat-scope assets the drive download route
+  // cannot serve), keyed by asset id. Never serialized with the request — display only.
+  const previewByAsset = new Map(); // asset_id -> data URL
 
   function addPendingSelection(sel) {
     if (pendingSelections.length >= 8) { Viewer.toast("At most 8 selections per message."); return; }
@@ -5102,37 +5268,31 @@
     return chip;
   }
 
-  // Freeze the viewer state at send time. Caps mirror the server schema so a request
-  // never 422s on our own payload. P0 selections ride in EVERY branch (NONE+P0 included);
-  // with nothing at all to send, returns null → the request carries no ``viewer`` field
-  // and behaves exactly like before.
-  function buildViewerPayload() {
-    const f = Viewer.getFocus ? Viewer.getFocus() : null;
+  // Freeze the MINIMUM viewer identity at send time — never viewer content. The server
+  // needs kind + provenance to decide whether a tool must ask the client for data; a
+  // cloud document also carries its current page because only the client knows it and
+  // the server renders that page itself. File name, playhead, duration, subtitles, full
+  // text and page images are NOT collected before the funnel certifies a tool that needs
+  // them: the capture path reads the live state when the capture-request arrives.
+  // P0 selections are explicit user actions and ride in every branch.
+  function buildViewerPayload(focus) {
+    const f = focus !== undefined
+      ? focus
+      : (Viewer.getFocus ? Viewer.getFocus() : null);
     if (f) lastFocus = f;
     const sels = pendingSelections.slice(0, 8);
     const p0Only = (src) => ({
-      name: src.name || "viewer", kind: src.kind || "text",
+      kind: src.kind || "text",
       provenance: src.provenance || "local",
       asset_id: src.asset_id || undefined,
       follow: false, mode: "none", selections: sels,
     });
     if (!f) return sels.length && lastFocus ? p0Only(lastFocus) : null;
     if (!viewerFollow) return sels.length ? p0Only(f) : null;
-    const p = { name: f.name, kind: f.kind, provenance: f.provenance, follow: true };
+    const p = { kind: f.kind, provenance: f.provenance, follow: true };
     if (f.asset_id) p.asset_id = f.asset_id;
-    if (f.page != null) p.page = f.page;
-    if (f.t_ms != null) p.t_ms = f.t_ms;
-    // focus_text is gone: document content is no longer scraped client-side — the server
-    // routes the open doc through the Viewer Access Context and read_document. Only video
-    // still ships extracted content (cues / transcript).
-    if (f.cues && f.cues.length) {
-      p.cues = f.cues.slice(0, 300).map((c) => ({
-        start_ms: c.start_ms, end_ms: c.end_ms, text: String(c.text || "").slice(0, 500),
-      }));
-    }
-    if (f.full_text) p.full_text = f.full_text;
-    if (f.full_chars != null) p.full_chars = f.full_chars;
-    p.full_trusted = !!f.full_trusted;
+    // Server-rendered source only: the page is the one fact the server cannot derive.
+    if (f.provenance === "cloud" && f.page != null) p.page = f.page;
     if (sels.length) p.selections = sels;
     return p;
   }
@@ -5195,10 +5355,6 @@
     if (key && key !== lastFocusKey) viewerFollow = true;
     lastFocusKey = key;
     renderAttachBar();
-    // A scroll/page change re-evaluates the staged page content: moving off the page whose
-    // text/screenshot is pinned drops those chips, so the new page's request never carries
-    // the previous page's content.
-    maybeStagePageContext();
   });
 
   // ── P0 text selection: explicit 「加入对话」 button, never auto-collected ──
@@ -5451,14 +5607,16 @@
         // P0 explicit context: upload the capture, then PIN it (chips under the input) —
         // it rides on the next send as a viewer selection, never as a file attachment.
         const payload = file || {};
-        let bytes, locator;
+        let bytes, locator, previewUrl = null;
         if (mode === "frame") {
           bytes = await imageSourceToBytes(payload.dataUrl);
+          previewUrl = payload.dataUrl;
           locator = { t_ms: payload.t_ms ?? (Viewer.getFocus()?.t_ms ?? 0) };
         } else {
           const region = await selectRegionFromImage(payload.dataUrl);
           if (!region) return; // cancelled
           bytes = await imageSourceToBytes(region.dataUrl);
+          previewUrl = region.dataUrl;
           locator = { ...(payload.baseLocator || {}), ...region.locator };
         }
         // A frame/roi capture is a chat-only asset (never drive-visible); the Send binds
@@ -5466,6 +5624,7 @@
         created = await uploadChatAsset(bytes, `${mode}_${Date.now()}.png`, {
           source: mode, locator, mime_type: "image/png",
         });
+        if (previewUrl) previewByAsset.set(String(created.asset_id), previewUrl);
         addPendingSelection({
           kind: mode === "frame" ? "frame" : "roi",
           image_asset_id: created.asset_id,
@@ -5493,6 +5652,7 @@
         created = await uploadChatAsset(bytes, `screenshot_${Date.now()}.png`, {
           source: "screenshot", mime_type: "image/png",
         });
+        previewByAsset.set(String(created.asset_id), region.dataUrl);
         setPendingAttach({
           kind: "asset", attachment_id: created.attachment_id,
           asset_id: created.asset_id, name: created.name, owned: true,
@@ -5520,77 +5680,191 @@
 
   Viewer.setAttachHandler(attachCurrent);
 
-  // ── Viewer page → Message: attach the CURRENT page's content ──
-  // When the user asks about the page on screen (「总结本页」/「解释这张表」/…), stage the
-  // current page's TEXT as a pinned text selection and — when the page's meaning is not in
-  // the text stream (a scan, or a page drawing pictures / table-chart line-work) — also its
-  // rendered screenshot as an owned chat asset (a pinned region selection). Both land as
-  // removable chips under the input so the user reviews/edits them BEFORE Send; nothing is
-  // auto-sent. Staging is deduplicated by (asset, page) so a re-trigger cannot upload or pin
-  // a second copy, and stale page chips are dropped the moment the page or message changes.
-  const PAGE_DEICTIC = /本[页张]|这[一]?[页张]|当前[页张]|这一页|这[个张]?[表图]|这[个张]?(表|图)|第\s*[0-9一二三四五六七八九十]+\s*页|page\s*\d|this (page|table|chart|figure|image)|current page/i;
-  let stagedPageKey = null; // `${asset_id||name}#${page}` the current auto page chips belong to
+  // ── Viewer page/frame → Message ──
+  // Nothing is captured or uploaded when the user types or sends: the message carries only
+  // the question and the lightweight viewer focus (kind / provenance / page / timestamp).
+  // The Intent Funnel decides which tool the turn uses; ONLY when it certifies ``vision``
+  // does the server emit a ``capture-request`` — then, and only then, the client grabs the
+  // page image / video frame, prepares the surrounding subtitles, uploads it, and answers
+  // the ticket (see ``performCapture`` below). Ordinary chat and every non-vision turn
+  // never take a screenshot.
 
-  function clearAutoPageCtx() {
-    const kept = pendingSelections.filter((s) => !s._pageCtx);
-    if (kept.length !== pendingSelections.length) { pendingSelections = kept; renderAttachBar(); }
-    stagedPageKey = null;
+  // The ±5s subtitle window around the captured playhead, taken from the cues frozen in the
+  // viewer focus (clipped by each cue's own span). Empty when the video has no subtitles.
+  function subtitleWindowText(focus, tMs) {
+    const cues = (focus && focus.cues) || [];
+    if (!cues.length) return "";
+    const lo = Math.max(0, tMs - 5000);
+    const hi = tMs + 5000;
+    return cues
+      .filter((c) => Number(c.end_ms) >= lo && Number(c.start_ms) <= hi)
+      .map((c) => String(c.text || "").trim())
+      .filter(Boolean)
+      .join("\n");
   }
 
-  async function stageViewerPage({ silent = true } = {}) {
-    if (!state.token) {
-      if (!silent) { appendMsg("error", "Sign in to attach the page."); openAccount(); }
-      return 0;
-    }
-    const f = Viewer.getFocus ? Viewer.getFocus() : null;
-    if (!f || f.kind !== "pdf" || !f.page) return 0;
-    const page = f.page;
-    let content;
-    try { content = await Viewer.getPageContent(page); } catch { content = null; }
-    if (!content) return 0;
-    const hasText = pendingSelections.some(
-      (s) => s._pageCtx && s.kind === "text" && s.locator && s.locator.page === page);
-    const hasImage = pendingSelections.some(
-      (s) => s._pageCtx && (s.kind === "roi" || s.kind === "frame") && s.locator && s.locator.page === page);
-    let added = 0;
-    // Plain extractable text → the text alone rides with the message.
-    if (content.hasText && !hasText) {
-      addPendingSelection({ kind: "text", text: content.text, locator: { page }, _pageCtx: true });
-      added++;
-    }
-    // Scan / table / chart / picture page → text AND a screenshot both ride.
-    if (content.needsImage && !hasImage) {
-      const url = Viewer.capturePageDataUrl(page);
-      if (url) {
+  // Answer ONE server ``capture-request`` ticket. Runs ONLY after the funnel certified
+  // ``vision``; the same call serves every retry (the server re-issues a fresh ticket).
+  // Success POSTs the uploaded asset + prepared text; any failure POSTs ``status:"failed"``
+  // so the server can retry or end recoverably — an empty picture is never uploaded.
+  async function performCapture(req, onCaptured) {
+    const ticketId = req && req.ticket_id;
+    const report = async (body) => {
+      if (!ticketId) return false;
+      try {
+        const res = await fetch(`/api/chat/captures/${encodeURIComponent(ticketId)}`, {
+          method: "POST",
+          headers: authHeaders(),
+          body: JSON.stringify(body),
+        });
+        return res.ok;
+      } catch { return false; /* the stream's timeout is the authority */ }
+    };
+    try {
+      const f = Viewer.getFocus ? Viewer.getFocus() : null;
+      const kind = req.kind || "page";
+      let dataUrl = null;
+      let locator = {};
+      let text = "";
+      if (kind === "frame") {
+        if (!f || f.kind !== "video") throw new Error("video is no longer open");
+        const t = req.t_ms != null ? req.t_ms : (f.t_ms || 0);
+        dataUrl = await Viewer.captureFrameDataUrl();
+        locator = { t_ms: t };
+        text = subtitleWindowText(f, t);
+      } else if (kind === "image") {
+        if (!f || f.kind !== "image") throw new Error("image is no longer open");
+        dataUrl = await Viewer.captureImageDataUrl();
+      } else {
+        if (!f || f.kind !== "pdf") throw new Error("document is no longer open");
+        const page = req.page != null ? req.page : (f.page || 1);
+        dataUrl = await Viewer.capturePageDataUrl(page);
+        locator = { page };
+        // Local document: its page text is prepared here, on the PC that has the file.
         try {
-          const bytes = await imageSourceToBytes(url);
-          const created = await uploadChatAsset(bytes, `page_${page}_${Date.now()}.png`, {
-            source: "screenshot", locator: { page }, mime_type: "image/png",
-          });
-          addPendingSelection({
-            kind: "roi", image_asset_id: created.asset_id, locator: { page }, _pageCtx: true,
-          });
-          added++;
-        } catch (err) {
-          if (!silent) appendMsg("error", `Page screenshot failed: ${err.message || err}`);
-        }
+          const content = await Viewer.getPageContent(page);
+          text = content && content.hasText ? String(content.text || "") : "";
+        } catch { text = ""; }
       }
+      if (!dataUrl) throw new Error("capture produced no image");
+      const bytes = await imageSourceToBytes(dataUrl);
+      if (!bytes.length) throw new Error("capture image is empty");
+      const created = await uploadChatAsset(bytes, `${kind}_${Date.now()}.png`, {
+        source: kind === "frame" ? "frame" : "screenshot",
+        locator: Object.keys(locator).length ? locator : null,
+        mime_type: "image/png",
+      });
+      previewByAsset.set(String(created.asset_id), dataUrl);
+      const accepted = await report({
+        status: "ok", asset_id: created.asset_id,
+        attachment_id: created.attachment_id || undefined,
+        // Live identity resolved at capture time — never pre-collected at send time.
+        name: (f && f.name) || req.name || undefined,
+        text: text || undefined,
+        ...locator,
+      });
+      // ONLY a ticket the server accepted means this picture is part of the turn — show it
+      // on the user's message (the live bubble was rendered before the capture existed).
+      if (accepted && typeof onCaptured === "function") {
+        onCaptured({ kind, name: req.name || (f && f.name) || "", text, dataUrl, ...locator });
+      }
+    } catch (err) {
+      await report({ status: "failed", reason: String((err && err.message) || err || "capture_failed") });
     }
-    if (added) stagedPageKey = `${f.asset_id || f.name}#${page}`;
-    if (added && !silent) Viewer.toast(`P${page} 内容已加入对话 (${content.reason}).`);
-    return added;
   }
 
-  // Keep the staged page chips in step with the composer + the viewer: stage on a page-deictic
-  // message, and DROP stale chips the moment the message stops asking about the page OR the
-  // viewer moved to a different page (so a previous page's text/screenshot is never attached
-  // to a new-page request).
-  function maybeStagePageContext() {
-    const f = Viewer.getFocus ? Viewer.getFocus() : null;
-    const key = f && f.kind === "pdf" && f.page ? `${f.asset_id || f.name}#${f.page}` : null;
-    const wants = PAGE_DEICTIC.test(chatInput.value || "");
-    if (!wants || !key) { if (stagedPageKey) clearAutoPageCtx(); return; }
-    if (key !== stagedPageKey) { clearAutoPageCtx(); stageViewerPage({ silent: true }); }
+  // Answer ONE server ``transcript-request`` ticket (whole-video questions). The viewer
+  // already parsed every subtitle cue locally; those cues are sent ONLY now, after the
+  // server decided this turn needs the full transcript — never at send time.
+  async function provideTranscript(req, onSent) {
+    const ticketId = req && req.ticket_id;
+    const report = async (body) => {
+      if (!ticketId) return false;
+      try {
+        const res = await fetch(`/api/chat/captures/${encodeURIComponent(ticketId)}`, {
+          method: "POST",
+          headers: authHeaders(),
+          body: JSON.stringify(body),
+        });
+        return res.ok;
+      } catch { return false; /* the stream's timeout is the authority */ }
+    };
+    try {
+      const f = Viewer.getFocus ? Viewer.getFocus() : null;
+      if (!f || f.kind !== "video") throw new Error("video is no longer open");
+      const text = String(f.full_text || "");
+      if (!text.trim() || !f.full_trusted) throw new Error("transcript is incomplete");
+      const accepted = await report({
+        status: "ok", full_text: text, full_trusted: true,
+        name: f.name || req.name || undefined,
+      });
+      if (accepted && typeof onSent === "function") {
+        onSent({ name: f.name || req.name || "", chars: text.length });
+      }
+      if (!accepted) throw new Error("transcript was not accepted");
+    } catch (err) {
+      await report({ status: "failed", reason: String((err && err.message) || err || "transcript_unavailable") });
+    }
+  }
+
+  // Attach the captured picture + locally prepared text (page text / ±5s subtitles) to the
+  // user message that triggered the capture, so the sent message shows exactly what was
+  // sent. A retry replaces the previous capture block instead of stacking a second one.
+  function appendCapturedContext(msgEl, info) {
+    if (!msgEl || !info) return;
+    const bubble = msgEl.querySelector(".msg-bubble");
+    if (!bubble) return;
+    let wrap = bubble.querySelector(".msg-prepared");
+    if (!wrap) {
+      wrap = document.createElement("div");
+      wrap.className = "msg-prepared";
+      bubble.insertBefore(wrap, bubble.firstChild);
+    }
+    wrap.querySelectorAll(".capture-live").forEach((n) => n.remove());
+    const where = info.kind === "frame"
+      ? (info.t_ms != null ? `video frame @ ${fmtClock(info.t_ms)}` : "video frame")
+      : (info.page != null ? `page ${info.page}` : "page image");
+    const card = document.createElement("div");
+    card.className = "msg-prepared-card capture-live";
+    card.textContent = `📷 captured ${where}${info.name ? ` from “${info.name}”` : ""}`;
+    wrap.appendChild(card);
+    if (info.text) {
+      const t = document.createElement("div");
+      t.className = "msg-prepared-text capture-live";
+      t.textContent = info.text;
+      t.title = "Click to expand / collapse";
+      t.addEventListener("click", () => t.classList.toggle("expanded"));
+      wrap.appendChild(t);
+    }
+    if (info.dataUrl) {
+      const img = document.createElement("img");
+      img.className = "msg-attach-img capture-live";
+      img.alt = where;
+      img.src = info.dataUrl;
+      wrap.appendChild(img);
+    }
+    chatLog.scrollTop = chatLog.scrollHeight;
+  }
+
+  // The whole-video turn used the client's parsed transcript: show that it was bound,
+  // without dumping a 100k-char transcript into the bubble.
+  function appendTranscriptContext(msgEl, info) {
+    if (!msgEl || !info) return;
+    const bubble = msgEl.querySelector(".msg-bubble");
+    if (!bubble) return;
+    let wrap = bubble.querySelector(".msg-prepared");
+    if (!wrap) {
+      wrap = document.createElement("div");
+      wrap.className = "msg-prepared";
+      bubble.insertBefore(wrap, bubble.firstChild);
+    }
+    wrap.querySelectorAll(".transcript-live").forEach((n) => n.remove());
+    const card = document.createElement("div");
+    card.className = "msg-prepared-card transcript-live";
+    card.textContent = `📄 full transcript · ${info.chars.toLocaleString()} chars`
+      + (info.name ? ` from “${info.name}”` : "");
+    wrap.appendChild(card);
+    chatLog.scrollTop = chatLog.scrollHeight;
   }
 
   // The subtitle overlay's 📋 button drops the caption text into the chat input, ready
@@ -6840,9 +7114,6 @@
       chatForm.requestSubmit();
     }
   });
-
-  // Stage the on-screen page's content as soon as the composer asks about it (Viewer→Message).
-  chatInput.addEventListener("input", () => { maybeStagePageContext(); });
 
   // ── Toolbar: generate summary / mindmap / slides from the current conversation ──
   const chatGenTools = [

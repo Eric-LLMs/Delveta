@@ -25,6 +25,7 @@ from core.application.chat import intent_funnel
 from core.application.chat.context import ChatTurnContext
 from core.application.chat.execution_plan import (
     ExecutionPlan,
+    PlanKind,
     PolicyContext,
     build_execution_plan,
 )
@@ -151,6 +152,32 @@ class TurnOrchestrator:
     # ── non-streaming turn (/chat) ───────────────────────────────────────────────
     async def run_turn(self, ctx: ChatTurnContext) -> dict:
         plan = await self.resolve_plan(ctx, self.deps)
+        if (
+            plan.kind is PlanKind.AGENT
+            and ctx.viewer_assembly
+            and ctx.viewer_assembly.get("status") == "transcript_deferred"
+        ):
+            # Non-streaming transports have no channel to ask the PC client for the
+            # complete transcript. Report the honest, recoverable requirement and execute
+            # nothing (no LLM, no session write); the client retries on /chat/stream.
+            return {
+                "answer": None,
+                "session_id": str(ctx.session_id),
+                "user_id": str(ctx.user_id),
+                "transcript_required": True,
+                "transcript_request": ctx.viewer_assembly.get("transcript_request"),
+            }
+        if plan.capture_request is not None:
+            # Non-streaming transports have no channel to ask the PC client for a
+            # capture. Report the honest, recoverable requirement and execute nothing
+            # (no tool, no LLM, no session write); the client retries on /chat/stream.
+            return {
+                "answer": None,
+                "session_id": str(ctx.session_id),
+                "user_id": str(ctx.user_id),
+                "capture_required": True,
+                "capture_request": plan.capture_request,
+            }
         executor = self.executor_for(plan)
         req = TurnRequest(ctx=ctx, deps=self.deps, plan=plan)
         research_continuing = False
@@ -202,6 +229,154 @@ class TurnOrchestrator:
         """Yield SSE frame dicts (``{"data": json}``) for one streaming turn."""
         deps = self.deps
         plan = await self.resolve_plan(ctx, deps)
+        # ── Deferred client capture (funnel-certified vision ONLY) ────────────────
+        # The funnel already decided ``vision``; the picture lives on the user's PC, so
+        # the stream pauses here — BEFORE any executor, tool or model call — emits a
+        # ``capture-request`` frame, and waits for the client to upload the page/frame
+        # and POST the ticket. On success THIS plan resumes with the asset id; the
+        # funnel is never re-run and no argument is extracted twice. A failed/empty
+        # capture is surfaced as a recoverable ``capture-failed`` frame and retried; on
+        # exhaustion the turn ends honestly with NO tool/LLM call and no session write.
+        if plan.capture_request is not None and deps.capture_broker is not None:
+            from core.application.chat.capture import (
+                apply_capture_to_context,
+                merge_payload,
+                resume_plan,
+            )
+
+            capture_spec = plan.capture_request
+            max_attempts = max(1, int(settings.chat_capture_max_attempts))
+            resumed_plan = None
+            attempt = 0
+            while attempt < max_attempts:
+                attempt += 1
+                ticket = deps.capture_broker.open(
+                    user_id=ctx.user_id, session_id=ctx.session_id
+                )
+                request = {
+                    **capture_spec, "ticket_id": ticket.id,
+                    "attempt": attempt, "max_attempts": max_attempts,
+                }
+                yield {"data": json.dumps(
+                    {"type": "capture-request", "data": request}, ensure_ascii=False
+                )}
+                try:
+                    submitted = await asyncio.wait_for(
+                        ticket.future, timeout=settings.chat_capture_timeout_seconds
+                    )
+                except TimeoutError:
+                    submitted = {"status": "failed", "reason": "capture_timeout"}
+                finally:
+                    deps.capture_broker.close(ticket.id)
+                payload = merge_payload(capture_spec, submitted)
+                if payload.get("status") == "ok" and payload.get("asset_id"):
+                    apply_capture_to_context(ctx, payload, deps.viewer)
+                    resumed_plan = resume_plan(plan, payload)
+                    logger.info(
+                        "chat.capture-resumed attempt=%d asset=%s",
+                        attempt, payload.get("asset_id"),
+                    )
+                    break
+                retryable = attempt < max_attempts
+                yield {"data": json.dumps({
+                    "type": "capture-failed",
+                    "data": {
+                        "reason": payload.get("reason") or "capture_failed",
+                        "attempt": attempt, "max_attempts": max_attempts,
+                        "retryable": retryable,
+                        "question": capture_spec.get("question") or "",
+                    },
+                }, ensure_ascii=False)}
+                if not retryable:
+                    break
+            if resumed_plan is None:
+                yield {"data": json.dumps({"type": "done", "data": {
+                    "answer": None,
+                    "session_id": str(ctx.session_id),
+                    "user_id": str(ctx.user_id),
+                    # No session write happened, so simply resending the message is a
+                    # safe recovery — never a fabricated answer from another source.
+                    "capture": {"status": "failed", "retryable": True},
+                }}, ensure_ascii=False)}
+                return
+            plan = resumed_plan
+        # ── Deferred full transcript (video FULL, Agent lane) ─────────────────────
+        # The question needs the whole video — the assembly already classified FULL — but
+        # the deferred-data client sent no transcript. Ask NOW (never at send time) over
+        # the SAME ticket/pause channel as capture, then resume the SAME turn with the
+        # client's locally parsed transcript. No re-classification, no partial content,
+        # and on failure no model call at all.
+        if (
+            plan.kind is PlanKind.AGENT
+            and ctx.viewer_assembly
+            and ctx.viewer_assembly.get("status") == "transcript_deferred"
+        ):
+            spec = ctx.viewer_assembly.get("transcript_request") or {}
+            max_attempts = max(1, int(settings.chat_capture_max_attempts))
+            completed = None
+            attempt = 0
+            while attempt < max_attempts and deps.capture_broker is not None:
+                attempt += 1
+                ticket = deps.capture_broker.open(
+                    user_id=ctx.user_id, session_id=ctx.session_id
+                )
+                yield {"data": json.dumps({
+                    "type": "transcript-request",
+                    "data": {**spec, "ticket_id": ticket.id,
+                             "attempt": attempt, "max_attempts": max_attempts},
+                }, ensure_ascii=False)}
+                try:
+                    submitted = await asyncio.wait_for(
+                        ticket.future, timeout=settings.chat_capture_timeout_seconds
+                    )
+                except TimeoutError:
+                    submitted = {"status": "failed", "reason": "transcript_timeout"}
+                finally:
+                    deps.capture_broker.close(ticket.id)
+                if (
+                    submitted.get("status") == "ok"
+                    and str(submitted.get("full_text") or "").strip()
+                ):
+                    completed = deps.viewer.with_transcript(
+                        ctx.viewer_assembly, submitted
+                    )
+                    break
+                retryable = attempt < max_attempts
+                yield {"data": json.dumps({
+                    "type": "transcript-failed",
+                    "data": {
+                        "reason": submitted.get("reason") or "transcript_unavailable",
+                        "attempt": attempt, "max_attempts": max_attempts,
+                        "retryable": retryable,
+                    },
+                }, ensure_ascii=False)}
+                if not retryable:
+                    break
+            status = (completed or {}).get("status")
+            if status != "injected":
+                aborted = {
+                    "mode": "full",
+                    "status": "too_large" if status == "too_large" else "unavailable",
+                    "rejected": (ctx.viewer_assembly or {}).get("rejected") or [],
+                }
+                yield {"data": json.dumps(
+                    {"type": "viewer", "data": aborted}, ensure_ascii=False
+                )}
+                yield {"data": json.dumps({"type": "done", "data": {
+                    "answer": None,
+                    "session_id": str(ctx.session_id),
+                    "user_id": str(ctx.user_id),
+                    # Nothing was sent to a model and no session row was written, so
+                    # resending the message is the safe recovery.
+                    "transcript": {"status": "failed", "retryable": True},
+                }}, ensure_ascii=False)}
+                return
+            ctx.viewer_assembly = completed
+            ctx.agent_context = {**(ctx.agent_context or {}), "viewer": completed}
+            logger.info(
+                "chat.transcript-resumed chars=%d",
+                len(str((completed.get("blocks") or [{}])[-1].text)),
+            )
         executor = self.executor_for(plan)
         req = TurnRequest(ctx=ctx, deps=deps, plan=plan)
         # Tag every log line the stream emits with the user + session. Set inside the
