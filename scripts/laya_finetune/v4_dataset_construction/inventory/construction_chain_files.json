@@ -1,0 +1,217 @@
+[
+ {
+  "path": "audit/compare_v4_versions.py",
+  "size": 7315,
+  "sha256": "c6f64363de6811f80ddab7309978f05f98487a322b8356036ec30aaba36e52af"
+ },
+ {
+  "path": "audit/inspect_k0_state.py",
+  "size": 2041,
+  "sha256": "ab4464bb43902fb2090769603127968109668c889fa3b0a5d505215d47023c77"
+ },
+ {
+  "path": "audit/v4_audit.py",
+  "size": 14213,
+  "sha256": "7efad500bddbfd57d81ebd033b5d5f581c7cf11cf5cd98dcb362b1d3859c5b3c"
+ },
+ {
+  "path": "audit/v4_distribution_report.py",
+  "size": 47971,
+  "sha256": "c79fbf3a6798df73ef4f4c8a48b6739e0ab98b9a60e45dd3865792a43268ab73"
+ },
+ {
+  "path": "audit/v4_full_stats.py",
+  "size": 48722,
+  "sha256": "7f128da3ba9221e826efea35cf7b8f1ca1342482af0b630d573c6233a7ef3253"
+ },
+ {
+  "path": "audit/v4_parity_all.py",
+  "size": 5768,
+  "sha256": "fa8dc1dae6f6d6be736e2e5588057179f4f6b01ad0f1be5f51cee69b222ce62a"
+ },
+ {
+  "path": "audit/v4_position_coverage.py",
+  "size": 6998,
+  "sha256": "b26e31ce6810ea159a8328362acaed6b3d9c5d22c9b09d2e655dec50f226e0bb"
+ },
+ {
+  "path": "audit/v4_schema_stats.py",
+  "size": 7422,
+  "sha256": "d0123a25027f72f01f6323f21ace91b72b07344fb194741c73880a40e68c6686"
+ },
+ {
+  "path": "data_v3/build_v3_dataset.py",
+  "size": 32983,
+  "sha256": "ab075ff99eebcb9959def980fba02c79d8e874dba646440fa77df15fe82e7a93"
+ },
+ {
+  "path": "data_v3/build_v4_dataset.py",
+  "size": 20869,
+  "sha256": "96f32b72451ff78bfd68ffe057ff8f413c43decd8de62735035b051f27825dd7"
+ },
+ {
+  "path": "data_v3/data_quality_issues.csv",
+  "size": 2025,
+  "sha256": "fb49751a72b448da4d950162ecd3f74f7253464258bc1d9355576daab9038660"
+ },
+ {
+  "path": "data_v3/data_quality_issues_v4.csv",
+  "size": 903,
+  "sha256": "474f5db1880dd28a2a0f07e92cc08ab0d19e715b58456b142d4ce0eb70b3f66f"
+ },
+ {
+  "path": "data_v3/laya_v4_plan_and_audit/laya_finetune_data_construction_plan.md",
+  "size": 11523,
+  "sha256": "74c6fd260f149d5f9c70ada1fc9372f3e4a0dd3f5840693432202b1e580f8514"
+ },
+ {
+  "path": "data_v3/laya_v4_plan_and_audit/laya_tool_selection_v4_annotation_audit.md",
+  "size": 7698,
+  "sha256": "a76d58f0b8b6e777239bb916b98eee03355318cda4791e1c7f03217bd35da815"
+ },
+ {
+  "path": "data_v3/laya_v4_plan_and_audit/laya_tool_selection_v4_annotation_review.csv",
+  "size": 454982,
+  "sha256": "703fba1ca821f34bc24b9f794b00c90accf96ade2870d7f1d96640d7ef7a11bf"
+ },
+ {
+  "path": "data_v3/laya_v4_plan_and_audit/laya_tool_selection_v4_audit_summary.json",
+  "size": 3043,
+  "sha256": "654dd3b84fd1bb28524a0b3c3f347ca996de6205d8dfb2bcb8729a0a726ff334"
+ },
+ {
+  "path": "data_v3/README.md",
+  "size": 3450,
+  "sha256": "cea99cf2af996aa044aca3c9a42bf42692abefa3b091d7c090501dff8d54db87"
+ },
+ {
+  "path": "data_v3/statistics.json",
+  "size": 6453,
+  "sha256": "f6131ccf6686cce500b0c86669d89e377693f27da91659fa1583c3de131af7ac"
+ },
+ {
+  "path": "data_v3/statistics_report.md",
+  "size": 8402,
+  "sha256": "1137809b9205f339edaad57686f2bde12b438577be7bc7f3ccb5602795b33732"
+ },
+ {
+  "path": "data_v3/statistics_report_v4.md",
+  "size": 5167,
+  "sha256": "466a8fe6a1abb0080c4fab996a8f52f319b3351c2c3c2aea259885bad1482c90"
+ },
+ {
+  "path": "data_v3/statistics_v4.json",
+  "size": 5409,
+  "sha256": "443ee8b8b2e113adeee5d284f68057aeab24591809e754fd0445e5515cce4983"
+ },
+ {
+  "path": "full_r1/logs/generation.log",
+  "size": 531,
+  "sha256": "5714ddfb028ab2678cb223e05a3bbb1a3bf3b0cc1382618b54928487f77a3d28"
+ },
+ {
+  "path": "full_r1/reports/acceptance_report.md",
+  "size": 144,
+  "sha256": "1e691d24c8ca4293a7129c0396fed0140b4e7177d9bdbbe14a9eb9129c53e83a"
+ },
+ {
+  "path": "full_r1/reports/boundary_test_report.md",
+  "size": 61,
+  "sha256": "e032b02d30a70e87e4f99f9fce15ca8033c406db81d7eba843a0cbef1afa72b2"
+ },
+ {
+  "path": "full_r1/reports/data_quality_report.md",
+  "size": 1190,
+  "sha256": "5e5bbdda09e12845048b20b1f3131e6032db7b5ced1a43de8172f9f715b44f27"
+ },
+ {
+  "path": "full_r1/reports/dataset_distribution_report.md",
+  "size": 13016,
+  "sha256": "b70b6457ea603409d1021669f82529b9a10e6be56dd7211b2407f1b990be62c4"
+ },
+ {
+  "path": "full_r1/reports/dataset_generation_logic.md",
+  "size": 5544,
+  "sha256": "5f98b661fd238b186c623f9f19bf5295e55a993361dc1695722d5512912a04fa"
+ },
+ {
+  "path": "full_r1/reports/source_audit.md",
+  "size": 4312,
+  "sha256": "d7d76c0f837670cf5d47089c45efcd72276b5e2b5ae1dee3cbaa8eb60e581e90"
+ },
+ {
+  "path": "full_r1/reports/split_integrity_report.md",
+  "size": 6061,
+  "sha256": "c654f1e88053b1cabb8c87015232a90642d723fc22e55777c12e1fd43d08be40"
+ },
+ {
+  "path": "full_r1/reports/threshold_comparison_report.md",
+  "size": 5852,
+  "sha256": "940fc0037906b843fbb37d23e8c61920ba70c55b17bd7298123e3851f7dd3074"
+ },
+ {
+  "path": "full_r1/scripts/build_dataset.py",
+  "size": 105053,
+  "sha256": "9a882b556e4a06e7527e22847a450598319655c442dec8af0a5dbc46125fc4d5"
+ },
+ {
+  "path": "inputs/laya_chat_tool_selection_balanced_18k_v4_params_filled_v2.csv",
+  "size": 4751438,
+  "sha256": "d74b30969589402ddc42a395c671dedaeb4d6e9de8ab30f5f534b569b22b7e32"
+ },
+ {
+  "path": "inputs/laya_tool_selection_v3.csv",
+  "size": 11597746,
+  "sha256": "47149f0744d30501563717a0164fda9e518034e1c6c52b6c71580ba317110290"
+ },
+ {
+  "path": "inputs/laya_tool_selection_v4.csv",
+  "size": 11996876,
+  "sha256": "e39adab214ed26992e26728a9e4c73659d5c924d283454d841abd789187c8445"
+ },
+ {
+  "path": "inputs/no_action_queries_v1.csv",
+  "size": 417255,
+  "sha256": "bce032d0dbfdd9f5061fb0310373654d5831cdabe90b5f2f28175c19d7340e00"
+ },
+ {
+  "path": "inputs/query_list_finetune_v1.csv",
+  "size": 3724326,
+  "sha256": "c0f65430714a34be1adab3666516bb7a998d1a184bd98047146b1830ab20f802"
+ },
+ {
+  "path": "inventory/v2_data_pre_replacement.json",
+  "size": 1880,
+  "sha256": "b2105e2438a48befad6d5074b9bded32eb34e41261fa81fcf16e6a34a0970058"
+ },
+ {
+  "path": "inventory/v4_data_files.json",
+  "size": 4078,
+  "sha256": "d9d678f363e15f3aaa92cea9273cf3d94b9bd711a37a17d904fb534349645564"
+ },
+ {
+  "path": "reference/smoke50_r1_generation_config.json",
+  "size": 6253,
+  "sha256": "4c75fc446d1e62b0262114a7b7ce212d05fb73fc0c1fe151602eeb72e37328f3"
+ },
+ {
+  "path": "repair/superseded/v4_repair_k0_gold.py",
+  "size": 25356,
+  "sha256": "d41c298bf881032ed17c367ffbcd30c717f6f9fc983bf047a5d69c3e4891ed94"
+ },
+ {
+  "path": "repair/unify_v4_official_version.py",
+  "size": 7429,
+  "sha256": "2fb0efe465d09ef9d7dec0cf277586905b92b5e0423352ed1c631b5fe6f2e94c"
+ },
+ {
+  "path": "repair/v4_k0_to_k1_inplace.py",
+  "size": 33214,
+  "sha256": "07602ca10065ba548741ee00ce2512d91685c968d95b1462ad6d4161d8f6aa23"
+ },
+ {
+  "path": "repair/verify_k0_to_k1_inplace.py",
+  "size": 5852,
+  "sha256": "eb45bab821b7c3d0e97a481df68ce6e874707c0e00e02901f4fbb822e1f94d1e"
+ }
+]

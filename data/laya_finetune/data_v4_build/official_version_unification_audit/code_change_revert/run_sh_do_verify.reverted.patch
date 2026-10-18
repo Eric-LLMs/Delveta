@@ -1,0 +1,34 @@
+# Exact `do_verify` change that was applied and then reverted.
+# Status after revert: `git diff -- scripts/laya_finetune/V2/run.sh` is empty
+# (run.sh matches HEAD). The left side below is the restored original.
+
+--- a/scripts/laya_finetune/V2/run.sh
++++ b/scripts/laya_finetune/V2/run.sh
+@@ -183,5 +183,24 @@
+ do_verify() {
+-  phase "verify the frozen bundle (stdlib only, no GPU)"
+-  normalize_bundle_eol
+-  "$PY" "$HERE/layachoice_v2_verify.py"
++  phase "verify the bundle (stdlib only, no GPU)"
++  local rule
++  rule="$("$PY" - "$DATA" <<'PY'
++import json, pathlib, sys
++p = pathlib.Path(sys.argv[1]) / "manifest.json"
++if not p.is_file():
++    print("")
++else:
++    slots = json.loads(p.read_text(encoding="utf-8")).get("option_slots")
++    print(slots.get("rule", "") if isinstance(slots, dict) else "")
++PY
++)"
++  if [[ -z "$rule" ]]; then
++    echo "missing bundle manifest: $DATA/manifest.json" >&2
++    exit 1
++  fi
++  if [[ "$rule" == "K+1" ]]; then
++    "$PY" "$HERE/layachoice_v4_verify.py" --data "$DATA"
++  else
++    normalize_bundle_eol
++    "$PY" "$HERE/layachoice_v2_verify.py"
++  fi
+ }

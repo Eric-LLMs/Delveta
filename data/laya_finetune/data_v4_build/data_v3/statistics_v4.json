@@ -1,0 +1,190 @@
+{
+  "task": "Laya Tool Router V4 dataset build (V3 + no-action REJECT set)",
+  "inputs": {
+    "v3": {
+      "path": "scripts/laya_finetune/data_v3/laya_tool_selection_v3.csv",
+      "rows": 47241,
+      "empty_query": 0,
+      "input_columns": [
+        "query",
+        "is_action",
+        "tool_name",
+        "capability_id",
+        "language",
+        "parameters",
+        "parameter_status",
+        "source",
+        "review_status",
+        "source_file",
+        "source_row"
+      ],
+      "capabilities": 19,
+      "capability_counts": {
+        "cap-social-search": 4445,
+        "cap-create-folder": 4121,
+        "cap-translate": 3981,
+        "cap-rag-search": 3941,
+        "cap-add-term": 3939,
+        "cap-web-search": 3936,
+        "cap-vision": 1923,
+        "cap-read-file": 1916,
+        "cap-read-document": 1916,
+        "cap-artifact": 1914,
+        "cap-edit-file": 1914,
+        "cap-bash": 1912,
+        "cap-slides": 1909,
+        "cap-summary": 1906,
+        "cap-mindmap": 1906,
+        "cap-pdf-table-to-text": 1906,
+        "cap-pdf-extract-text": 1904,
+        "reject": 1000,
+        "cap-research": 852
+      },
+      "reject_rows": 1000,
+      "reject_pct": 2.12,
+      "parameters_raw_present": 29669,
+      "parameters_nonempty_object": 22669,
+      "language_counts": {
+        "unknown": 29241,
+        "zh": 9000,
+        "en": 9000
+      }
+    },
+    "no_action": {
+      "path": "data/BaseData/no_action_queries_v1.csv",
+      "rows": 2000,
+      "empty_query": 0,
+      "input_columns": [
+        "query",
+        "is_action",
+        "tool_name",
+        "capability_id",
+        "language",
+        "parameters",
+        "parameter_status",
+        "source",
+        "review_status",
+        "source_file",
+        "source_row"
+      ],
+      "capabilities": 1,
+      "capability_counts": {
+        "reject": 2000
+      },
+      "reject_rows": 2000,
+      "reject_pct": 100.0,
+      "parameters_raw_present": 2000,
+      "parameters_nonempty_object": 0,
+      "language_counts": {
+        "en": 1000,
+        "zh": 1000
+      }
+    },
+    "sha256": {
+      "laya_tool_selection_v3.csv": "47149f0744d30501563717a0164fda9e518034e1c6c52b6c71580ba317110290",
+      "no_action_queries_v1.csv": "bce032d0dbfdd9f5061fb0310373654d5831cdabe90b5f2f28175c19d7340e00"
+    }
+  },
+  "merge_dedup": {
+    "v3_rows": 47241,
+    "no_action_rows": 2000,
+    "merged_rows": 49241,
+    "exact_duplicate_rows": 0,
+    "query_duplicate_rows": 0,
+    "same_query_same_label_same_output": 0,
+    "parameter_enrichment_merges": 0,
+    "same_query_different_label_conflicts": 0,
+    "same_query_same_label_different_param_conflicts": 0,
+    "isolated_groups": 0,
+    "isolated_rows": 0,
+    "dropped_as_duplicate": 0,
+    "final_rows": 49241
+  },
+  "final": {
+    "rows": 49241,
+    "capability_counts": {
+      "cap-social-search": 4445,
+      "cap-create-folder": 4121,
+      "cap-translate": 3981,
+      "cap-rag-search": 3941,
+      "cap-add-term": 3939,
+      "cap-web-search": 3936,
+      "reject": 3000,
+      "cap-vision": 1923,
+      "cap-read-document": 1916,
+      "cap-read-file": 1916,
+      "cap-artifact": 1914,
+      "cap-edit-file": 1914,
+      "cap-bash": 1912,
+      "cap-slides": 1909,
+      "cap-mindmap": 1906,
+      "cap-pdf-table-to-text": 1906,
+      "cap-summary": 1906,
+      "cap-pdf-extract-text": 1904,
+      "cap-research": 852
+    },
+    "capability_pct": {
+      "cap-social-search": 9.03,
+      "cap-create-folder": 8.37,
+      "cap-translate": 8.08,
+      "cap-rag-search": 8.0,
+      "cap-add-term": 8.0,
+      "cap-web-search": 7.99,
+      "reject": 6.09,
+      "cap-vision": 3.91,
+      "cap-read-document": 3.89,
+      "cap-read-file": 3.89,
+      "cap-artifact": 3.89,
+      "cap-edit-file": 3.89,
+      "cap-bash": 3.88,
+      "cap-slides": 3.88,
+      "cap-mindmap": 3.87,
+      "cap-pdf-table-to-text": 3.87,
+      "cap-summary": 3.87,
+      "cap-pdf-extract-text": 3.87,
+      "cap-research": 1.73
+    },
+    "action_counts": {
+      "true": 46241,
+      "false": 3000
+    },
+    "action_pct": {
+      "true": 93.91,
+      "false": 6.09
+    },
+    "language_counts": {
+      "unknown": 29241,
+      "en": 10000,
+      "zh": 10000
+    },
+    "language_pct": {
+      "unknown": 59.38,
+      "en": 20.31,
+      "zh": 20.31
+    },
+    "capability_min": 852,
+    "capability_max": 4445,
+    "capability_median": 1916,
+    "parameters_raw_present": 31669,
+    "parameters_raw_present_pct": 64.31,
+    "parameters_nonempty_object": 22669,
+    "parameters_nonempty_object_pct": 46.04,
+    "parameters_parse_ok": 31669,
+    "parameters_parse_ok_pct_of_raw": 100.0
+  },
+  "shuffle": {
+    "seed": 20261019,
+    "rows_before": 49241,
+    "rows_after": 49241,
+    "multiset_identical": true
+  },
+  "regression": {
+    "v3_sha256_after": "47149f0744d30501563717a0164fda9e518034e1c6c52b6c71580ba317110290",
+    "no_action_sha256_after": "bce032d0dbfdd9f5061fb0310373654d5831cdabe90b5f2f28175c19d7340e00",
+    "inputs_unmodified": true
+  },
+  "outputs": {
+    "laya_tool_selection_v4.csv": "e39adab214ed26992e26728a9e4c73659d5c924d283454d841abd789187c8445",
+    "data_quality_issues_v4.csv": "474f5db1880dd28a2a0f07e92cc08ab0d19e715b58456b142d4ce0eb70b3f66f"
+  }
+}

@@ -1,0 +1,162 @@
+{
+  "run_id": "smoke50_r1",
+  "mode": "smoke",
+  "build_time_utc": "2026-10-18T19:57:10Z",
+  "source": {
+    "path": "scripts\\laya_finetune\\data_v3\\laya_tool_selection_v4.csv",
+    "bytes": 11996876,
+    "sha256": "e39adab214ed26992e26728a9e4c73659d5c924d283454d841abd789187c8445",
+    "fields": [
+      "query",
+      "is_action",
+      "tool_name",
+      "capability_id",
+      "language",
+      "parameters",
+      "parameter_status",
+      "source",
+      "review_status",
+      "source_file",
+      "source_row"
+    ],
+    "rows": 49241
+  },
+  "database": {
+    "db_version": "PostgreSQL 16.14 (Debian 16.14-1.pgdg12+1) on x86_64-pc-linux-gnu, compiled by gcc (Debian 12.2.0-14+deb12u1) 12.2.0, 64-bit",
+    "profile": {
+      "dim": 1024,
+      "model": "eric-ml-nlp/Delveta-BGE-M3-v1#INT8",
+      "base_url": "http://localhost:18080",
+      "provider": "tei"
+    },
+    "model_sha": "0e0ada7fec9367bca6d816b86953e4f9fe8531ebd4e8251f6de0721c0d2b1f0d",
+    "capabilities": 18,
+    "standard_rows": 36,
+    "similar_rows": 872,
+    "indexes": [
+      {
+        "indexname": "capability_similar_queries_embedding_hnsw",
+        "indexdef": "CREATE INDEX capability_similar_queries_embedding_hnsw ON public.capability_similar_queries USING hnsw (embedding vector_cosine_ops)"
+      },
+      {
+        "indexname": "capability_similar_queries_pkey",
+        "indexdef": "CREATE UNIQUE INDEX capability_similar_queries_pkey ON public.capability_similar_queries USING btree (id)"
+      },
+      {
+        "indexname": "capability_similar_queries_standard_idx",
+        "indexdef": "CREATE INDEX capability_similar_queries_standard_idx ON public.capability_similar_queries USING btree (standard_query_id)"
+      },
+      {
+        "indexname": "capability_standard_queries_embedding_hnsw",
+        "indexdef": "CREATE INDEX capability_standard_queries_embedding_hnsw ON public.capability_standard_queries USING hnsw (embedding vector_cosine_ops)"
+      },
+      {
+        "indexname": "capability_standard_queries_one_per_language",
+        "indexdef": "CREATE UNIQUE INDEX capability_standard_queries_one_per_language ON public.capability_standard_queries USING btree (capability_id, language)"
+      },
+      {
+        "indexname": "capability_standard_queries_pkey",
+        "indexdef": "CREATE UNIQUE INDEX capability_standard_queries_pkey ON public.capability_standard_queries USING btree (id)"
+      }
+    ]
+  },
+  "corpus": {
+    "standard_rows": 36,
+    "similar_rows": 872,
+    "embedded_standard_rows": 36,
+    "embedded_similar_rows": 872,
+    "sha256": "d7d8041c3a9bc153636b70ef60adea82cee6c591ab98143ceaab22d412b75c94"
+  },
+  "exclusion_rules": {
+    "standard_query": "exact/normalised query equality",
+    "standard_query_similar": "exact/normalised query equality",
+    "derived_from_standard_query": "not determinable: no parent/derived ID",
+    "duplicate_query": "first deterministic row kept"
+  },
+  "recall": {
+    "sql_lanes": [
+      "standard",
+      "similar"
+    ],
+    "ann_pool_per_lane": 64,
+    "business_filters_applied": false,
+    "capabilities_included": "all 18, including cap-research and hidden caps",
+    "score": "1 - cosine_distance",
+    "evidence_floor": 0.8,
+    "shared_across_thresholds": true
+  },
+  "thresholds": [
+    0.82,
+    0.85,
+    0.88
+  ],
+  "aggregation": {
+    "per_capability": "max score",
+    "sort": "score DESC, capability_id ASC (deterministic tie-break)",
+    "top_k": 3,
+    "padding": false,
+    "reject": "one uppercase REJECT card appended after capability cards"
+  },
+  "labels": {
+    "no_action": "REJECT",
+    "no_candidates": "REJECT",
+    "gold_in_top3": "gold capability",
+    "gold_not_retrieved": "REJECT"
+  },
+  "language_rule": {
+    "explicit": "keep source zh/en",
+    "blank": "Han only -> zh; Latin only -> en; Han+Latin -> mixed; neither -> unknown"
+  },
+  "query_family_rule": {
+    "normalise": "NFKC, strip, casefold, whitespace collapse",
+    "placeholders": "quoted spans -> <q>; digit runs -> <n>",
+    "signature": "first 5 whitespace tokens if >=3 tokens, else first 12 chars"
+  },
+  "split": {
+    "stratification_key": "gold label x resolved language",
+    "ratios": {
+      "train": 0.75,
+      "test": 0.2,
+      "val": 0.05
+    },
+    "integer_rule": "minimum representation for n<3; largest-remainder style remainder with max(1, round()) for n>=3",
+    "family_grouping": "whole family assigned to one split",
+    "seed": 424242,
+    "same_assignment_across_thresholds": true
+  },
+  "schema": {
+    "version": "V4-dynamic",
+    "training_schema": "LayaChoice-v2 14-key JSONL",
+    "training_keys": [
+      "id",
+      "source_query_id",
+      "split",
+      "part",
+      "lang",
+      "state",
+      "order",
+      "options",
+      "gold_index",
+      "target_kind",
+      "gold_capability_id",
+      "reject_index",
+      "shuffle",
+      "src_sha"
+    ],
+    "part": "p2",
+    "threshold_in_training_row": false,
+    "construction_audit_file": "construction_audit.jsonl",
+    "compatible_with_v2_loader": true,
+    "v2_loader_modified": "option-count/permutation/gold-index validation generalized from fixed 4 to the row's actual K+1 (1..4); schema, labels, REJECT construction and target semantics unchanged",
+    "option_slots": "K+1, K in {0,1,2,3} (1..4 options)",
+    "reject_label": "REJECT",
+    "card_source": "production cap_router.card_renderer.render_card over the live Registry; byte-identical to V2/data/aligned, not V2/data base"
+  },
+  "scripts": {
+    "build_dataset.py": "9a882b556e4a06e7527e22847a450598319655c442dec8af0a5dbc46125fc4d5",
+    "validate_dataset.py": "0d143837caa9c69da27320801780a06e47b4c332516772352615e772b9713c08",
+    "test_boundary_cases.py": "e4f36e11ab419ff5ea2f8d0677b1bfec90c32ea7e4ba2d21dd21dc9ba954340c"
+  },
+  "python": "3.13.11 (main, Dec 17 2025, 21:09:15) [MSC v.1944 64 bit (AMD64)]",
+  "rebuild_command": "PYTHONPATH=E:\\Work Space\\Git Repositories\\DeepDive\\packages\\core .venv/Scripts/python.exe E:\\Work Space\\Git Repositories\\DeepDive\\scripts\\laya_finetune\\data_v4_build\\smoke50_r1\\scripts\\build_dataset.py --mode smoke"
+}
