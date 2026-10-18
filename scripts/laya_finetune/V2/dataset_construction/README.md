@@ -18,9 +18,7 @@ The generated dataset itself lives in two independent copies:
 | `full_r1/scripts/build_dataset.py` | Main construction entry: source load, eligibility, split, embedding, recall, K+1 option construction, labels, shuffle, manifest and audits |
 | `full_r1/logs/generation.log` | Run log of the `full_r1` generation |
 | `full_r1/reports/` | Reports emitted by the construction entry and its validation stages |
-| `data_v3/build_v3_dataset.py` | Upstream V3 CSV build (dedup, conflict isolation, fixed-seed row shuffle) |
-| `data_v3/build_v4_dataset.py` | Adds the no-action REJECT rows and writes the V4 source CSV |
-| `data_v3/laya_tool_selection_v4.csv` | Exact input CSV for `build_dataset.py` |
+| `data/laya_finetune/data_v4_build/data_v3/` | Upstream V3/V4 source-CSV build scripts, statistics and intermediate CSVs (kept in the data archive, not duplicated here) |
 | `inputs/` | Inputs required by the V3/V4 chain |
 | `repair/v4_k0_to_k1_inplace.py` | Official in-place K=0 -> K=1 repair |
 | `repair/verify_k0_to_k1_inplace.py` | Repair verification |
