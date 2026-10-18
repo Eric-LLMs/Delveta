@@ -19,7 +19,7 @@ The generated dataset itself lives in two independent copies:
 | `full_r1/logs/generation.log` | Run log of the `full_r1` generation |
 | `full_r1/reports/` | Reports emitted by the construction entry and its validation stages |
 | `data/laya_finetune/data_v4_build/data_v3/` | Upstream V3/V4 source-CSV build scripts, statistics and intermediate CSVs (kept in the data archive, not duplicated here) |
-| `inputs/` | Inputs required by the V3/V4 chain |
+| `inputs/laya_tool_selection_v4.csv` | Final source CSV consumed by `build_dataset.py`; the raw upstream inputs are recorded in `BUILD_RECORD.md` and kept under `data/BaseData/` |
 | `repair/v4_k0_to_k1_inplace.py` | Official in-place K=0 -> K=1 repair |
 | `repair/verify_k0_to_k1_inplace.py` | Repair verification |
 | `repair/unify_v4_official_version.py` | Official manifest/hash/archive unification |
