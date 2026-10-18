@@ -136,12 +136,14 @@ changes outside this backup task.
    only for `smoke50_r1`.
 3. `full_r1/reports/threshold_comparison_082_085_088.json` is missing; the
    Markdown comparison report exists.
-4. `build_dataset.py` still points `SOURCE_CSV` at
-   `scripts/laya_finetune/data_v3/laya_tool_selection_v4.csv` and its
-   `THRESHOLD_TAGS` map still uses `threshold_082/085/088`. The source CSV now
-   lives in `data/laya_finetune/data_v4_build/data_v3/`, and the generated
-   directories were renamed to `recall_threshold_*`. Running the script as
-   archived will fail until those constants are repointed (not changed here).
+4. `build_dataset.py` points `SOURCE_CSV` at
+   `scripts/laya_finetune/data_v3/laya_tool_selection_v2.csv`: the filename is
+   synced with the renamed copy, but the directory prefix and `REPO_ROOT` are
+   still pre-move. Its `THRESHOLD_TAGS` map still uses `threshold_082/085/088`.
+   The source CSV lives in `data/laya_finetune/data_v4_build/data_v3/` and in
+   `inputs/` under the renamed name, and the generated directories were renamed
+   to `recall_threshold_*`. Running the script as archived will fail until the
+   path and tag constants are repointed.
 5. `repair/v4_k0_to_k1_inplace.py` and
    `repair/verify_k0_to_k1_inplace.py` still use the old `threshold_*` tags and
    reference the superseded `full_r1_repaired` directory. They are preserved

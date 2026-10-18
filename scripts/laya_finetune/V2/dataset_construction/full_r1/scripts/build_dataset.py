@@ -41,7 +41,7 @@ import numpy as np
 HERE = Path(__file__).resolve().parent
 RUN_DIR = HERE.parent
 REPO_ROOT = HERE.parents[4]
-SOURCE_CSV = REPO_ROOT / "scripts/laya_finetune/data_v3/laya_tool_selection_v4.csv"
+SOURCE_CSV = REPO_ROOT / "scripts/laya_finetune/data_v3/laya_tool_selection_v2.csv"
 DB_DSN = os.environ.get(
     "DELVETA_DB_DSN", "postgresql://delveta:delveta@localhost:15432/delveta")
 EMBED_URL = os.environ.get("DELVETA_EMBED_URL", "http://localhost:18080/embed")

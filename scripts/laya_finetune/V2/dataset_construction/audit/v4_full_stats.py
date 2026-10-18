@@ -20,7 +20,7 @@ import numpy as np
 RUN = Path(r"e:/Work Space/Git Repositories/DeepDive/scripts/laya_finetune/data_v4_build/full_r1")
 OUT = RUN / "stats"
 OUT.mkdir(exist_ok=True)
-SOURCE_CSV = Path(r"e:/Work Space/Git Repositories/DeepDive/scripts/laya_finetune/data_v3/laya_tool_selection_v4.csv")
+SOURCE_CSV = Path(r"e:/Work Space/Git Repositories/DeepDive/scripts/laya_finetune/data_v3/laya_tool_selection_v2.csv")
 DB_DSN = "postgresql://delveta:delveta@localhost:15432/delveta"
 THRESHOLDS = (0.82, 0.85, 0.88)
 TAGS = {0.82: "threshold_082", 0.85: "threshold_085", 0.88: "threshold_088"}
