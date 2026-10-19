@@ -25,7 +25,7 @@
 | Batch sampling | capability-unique |
 | Variants | FP32 (master) / FP16 / INT8 (ONNX CPU) |
 | Training code commit | `f7b1f21` |
-| Hardware | NVIDIA A30 24 GB |
+| Hardware | NVIDIA L4 24 GB |
 
 One sentence: **the base `BAAI/bge-m3` was fine-tuned dense-only on a frozen 16216-row dual-target
 set with capability-unique batching; training loss fell from ~1.12 to 0.8835, but retrieval
@@ -191,9 +191,9 @@ once in `__post_init__` and cannot be changed after construction.
 
 | | |
 |---|---|
-| GPU | NVIDIA A30 24 GB |
+| GPU | NVIDIA L4 24 GB |
 | Driver | 580.126.20 |
-| CUDA | 13.0 (bf16 supported, compute capability 8.0) |
+| CUDA | 13.0 (bf16 supported, compute capability 8.9) |
 | FlagEmbedding | 1.4.2 |
 | transformers | 5.17.0 |
 | torch | 2.14.0 (CUDA build `2.14.0+cu130` on the GPU host) |
@@ -467,7 +467,7 @@ Host: **AMD EPYC 7542**, 8 threads, batch size 12, input length 64.
   the latencies are **not** an apples-to-apples quantization-vs-baseline comparison. The
   meaningful signals are the **file size** and **peak RSS**; within the ONNX Runtime column,
   latency is comparable to itself only.
-- GPU peak (formal training): 11 459.1 MB allocated / 13 558.0 MB reserved on an A30 24 GB. GPU
+- GPU peak (formal training): 11 459.1 MB allocated / 13 558.0 MB reserved on an L4 24 GB. GPU
   **inference** latency for the variants has not been measured.
 - Latency measured on different devices or at different batch settings must not be used to
   conclude which quantization is "better".

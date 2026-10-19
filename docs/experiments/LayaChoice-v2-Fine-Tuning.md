@@ -208,7 +208,7 @@ the Agent is constructed (`R.install()` in `layachoice_v2_render.py`) and passin
 | Gradient clip | `clip_grad_norm_(1.0)` |
 | Total optimizer updates | 600 |
 | Precision | bf16 autocast (no `GradScaler`) |
-| Hardware | 1× NVIDIA A30 |
+| Hardware | 1× NVIDIA L4 |
 | Runtime | torch `2.14.1+cu130`, transformers `5.17.0`, python `3.11`, `laya==0.3.21` |
 | Seed base | `42` |
 | Fine-tuning | **full-parameter** (no PEFT/LoRA) |
@@ -386,7 +386,7 @@ would be measuring the wrong thing (see architecture rule 17).
 
 | | |
 |---|---|
-| GPU | 1× NVIDIA A30 |
+| GPU | 1× NVIDIA L4 |
 | torch | 2.14.1+cu130 |
 | transformers | 5.17.0 |
 | Python | 3.11 |

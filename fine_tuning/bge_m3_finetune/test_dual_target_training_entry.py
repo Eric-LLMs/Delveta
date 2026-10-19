@@ -506,7 +506,7 @@ class TestM3RuntimeContract(unittest.TestCase):
         self.assertFalse(kw_on["unified_finetuning"])
         self.assertEqual(kw_on["per_device_train_batch_size"], ns_on.per_device_train_batch_size)
 
-    # --bf16 real construction (only where bf16 GPUs exist, e.g. the A30)
+    # --bf16 real construction (only where bf16 GPUs exist, e.g. the L4)
     @unittest.skipUnless(
         torch.cuda.is_available() and torch.cuda.is_bf16_supported(),
         "bf16-capable GPU required",

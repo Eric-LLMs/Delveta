@@ -18,7 +18,7 @@ laya==0.3.21
 # torch.amp.GradScaler).
 transformers==5.17.0
 
-# Accelerator runtime. Verified on torch 2.14.1+cu130 (1x NVIDIA A30, bf16) and on
+# Accelerator runtime. Verified on torch 2.14.1+cu130 (1x NVIDIA L4, bf16) and on
 # torch 2.14.0 CPU for the --smoke path. A CUDA build must be installed from the
 # PyTorch index that matches the box's driver; a plain `pip install torch` may pick a
 # CPU-only wheel.

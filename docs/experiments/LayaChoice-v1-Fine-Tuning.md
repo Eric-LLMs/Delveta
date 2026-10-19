@@ -305,7 +305,7 @@ is precisely what fine-tuning is for (§15, §16).
 | Card view | `B_noprov` |
 | Fine-tuning | **full-parameter** (no PEFT/LoRA) |
 | Precision | BF16 autocast, `GradScaler` disabled (bf16), weights kept FP32 |
-| Hardware | NVIDIA A30 24 GB, world_size 1 |
+| Hardware | NVIDIA L4 24 GB, world_size 1 |
 
 Rationale, in one line each:
 
@@ -609,7 +609,7 @@ Environment of the formal run (`release_manifest.json` → `environment`, `versi
 
 | | |
 |---|---|
-| GPU | NVIDIA A30, 24 GB |
+| GPU | NVIDIA L4, 24 GB |
 | CUDA | 13.0 (bf16 supported) |
 | torch | 2.11.0+cu130 |
 | transformers | 5.7.0 |

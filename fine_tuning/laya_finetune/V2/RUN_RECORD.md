@@ -25,7 +25,7 @@ run (kept out of this repo, archived in `.tmp/v2_release/release_manifest.json`)
 | | |
 |---|---|
 | platform | `Linux-6.8.0-100-generic-x86_64-with-glibc2.35`, x86_64 |
-| GPU | 1× **NVIDIA A30** |
+| GPU | 1× **NVIDIA L4** |
 | CUDA | 13.0, `cuda_available = true`, `bf16_supported = true` (AMP dtype bf16) |
 | python | **3.11** |
 | torch | **2.14.1+cu130** |

@@ -58,7 +58,7 @@ fine_tuning/laya_finetune/V2/
 |---|---|
 | Python | **3.11** (the verified run used 3.11) |
 | OS / shell | Linux or macOS. **Windows:** run the `*.py` stages directly (Git-Bash or WSL can run `run.sh`; PowerShell cannot). |
-| GPU | **1× NVIDIA A30** for the verified run; any CUDA GPU with ≥40 GB free disk works (bf16 on Ampere+, fp16 + `GradScaler` on T4). A CPU-only box can run `--smoke` and `verify`. |
+| GPU | **1× NVIDIA L4** for the verified run; any CUDA GPU with ≥40 GB free disk works (bf16 on Ampere+, fp16 + `GradScaler` on T4). A CPU-only box can run `--smoke` and `verify`. |
 | CUDA / torch | verified on `torch 2.14.1+cu130`; the `--smoke` and `verify` paths run on `torch 2.14.0` CPU |
 | transformers | `5.17.0` (exact-pinned) |
 | laya | `0.3.21` (exact-pinned, asserted at every stage start) |
