@@ -79,7 +79,7 @@ def reject_block(rows: list[dict]) -> dict:
 
 
 def summarise(rows: list[dict], *, arm: str, split: str, temperature, card_view: str,
-              extra: dict | None = None) -> dict:
+              option_slots=None, extra: dict | None = None) -> dict:
     n = len(rows)
     hits = sum(r["hit"] for r in rows)
     top1 = _rate(hits, n)
@@ -88,7 +88,9 @@ def summarise(rows: list[dict], *, arm: str, split: str, temperature, card_view:
     confusions = Counter((r["gold_id"], r["pred_id"]) for r in rows if not r["hit"])
     report = {
         "arm": arm, "split": split, "rows": n,
-        "card_view": card_view, "option_slots": S.OPTION_SLOTS, "reject_label": S.REJECT_LABEL,
+        "card_view": card_view,
+        "option_slots": S.OPTION_SLOTS if option_slots is None else option_slots,
+        "reject_label": S.REJECT_LABEL,
         "option_max_tokens": S.OPTION_MAX_TOKENS,
         "head_max_len": S.HEAD_MAX_LEN, "max_len": S.MAX_LEN,
         "temperature": list(temperature) if isinstance(temperature, (list, tuple))
@@ -145,6 +147,7 @@ def arm_baseline(args) -> None:
     decided = F.decide(model, tok, rows, cfg, instructions, temperature, device)
     report = summarise(decided, arm="baseline-zero-shot", split="test",
                        temperature=temperature, card_view=manifest["formal_card_view"],
+                       option_slots=manifest.get("option_slots", S.OPTION_SLOTS),
                        extra={"base_checkpoint": {"repo_id": S.BASE_REPO,
                                                   "revision": S.BASE_REVISION,
                                                   "subfolder": S.BASE_SUBFOLDER},
@@ -177,6 +180,7 @@ def arm_select(args) -> None:
         train_meta = json.loads(meta_file.read_text(encoding="utf-8")) if meta_file.exists() else {}
         report = summarise(decided, arm=f"validation-{ckpt.name}", split="val",
                            temperature=[1.0, 1.0, 1.0], card_view=manifest["formal_card_view"],
+                           option_slots=manifest.get("option_slots", S.OPTION_SLOTS),
                            extra={"checkpoint": str(ckpt),
                                   "train_loss": train_meta.get("mean_loss"),
                                   "smoke": args.smoke})
@@ -247,7 +251,9 @@ def arm_benchmark(args) -> None:
             comparison["row_count_mismatch"] = [base["rows"], len(decided)]
         extra["baseline_comparison"] = comparison
     report = summarise(decided, arm="final-test", split="test", temperature=temperature,
-                       card_view=manifest["formal_card_view"], extra=extra)
+                       card_view=manifest["formal_card_view"],
+                       option_slots=manifest.get("option_slots", S.OPTION_SLOTS),
+                       extra=extra)
     print("[benchmark] best checkpoint on the frozen Test split")
     print_summary(report)
     if "baseline_comparison" in extra:

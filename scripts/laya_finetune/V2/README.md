@@ -31,9 +31,9 @@ scripts/laya_finetune/V2/
   layachoice_v2_dataset.py      the dataset contract: adapter (V2Example) + manifest-checked loader
   layachoice_v2_finetune.py     stage 2: --train / --fit-temperature / --export
   layachoice_v2_eval.py         stage 3: --baseline-zero-shot / --select / --benchmark
-  layachoice_v2_verify.py       bundle verifier: hashes, schema, labels, splits, calibration
-                                (stdlib only — no GPU, no tokenizer, no network; V2 flat-4
-                                layout only)
+  layachoice_v2_verify.py       bundle verifier: hashes, schema, labels, splits, calibration,
+                                threshold consistency (stdlib only — no GPU, no tokenizer,
+                                no network; flat V2 and dynamic V4 layouts)
   plot_val_curves.py            analysis: per-epoch Val curves -> PNGs + val_metrics.csv
                                 (reads val_metrics.json only; Test is never read)
   val_metrics.json              the frozen per-epoch Val metrics the plot reads (run record)
@@ -48,6 +48,7 @@ scripts/laya_finetune/V2/
     (shared evidence; the full archive under data/laya_finetune/data_v4_build/
     also keeps query_embeddings.npy and shared_retrieval_evidence.jsonl)
   dataset_construction/         the V4 build archive (BUILD_RECORD.md, scripts, inputs)
+  frozen_backup/                historical V2 pre-adjustment Test split + SHA256 record
   out/                          run artifacts (not committed)
 ```
 
@@ -114,7 +115,9 @@ bash run.sh analysis                        # per-epoch Val curves for this run
 
 Add `--smoke` to any stage for a CPU run (8 rows per split, 1 training step), and
 `--python <exe>` / `--data DIR` / `--out DIR` to point at a specific interpreter or
-directories. `run.sh` never deletes an output directory, never downloads anything unpinned and
+directories. With the installed V4 layout, `verify` auto-detects the three threshold
+bundles under `data/`; the stages after it need one bundle, e.g.
+`bash run.sh train --data data/recall_threshold_085`. `run.sh` never deletes an output directory, never downloads anything unpinned and
 never uploads; it stops on the first failing stage and returns non-zero. Each run appends a
 record (git sha, config, data version) to `out/run_ledger.jsonl`.
 

@@ -432,7 +432,7 @@ def mode_train(args) -> None:
             "base_checkpoint": {"repo_id": S.BASE_REPO, "revision": S.BASE_REVISION,
                                 "subfolder": S.BASE_SUBFOLDER},
             "formal_card_view": manifest["formal_card_view"],
-            "option_slots": S.OPTION_SLOTS,
+            "option_slots": manifest.get("option_slots", S.OPTION_SLOTS),
             "reject_label": S.REJECT_LABEL,
             "option_max_tokens": S.OPTION_MAX_TOKENS,
             "head_max_len": S.HEAD_MAX_LEN,
@@ -553,7 +553,8 @@ def mode_export(args) -> None:
     exported["temperature"] = temperature
     exported.pop("temperature_by_options", None)
     exported["model_name"] = "layachoice-v2"
-    exported["layachoice"] = {"checkpoint": str(ckpt), "option_slots": S.OPTION_SLOTS,
+    exported["layachoice"] = {"checkpoint": str(ckpt),
+                              "option_slots": manifest.get("option_slots", S.OPTION_SLOTS),
                               "reject_label": S.REJECT_LABEL,
                               "option_max_tokens": S.OPTION_MAX_TOKENS,
                               "head_max_len": S.HEAD_MAX_LEN, "max_len": S.MAX_LEN,

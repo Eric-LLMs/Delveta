@@ -25,7 +25,8 @@ The generated dataset itself lives in two independent copies:
 | `repair/unify_v4_official_version.py` | Official manifest/hash/archive unification |
 | `repair/superseded/v4_repair_k0_gold.py` | Superseded repair approach that wrote a separate `full_r1_repaired` bundle |
 | `audit/` | Read-only statistics, schema, parity, position-coverage and comparison scripts used during validation |
-| `inventory/` | File-level SHA-256 inventories for the generated data and the pre-replacement V2 data |
+| `inventory/` | File-level SHA-256 inventories: generated data (`v4_data_files.json`), pre-replacement V2 data (`v2_data_pre_replacement.json`) and the build-time construction chain (`construction_chain_files.json`) |
+| `inventory/construction_chain_relocations.json` | Current locations of chain files removed from this bundle during deduplication; every target is SHA-256-verified against the build-time inventory |
 | `reference/smoke50_r1_generation_config.json` | Configuration file from the smoke run; the `full_r1` configuration file is missing (see `BUILD_RECORD.md`) |
 
 ## Reproduction status
