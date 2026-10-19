@@ -249,8 +249,8 @@ inside the shared head+options budget.
 
 | Capability card | Raw tokens | Special Tokens | Total tokens | Per-option cap |
 |---|---:|---:|---:|---:|
-| `cap-social-search` | 243 | 7 | 250 | 256 |
-| `cap-read-document` | 224 | 7 | 231 | 256 |
+| `cap-social-search` | 216 | 7 | 223 | 256 |
+| `cap-read-document` | 221 | 7 | 228 | 256 |
 | `cap-vision` | 224 | 5 | 229 | 256 |
 | `cap-rag-search` | 216 | 7 | 223 | 256 |
 | `cap-add-term` | 204 | 7 | 211 | 256 |
@@ -269,9 +269,9 @@ inside the shared head+options budget.
 | `cap-research` | 40 | 5 | 45 | 256 |
 
 All 18 cards fit within the 256-token per-option budget; no card loses text to
-truncation. `cap-social-search` is the longest (243 raw / 250 total), followed by
-`cap-read-document` (224 / 231) and `cap-vision` (224 / 229). The remaining cards are at or
-below 216 raw tokens.
+truncation. `cap-vision` is the longest (224 raw / 229 total), followed by
+`cap-read-document` (221 / 228) and `cap-social-search` (216 / 223). The remaining cards
+are at or below 216 raw tokens.
 
 This is not a re-measurement of the frozen v2 training bundle. That run documented 17
 capabilities and cards of 136–230 tokens, which is why the "no option card is truncated"
@@ -300,7 +300,7 @@ params:
 - question (string, optional): optional question about the image, copied from the sentence
 ```
 
-##### `cap-social-search` (243 tokens; parameter block 111)
+##### `cap-social-search` (216 tokens; parameter block 84)
 
 ```
 ### cap-social-search
@@ -311,13 +311,13 @@ does: Search social platforms such as Reddit for discussions, recommendations, a
 negative examples:
 - (none curated)
 params:
-- limit (integer, optional): optional max results per platform; only when the sentence states one
-- query (string, required): the user's search TOPIC, extracted from the sentence and kept VERBATIM — do not rewrite, translate, summarize, expand or paraphrase
-- platform (string, optional): optional platform (reddit / x / zhihu); only when the sentence names one; OMIT when no specific platform is named
-- subreddit (string, optional): optional reddit-only scope; only when the sentence names one
+- limit (integer, optional): max results per platform; only if stated
+- query (string, required): search query copied verbatim from the user's sentence; do not rewrite, translate, summarize, expand or paraphrase
+- platform (string, optional): platform reddit / x / zhihu; omit unless named
+- subreddit (string, optional): reddit-only subreddit; omit unless named
 ```
 
-##### `cap-read-document` (224 tokens)
+##### `cap-read-document` (221 tokens)
 
 ```
 ### cap-read-document
@@ -328,8 +328,8 @@ does: Read and understand the structured content of a resolved document asset. U
 negative examples:
 - (none curated)
 params:
-- pages (string, optional): optional page/slide spec like "2" or "1-3"; only when the sentence states one
-- asset_id (string, required, max_len=64): asset id of the attached/opened document (from turn facts, not the sentence)
+- pages (string, optional): page/slide spec "2" or "1-3"; only if stated
+- asset_id (string, required, max_len=64): ID of the attached or opened document, obtained from turn facts, not the user's sentence
 ```
 
 ##### `cap-rag-search` (216 tokens)
@@ -556,9 +556,9 @@ Verified in this audit:
   (`registry.store.list_capabilities`).
 - Token counts use the project's actual Laya multilingual tokenizer at the pinned base
   revision, with the same call shape the sequence builder uses.
-- All 18 cards fit within the 256-token cap. `cap-social-search` is the longest
-  (243 raw / 250 total), followed by `cap-read-document` (224 / 231) and `cap-vision`
-  (224 / 229); the remaining 15 are ≤216 raw tokens.
+- All 18 cards fit within the 256-token cap. `cap-vision` is the longest
+  (224 raw / 229 total), followed by `cap-read-document` (221 / 228) and
+  `cap-social-search` (216 / 223); the remaining 15 are ≤216 raw tokens.
 - The card texts above were each rendered with the production `render_card()` and tokenized
   in full.
 - The card texts preserve every slot name, type, requiredness, `max_len` and extraction
