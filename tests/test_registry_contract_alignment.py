@@ -142,17 +142,15 @@ FROZEN_PARAMETERS: dict[str, dict] = {
     },
     "cap-social-search": {
         "query": {"type": "string", "required": True,
-                  "description": "the user's search TOPIC, extracted from the "
-                                 "sentence and kept VERBATIM — do not rewrite, "
-                                 "translate, summarize, expand or paraphrase"},
+                  "description": "search query copied verbatim from the user's "
+                                 "sentence; do not rewrite, translate, summarize, "
+                                 "expand or paraphrase"},
         "platform": {"type": "string", "required": False,
-                     "description": "optional platform (reddit / x / zhihu); only "
-                                    "when the sentence names one; OMIT when no "
-                                    "specific platform is named"},
+                     "description": "platform reddit / x / zhihu; omit unless named"},
         "subreddit": {"type": "string", "required": False,
-                      "description": "optional reddit-only scope; only when the sentence names one"},
+                      "description": "reddit-only subreddit; omit unless named"},
         "limit": {"type": "integer", "required": False,
-                  "description": "optional max results per platform; only when the sentence states one"},
+                  "description": "max results per platform; only if stated"},
     },
     "cap-translate": {
         "text": {"type": "string", "required": True,
@@ -176,19 +174,17 @@ FROZEN_PARAMETERS: dict[str, dict] = {
         "page": {"type": "integer", "required": False,
                  "description": "1-based PDF page to render and read; omitted -> the "
                                 "page open in the viewer (a multi-page PDF with no page "
-                                "in view is refused, never a silent page 1)"},
+                                "in view is refused)"},
         "region": {"type": "object", "required": False,
                    "description": "optional sub-region of the rendered page as fractions "
-                                  "{x, y, w, h} (0..1, top-left origin), to focus a "
-                                  "table/chart/figure; omitted -> the whole page"},
+                                  "{x, y, w, h} (0..1, top-left origin)"},
     },
     "cap-read-document": {
         "asset_id": {"type": "string", "max_len": 64, "required": True,
-                     "description": "asset id of the attached/opened document "
-                                    "(from turn facts, not the sentence)"},
+                     "description": "ID of the attached or opened document, "
+                                    "obtained from turn facts, not the user's sentence"},
         "pages": {"type": "string", "required": False,
-                  "description": "optional page/slide spec like \"2\" or \"1-3\"; "
-                                 "only when the sentence states one"},
+                  "description": "page/slide spec \"2\" or \"1-3\"; only if stated"},
     },
     "cap-pdf-table-to-text": {
         "asset_id": {"type": "string", "max_len": 64, "required": True,
