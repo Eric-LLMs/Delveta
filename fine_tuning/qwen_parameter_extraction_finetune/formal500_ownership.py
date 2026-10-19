@@ -20,7 +20,7 @@ ownership from the CURRENT sources of truth.
 
 Sources of truth (in priority order)
 ------------------------------------
-1. ``scripts/qwen_parameter_extraction_finetune/pe_contract.py`` — the frozen
+1. ``fine_tuning/qwen_parameter_extraction_finetune/pe_contract.py`` — the frozen
    extraction contract. ``model_slots(cap)`` IS the online handler's
    ``slot_plan().model_slots`` for the six MODEL-extraction capabilities
    (the protocol test enforces the tie). Imported, never re-typed.
@@ -54,7 +54,7 @@ from __future__ import annotations
 import os
 import sys
 
-_HERE = os.path.dirname(os.path.abspath(__file__))  # scripts/qwen_parameter_extraction_finetune
+_HERE = os.path.dirname(os.path.abspath(__file__))  # fine_tuning/qwen_parameter_extraction_finetune
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 

@@ -9,8 +9,8 @@
 > checkpoint, and the service backend maps a `REJECT` answer to a normal fourth decision
 > routed to the Agent. It runs as the `cap-router` Compose service.
 >
-> Everything below is derived from the run artifacts (`scripts/laya_finetune/V2/` and the
-> frozen bundle `scripts/laya_finetune/V2/data/`), not from recollection.
+> Everything below is derived from the run artifacts (`fine_tuning/laya_finetune/V2/` and the
+> frozen bundle `fine_tuning/laya_finetune/V2/data/`), not from recollection.
 
 ## 1. Experiment Overview
 
@@ -380,7 +380,7 @@ would be measuring the wrong thing (see architecture rule 17).
 | Selected model (epoch 7), FP32 weights + model card | [Delveta-LayaChoice-v2](https://huggingface.co/eric-ml-nlp/Delveta-LayaChoice-v2) (public) |
 | Non-selected checkpoints (epochs 1–6) | [Delveta-LayaChoice-v2-checkpoints](https://huggingface.co/eric-ml-nlp/Delveta-LayaChoice-v2-checkpoints) (public) |
 | Frozen dataset (splits + `manifest.json` + audit) | [Delveta-LayaChoice-v2-Data](https://huggingface.co/datasets/eric-ml-nlp/Delveta-LayaChoice-v2-Data) (public) |
-| Training / evaluation code | [`scripts/laya_finetune/V2/`](https://github.com/Eric-LLMs/Delveta/tree/main/scripts/laya_finetune/V2) |
+| Training / evaluation code | [`fine_tuning/laya_finetune/V2/`](https://github.com/Eric-LLMs/Delveta/tree/main/fine_tuning/laya_finetune/V2) |
 
 ## 18. Reproducibility
 

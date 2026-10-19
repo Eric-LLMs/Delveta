@@ -134,8 +134,8 @@ tool-intent routing。当前模型为 **v2** —— 一个 4-way 决策：要么
 要么显式 `REJECT` 整个候选集。
 
 * 模型：[Delveta-LayaChoice-v2](https://huggingface.co/eric-ml-nlp/Delveta-LayaChoice-v2)
-* 数据集：[Delveta-LayaChoice-v2-Data](https://huggingface.co/datasets/eric-ml-nlp/Delveta-LayaChoice-v2-Data) · [`scripts/laya_finetune/V2/data/`](scripts/laya_finetune/V2/data/)
-* 训练代码：[`scripts/laya_finetune/V2/`](scripts/laya_finetune/V2/)
+* 数据集：[Delveta-LayaChoice-v2-Data](https://huggingface.co/datasets/eric-ml-nlp/Delveta-LayaChoice-v2-Data) · [`fine_tuning/laya_finetune/V2/data/`](fine_tuning/laya_finetune/V2/data/)
+* 训练代码：[`fine_tuning/laya_finetune/V2/`](fine_tuning/laya_finetune/V2/)
 * Checkpoints：[Delveta-LayaChoice-v2-checkpoints](https://huggingface.co/eric-ml-nlp/Delveta-LayaChoice-v2-checkpoints)
 * 实验记录：[LayaChoice-v2 Fine-Tuning](docs/experiments/LayaChoice-v2-Fine-Tuning.md)
 
@@ -155,8 +155,8 @@ Hugging Face 仓库中（根目录不存模型副本）。
 
 * 模型（FP32 / FP16 / INT8）：[Delveta-BGE-M3-v1](https://huggingface.co/eric-ml-nlp/Delveta-BGE-M3-v1)
 * 下载：`hf download eric-ml-nlp/Delveta-BGE-M3-v1 --local-dir <dir>`
-* 数据集：[Delveta-BGE-M3-v1-Data](https://huggingface.co/datasets/eric-ml-nlp/Delveta-BGE-M3-v1-Data) · [`scripts/bge_m3_finetune/data/`](scripts/bge_m3_finetune/data/)
-* 训练代码：[`scripts/bge_m3_finetune/`](scripts/bge_m3_finetune/)
+* 数据集：[Delveta-BGE-M3-v1-Data](https://huggingface.co/datasets/eric-ml-nlp/Delveta-BGE-M3-v1-Data) · [`fine_tuning/bge_m3_finetune/data/`](fine_tuning/bge_m3_finetune/data/)
+* 训练代码：[`fine_tuning/bge_m3_finetune/`](fine_tuning/bge_m3_finetune/)
 * 训练档案：[Delveta-BGE-M3-v1-checkpoints](https://huggingface.co/eric-ml-nlp/Delveta-BGE-M3-v1-checkpoints)
 * 实验记录（训练 + 变体 + 评测）：[BGE-M3 Fine-Tuning](docs/experiments/bge-m3-finetuning.md)
 
@@ -170,8 +170,8 @@ LoRA SFT，在 capability 已由上游选定之后，负责填充该 capability 
 参数抽取**：从不选择、重选或质疑 capability。
 
 * 模型（FP16 / FP32 / INT8 / Q5_K_M）：[Delveta-Qwen3-0.6B-PE-v1](https://huggingface.co/eric-ml-nlp/Delveta-Qwen3-0.6B-PE-v1)
-* 数据集：[Delveta-Qwen3-0.6B-PE-v1-Data](https://huggingface.co/datasets/eric-ml-nlp/Delveta-Qwen3-0.6B-PE-v1-Data) · [`scripts/qwen_parameter_extraction_finetune/data/`](scripts/qwen_parameter_extraction_finetune/data/)
-* 训练代码：[`scripts/qwen_parameter_extraction_finetune/`](scripts/qwen_parameter_extraction_finetune/) —— 入口 `bash run.sh`
+* 数据集：[Delveta-Qwen3-0.6B-PE-v1-Data](https://huggingface.co/datasets/eric-ml-nlp/Delveta-Qwen3-0.6B-PE-v1-Data) · [`fine_tuning/qwen_parameter_extraction_finetune/data/`](fine_tuning/qwen_parameter_extraction_finetune/data/)
+* 训练代码：[`fine_tuning/qwen_parameter_extraction_finetune/`](fine_tuning/qwen_parameter_extraction_finetune/) —— 入口 `bash run.sh`
 * Checkpoints：[Delveta-Qwen3-0.6B-PE-v1-checkpoints](https://huggingface.co/eric-ml-nlp/Delveta-Qwen3-0.6B-PE-v1-checkpoints)
 * 实验记录：[Qwen3-0.6B Parameter-Extraction Fine-Tuning](docs/experiments/qwen3-0.6b-parameter-extraction-finetuning.md)
 

@@ -7,7 +7,7 @@ chat Intent Funnel can select a capability with it, and measures the result agai
 checkpoint un-finetuned on the same frozen test set.
 
 ```
-scripts/laya_finetune/
+fine_tuning/laya_finetune/
   README.md                this file
   run.sh                   one-click: env check -> baseline -> train -> select -> temperature
                            -> benchmark -> export [-> push-to-hub]
@@ -153,8 +153,8 @@ selection does not depend on the calibration step.
 Stage 1 runs on the repo host, once — it needs the live capability registry:
 
 ```bash
-.venv/Scripts/python.exe scripts/laya_finetune/layachoice_prepare.py          # full
-.venv/Scripts/python.exe scripts/laya_finetune/layachoice_prepare.py --smoke  # 8 rows/split
+.venv/Scripts/python.exe fine_tuning/laya_finetune/layachoice_prepare.py          # full
+.venv/Scripts/python.exe fine_tuning/laya_finetune/layachoice_prepare.py --smoke  # 8 rows/split
 ```
 
 It refuses to build from inputs that are not the frozen revision (four pinned SHA-256s),

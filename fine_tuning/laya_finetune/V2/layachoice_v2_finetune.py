@@ -605,7 +605,7 @@ def parse_args(argv=None) -> argparse.Namespace:
     ap.add_argument("--data", default=str(D.DATA))
     ap.add_argument("--out", default=None,
                     help="run directory (--train) or deployment directory (--export); "
-                         "defaults to scripts/laya_finetune/V2/out, and to <ckpt>/../calibration "
+                         "defaults to fine_tuning/laya_finetune/V2/out, and to <ckpt>/../calibration "
                          "for --fit-temperature")
     ap.add_argument("--ckpt", default=None)
     ap.add_argument("--epochs", type=int, default=S.EPOCHS)

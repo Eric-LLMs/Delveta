@@ -19,7 +19,7 @@ import torch
 
 REPO = Path(__file__).resolve().parents[3]
 SMK = Path(__file__).resolve().parent
-V2 = REPO / "scripts" / "laya_finetune" / "V2"
+V2 = REPO / "fine_tuning" / "laya_finetune" / "V2"
 sys.path.insert(0, str(V2))
 
 import layachoice_v2_spec as S        # noqa: E402

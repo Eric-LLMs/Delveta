@@ -78,7 +78,7 @@
     },
     {
       "from": "inputs/laya_tool_selection_v4.csv",
-      "to": "scripts/laya_finetune/V2/dataset_construction/inputs/laya_tool_selection_v2.csv",
+      "to": "fine_tuning/laya_finetune/V2/dataset_construction/inputs/laya_tool_selection_v2.csv",
       "sha256": "e39adab214ed26992e26728a9e4c73659d5c924d283454d841abd789187c8445"
     },
     {

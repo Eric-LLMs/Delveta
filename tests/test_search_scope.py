@@ -115,7 +115,7 @@ def test_subreddit_is_never_an_effective_model_slot():
 def test_handler_and_contract_read_the_same_rule():
     import sys
     from pathlib import Path
-    scripts = (Path(__file__).resolve().parents[1] / "scripts"
+    scripts = (Path(__file__).resolve().parents[1] / "fine_tuning"
                / "qwen_parameter_extraction_finetune")
     if str(scripts) not in sys.path:
         sys.path.insert(0, str(scripts))

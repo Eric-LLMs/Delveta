@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Stage 2 - fine-tune Laya (multilingual) on LayaChoice-v1, then package it.
 
-Runs on the rented GPU box. Everything it needs is under scripts/laya_finetune/data/
+Runs on the rented GPU box. Everything it needs is under fine_tuning/laya_finetune/data/
 (the frozen bundle written by layachoice_prepare.py) plus the pinned base checkpoint
 convaiinnovations/laya@55cf4c4e/multilingual - no registry, no database, no repo
 checkout beyond this directory.
@@ -766,7 +766,7 @@ def parse_args(argv=None) -> argparse.Namespace:
     ap.add_argument("--data", default=str(DATA))
     ap.add_argument("--out", default=None,
                     help="run directory (--train) or deployment directory (--export); "
-                         "defaults to scripts/laya_finetune/out, and to <ckpt>/../calibration "
+                         "defaults to fine_tuning/laya_finetune/out, and to <ckpt>/../calibration "
                          "for --fit-temperature")
     ap.add_argument("--ckpt", default=None)
     ap.add_argument("--epochs", type=int, default=EPOCHS)

@@ -39,9 +39,10 @@ from core.application.chat.intent_funnel.argument_acquisition.slot_refine import
 )
 from core.application.chat.intent_funnel.cap_handler import handler_for
 
-# ``pe_contract`` is the stdlib-only shared contract under scripts/ (no production
-# import, so the standalone builder/verifier and this test read the SAME snapshot).
-_SCRIPTS = (Path(__file__).resolve().parents[1] / "scripts"
+# ``pe_contract`` is the stdlib-only shared contract under fine_tuning/ (no
+# production import, so the standalone builder/verifier and this test read the
+# SAME snapshot).
+_SCRIPTS = (Path(__file__).resolve().parents[1] / "fine_tuning"
             / "qwen_parameter_extraction_finetune")
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))

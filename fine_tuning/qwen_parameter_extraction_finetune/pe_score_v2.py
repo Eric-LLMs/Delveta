@@ -36,7 +36,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent                 # logs/_argbench
 ROOT = HERE.parents[1]
-SCRIPTS = ROOT / "scripts" / "qwen_parameter_extraction_finetune"
+SCRIPTS = ROOT / "fine_tuning" / "qwen_parameter_extraction_finetune"
 for _p in (str(ROOT), str(ROOT / "packages"), str(SCRIPTS)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
@@ -231,7 +231,7 @@ def schema_snapshot() -> dict:
     return {
         "kind": "offline_reference_contract_snapshot",
         "live_registry": False,
-        "source": "scripts/qwen_parameter_extraction_finetune/pe_contract.py",
+        "source": "fine_tuning/qwen_parameter_extraction_finetune/pe_contract.py",
         "source_commit": C.SOURCE_COMMIT,
         "note": ("NOT the LIVE Registry — the Registry was unreachable; this is the "
                  "offline reference contract (model slots + rendered face) the "

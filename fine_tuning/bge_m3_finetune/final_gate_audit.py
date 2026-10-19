@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""FINAL PRE-TRAINING GATE — read-only audit of scripts/bge_m3_finetune/data/.
+"""FINAL PRE-TRAINING GATE — read-only audit of fine_tuning/bge_m3_finetune/data/.
 
 Verifies the 5 gate items against the files on disk. Writes nothing but stdout
 and data/_final_gate_report.json. No training, no downloads, no edits.

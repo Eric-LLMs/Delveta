@@ -14,8 +14,8 @@
 # Run: python prepare_dataset.py --config config_contract_aligned_v5.yaml
 
 source:
-  train_candidates: scripts/qwen_parameter_extraction_finetune/data/V5/delveta_pe_train_contract_aligned_v5_candidate.jsonl
-  test_candidates:  scripts/qwen_parameter_extraction_finetune/data/V5/delveta_pe_test_contract_aligned_v5_candidate.jsonl
+  train_candidates: fine_tuning/qwen_parameter_extraction_finetune/data/V5/delveta_pe_train_contract_aligned_v5_candidate.jsonl
+  test_candidates:  fine_tuning/qwen_parameter_extraction_finetune/data/V5/delveta_pe_test_contract_aligned_v5_candidate.jsonl
   formal500:        logs/_argbench/dataset_formal500.jsonl
   source_commit:    fdf96cf
 

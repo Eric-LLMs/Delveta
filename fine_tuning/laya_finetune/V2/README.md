@@ -19,7 +19,7 @@ and training hyper-parameters are the frozen v1 values; only the dataset/task di
 > `tests/test_laya_v4_prompt_parity.py` pins that training/serving parity.
 
 ```
-scripts/laya_finetune/V2/
+fine_tuning/laya_finetune/V2/
   README.md                     this file
   run.sh                        single entry point: a bare `bash run.sh` runs the whole
                                 pipeline; each phase is also runnable alone

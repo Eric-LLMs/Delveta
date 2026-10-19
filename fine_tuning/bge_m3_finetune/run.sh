@@ -7,7 +7,7 @@
 #   bash run.sh --help          usage
 #
 # This wrapper only calls the real entry
-# scripts/bge_m3_finetune/train_bge_m3_dual_target.py with the pinned formal recipe.
+# fine_tuning/bge_m3_finetune/train_bge_m3_dual_target.py with the pinned formal recipe.
 # It never edits the frozen Dataset V1, the capability-unique sampler, the loss, or any
 # hyper-parameter. See docs/experiments/bge-m3-finetuning.md.
 #

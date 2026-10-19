@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only audit of scripts/bge_m3_finetune/data/ against the TWO Delveta
+"""Read-only audit of fine_tuning/bge_m3_finetune/data/ against the TWO Delveta
 retrieval chains (Agent = Query->Capability Description; Intent Funnel =
 Query->Standard/Similar corpus).
 
@@ -21,7 +21,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-DATA = ROOT / "scripts" / "bge_m3_finetune" / "data"
+DATA = ROOT / "fine_tuning" / "bge_m3_finetune" / "data"
 REG = ROOT / "logs" / "_registry_dump.json"
 
 # curated confusable/hard-negative pairs (logs/_cap_only_eval.py DISTRACTORS,

@@ -48,7 +48,7 @@ from core.config import settings
 
 URL = "http://localhost:18092"
 FROZEN = (Path(__file__).resolve().parents[1]
-          / "scripts" / "laya_finetune" / "V1" / "data"
+          / "fine_tuning" / "laya_finetune" / "V1" / "data"
           / "layachoice_v1_test_b_noprov.jsonl.gz")
 
 

@@ -24,10 +24,10 @@
 **/.venv
 **/.venv-*
 
-# ML training workspaces under scripts/ (datasets, checkpoints, their own venvs).
-# scripts/ is only copied so gen_proto.sh can run; these workspaces are multi-GB and
-# never used by any image. Without this the build context balloons to ~8 GB.
-scripts/*_finetune
+# ML training workspaces (datasets, checkpoints, their own venvs). No image consumes
+# them; scripts/ is only copied so gen_proto.sh can run. Without this the build
+# context balloons past 8 GB.
+fine_tuning
 
 # JS deps (the Electron/web clients are built on the host, never inside a Python image)
 **/node_modules

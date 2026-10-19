@@ -2,7 +2,7 @@
 
 The LayaChoice-v2 option cards the model trains on are a DERIVED value of the
 production renderer: ``cap_router.card_renderer.render_card`` against the live
-Registry. ``scripts/laya_finetune/V2/build/v2_refresh_cards_from_registry.py``
+Registry. ``fine_tuning/laya_finetune/V2/build/v2_refresh_cards_from_registry.py``
 writes them to ``data/aligned/`` (the frozen ``data/`` bundle is left untouched).
 These tests pin that contract without a database and detect drift when one is
 reachable:
@@ -27,7 +27,7 @@ import pytest
 from sqlalchemy import exc as sa_exc
 
 _REPO = Path(__file__).resolve().parents[1]
-_V2 = _REPO / "scripts" / "laya_finetune" / "V2"
+_V2 = _REPO / "fine_tuning" / "laya_finetune" / "V2"
 if str(_V2) not in sys.path:
     sys.path.insert(0, str(_V2))
 
@@ -137,4 +137,4 @@ async def test_snapshot_still_matches_the_live_registry() -> None:
     drifted = sorted(c for c in snapshot if live.get(c) != snapshot[c])
     assert not drifted, (
         f"Registry drifted from the aligned snapshot for {drifted}; "
-        "re-run scripts/laya_finetune/V2/build/v2_refresh_cards_from_registry.py")
+        "re-run fine_tuning/laya_finetune/V2/build/v2_refresh_cards_from_registry.py")

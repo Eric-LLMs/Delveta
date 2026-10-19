@@ -27,7 +27,7 @@ from types import SimpleNamespace
 import pytest
 
 _REPO = Path(__file__).resolve().parents[1]
-_V2 = _REPO / "scripts" / "laya_finetune" / "V2"
+_V2 = _REPO / "fine_tuning" / "laya_finetune" / "V2"
 _RUN = _V2 / "data"
 for _p in (_V2, _REPO / "packages", _REPO / "deploy" / "laya"):
     if str(_p) not in sys.path:

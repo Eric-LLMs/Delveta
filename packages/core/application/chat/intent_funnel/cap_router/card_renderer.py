@@ -28,13 +28,13 @@ from __future__ import annotations
 from ..tool_intent.prompt import _MAX_NEGATIVE_EXAMPLES, _params_block
 
 # The instructions string the frozen dataset was built and benchmarked under
-# (scripts/laya_finetune/data/manifest.json -> "instructions"). It is part of the
+# (fine_tuning/laya_finetune/data/manifest.json -> "instructions"). It is part of the
 # model's input distribution, so it is pinned here verbatim.
 INSTRUCTIONS = "Which capability should handle the user's request?"
 
 # The frozen REJECT option: the criterion the model answers with when no listed
 # capability fits. It is byte-for-byte the card the V2 dataset was built and
-# benchmarked under (scripts/laya_finetune/V2/build/v2_generate_dataset.py
+# benchmarked under (fine_tuning/laya_finetune/V2/build/v2_generate_dataset.py
 # -> REJECT_CARD); adding anything to it would take the model out of
 # distribution. REJECT is a NORMAL decision, not a threshold or a fallback, and
 # it is appended AFTER however many capability cards the candidate set carries.

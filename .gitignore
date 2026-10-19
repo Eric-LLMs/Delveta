@@ -53,25 +53,25 @@ scripts/trace_chat_prompt.py
 # LayaChoice-v1 frozen bundle — the model-phase inputs and the two un-regenerable
 # raw files; exempted from the generic `data/` rule above so they are committed.
 # The generated `smoke/` subset stays ignored.
-!scripts/laya_finetune/V1/data/
-scripts/laya_finetune/V1/data/smoke/
+!fine_tuning/laya_finetune/V1/data/
+fine_tuning/laya_finetune/V1/data/smoke/
 
 # LayaChoice-v2 frozen dataset — the accepted 4-way (3 capability + REJECT) bundle;
 # exempted from the generic `data/` rule above so it is committed, like V1.
-!scripts/laya_finetune/V2/data/
+!fine_tuning/laya_finetune/V2/data/
 
 # LayaChoice-v2 data-construction chain (capture -> generate_final -> adjust_test_to_train);
 # exempted from the generic `build/` rule above so the reproducible chain is committed.
-!scripts/laya_finetune/V2/build/
+!fine_tuning/laya_finetune/V2/build/
 
 # Qwen3-0.6B parameter-extraction SFT bundle — the frozen train/validation/test
 # splits, manifest and build reports are the reproduce-and-commit artifacts;
 # `data/` is exempted from the generic rule above so the bundle is committed.
 # Training checkpoints and exported model artifacts (later stages) stay ignored.
-!scripts/qwen_parameter_extraction_finetune/data/
-scripts/qwen_parameter_extraction_finetune/checkpoints/
-scripts/qwen_parameter_extraction_finetune/exports/
+!fine_tuning/qwen_parameter_extraction_finetune/data/
+fine_tuning/qwen_parameter_extraction_finetune/checkpoints/
+fine_tuning/qwen_parameter_extraction_finetune/exports/
 # Isolated smoke-test environment, local HF model cache and smoke outputs stay local.
-scripts/qwen_parameter_extraction_finetune/.venv/
-scripts/qwen_parameter_extraction_finetune/.hf_cache/
-scripts/qwen_parameter_extraction_finetune/smoke_out/
+fine_tuning/qwen_parameter_extraction_finetune/.venv/
+fine_tuning/qwen_parameter_extraction_finetune/.hf_cache/
+fine_tuning/qwen_parameter_extraction_finetune/smoke_out/

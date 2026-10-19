@@ -7,7 +7,7 @@ The serving process must therefore install the 256-cap builder before it encodes
 anything.
 
 This module is a DELIBERATE, frozen copy of the builder the training/export path
-used (``scripts/laya_finetune/layachoice_finetune.py``): the service must not
+used (``fine_tuning/laya_finetune/layachoice_finetune.py``): the service must not
 import from the fine-tuning script, so the two cannot share code. Only the source
 of ``OPTION_MAX_TOKENS``/``HEAD_MAX_LEN``/``MAX_LEN`` differs — here they are
 module constants, there they are the training constants. The body of

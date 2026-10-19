@@ -42,9 +42,9 @@ from core.application.chat.intent_funnel.cap_handler.social_search_handler impor
 )
 
 # ``pe_contract`` / ``evaluate`` are the stdlib-only shared contract + scorer
-# under scripts/ (no production import), so this test reads the SAME snapshot the
-# builder / verifier / trainer read.
-_SCRIPTS = (Path(__file__).resolve().parents[1] / "scripts"
+# under fine_tuning/ (no production import), so this test reads the SAME snapshot
+# the builder / verifier / trainer read.
+_SCRIPTS = (Path(__file__).resolve().parents[1] / "fine_tuning"
             / "qwen_parameter_extraction_finetune")
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))

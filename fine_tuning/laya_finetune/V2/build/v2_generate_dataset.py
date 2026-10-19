@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """V2 (REJECT) dataset — full corrected scope, one build.
 
-V1 is read-only. Nothing under scripts/laya_finetune/ or production is touched.
+V1 is read-only. Nothing under fine_tuning/laya_finetune/ or production is touched.
 
 Per split (train/val/test) = Part1 + Part2, merged, then ROW-shuffled.
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Step 1 audit for the BGE-M3 Query -> Capability fine-tuning datasets.
 
-Read-only. Reports, for scripts/bge_m3_finetune/data/:
+Read-only. Reports, for fine_tuning/bge_m3_finetune/data/:
   * schema / field contract
   * per-capability x language distribution (train + test)
   * source composition (which rows come from the real retrieval corpus908 vs synthetic)

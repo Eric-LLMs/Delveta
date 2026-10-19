@@ -7222,11 +7222,11 @@ breakdowns live in the experiment record (§26.6).
 
 | Artifact | Home |
 |---|---|
-| Source code / experiment definition (v2) | [`scripts/laya_finetune/V2/`](https://github.com/Eric-LLMs/Delveta/tree/main/scripts/laya_finetune/V2) |
+| Source code / experiment definition (v2) | [`fine_tuning/laya_finetune/V2/`](https://github.com/Eric-LLMs/Delveta/tree/main/fine_tuning/laya_finetune/V2) |
 | Selected model (v2, FP32 weights + eval reports) | [Delveta-LayaChoice-v2](https://huggingface.co/eric-ml-nlp/Delveta-LayaChoice-v2) |
 | Non-selected checkpoints (epochs 1–6) | [Delveta-LayaChoice-v2-checkpoints](https://huggingface.co/eric-ml-nlp/Delveta-LayaChoice-v2-checkpoints) |
-| Frozen dataset (v2 bundles; shas in `manifest.json`) | [`scripts/laya_finetune/V2/data/`](https://github.com/Eric-LLMs/Delveta/tree/main/scripts/laya_finetune/V2/data) · [Delveta-LayaChoice-v2-Data](https://huggingface.co/datasets/eric-ml-nlp/Delveta-LayaChoice-v2-Data) |
-| Archived v1 source + data | [`scripts/laya_finetune/V1/`](https://github.com/Eric-LLMs/Delveta/tree/main/scripts/laya_finetune/V1) |
+| Frozen dataset (v2 bundles; shas in `manifest.json`) | [`fine_tuning/laya_finetune/V2/data/`](https://github.com/Eric-LLMs/Delveta/tree/main/fine_tuning/laya_finetune/V2/data) · [Delveta-LayaChoice-v2-Data](https://huggingface.co/datasets/eric-ml-nlp/Delveta-LayaChoice-v2-Data) |
+| Archived v1 source + data | [`fine_tuning/laya_finetune/V1/`](https://github.com/Eric-LLMs/Delveta/tree/main/fine_tuning/laya_finetune/V1) |
 
 The full v2 experiment record — dataset definition, frozen SHA256s, token budget,
 per-epoch results, temperature calibration, final-test and error analysis — lives in
@@ -7657,7 +7657,7 @@ been run/passed**.
 
 | Artifact | Home |
 |---|---|
-| Training code / entry | [`scripts/qwen_parameter_extraction_finetune/`](https://github.com/Eric-LLMs/Delveta/tree/main/scripts/qwen_parameter_extraction_finetune) |
+| Training code / entry | [`fine_tuning/qwen_parameter_extraction_finetune/`](https://github.com/Eric-LLMs/Delveta/tree/main/fine_tuning/qwen_parameter_extraction_finetune) |
 | Model (FP16 / FP32 / INT8 / Q5_K_M) | [Delveta-Qwen3-0.6B-PE-v1](https://huggingface.co/eric-ml-nlp/Delveta-Qwen3-0.6B-PE-v1) |
 | Frozen dataset | [Delveta-Qwen3-0.6B-PE-v1-Data](https://huggingface.co/datasets/eric-ml-nlp/Delveta-Qwen3-0.6B-PE-v1-Data) |
 | Checkpoints (full trainer state) | [Delveta-Qwen3-0.6B-PE-v1-checkpoints](https://huggingface.co/eric-ml-nlp/Delveta-Qwen3-0.6B-PE-v1-checkpoints) |
@@ -7991,12 +7991,12 @@ not copy the per-sample JSONL into the document.
 
 | Artifact | Home |
 |---|---|
-| Training entry | [`scripts/bge_m3_finetune/train_bge_m3_dual_target.py`](https://github.com/Eric-LLMs/Delveta/blob/main/scripts/bge_m3_finetune/train_bge_m3_dual_target.py) |
-| Capability-unique sampler | [`scripts/bge_m3_finetune/capability_unique_sampler.py`](https://github.com/Eric-LLMs/Delveta/blob/main/scripts/bge_m3_finetune/capability_unique_sampler.py) |
-| Trainer mixin | [`scripts/bge_m3_finetune/capability_unique_trainer.py`](https://github.com/Eric-LLMs/Delveta/blob/main/scripts/bge_m3_finetune/capability_unique_trainer.py) |
-| Row-alignment check | [`scripts/bge_m3_finetune/dual_target_alignment.py`](https://github.com/Eric-LLMs/Delveta/blob/main/scripts/bge_m3_finetune/dual_target_alignment.py) |
-| Tests | [`scripts/bge_m3_finetune/test_capability_unique_sampler.py`](https://github.com/Eric-LLMs/Delveta/blob/main/scripts/bge_m3_finetune/test_capability_unique_sampler.py) · [`test_dual_target_training_entry.py`](https://github.com/Eric-LLMs/Delveta/blob/main/scripts/bge_m3_finetune/test_dual_target_training_entry.py) |
-| Frozen Dataset V1 | [`scripts/bge_m3_finetune/data/`](https://github.com/Eric-LLMs/Delveta/tree/main/scripts/bge_m3_finetune/data) · [Delveta-BGE-M3-v1-Data](https://huggingface.co/datasets/eric-ml-nlp/Delveta-BGE-M3-v1-Data) |
+| Training entry | [`fine_tuning/bge_m3_finetune/train_bge_m3_dual_target.py`](https://github.com/Eric-LLMs/Delveta/blob/main/fine_tuning/bge_m3_finetune/train_bge_m3_dual_target.py) |
+| Capability-unique sampler | [`fine_tuning/bge_m3_finetune/capability_unique_sampler.py`](https://github.com/Eric-LLMs/Delveta/blob/main/fine_tuning/bge_m3_finetune/capability_unique_sampler.py) |
+| Trainer mixin | [`fine_tuning/bge_m3_finetune/capability_unique_trainer.py`](https://github.com/Eric-LLMs/Delveta/blob/main/fine_tuning/bge_m3_finetune/capability_unique_trainer.py) |
+| Row-alignment check | [`fine_tuning/bge_m3_finetune/dual_target_alignment.py`](https://github.com/Eric-LLMs/Delveta/blob/main/fine_tuning/bge_m3_finetune/dual_target_alignment.py) |
+| Tests | [`fine_tuning/bge_m3_finetune/test_capability_unique_sampler.py`](https://github.com/Eric-LLMs/Delveta/blob/main/fine_tuning/bge_m3_finetune/test_capability_unique_sampler.py) · [`test_dual_target_training_entry.py`](https://github.com/Eric-LLMs/Delveta/blob/main/fine_tuning/bge_m3_finetune/test_dual_target_training_entry.py) |
+| Frozen Dataset V1 | [`fine_tuning/bge_m3_finetune/data/`](https://github.com/Eric-LLMs/Delveta/tree/main/fine_tuning/bge_m3_finetune/data) · [Delveta-BGE-M3-v1-Data](https://huggingface.co/datasets/eric-ml-nlp/Delveta-BGE-M3-v1-Data) |
 | Model (FP32 / FP16 / INT8) | [Delveta-BGE-M3-v1](https://huggingface.co/eric-ml-nlp/Delveta-BGE-M3-v1) |
 | Training archive (log / summary) | [Delveta-BGE-M3-v1-checkpoints](https://huggingface.co/eric-ml-nlp/Delveta-BGE-M3-v1-checkpoints) |
 

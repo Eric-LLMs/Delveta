@@ -62,7 +62,7 @@ may honestly be partial or **`{}`**; execution-side requiredness is enforced
 separately by the Binder (§28.5). This release **keeps** rows whose target leaves a
 required slot unfilled (`include_clarify_rows: true`) rather than isolating them.
 The frozen bundle is the `data/` tree
-([`scripts/qwen_parameter_extraction_finetune/data/`](../../scripts/qwen_parameter_extraction_finetune/data/))
+([`fine_tuning/qwen_parameter_extraction_finetune/data/`](../../fine_tuning/qwen_parameter_extraction_finetune/data/))
 and is published as
 [`Delveta-Qwen3-0.6B-PE-v1-Data`](https://huggingface.co/datasets/eric-ml-nlp/Delveta-Qwen3-0.6B-PE-v1-Data).
 
@@ -84,7 +84,7 @@ and is published as
 
 Only the **assistant tool-call turn** is supervised; the system + user prompt is
 masked. The config is
-[`config.yaml`](../../scripts/qwen_parameter_extraction_finetune/config.yaml).
+[`config.yaml`](../../fine_tuning/qwen_parameter_extraction_finetune/config.yaml).
 
 **Run-level record** (from the training run's final `trainer_state`):
 
@@ -216,28 +216,28 @@ Q5_K_M was verified for **native tool-calling under llama.cpp `llama-server
 ## 10. Reproducibility
 
 The whole chain lives in
-[`scripts/qwen_parameter_extraction_finetune/`](../../scripts/qwen_parameter_extraction_finetune/);
+[`fine_tuning/qwen_parameter_extraction_finetune/`](../../fine_tuning/qwen_parameter_extraction_finetune/);
 every stage shares one contract (`pe_contract.py`) and one loader/renderer
 (`sft_data.py`), so build, train, eval and export cannot drift.
 
 ```bash
 # 0. environment + frozen-data preflight (NEVER starts training)
-bash scripts/qwen_parameter_extraction_finetune/run.sh --check
+bash fine_tuning/qwen_parameter_extraction_finetune/run.sh --check
 
 # 1. verify the frozen bundle (stdlib; hash + counts + leakage)
-python scripts/qwen_parameter_extraction_finetune/validate_dataset.py
+python fine_tuning/qwen_parameter_extraction_finetune/validate_dataset.py
 
 # 2. real LoRA training (preflight, then train.py)
-bash scripts/qwen_parameter_extraction_finetune/run.sh
+bash fine_tuning/qwen_parameter_extraction_finetune/run.sh
 
 # 2'. launchability check without training
-bash scripts/qwen_parameter_extraction_finetune/run.sh --dry-run
+bash fine_tuning/qwen_parameter_extraction_finetune/run.sh --dry-run
 
 # 3. score every checkpoint and select
-python scripts/qwen_parameter_extraction_finetune/evaluate.py --all-checkpoints
+python fine_tuning/qwen_parameter_extraction_finetune/evaluate.py --all-checkpoints
 
 # 4. export adapter / merged HF / GGUF plan
-python scripts/qwen_parameter_extraction_finetune/export.py --which all
+python fine_tuning/qwen_parameter_extraction_finetune/export.py --which all
 ```
 
 `run.sh` is a thin, safe wrapper: it locates the script directory from its own
@@ -258,7 +258,7 @@ training.
 
 | Artifact | Home |
 |---|---|
-| Training code / entry | [`scripts/qwen_parameter_extraction_finetune/`](https://github.com/Eric-LLMs/Delveta/tree/main/scripts/qwen_parameter_extraction_finetune) |
+| Training code / entry | [`fine_tuning/qwen_parameter_extraction_finetune/`](https://github.com/Eric-LLMs/Delveta/tree/main/fine_tuning/qwen_parameter_extraction_finetune) |
 | Model (FP16 / FP32 / INT8 / Q5_K_M) | [Delveta-Qwen3-0.6B-PE-v1](https://huggingface.co/eric-ml-nlp/Delveta-Qwen3-0.6B-PE-v1) |
 | Frozen dataset | [Delveta-Qwen3-0.6B-PE-v1-Data](https://huggingface.co/datasets/eric-ml-nlp/Delveta-Qwen3-0.6B-PE-v1-Data) |
 | Checkpoints (full trainer state) | [Delveta-Qwen3-0.6B-PE-v1-checkpoints](https://huggingface.co/eric-ml-nlp/Delveta-Qwen3-0.6B-PE-v1-checkpoints) |

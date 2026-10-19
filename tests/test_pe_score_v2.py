@@ -1,4 +1,4 @@
-"""PE scoring v2 (``scripts/qwen_parameter_extraction_finetune/pe_score_v2``) — the
+"""PE scoring v2 (``fine_tuning/qwen_parameter_extraction_finetune/pe_score_v2``) — the
 per-sample, contract-aligned 口径, on synthetic records.
 
 The v2 scorer is the CURRENT versioned standard (the legacy ``eval_pilot.score`` is
@@ -21,7 +21,7 @@ from pathlib import Path
 
 import pytest
 
-_SCRIPTS = (Path(__file__).resolve().parents[1] / "scripts"
+_SCRIPTS = (Path(__file__).resolve().parents[1] / "fine_tuning"
             / "qwen_parameter_extraction_finetune")
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))

@@ -5,7 +5,7 @@
 > stable architectural facts distilled from it live in
 > [architecture.md §26](../architecture.md#26-layachoice-capability-selection).
 >
-> Everything below is derived from the run artifacts (`scripts/laya_finetune/out/`) and the
+> Everything below is derived from the run artifacts (`fine_tuning/laya_finetune/out/`) and the
 > read-only audits (`/root/_laya_replay/`), not from recollection.
 
 ## 1. Experiment Overview
@@ -234,7 +234,7 @@ silently truncated the *instruction head* to 8 tokens while the options stayed o
 so the model was answering a question whose question text had been destroyed. The measured
 0.3622 describes a broken input, not the model.
 
-The artifacts are quarantined at `scripts/laya_finetune/out.256cap_INVALID/` — a **sibling** of
+The artifacts are quarantined at `fine_tuning/laya_finetune/out.256cap_INVALID/` — a **sibling** of
 `out/`, deliberately outside the archive and outside the release, so it cannot be picked up by
 a directory glob.
 
@@ -537,7 +537,7 @@ temperature agreement survives a real load.
 
 ## 24. Artifact Sizes and SHA256
 
-Run artifacts (`scripts/laya_finetune/out/SHA256SUMS`, verified after the run):
+Run artifacts (`fine_tuning/laya_finetune/out/SHA256SUMS`, verified after the run):
 
 | Artifact | Size | SHA256 |
 |---|---|---|
@@ -597,8 +597,8 @@ repository.
 |---|---|
 | Selected model (epoch 2), FP32 weights + eval reports | [Delveta-LayaChoice-v1](https://huggingface.co/eric-ml-nlp/Delveta-LayaChoice-v1) (public) |
 | Non-selected checkpoints (epoch 1 / 3 / 4) | [Delveta-LayaChoice-v1-checkpoints](https://huggingface.co/eric-ml-nlp/Delveta-LayaChoice-v1-checkpoints) (public) |
-| Frozen dataset (bundles + raw + `SHA256SUMS`) | [`scripts/laya_finetune/data/`](https://github.com/Eric-LLMs/Delveta/tree/main/scripts/laya_finetune/data) |
-| Training / evaluation code | [`scripts/laya_finetune/`](https://github.com/Eric-LLMs/Delveta/tree/main/scripts/laya_finetune) |
+| Frozen dataset (bundles + raw + `SHA256SUMS`) | [`fine_tuning/laya_finetune/data/`](https://github.com/Eric-LLMs/Delveta/tree/main/fine_tuning/laya_finetune/data) |
+| Training / evaluation code | [`fine_tuning/laya_finetune/`](https://github.com/Eric-LLMs/Delveta/tree/main/fine_tuning/laya_finetune) |
 
 The SHA256 values in the table above are the authority for every published copy; the
 uploaded weights were verified against them after upload.
@@ -622,7 +622,7 @@ Stages, in order:
 
 ```bash
 # repo host, once (needs the live capability registry) — already done; bundle is frozen
-.venv/Scripts/python.exe scripts/laya_finetune/layachoice_prepare.py
+.venv/Scripts/python.exe fine_tuning/laya_finetune/layachoice_prepare.py
 
 # GPU box
 python layachoice_eval.py --baseline-zero-shot --out out/baseline
@@ -644,7 +644,7 @@ What must hold for a rerun to be comparable:
 5. `git` state: the run executed from the working tree at
    `132499cfec3f9e4b79bfb829afff56d3cfb81498`; `release_manifest.json.git.previous_head`
    records it, and `release_commit` is filled in by the documentation commit that follows.
-   The three `scripts/laya_finetune/*.py` files were verified byte-identical between the GPU
+   The three `fine_tuning/laya_finetune/*.py` files were verified byte-identical between the GPU
    box and this repository (`sha256` match), so the archived code is the code that ran.
 
 Determinism caveat: seeds are fixed (`seed_base=42`, per-epoch `42+epoch`, plus explicit

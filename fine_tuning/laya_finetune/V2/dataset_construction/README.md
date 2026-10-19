@@ -6,7 +6,7 @@ training-data directory.
 
 The generated dataset itself lives in two independent copies:
 
-- `scripts/laya_finetune/V2/data/` — the copy used by the existing V2/V4
+- `fine_tuning/laya_finetune/V2/data/` — the copy used by the existing V2/V4
   training directory layout.
 - `data/laya_finetune/data_v4_build/` — the complete build archive, including
   the original `full_r1` tree and the large retrieval intermediates.

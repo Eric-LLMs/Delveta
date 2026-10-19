@@ -31,7 +31,7 @@ from pathlib import Path
 import pytest
 
 _REPO = Path(__file__).resolve().parents[1]
-_SCRIPTS = _REPO / "scripts" / "qwen_parameter_extraction_finetune"
+_SCRIPTS = _REPO / "fine_tuning" / "qwen_parameter_extraction_finetune"
 for _p in (str(_SCRIPTS), str(_REPO), str(_REPO / "packages")):
     if _p not in sys.path:
         sys.path.insert(0, _p)

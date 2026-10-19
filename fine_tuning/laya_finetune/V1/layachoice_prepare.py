@@ -3,7 +3,7 @@
 
 Runs on the REPO HOST, once. The GPU box has no registry/DB, so everything the
 training and evaluation stages need is materialised here and committed under
-scripts/laya_finetune/data/.
+fine_tuning/laya_finetune/data/.
 
 Sources (read-only, never modified):
   train  logs/_laya_ds/LayaChoice_v1_train.jsonl          (rendered, 856 rows)
@@ -33,8 +33,8 @@ Runs in the repo venv (`.venv`), which carries sqlalchemy/httpx for the registry
 `.venv-laya` is inference-only and lacks them.
 
 Usage:
-    .venv/Scripts/python.exe scripts/laya_finetune/layachoice_prepare.py
-    .venv/Scripts/python.exe scripts/laya_finetune/layachoice_prepare.py --smoke
+    .venv/Scripts/python.exe fine_tuning/laya_finetune/layachoice_prepare.py
+    .venv/Scripts/python.exe fine_tuning/laya_finetune/layachoice_prepare.py --smoke
 """
 from __future__ import annotations
 

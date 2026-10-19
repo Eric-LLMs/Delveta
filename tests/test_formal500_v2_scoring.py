@@ -1,6 +1,6 @@
 """Tests for the Formal-500 v2 ownership map, generation rules and scorer.
 
-Everything imported here is TRACKED (``scripts/qwen_parameter_extraction_finetune``);
+Everything imported here is TRACKED (``fine_tuning/qwen_parameter_extraction_finetune``);
 no untracked ``logs/`` module is imported, so CI collection stays clean.
 
 The v1 Formal-500 evaluator (``logs/_e2e_virtual_metrics.py`` + the frozen
@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[1]
-_SCRIPTS = _ROOT / "scripts" / "qwen_parameter_extraction_finetune"
+_SCRIPTS = _ROOT / "fine_tuning" / "qwen_parameter_extraction_finetune"
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 

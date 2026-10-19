@@ -16,7 +16,7 @@ import json
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[3]
-SRC = REPO / "scripts" / "laya_finetune" / "V2" / "data"
+SRC = REPO / "fine_tuning" / "laya_finetune" / "V2" / "data"
 OUT = Path(__file__).resolve().parent / "data"
 
 rows = {json.loads(l)["id"]: json.loads(l)

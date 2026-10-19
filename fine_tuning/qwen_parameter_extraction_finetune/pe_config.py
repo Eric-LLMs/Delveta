@@ -10,7 +10,7 @@ the trainer, the evaluator and the exporter cannot disagree:
 * every other section      -> relative to THIS SCRIPT DIRECTORY (``output.*`` /
   (``output`` / ``train`` /     ``train`` / ``eval`` / ``export``), so the whole
    ``eval`` / ``export``)      project stays under
-                             ``scripts/qwen_parameter_extraction_finetune/``.
+                             ``fine_tuning/qwen_parameter_extraction_finetune/``.
 
 Stdlib + PyYAML only — never imports torch / transformers / peft — so a config
 check runs in any environment and can gate a real training launch.

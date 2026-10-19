@@ -3,7 +3,7 @@
 # `source.*` paths are relative to the REPOSITORY ROOT (they point at the repo's
 # data/ and logs/). Every other section (`output.*`, `model.*`, `train.*`,
 # `eval.*`, `export.*`) is relative to THIS SCRIPT DIRECTORY, so the whole project
-# stays self-contained under scripts/qwen_parameter_extraction_finetune/.
+# stays self-contained under fine_tuning/qwen_parameter_extraction_finetune/.
 #
 # Stage map:
 #   prepare_dataset.py -> read PE v2 candidates, re-derive labels against
@@ -27,8 +27,8 @@ source:
   # SHA-256 differ from the shipped bundle. The exact candidates cannot be located,
   # so the committed bundle is the frozen authoritative training input and is NOT
   # fully reconstructable from any checked-in material.
-  train_candidates: scripts/qwen_parameter_extraction_finetune/data/V5/delveta_pe_train_contract_aligned_v5_candidate.jsonl
-  test_candidates:  scripts/qwen_parameter_extraction_finetune/data/V5/delveta_pe_test_contract_aligned_v5_candidate.jsonl
+  train_candidates: fine_tuning/qwen_parameter_extraction_finetune/data/V5/delveta_pe_train_contract_aligned_v5_candidate.jsonl
+  test_candidates:  fine_tuning/qwen_parameter_extraction_finetune/data/V5/delveta_pe_test_contract_aligned_v5_candidate.jsonl
   # Frozen external benchmark — fully isolated (no repair, split, train, select).
   formal500:        logs/_argbench/dataset_formal500.jsonl
   source_commit:    fdf96cf

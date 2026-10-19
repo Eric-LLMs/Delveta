@@ -132,8 +132,8 @@ and tool-intent routing. The current model is **v2** — a 4-way decision that
 either selects a capability or explicitly `REJECT`s the candidate set.
 
 - Model: [Delveta-LayaChoice-v2](https://huggingface.co/eric-ml-nlp/Delveta-LayaChoice-v2)
-- Dataset: [Delveta-LayaChoice-v2-Data](https://huggingface.co/datasets/eric-ml-nlp/Delveta-LayaChoice-v2-Data) · [`scripts/laya_finetune/V2/data/`](scripts/laya_finetune/V2/data/)
-- Training code: [`scripts/laya_finetune/V2/`](scripts/laya_finetune/V2/)
+- Dataset: [Delveta-LayaChoice-v2-Data](https://huggingface.co/datasets/eric-ml-nlp/Delveta-LayaChoice-v2-Data) · [`fine_tuning/laya_finetune/V2/data/`](fine_tuning/laya_finetune/V2/data/)
+- Training code: [`fine_tuning/laya_finetune/V2/`](fine_tuning/laya_finetune/V2/)
 - Checkpoints: [Delveta-LayaChoice-v2-checkpoints](https://huggingface.co/eric-ml-nlp/Delveta-LayaChoice-v2-checkpoints)
 - Experiment record: [LayaChoice-v2 Fine-Tuning](docs/experiments/LayaChoice-v2-Fine-Tuning.md)
 
@@ -154,8 +154,8 @@ INT8 — inside one Hugging Face repository (no root model copy).
 
 - Model (FP32 / FP16 / INT8): [Delveta-BGE-M3-v1](https://huggingface.co/eric-ml-nlp/Delveta-BGE-M3-v1)
 - Download: `hf download eric-ml-nlp/Delveta-BGE-M3-v1 --local-dir <dir>`
-- Dataset: [Delveta-BGE-M3-v1-Data](https://huggingface.co/datasets/eric-ml-nlp/Delveta-BGE-M3-v1-Data) · [`scripts/bge_m3_finetune/data/`](scripts/bge_m3_finetune/data/)
-- Training code: [`scripts/bge_m3_finetune/`](scripts/bge_m3_finetune/)
+- Dataset: [Delveta-BGE-M3-v1-Data](https://huggingface.co/datasets/eric-ml-nlp/Delveta-BGE-M3-v1-Data) · [`fine_tuning/bge_m3_finetune/data/`](fine_tuning/bge_m3_finetune/data/)
+- Training code: [`fine_tuning/bge_m3_finetune/`](fine_tuning/bge_m3_finetune/)
 - Training archive: [Delveta-BGE-M3-v1-checkpoints](https://huggingface.co/eric-ml-nlp/Delveta-BGE-M3-v1-checkpoints)
 - Experiment record (training + variants + evaluation): [BGE-M3 Fine-Tuning](docs/experiments/bge-m3-finetuning.md)
 
@@ -170,8 +170,8 @@ capability is already chosen upstream. It extracts arguments **only**: it never
 selects, re-selects or questions the capability.
 
 - Model (FP16 / FP32 / INT8 / Q5_K_M): [Delveta-Qwen3-0.6B-PE-v1](https://huggingface.co/eric-ml-nlp/Delveta-Qwen3-0.6B-PE-v1)
-- Dataset: [Delveta-Qwen3-0.6B-PE-v1-Data](https://huggingface.co/datasets/eric-ml-nlp/Delveta-Qwen3-0.6B-PE-v1-Data) · [`scripts/qwen_parameter_extraction_finetune/data/`](scripts/qwen_parameter_extraction_finetune/data/)
-- Training code: [`scripts/qwen_parameter_extraction_finetune/`](scripts/qwen_parameter_extraction_finetune/) — entry `bash run.sh`
+- Dataset: [Delveta-Qwen3-0.6B-PE-v1-Data](https://huggingface.co/datasets/eric-ml-nlp/Delveta-Qwen3-0.6B-PE-v1-Data) · [`fine_tuning/qwen_parameter_extraction_finetune/data/`](fine_tuning/qwen_parameter_extraction_finetune/data/)
+- Training code: [`fine_tuning/qwen_parameter_extraction_finetune/`](fine_tuning/qwen_parameter_extraction_finetune/) — entry `bash run.sh`
 - Checkpoints: [Delveta-Qwen3-0.6B-PE-v1-checkpoints](https://huggingface.co/eric-ml-nlp/Delveta-Qwen3-0.6B-PE-v1-checkpoints)
 - Experiment record: [Qwen3-0.6B Parameter-Extraction Fine-Tuning](docs/experiments/qwen3-0.6b-parameter-extraction-finetuning.md)
 

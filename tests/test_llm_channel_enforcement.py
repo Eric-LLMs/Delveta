@@ -324,7 +324,7 @@ ALLOW_NOT_SHELL = {
 
 def test_every_openai_llm_construction_is_shell_or_allowlisted():
     sites: dict[str, list[bool]] = {}
-    for base in ("apps", "packages", "plugins", "scripts"):
+    for base in ("apps", "packages", "plugins", "scripts", "fine_tuning"):
         for py in (REPO / base).rglob("*.py"):
             rel = py.relative_to(REPO).as_posix()
             text = py.read_text(encoding="utf-8")

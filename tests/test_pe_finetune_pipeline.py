@@ -1,7 +1,7 @@
 """B2 — the PE fine-tune TRAINING PIPELINE (scripts only; no torch, no model).
 
 This suite pins the script-level contract of the formal training chain under
-``scripts/qwen_parameter_extraction_finetune/`` WITHOUT importing torch /
+``fine_tuning/qwen_parameter_extraction_finetune/`` WITHOUT importing torch /
 transformers / peft (the main test env has none of them):
 
 * ``pe_config``  — the config loads and the two path conventions resolve;
@@ -24,7 +24,7 @@ from pathlib import Path
 
 import pytest
 
-_SCRIPTS = (Path(__file__).resolve().parents[1] / "scripts"
+_SCRIPTS = (Path(__file__).resolve().parents[1] / "fine_tuning"
             / "qwen_parameter_extraction_finetune")
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))

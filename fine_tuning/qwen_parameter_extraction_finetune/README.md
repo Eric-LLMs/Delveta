@@ -20,7 +20,7 @@ in the data build, and no stage ever reads Formal-500 or the frozen test split.
 ## Layout
 
 ```
-scripts/qwen_parameter_extraction_finetune/
+fine_tuning/qwen_parameter_extraction_finetune/
   README.md                 this file
   run.sh                    reproducible entry: preflight, then hand off to train.py
   config.yaml               source/output paths + build/train/eval/export knobs
@@ -181,8 +181,8 @@ Every run is seeded (`build.seed`), so the split is reproducible.
 ## Run
 
 ```bash
-python scripts/qwen_parameter_extraction_finetune/prepare_dataset.py   # build
-python scripts/qwen_parameter_extraction_finetune/validate_dataset.py  # verify
+python fine_tuning/qwen_parameter_extraction_finetune/prepare_dataset.py   # build
+python fine_tuning/qwen_parameter_extraction_finetune/validate_dataset.py  # verify
 ```
 
 `prepare_dataset.py` imports the live `prompt_for` / extractor user-message renderer
@@ -200,16 +200,16 @@ directory.
 
 ```bash
 # recommended: preflight (python/deps/config/data/SHA-256/disk/GPU), then the real run
-bash scripts/qwen_parameter_extraction_finetune/run.sh --check            # preflight only — NEVER trains
-bash scripts/qwen_parameter_extraction_finetune/run.sh --dry-run          # preflight, then stop before train()
-bash scripts/qwen_parameter_extraction_finetune/run.sh                    # preflight, then the real LoRA run
+bash fine_tuning/qwen_parameter_extraction_finetune/run.sh --check            # preflight only — NEVER trains
+bash fine_tuning/qwen_parameter_extraction_finetune/run.sh --dry-run          # preflight, then stop before train()
+bash fine_tuning/qwen_parameter_extraction_finetune/run.sh                    # preflight, then the real LoRA run
 
 # or drive the entry directly
-python scripts/qwen_parameter_extraction_finetune/train.py --check       # config + data gate (no torch)
-python scripts/qwen_parameter_extraction_finetune/train.py --dry-run     # build the wiring; stop before train()
-python scripts/qwen_parameter_extraction_finetune/train.py               # the real LoRA run
-python scripts/qwen_parameter_extraction_finetune/evaluate.py --all-checkpoints   # score + select
-python scripts/qwen_parameter_extraction_finetune/export.py --which all           # adapter + merged + gguf plan
+python fine_tuning/qwen_parameter_extraction_finetune/train.py --check       # config + data gate (no torch)
+python fine_tuning/qwen_parameter_extraction_finetune/train.py --dry-run     # build the wiring; stop before train()
+python fine_tuning/qwen_parameter_extraction_finetune/train.py               # the real LoRA run
+python fine_tuning/qwen_parameter_extraction_finetune/evaluate.py --all-checkpoints   # score + select
+python fine_tuning/qwen_parameter_extraction_finetune/export.py --which all           # adapter + merged + gguf plan
 ```
 
 `run.sh` is a thin, safe wrapper: it resolves paths from its own location (not the
