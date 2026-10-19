@@ -100,6 +100,10 @@ export paths, so the three can never render the input differently:
 | `HEAD_MAX_LEN` | **768** — the budget the question head and all options **share** |
 | `MAX_LEN` | **1024** — the whole-sequence ceiling |
 
+The detailed token-budget rationale, the capability-card token audit and the full card
+prompts are recorded in
+[LayaChoice-v1 Fine-Tuning — Token Budget](../../../docs/experiments/LayaChoice-v1-Fine-Tuning.md#9-token-budget-investigation).
+
 **Why 256 and not the library's 48.** `laya.common.build_sequence` hard-codes
 `max_length=48` on each option. Every frozen option is 136–230 tokens (median 171) under view
 B_noprov, so at 48 tokens *none* of the 2568 options (856 rows × 3) keeps a complete `does:`

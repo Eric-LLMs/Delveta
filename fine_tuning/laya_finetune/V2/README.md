@@ -178,6 +178,16 @@ export paths read them from), so the three can never render the input differentl
 | `HEAD_MAX_LEN` | **768** — the budget the question head and **all options share** |
 | `MAX_LEN` | **1024** — the whole-sequence ceiling |
 
+The per-option cap was raised from the library default of 48 tokens because the frozen
+capability cards require more space. These limits apply at different levels and should not
+be treated interchangeably.
+
+**Card-length audit:** all 18 capability cards fit within the 256-token per-option cap.
+`cap-vision` and `cap-read-document` are the longest at 224 tokens.
+
+See [LayaChoice V2 Fine-Tuning — Token Budget](../../../docs/experiments/LayaChoice-v2-Fine-Tuning.md#capability-card-token-audit-and-compression)
+for the detailed rationale, card statistics and full card prompts.
+
 **Why 256 and not the library's 48.** `laya.common.build_sequence` hard-codes
 `max_length=48` on each option. The frozen `B_noprov` cards run 136–230 tokens (median 171),
 so at 48 tokens *none* of the options keeps a complete `does:` line or any part of the
@@ -204,6 +214,11 @@ like-for-like.
 `head_max_len=256`. Reproducing v2 requires applying the same override
 (`layachoice_v2_render.install()`) and passing the same 256/768/1024 budget before the Agent is
 constructed, or expect a materially lower score under stock rendering.
+
+**Token Budget Audit.** The current per-option budget is **256 tokens**. All 18 capability
+cards fit within it; `cap-vision` and `cap-read-document` are the longest at 224 tokens. The
+complete 18-card table, full card prompts and measured token counts are in
+[LayaChoice-v2 Fine-Tuning — Token Budget](../../../docs/experiments/LayaChoice-v2-Fine-Tuning.md#capability-card-token-audit-and-compression).
 
 ## Pipeline
 

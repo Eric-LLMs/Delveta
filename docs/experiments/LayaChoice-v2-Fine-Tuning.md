@@ -12,11 +12,18 @@
 > Everything below is derived from the run artifacts (`fine_tuning/laya_finetune/V2/` and the
 > frozen bundle `fine_tuning/laya_finetune/V2/data/`), not from recollection.
 
+> **Contract correction — V1 is fixed, V2 is dynamic.** V1 is the fixed-K build (**K = 3**).
+> V2's current contract is **dynamic K+1**: K capability cards (0..3) plus one `REJECT` card,
+> so a question carries **1..4 options**. The formal run recorded in this document used the
+> earlier **flat 4-way** build (K = 3 + `REJECT`); the installed `data/recall_threshold_*`
+> bundles are V4 (dynamic K+1) and no V4 training run has been recorded here. Sections that
+> state fixed counts describe that historical run, not the current V2 contract.
+
 ## 1. Experiment Overview
 
 | | |
 |---|---|
-| Task | Choose the correct capability for a user request from a 3-candidate `criteria` set, **or** reject the whole set — a 4-way flat classification |
+| Task | Choose the correct capability for a user request from the recalled candidates, **or** reject the set. Current V2: dynamic K+1 (K = 0..3, 1..4 options). The formal run below used the flat 4-way build (K = 3 + `REJECT`) |
 | Base model | `convaiinnovations/laya`, subfolder `multilingual`, revision `55cf4c4eb…` |
 | Output | `Delveta LayaChoice v2` — full-parameter fine-tune, FP32 export |
 | Data | Train 2 112 / Calibration 211 / Validation v3 300 / Final Test v3 1 400 (all frozen) |
@@ -27,9 +34,10 @@
 | REJECT on Final Test | recall 0.719298 / precision 0.557823 / FPR 0.050544 |
 | Export | `model.safetensors`, FP32 preserve, 1 287 653 720 B, sha256 `c6331bd5…` |
 
-One sentence: **v1 (3-way) could only pick among the candidates it was shown; v2 adds an
-explicit `REJECT` fourth option and is trained and measured as a 4-way classification**,
-with the best checkpoint chosen on a separate validation split the test set never touched.
+One sentence: **v1 is the fixed 3-way build; v2 adds an explicit `REJECT` option and its
+current contract is dynamic K+1 (1..4 options)**. The formal run recorded here used the flat
+4-way build (K = 3 + `REJECT`), with the best checkpoint chosen on a separate validation
+split the test set never touched.
 
 ## 2. Objective
 
@@ -44,22 +52,31 @@ wrong candidate. The objective of v2 was to close that gap with a number:
 Not objectives: not a general chat model, not a production-traffic model, and not a
 re-opening of the v1 dataset (v1 is frozen, §5).
 
-## 3. From 3-way to 4-way
+## 3. From fixed 3-way (V1) to dynamic K+1 (V2)
 
-The v1 model scored exactly the candidates it was shown; it had no "none" output. v2 makes
-abstention a first-class decision:
+V1 is **fixed**: every row carries exactly three capability cards, and the model has no
+"none" output. V2 makes abstention a first-class decision and makes the option count
+dynamic:
 
-- every row carries **three capability cards plus one `REJECT` card** (`OPTION_SLOTS = 4`);
-- `REJECT` is a **normal 4th option**, not a threshold and not a post-hoc rule — the model
-  is trained to assign it probability mass directly;
-- the option order is a **per-row deterministic 4-way shuffle** (seed prefix
+- **Current V2 contract:** K capability cards (K = 0..3) plus one `REJECT` card, so every
+  question carries **K + 1 options (1..4)** (`MIN_OPTION_SLOTS = 1`,
+  `MAX_OPTION_SLOTS = 4`). `OPTION_SLOTS = 4` remains the frozen flat-v2 constant.
+- `REJECT` is a **normal option**, not a threshold and not a post-hoc rule — the model
+  assigns it probability mass directly.
+- The option order is a **per-row deterministic K+1 shuffle** (seed prefix
   `reject-shuffle-v1`, recorded in each row's `shuffle` field), so the model cannot learn a
-  positional prior;
-- `gold_index ∈ {0,1,2,3}` marks the target slot and `target_kind ∈ {capability, reject}`
-  records which kind of target the row has.
+  positional prior.
+- `gold_index` marks the target slot within the row's actual option count and
+  `target_kind ∈ {capability, reject}` records which kind of target the row has.
 
-Because the model now always sees four options, **a caller must render the `REJECT` card**.
-A 3-option question does not match the trained pipeline and its scores are not meaningful.
+**Historical run.** The formal run recorded in this document used the earlier flat 4-way
+build: every row carried three capability cards plus one `REJECT` card, and
+`gold_index ∈ {0,1,2,3}`. That build is the source of the measured numbers below. The
+installed `data/recall_threshold_*` bundles are V4 (dynamic K+1); no V4 training run is
+recorded here.
+
+In both builds, **a caller must render the `REJECT` card**. A question without it does not
+match the trained pipeline and its scores are not meaningful.
 
 ## 4. Base Model
 
@@ -77,16 +94,17 @@ pinned to an exact revision and to `laya==0.3.21`.
 
 ## 5. Dataset Definition
 
-**LayaChoice-v2** is the v1 capability-selection benchmark extended to a 4-way choice. It
-is derived from the frozen v1 bundle (`B_noprov` view), not rebuilt from the Registry:
+**LayaChoice-v2** is the v1 capability-selection benchmark extended with a `REJECT` option.
+Its current contract is dynamic K+1; the formal run recorded here used the flat 4-way build.
+It is derived from the frozen v1 bundle (`B_noprov` view), not rebuilt from the Registry:
 
 | | |
 |---|---|
 | Card view | `B_noprov` — the production card with the `query examples:` block and the `evidence:` provenance line removed |
-| Candidates per row | **K = 3** capability cards **+ 1 `REJECT` card** (`OPTION_SLOTS = 4`) |
-| Capabilities | 17 + `REJECT` = 18 possible target slots |
+| Candidates per row | **Current V2: K capability cards (0..3) + 1 `REJECT` card, 1..4 options.** Formal run: **K = 3 + `REJECT`** (`OPTION_SLOTS = 4`) |
+| Capabilities | 17 + `REJECT` = 18 possible target slots in the formal run; the current Registry has 18 active capabilities (see §9) |
 | Languages | `zh` / `en` |
-| Row shape | `{id, lang, state, order[4], options[4], gold, gold_index, target_kind, part, …}` |
+| Row shape | Current V2: `{id, lang, state, order[K+1], options[K+1], gold, gold_index, target_kind, part, …}`; formal run: `order[4]`, `options[4]` |
 
 The `REJECT` card text is frozen for all rows:
 
@@ -154,21 +172,22 @@ Source (v1) bundles the construction read from:
 
 ## 8. Candidate Contract
 
-The production contract the model is trained and benchmarked under — **3 capabilities +
-`REJECT`, always**:
+V1 is fixed at **K = 3**. V2's current contract is **dynamic K+1**: the model receives K
+capability cards plus one `REJECT` card, and emits a choice over **K + 1 options (1..4)**.
 
 | Candidate count | Behaviour |
 |---|---|
-| K = 0 | never enters LayaChoice (funnel short-circuits) |
-| K = 1 | the business layer executes it directly, LayaChoice is not called |
-| K = 2 | LayaChoice (capabilities) — **not measured by v2** |
-| K = 3 | LayaChoice — the trained and measured case (`+ REJECT`) |
-| K ≥ 4 | the business layer truncates to top-3 **first**, then LayaChoice |
+| K = 0 | caller short-circuits on the empty set; LayaChoice is not called |
+| K = 1 | 2 options (1 capability + `REJECT`) |
+| K = 2 | 3 options (2 capabilities + `REJECT`) |
+| K = 3 | 4 options (3 capabilities + `REJECT`) — the formal-run case |
+| K ≥ 4 | the business layer truncates to top-3 **first** (`normalize_top_k`), then LayaChoice |
 
-**Production candidate normalization must happen before LayaChoice**, not inside it. v2 is
-trained and measured at exactly three capability candidates **plus the `REJECT` card**; K=2
-and K≥4 post-truncation are **not** exercised by any number in this document. A caller must
-render `REJECT` as a fourth criteria.
+**Production candidate normalization must happen before LayaChoice**, not inside it. The
+formal run recorded here was trained and measured at exactly three capability candidates
+**plus the `REJECT` card**; K=0..2 and K≥4 post-truncation are **not** exercised by any
+number in this document. The current dynamic bundle (V4) has not been trained. In every
+case, a caller must render `REJECT` as one of the criteria.
 
 ## 9. Token Budget
 
@@ -182,12 +201,376 @@ The frozen configuration:
 | Constant | Value | Meaning |
 |---|---|---|
 | `OPTION_MAX_TOKENS` | **256** | per-option hard cap (capability cards and `REJECT`) |
-| `HEAD_MAX_LEN` | **768** | budget the question head **and all four options share** |
+| `HEAD_MAX_LEN` | **768** | budget the question head **and all options (up to four) share** |
 | `MAX_LEN` | **1024** | whole-sequence ceiling |
 
+### Capability Card Token Audit and Compression
+
+#### Budget Rationale
+
+The three constants constrain different levels of one input sequence and must not be
+treated interchangeably:
+
+- `OPTION_MAX_TOKENS = 256` — a **hard per-option cap**. It applies independently to each
+  capability card and to the `REJECT` card.
+- `HEAD_MAX_LEN = 768` — a **shared budget**, not a per-card length. The question head and
+  all options (K + 1, up to four) draw from this one pool
+  (`opt_budget = head_max_len − Σoptions`). When the pool drops below 16 tokens the
+  even-share fallback shrinks the options and the instruction head together.
+- `MAX_LEN = 1024` — the ceiling on the **complete assembled sequence**, including the
+  `[CLS]`, question head, option markers, option cards, serialized state and `[SEP]`.
+  State text is right-truncated at this level.
+
+The library default for the per-option cap is 48 tokens (`laya.common.build_sequence`
+hard-codes `max_length=48`). The frozen `B_noprov` cards are longer than that, so the cap
+is raised to 256 in both the training builder and the serving builder. This does not
+change the meaning of `HEAD_MAX_LEN` or `MAX_LEN`: it only lifts the per-option ceiling
+inside the shared head+options budget.
+
+#### Capability Card Token Statistics
+
+**Audit method.**
+
+- **Source:** `data/db_export/capabilities.jsonl`, the working-tree export of the live
+  Registry (18 active capability cards, plus the separate `REJECT` card).
+- **Renderer:** the production `render_card()` in
+  `packages/core/application/chat/intent_funnel/cap_router/card_renderer.py`.
+- **Tokenizer:** the project's actual Laya multilingual tokenizer at the pinned base
+  revision, called the same way `build_sequence` calls it (`add_special_tokens=False` on
+  `" " + card`; truncation at `OPTION_MAX_TOKENS`).
+- **Count unit:** text tokens per option card. Counts exclude the leading `[MASK]` marker;
+  an option slot in the assembled sequence therefore carries one extra token.
+- **Live DB:** not queried during this audit (no database was available); the export may lag
+  the live table.
+
+This is not a re-measurement of the frozen v2 training bundle. That run documented 17
+capabilities and cards of 136–230 tokens, which is why the "no option card is truncated"
+statement above holds for the released experiment. The current Registry has 18 active
+capability cards; the longest, `cap-vision` and `cap-read-document`, measure 224 tokens and
+fit within the 256-token cap. Which capability was absent from the frozen 17-card set has
+not been verified and is not asserted here.
+
+| Capability card | Raw tokens | Per-option cap |
+|---|---:|---:|
+| `cap-vision` | **224** | 256 |
+| `cap-read-document` | 224 | 256 |
+| `cap-rag-search` | 216 | 256 |
+| `cap-social-search` | 205 | 256 |
+| `cap-add-term` | 204 | 256 |
+| `cap-pdf-extract-text` | 195 | 256 |
+| `cap-web-search` | 193 | 256 |
+| `cap-pdf-table-to-text` | 191 | 256 |
+| `cap-edit-file` | 166 | 256 |
+| `cap-translate` | 164 | 256 |
+| `cap-create-folder` | 148 | 256 |
+| `cap-slides` | 148 | 256 |
+| `cap-bash` | 147 | 256 |
+| `cap-mindmap` | 147 | 256 |
+| `cap-artifact` | 144 | 256 |
+| `cap-summary` | 141 | 256 |
+| `cap-read-file` | 84 | 256 |
+| `cap-research` | 40 | 256 |
+
+All 18 cards fit within the 256-token per-option budget. `cap-vision` and
+`cap-read-document` are the longest at 224 tokens; `cap-rag-search` is 216 and
+`cap-social-search` is 205. The remaining cards are at or below 204.
+
+#### Full Card Prompts
+
+The card texts below are the measured final forms used for the token counts.
+
+##### `cap-vision` (224 tokens)
+
+```
+### cap-vision
+tool: vision
+does: Analyze an image (screenshot, chart, photo, diagram). Use it when the user asks what an image contains or means. Not for reading text documents or extracting PDF text.
+
+中文：分析附件或阅读器中的图片（截图、图表、照片、示意图），回答图里有什么或表达什么。不适用于 PDF 或文本文档。
+negative examples:
+- (none curated)
+params:
+- page (integer, optional): 1-based PDF page to render and read; omitted -> the page open in the viewer (a multi-page PDF with no page in view is refused)
+- region (object, optional): optional sub-region of the rendered page as fractions {x, y, w, h} (0..1, top-left origin)
+- asset_id (string, required, max_len=64): asset id of the attached/opened image (from turn facts, not the sentence)
+- question (string, optional): optional question about the image, copied from the sentence
+```
+
+##### `cap-social-search` (205 tokens; parameter block 73)
+
+```
+### cap-social-search
+tool: search_social
+does: Search social platforms such as Reddit for discussions, recommendations, and user opinions. Use it when the user asks what people or online communities are saying on a social platform. It does not apply to general public-web search or searches over the user's own materials.
+
+中文：在 Reddit 等社交平台上搜索大家的讨论、推荐与评价。当用户点名社交平台，或要“社区／论坛里大家怎么说、网友评价”时适用。一般网页搜索、搜索用户自己的资料，都不属于它。
+negative examples:
+- (none curated)
+params:
+- limit (integer, optional): max results per platform; only if stated
+- query (string, required): search topic copied verbatim; do not rewrite, translate or expand
+- platform (string, optional): reddit / x / zhihu; omit unless named
+- subreddit (string, optional): reddit-only scope; omit unless named
+```
+
+##### `cap-read-document` (224 tokens)
+
+```
+### cap-read-document
+tool: read_document
+does: Read and understand the structured content of a resolved document asset. Use it when the user asks to read a document and answer questions based on its contents. It does not apply to exporting the document's raw text, extracting only tables, or reading a workspace-local file by path.
+
+中文：阅读当前附件或阅读器中已打开的那份文档的结构化内容，可用于回答关于该文档的问题。当用户要“读这份文档／通读它并据此作答”时适用。把文档原文整段导出、或只转表格，都不属于它；按路径读工作区里的普通文件也不属于它。
+negative examples:
+- (none curated)
+params:
+- pages (string, optional): optional page/slide spec like "2" or "1-3"; only when the sentence states one
+- asset_id (string, required, max_len=64): asset id of the attached/opened document (from turn facts, not the sentence)
+```
+
+##### `cap-rag-search` (216 tokens)
+
+```
+### cap-rag-search
+tool: rag_search
+does: Search the user's own imported materials or document library. Use it when the user asks to find information in their imported or uploaded materials. It does not apply to public-web search or social-platform search.
+
+中文：在用户自己导入的材料（个人文档库、已上传的资料）里检索内容。当用户要在“我导入的资料／我的资料库”中查找某个问题时适用。搜索公开网络、或搜索社交平台，都不属于它。
+negative examples:
+- (none curated)
+params:
+- query (string, required): the user's search TOPIC, extracted from the sentence and kept VERBATIM — do not rewrite, translate, summarize, expand or paraphrase
+- top_k (integer, optional): optional result count; only when the sentence states one
+- domain (string, optional): optional domain NAME to scope the search to (resolved to a real domain id by the tool); only when the sentence names one
+```
+
+##### `cap-add-term` (204 tokens)
+
+```
+### cap-add-term
+tool: add_term
+does: Add a word, term, or expression to a named vocabulary domain. Use it when the user asks to add or save a term to their vocabulary, glossary, or vocabulary list. It does not apply to creating files or folders or editing existing file content.
+
+中文：把一个词、术语或表达收进用户词汇库（生词本、术语表、词库里的某个命名域）。当用户要求将某个词、术语或表达加入/收录到词汇库的指定命名域时适用。它只新增一条词汇记录；新建文件或文件夹、修改已有文件的内容，都不属于它。
+negative examples:
+- (none curated)
+params:
+- term (string, required, max_len=120): the word/term to add, quotes removed
+- domain (string, required, max_len=60): the vocabulary domain to add it into
+```
+
+##### `cap-pdf-extract-text` (195 tokens)
+
+```
+### cap-pdf-extract-text
+tool: pdf_extract_text
+does: Extract the complete raw text from an attached or resolved document. Use it when the user asks to extract or export the document's full text. It does not apply to extracting only tables or to reading and understanding the document for question answering.
+
+中文：提取附件/已解析文档的完整原始文字内容。当用户要求提取全文或导出文档原始文字时适用。只转换表格的应交给表格转换；要求理解、阅读并据此回答问题的，不属于它。
+negative examples:
+- (none curated)
+params:
+- pages (string, optional): optional page spec like "2" or "1-3" from the viewer context; omitted = whole document
+- asset_id (string, required, max_len=64): asset id of the attached/opened document (from turn facts, not the sentence)
+```
+
+##### `cap-web-search` (193 tokens)
+
+```
+### cap-web-search
+tool: web_search
+does: Search the public web for external information, including webpages, reference material, news, and current information. Use it when the user asks to search or look up information on the internet. It does not apply to searching the user's own materials or searches restricted to a specific social platform.
+
+中文：在公开互联网上搜索外部信息，包括网页、资料、新闻和时事。当用户要求上网查找公开网络信息时适用。搜索用户自己的资料或限定在特定社交平台上搜索，不属于它。
+negative examples:
+- (none curated)
+params:
+- query (string, required): the user's search TOPIC, extracted from the sentence and kept VERBATIM — do not rewrite, translate, summarize, expand or paraphrase
+- top_k (integer, optional): optional number of results; only when the sentence states one
+```
+
+##### `cap-pdf-table-to-text` (191 tokens)
+
+```
+### cap-pdf-table-to-text
+tool: pdf_table_to_text
+does: Convert tables inside an attached PDF into text while preserving their row and column structure. Use it when the user explicitly asks to convert PDF tables to text or CSV. It does not apply to extracting the full document text.
+
+中文：只把附件 PDF 里的表格转换为文字，并保留行列结构。当用户明确要求“把这份 PDF 里的表格转成文字／CSV”时适用。提取整份文档的全文不属于它。
+negative examples:
+- (none curated)
+params:
+- pages (string, optional): optional page spec like "2" or "1-3" from the viewer context; omitted = whole document
+- asset_id (string, required, max_len=64): asset id of the attached/opened document (from turn facts, not the sentence)
+```
+
+##### `cap-edit-file` (166 tokens)
+
+```
+### cap-edit-file
+tool: edit_file
+does: Modify the contents of an existing workspace-local file. Use it when the user asks to change, replace, update, or write content in an existing file. It does not apply to only reading a file, creating a folder, or adding a term to a vocabulary domain.
+
+中文：修改工作区里某个已存在文件的内容——替换其中一段文字，或写入新内容。当用户要求“改动／更新／替换某个文件里的内容”时适用。只读取文件、新建文件夹、把词存进词汇库，都不属于它。
+negative examples:
+- (none curated)
+params:
+- type (string, optional)
+- required (string, optional)
+- properties (string, optional)
+```
+
+##### `cap-translate` (164 tokens)
+
+```
+### cap-translate
+tool: translate
+does: Translate provided text from one language into another. Use it when the user explicitly asks to translate text into a different language. It does not apply to summarizing, explaining, or rewriting text in the same language.
+
+中文：把给定文本从一种语言翻译成另一种语言。当用户要求“翻译成某种语言”时适用，附件或引用中的文字同样可以翻译。要求总结、解释或同语言改写的，都不属于它。
+negative examples:
+- (none curated)
+params:
+- text (string, required): the text to translate, copied from the sentence
+- target_language (string, optional): optional target language name (e.g. "English", "Chinese"); omitted -> executor default (English)
+```
+
+##### `cap-create-folder` (148 tokens)
+
+```
+### cap-create-folder
+tool: create_folder
+does: Create a new folder with an explicit name in the workspace. Use it when the user asks to create or make a folder or directory. It does not apply to creating or editing files, renaming existing folders, or adding terms to a vocabulary domain.
+
+中文：新建一个名称明确的文件夹（目录、子文件夹）。当用户要求“新建／创建文件夹”时适用。新建文档或文件、给已有文件夹改名、把词收进词汇库，都不属于它。
+negative examples:
+- (none curated)
+params:
+- name (string, required, max_len=120): the folder name, quotes removed
+```
+
+##### `cap-slides` (148 tokens)
+
+```
+### cap-slides
+tool: slides_gen
+does: Create a slide deck with a canonical 16:9 PDF plus Marp and .pptx exports. Use it when the user asks for slides, a presentation, or a PowerPoint deck. It does not apply to summaries, mind maps, or published research PDF artifacts.
+
+中文：把材料做成幻灯片：输出正式的 16:9 PDF，并同时导出 Marp 与 .pptx。当用户要“PPT／演示文稿／slides”时适用。要摘要、思维导图或研究 PDF 成果物的，都不属于它。
+negative examples:
+- (none curated)
+params: none (arguments must be {})
+```
+
+##### `cap-bash` (147 tokens)
+
+```
+### cap-bash
+tool: bash
+does: Execute a command or script in the workspace sandbox. Use it when the user explicitly asks to run or execute a command or script. It does not apply when the user only wants to read a file or edit file contents.
+
+中文：在工作区沙箱中执行用户明确要求运行的命令或脚本。当用户要求“运行／执行某条命令或脚本”时适用。只想读取文件、或只想修改文件内容而没有要求执行命令的，都不属于它。
+negative examples:
+- (none curated)
+params:
+- type (string, optional)
+- required (string, optional)
+- properties (string, optional)
+```
+
+##### `cap-mindmap` (147 tokens)
+
+```
+### cap-mindmap
+tool: mindmap_gen
+does: Create a Mermaid mind map (.mmd) from one or more workspace files. Use it when the user asks for a mind map, brain map, or knowledge tree. It does not apply to producing a written summary, slide deck, or published research PDF.
+
+中文：把一个或多个工作区文件的内容整理成分支结构的 Mermaid 思维导图（.mmd）。当用户要“思维导图／脑图／知识树”时适用。要文字摘要、幻灯片或正式 PDF 成果物的，都不属于它。
+negative examples:
+- (none curated)
+params: none (arguments must be {})
+```
+
+##### `cap-artifact` (144 tokens)
+
+```
+### cap-artifact
+tool: artifact
+does: Compile a research artifact into a formally published PDF. Use it when the user explicitly asks to compile, generate, or publish research results as a final PDF artifact. It does not apply to ordinary slide decks, summaries, or mind maps.
+
+中文：将研究成果物编译为正式发布的 PDF。当用户明确要求将研究成果编译、生成或发布为正式 PDF 成果物时适用。普通幻灯片、摘要、思维导图不属于它。
+negative examples:
+- (none curated)
+params:
+- type (string, optional)
+- required (string, optional)
+- properties (string, optional)
+```
+
+##### `cap-summary` (141 tokens)
+
+```
+### cap-summary
+tool: summary_gen
+does: Generate a grounded Markdown research summary with [file:line] citations. Use it when the user asks to summarize, condense, or extract key points from the available research materials. It does not apply to creating slides, mind maps, translations, or published research PDF artifacts.
+
+中文：把本轮材料提炼成带有出处的 Markdown 摘要。当用户要“总结／概括要点／提炼重点”时适用。要幻灯片、思维导图、翻译或研究 PDF 成果物的，都不属于它。
+negative examples:
+- (none curated)
+params: none (arguments must be {})
+```
+
+##### `cap-read-file` (84 tokens)
+
+```
+### cap-read-file
+tool: read_file
+does: Read the contents of an existing file from the workspace or My Drive using its path. It does not apply to attachments or viewer documents, or to image analysis.
+negative examples:
+- (none curated)
+params:
+- type (string, optional)
+- required (string, optional)
+- properties (string, optional)
+```
+
+##### `cap-research` (40 tokens)
+
+```
+### cap-research
+tool: research
+does: Multi-step Research OS project driver (plugin).
+negative examples:
+- (none curated)
+params: none (arguments must be {})
+```
+
+#### Validation and Follow-up
+
+Verified in this audit:
+
+- All 18 cards were rendered with the production `render_card()` from the Registry export
+  in the working tree (`data/db_export/capabilities.jsonl`).
+- Token counts use the project's actual Laya multilingual tokenizer at the pinned base
+  revision, with the same call shape the sequence builder uses.
+- All 18 cards fit within the 256-token cap. `cap-vision` and `cap-read-document` are the
+  longest at 224 tokens; `cap-rag-search` is 216 and `cap-social-search` is 205; the
+  remaining 14 are ≤204.
+- The card texts above were each rendered with the production `render_card()` and tokenized
+  in full.
+- The card texts preserve every slot name, type, requiredness, `max_len` and extraction
+  constraint.
+
+Pending or unverified:
+
+- The live Registry was not queried during this audit (no database was available). The
+  numbers come from the working-tree export and could lag the live table.
+- No capability definition, migration, training row or model artifact was modified.
+
 `head_max_len` is a **combined budget**, not a length. At four option slots the
-construction audit confirmed the 256/768/1024 budget is sufficient — **no option card is
-truncated and the `REJECT` card enters the sequence in full**.
+construction audit confirmed the 256/768/1024 budget is sufficient **for the frozen v2
+bundle** — no option card is truncated and the `REJECT` card enters the sequence in full.
+The current-Registry measurements above also fit within the per-card cap.
 
 **Deployment consequence:** a stock `laya` install renders at 48 tokens per option and
 `head_max_len=256`. Reproducing v2's behaviour requires applying the same override before
@@ -410,13 +793,13 @@ What must hold for a rerun to be comparable:
    71.93 % / precision 55.78 %; 65 capability rows are wrongly rejected and 32 `REJECT`
    rows are wrongly routed. `REJECT` recall on the small validation split (16 gold rejects)
    is not a reliable estimate.
-3. **K is not validated outside 3 (+ `REJECT`).** K=2 and K≥4 post-truncation are unmeasured;
-   no number here covers either.
-4. **17 capabilities, as of the freeze.** Capabilities added later are out of distribution by
-   construction.
-5. **The model cannot be deployed on the current renderer.** The production `cap_router` and
-   sidecar are v1-shaped and emit no `REJECT` option; v2 requires that option to be rendered
-   (§3, §8). Integration is pending.
+3. **K is not validated outside the formal run's 3 + `REJECT`.** The formal run trained and
+   measured only K=3. The current V4 bundle is dynamic K+1 but has not been trained; K=1..2
+   and K≥4 post-truncation are unmeasured, and no number here covers them.
+4. **17 capabilities in the formal run.** The current Registry has 18 active capability
+   cards; capabilities added after the freeze are out of distribution by construction.
+5. **The released weights were trained on the flat 4-way build.** Serving the current dynamic
+   bundle requires the dynamic adapter; the measured numbers here do not cover that bundle.
 6. **The dataset is synthetic / curated**, not sampled from live traffic (§5).
 7. **EN/ZH only.** No claim is made for any other language.
 8. **Base-model license is undetermined.** The upstream repository went private and its
