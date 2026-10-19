@@ -1,8 +1,0 @@
-2026-10-18T20:47:16Z INFO run_id=full_r1 mode=full
-2026-10-18T20:47:17Z INFO source rows=49241 sha=e39adab214ed26992e26728a9e4c73659d5c924d283454d841abd789187c8445
-2026-10-18T20:47:23Z INFO eligible=48333 excluded=908
-2026-10-18T20:47:23Z INFO selected=48333
-2026-10-18T21:19:16Z INFO embedded 48333 queries in 1912.06s
-2026-10-18T21:20:58Z INFO recall: 48333 queries in 101.81s
-2026-10-18T21:21:22Z INFO ANN exact audit: missing>=0.82=34593, max cap gap=0.16702373
-2026-10-18T21:22:43Z INFO wrote three threshold versions

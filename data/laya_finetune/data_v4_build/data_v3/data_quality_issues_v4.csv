@@ -1,5 +1,0 @@
-﻿issue_id,issue_type,severity,count,source_file,capability_id,detail,handling
-R-NOACTION-REVIEW,no_action_rows_pending_human_review,info,2000,no_action_queries_v1.csv,reject,no_action_queries_v1 review_status=rule_checked_pending_human_review,kept_as_reject
-L-RESEARCH,research_lane_category,review,852,laya_tool_selection_v3.csv,cap-research,"DB intent_kind=research, outside the 17 chat action capabilities",kept_unchanged_flagged_for_human_review
-L-UNKNOWN,language_missing_in_input,info,29241,laya_tool_selection_v3.csv,all,V3 rows from query_list_finetune_v1 have no language column,language_left_empty
-P-EMPTY,parameters_empty_or_not_extracted,info,26572,generated_original_no_action_v1|laya_chat_tool_selection_balanced_18k_v4_params_filled_v2.csv|query_list_finetune_v1.csv,all,parameter extraction is only available for 6 capabilities; asset slots are context-owned,kept_empty_by_design
