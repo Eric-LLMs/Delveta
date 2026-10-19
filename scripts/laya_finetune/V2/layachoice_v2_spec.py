@@ -60,5 +60,14 @@ DECISION_CHUNK = 16
 
 # ── V2 task shape (the only values that differ from V1) ─────────────────────
 V2_BENCH = "LayaChoice-v2"
-OPTION_SLOTS = 4                       # 3 capability cards + 1 REJECT card
-REJECT_LABEL = "REJECT"                # the 4th option's label and capability id
+OPTION_SLOTS = 4                       # frozen V2: 3 capability cards + 1 REJECT card
+REJECT_LABEL = "REJECT"                # the REJECT option's label and capability id
+
+# ── dynamic option carry (V4) ──────────────────────────────────────────────
+# The ONLY contract change allowed for V4: the option count is K+1 instead of a
+# fixed 4. Everything else (schema, labels, REJECT construction, card text,
+# token budget) stays V2. MIN=1 is the K=0 case: one REJECT option.
+MIN_OPTION_SLOTS = 1
+MAX_OPTION_SLOTS = 4
+DYNAMIC_OPTION_SLOTS = {"rule": "K+1", "min": MIN_OPTION_SLOTS,
+                        "max": MAX_OPTION_SLOTS}

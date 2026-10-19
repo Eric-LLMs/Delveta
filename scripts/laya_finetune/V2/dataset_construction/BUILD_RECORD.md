@@ -163,6 +163,8 @@ changes outside this backup task.
 ## 8. Post-build archive layout
 
 The complete original build tree is archived at
-`data/laya_finetune/data_v4_build/full_r1/`. The dataset copy installed for
-the training layout is `scripts/laya_finetune/V2/data/`. The two copies are
+`data/laya_finetune/data_v4_build/full_r1/`. The upstream V3/V4 source-CSV
+build scripts, statistics and intermediate CSVs are archived at
+`data/laya_finetune/data_v4_build/data_v3/`. The dataset copy installed for
+the training layout is `scripts/laya_finetune/V2/data/`. The copies are
 independent; no symlinks are used.

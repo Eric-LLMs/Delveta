@@ -120,9 +120,9 @@ def build_item(tok, ex: V2Example, instructions: str,
                max_len: int = S.MAX_LEN, head_max_len: int = S.HEAD_MAX_LEN) -> dict:
     """One example -> the tensor payload for the model, plus its one-hot target.
 
-    ``target[gold_index]`` is the single positive slot (the task is flat 4-way:
-    3 capability classes + REJECT — REJECT is a normal class, not a separate
-    NONE head).
+    ``target[gold_index]`` is the single positive slot over the row's ACTUAL
+    option count: K recalled capability cards (0..3) plus REJECT. REJECT is a
+    normal class, not a separate NONE head.
     """
     q = question_of(ex, instructions)
     ids, markers = build_sequence(tok, ex.state, q, max_len, head_max_len)

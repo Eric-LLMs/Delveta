@@ -11,7 +11,7 @@ Three arms, each writing the COMPLETE per-row result, never only a summary:
   --benchmark           the best checkpoint on the frozen Test split, with the fitted
                         temperature.
 
-The task is flat 4-way (3 capability classes + REJECT), so the report adds the
+Each row carries K capability cards (0..3) plus REJECT, so the report adds the
 REJECT block next to top-1: how often a genuinely-unanswerable row is rejected,
 and how often a capable query is wrongly rejected.
 

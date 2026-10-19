@@ -5,18 +5,18 @@ plus a small scoring head that picks one option out of a question's `criteria` d
 directory fine-tunes the **multilingual** checkpoint on **LayaChoice-v2**, and measures the
 result against the same checkpoint un-finetuned on the same frozen test set.
 
-v2 extends the v1 capability-selection task from 3-way to **4-way**: every question shows
-**three capability cards plus one `REJECT` card** (`OPTION_SLOTS = 4`), so the model can
-abstain when the correct capability is not among the candidates. `REJECT` is a normal fourth
-option — trained directly, not a threshold and not a post-hoc rule. The base checkpoint,
-token budget, seeds and training hyper-parameters are the frozen v1 values; **v2 differs from
-v1 only in the dataset/task**, never by silently re-tuning the recipe.
+The task is dynamic capability selection: every question shows the **K real recalled
+capability cards (0..3) plus one `REJECT` card**, so a row has **K+1 options (1..4)**. The
+model can abstain when the correct capability is not among the candidates. `REJECT` is a
+normal option — trained directly, not a threshold and not a post-hoc rule. `OPTION_SLOTS = 4`
+remains the frozen flat-v2 constant; the adapter and loader validate the actual K+1 count
+(`MIN_OPTION_SLOTS = 1`, `MAX_OPTION_SLOTS = 4`). The base checkpoint, token budget, seeds
+and training hyper-parameters are the frozen v1 values; only the dataset/task differs.
 
-> **Production integration status.** The production `cap_router` card renderer and the
-> `deploy/laya` sidecar still render the 3-option **v1** question and emit no `REJECT`
-> criteria, so v2 is **not yet wired into production**. A caller must render the `REJECT`
-> card as a fourth criteria; a 3-option question does not match the trained pipeline and its
-> scores are not meaningful.
+> **Production integration.** `cap_router.card_renderer.render_choice_question` renders the
+> same instructions, the K capability cards and the frozen `REJECT` card, and
+> `deploy/laya/layachoice_sequence` builds the same token sequence as the training path.
+> `tests/test_laya_v4_prompt_parity.py` pins that training/serving parity.
 
 ```
 scripts/laya_finetune/V2/
@@ -32,19 +32,22 @@ scripts/laya_finetune/V2/
   layachoice_v2_finetune.py     stage 2: --train / --fit-temperature / --export
   layachoice_v2_eval.py         stage 3: --baseline-zero-shot / --select / --benchmark
   layachoice_v2_verify.py       bundle verifier: hashes, schema, labels, splits, calibration
-                                (stdlib only — no GPU, no tokenizer, no network)
+                                (stdlib only — no GPU, no tokenizer, no network; V2 flat-4
+                                layout only)
   plot_val_curves.py            analysis: per-epoch Val curves -> PNGs + val_metrics.csv
                                 (reads val_metrics.json only; Test is never read)
   val_metrics.json              the frozen per-epoch Val metrics the plot reads (run record)
-  data/                         the frozen bundle, self-contained and also the GitHub backup
-    v2_{train,val,test}.jsonl   the three splits
-    manifest.json               row counts, calibration ids, part/language counts, base revision
-    v2_build_report.json        the construction report
-    v2_construction_audit.jsonl the per-row construction audit
-    SHA256SUMS                  sha256 of each bundle file (computed from the files above)
-  frozen_backup/                the pre-adjustment Test split and its SHA256 record
-    v2_test_1800_pre_adjustment.jsonl
-    FROZEN_SHA256.json
+  data/                         the installed V4 bundle, one directory per threshold
+    recall_threshold_{082,085,088}/
+        v2_{train,val,test}.jsonl   the three splits
+        manifest.json               row counts, calibration ids, K+1 option bounds, base revision
+        construction_audit.jsonl    the per-row construction audit (pre-repair evidence)
+        direct_reject.jsonl         the pre-repair direct-reject rows
+    capability_ids.json, capability_max_scores.npy, query_embedding_ids.json,
+    ann_coverage_audit.json, boundary_cases.jsonl, sample_manifest.csv, SHA256SUMS
+    (shared evidence; the full archive under data/laya_finetune/data_v4_build/
+    also keeps query_embeddings.npy and shared_retrieval_evidence.jsonl)
+  dataset_construction/         the V4 build archive (BUILD_RECORD.md, scripts, inputs)
   out/                          run artifacts (not committed)
 ```
 
@@ -128,7 +131,7 @@ Fine-tuning uses `transformers` + `torch` directly, not PEFT or the Trainer, bec
 |---|---|
 | checkpoint | `convaiinnovations/laya`, subfolder `multilingual`, revision `55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851` (asserted on load) |
 | encoder | `jhu-clsp/mmBERT-base`, 322 M params, ctx 1024 |
-| items | `build_sequence` → `{ids, markers, qtype=QTYPES["choice"], target, label}`; a one-hot target at `gold_index`, `label = gold_index`, over four slots (3 capabilities + `REJECT`) |
+| items | `build_sequence` → `{ids, markers, qtype=QTYPES["choice"], target, label}`; a one-hot target at `gold_index`, `label = gold_index`, over the row's K+1 slots (K capabilities + `REJECT`) |
 | loss | `loss_rl + 1.0*loss_ce`, where `loss_rl` is a GRPO-style group-advantage term over `proper_reward` (log score + 0.75·spherical) at `GROUP_SIZE=4`, and `loss_ce` is a masked cross-entropy on the gold slot |
 | noise | `eps ~ N(0, sigma²)` zero-mean-projected onto the simplex-perpendicular and masked; `sigma` 0.4 → 0.1 across epochs; the advantage is standardized within the group |
 | optim | `AdamW([{encoder: 2.5e-5}, {head: 1.0e-4}], weight_decay=0.01)`, `CosineAnnealingLR(T_max=updates, eta_min=1e-6)`, `clip_grad_norm_(1.0)` |
@@ -145,17 +148,18 @@ label. The `REJECT` card text is frozen for all rows:
 
 ### How v2 differs from v1
 
-1. **A fourth, `REJECT` option.** Every row is a flat 4-way classification; the model assigns
-   the abstain class probability mass directly instead of deriving it from a threshold.
-2. **A per-row deterministic 4-way shuffle** (seed prefix `reject-shuffle-v1`, recorded in
+1. **An explicit `REJECT` option.** The model assigns the abstain class probability mass
+   directly instead of deriving it from a threshold.
+2. **A per-row deterministic K+1 shuffle** (seed prefix `reject-shuffle-v1`, recorded in
    each row's `shuffle` field), so the model cannot learn a positional prior.
-3. **The target is positional.** `gold_index ∈ {0,1,2,3}` marks the target slot and
-   `target_kind ∈ {capability, reject}` records the row's kind; the model input is exactly
-   `{state, order, options}`, and every other frozen key (`part`, `source_query_id`, `src_sha`,
-   `shuffle`, `lang`, `gold_index`, `target_kind`, `gold_capability_id`, `reject_index`) is
-   metadata that **never enters the sequence**.
-4. **A larger, re-frozen bundle** (Train 2 112 / Val 300 / Test 1 400), including a
-   Test→Train adjustment (see *Pipeline*).
+3. **The target is positional.** `gold_index` marks the target slot within the row's actual
+   option count and `target_kind ∈ {capability, reject}` records the row's kind; the model
+   input is exactly `{state, order, options}`, and every other frozen key (`part`,
+   `source_query_id`, `src_sha`, `shuffle`, `lang`, `gold_index`, `target_kind`,
+   `gold_capability_id`, `reject_index`) is metadata that **never enters the sequence**.
+4. **A dynamic bundle.** V4 carries 48,333 rows per threshold (train 36,197 / val 2,407 /
+   test 9,729) with K ∈ 0..3, including an in-place K=0→K=1 repair; see
+   `dataset_construction/BUILD_RECORD.md`.
 
 Everything else — base, seeds, optimiser, loss, noise, token budget — is the frozen v1
 recipe, deliberately unchanged so v2 is comparable to v1 in every respect except the task.
@@ -168,7 +172,7 @@ export paths read them from), so the three can never render the input differentl
 | | |
 |---|---|
 | `OPTION_MAX_TOKENS` | **256** — the per-option hard cap (capability cards and `REJECT`) |
-| `HEAD_MAX_LEN` | **768** — the budget the question head and **all four options share** |
+| `HEAD_MAX_LEN` | **768** — the budget the question head and **all options share** |
 | `MAX_LEN` | **1024** — the whole-sequence ceiling |
 
 **Why 256 and not the library's 48.** `laya.common.build_sequence` hard-codes
@@ -266,6 +270,10 @@ the length-3 `temperature`, and `temperature_by_options` dropped), then reloads 
 agree. fp32 ≈ 1.29 GB, fp16/bf16 ≈ 645 MB.
 
 ## Results
+
+> **Historical run.** This section records the flat 4-way v2 bundle. The installed
+> `data/recall_threshold_*` bundles are V4 (dynamic K+1); no V4 training run has been
+> recorded yet.
 
 Best epoch 7 (selected on Validation v3 top-1 only), calibrated temperature `[5.0, 1.0, 1.0]`,
 on the frozen Final Test v3 (1 400 rows):

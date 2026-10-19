@@ -2,8 +2,12 @@
 """LayaChoice-v2 dataset contract — adapter + loader.
 
 The V2 bundle is the accepted 4-way task: every row carries three capability
-cards plus one REJECT card. This module owns the dataset contract ONLY — it never
-touches a tokenizer or a model.
+cards plus one REJECT card. V4 keeps the exact same schema and label semantics
+but carries K capability cards plus one REJECT card, where K is the real number
+of recalled candidates (0..3), so a row has K+1 options (1..4). The adapter and
+loader validate the actual option count; nothing else about the contract moves.
+This module owns the dataset contract ONLY — it never touches a tokenizer or a
+model.
 
 Two responsibilities live here because they share one frozen schema:
 
@@ -16,9 +20,10 @@ Two responsibilities live here because they share one frozen schema:
     and proves each split still describes the frozen manifest (row count, split
     tag, and every row's source sha declared for that split).
 
-``gold_index`` (0..3) is the FINAL target position — the slot the model must pick.
-For a ``capability`` row that slot holds the gold capability; for a ``reject`` row
-it holds the REJECT card (and equals ``reject_index``).
+``gold_index`` is the FINAL target position — the slot the model must pick. For
+a ``capability`` row that slot holds the gold capability; for a ``reject`` row it
+holds the REJECT card (and equals ``reject_index``). The index is validated
+against the row's ACTUAL option count, never a hard-coded 4.
 """
 from __future__ import annotations
 
@@ -106,9 +111,13 @@ def adapt_row(raw: dict) -> V2Example:
 
     order = tuple(raw["order"])
     options = tuple(raw["options"])
-    if len(order) != S.OPTION_SLOTS or len(options) != S.OPTION_SLOTS:
-        raise ValueError(f"{raw['id']}: expected {S.OPTION_SLOTS} options, "
-                         f"got order={len(order)} options={len(options)}")
+    n_options = len(order)
+    if n_options != len(options):
+        raise ValueError(f"{raw['id']}: order/options length mismatch "
+                         f"(order={n_options}, options={len(options)})")
+    if not (S.MIN_OPTION_SLOTS <= n_options <= S.MAX_OPTION_SLOTS):
+        raise ValueError(f"{raw['id']}: expected {S.MIN_OPTION_SLOTS}.."
+                         f"{S.MAX_OPTION_SLOTS} options, got {n_options}")
     if any(not str(o).strip() for o in options):
         raise ValueError(f"{raw['id']}: an option card is empty")
 
@@ -118,8 +127,9 @@ def adapt_row(raw: dict) -> V2Example:
                          f"{raw['reject_index']}, found at {reject_slots}")
 
     gi = raw["gold_index"]
-    if not (0 <= gi < S.OPTION_SLOTS):
-        raise ValueError(f"{raw['id']}: gold_index {gi} out of range")
+    if not (0 <= gi < n_options):
+        raise ValueError(f"{raw['id']}: gold_index {gi} out of range "
+                         f"for {n_options} options")
     kind = raw["target_kind"]
     if kind not in TARGET_KINDS:
         raise ValueError(f"{raw['id']}: unknown target_kind {kind!r}")
@@ -142,9 +152,9 @@ def adapt_row(raw: dict) -> V2Example:
 
     shuf = raw["shuffle"]
     perm = tuple(shuf["permutation"])
-    if sorted(perm) != list(range(S.OPTION_SLOTS)):
+    if sorted(perm) != list(range(n_options)):
         raise ValueError(f"{raw['id']}: shuffle permutation {perm} is not a permutation "
-                         f"of 0..{S.OPTION_SLOTS - 1}")
+                         f"of 0..{n_options - 1}")
 
     return V2Example(
         id=str(raw["id"]), source_query_id=str(raw["source_query_id"]),
@@ -158,13 +168,31 @@ def adapt_row(raw: dict) -> V2Example:
     )
 
 
+def option_slot_bounds(manifest: dict) -> tuple[int, int]:
+    """The option-count contract stated by a manifest.
+
+    Frozen V2 declares an integer (4). A dynamic bundle declares the same rule
+    production uses, ``K+1``. Both are validated; an unknown shape is rejected.
+    """
+    slots = manifest.get("option_slots")
+    if isinstance(slots, int) and not isinstance(slots, bool):
+        if slots != S.OPTION_SLOTS:
+            raise RuntimeError(f"manifest option_slots {slots} != {S.OPTION_SLOTS}")
+        return slots, slots
+    if isinstance(slots, dict) and slots.get("rule") == "K+1":
+        lo, hi = slots.get("min"), slots.get("max")
+        if lo != S.MIN_OPTION_SLOTS or hi != S.MAX_OPTION_SLOTS:
+            raise RuntimeError(f"manifest option_slots range {lo}..{hi} != "
+                               f"{S.MIN_OPTION_SLOTS}..{S.MAX_OPTION_SLOTS}")
+        return lo, hi
+    raise RuntimeError(f"manifest option_slots is not a valid contract: {slots!r}")
+
+
 def read_manifest(data_dir: Path = DATA) -> dict:
     manifest = json.loads((data_dir / "manifest.json").read_text(encoding="utf-8"))
     if manifest.get("bench") != S.V2_BENCH:
         raise RuntimeError(f"manifest bench {manifest.get('bench')!r} != {S.V2_BENCH!r}")
-    if manifest.get("option_slots") != S.OPTION_SLOTS:
-        raise RuntimeError(f"manifest option_slots {manifest.get('option_slots')} "
-                           f"!= {S.OPTION_SLOTS}")
+    option_slot_bounds(manifest)
     return manifest
 
 
@@ -188,6 +216,11 @@ def load_split(split: str, data_dir: Path = DATA, limit: int | None = None) -> l
         raise RuntimeError(f"{split}: {len(rows)} rows, manifest says {expected}")
     if {r.split for r in rows} != {split}:
         raise RuntimeError(f"{split}: rows carry a foreign split tag")
+    lo, hi = option_slot_bounds(manifest)
+    out_of_contract = [r.id for r in rows if not lo <= len(r.options) <= hi]
+    if out_of_contract:
+        raise RuntimeError(f"{split}: option count outside manifest contract "
+                           f"{lo}..{hi} for {out_of_contract[:5]}")
     # A split may legitimately draw from more than one frozen source (e.g. after the
     # Test->Train move, Train carries both the train and the test source
     # sha). When the manifest declares the split's provenances, every row must match

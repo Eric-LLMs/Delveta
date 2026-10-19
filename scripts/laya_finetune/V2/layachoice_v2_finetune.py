@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""LayaChoice-v2 — fine-tune the official Laya base on the frozen 4-way task.
+"""LayaChoice-v2 — fine-tune the official Laya base on the frozen choice task.
 
 Trains from the official ORIGINAL base checkpoint
 (convaiinnovations/laya@55cf4c4e/multilingual), never from a v1 checkpoint.
 The recipe (token budget, base, seeds, hyper-parameters) matches the accepted
-v1 run; V2 differs only in the dataset/task (4-way: 3 capability + REJECT).
+v1 run; the task differs only in the dataset: K recalled capability cards
+(0..3) plus one REJECT, so each row has K+1 options.
 
 This module owns the model plumbing (base load, decisions, temperature fit,
 the train loop, export) and reuses the dataset contract
