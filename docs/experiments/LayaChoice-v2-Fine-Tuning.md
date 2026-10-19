@@ -231,49 +231,53 @@ inside the shared head+options budget.
 
 **Audit method.**
 
-- **Source:** `data/db_export/capabilities.jsonl`, the working-tree export of the live
-  Registry (18 active capability cards, plus the separate `REJECT` card).
+- **Source:** the live Registry (`capabilities`, 18 enabled cards), read through the same
+  loader the serving path uses (`registry.store.list_capabilities`).
 - **Renderer:** the production `render_card()` in
   `packages/core/application/chat/intent_funnel/cap_router/card_renderer.py`.
 - **Tokenizer:** the project's actual Laya multilingual tokenizer at the pinned base
   revision, called the same way `build_sequence` calls it (`add_special_tokens=False` on
   `" " + card`; truncation at `OPTION_MAX_TOKENS`).
-- **Count unit:** text tokens per option card. Counts exclude the leading `[MASK]` marker;
-  an option slot in the assembled sequence therefore carries one extra token.
-- **Live DB:** not queried during this audit (no database was available); the export may lag
-  the live table.
+- **Raw tokens:** the card body only, with no `cap-<id>:` label.
+- **Special Tokens:** everything the option slot adds around the card body — the
+  `cap-<id>:` label and the leading `[MASK]` marker. It is measured as Total − Raw, so it
+  varies with the label's tokenization rather than being a fixed 1.
+- **Total tokens:** the complete option encoding that reaches the model — the
+  `cap-<id>:` label, the card body and the `[MASK]` marker — after the 256-token
+  per-option truncation. It is measured, not a sum of the other columns.
+- **Per-option cap:** `OPTION_MAX_TOKENS = 256`.
+
+| Capability card | Raw tokens | Special Tokens | Total tokens | Per-option cap |
+|---|---:|---:|---:|---:|
+| `cap-social-search` | 243 | 7 | 250 | 256 |
+| `cap-read-document` | 224 | 7 | 231 | 256 |
+| `cap-vision` | 224 | 5 | 229 | 256 |
+| `cap-rag-search` | 216 | 7 | 223 | 256 |
+| `cap-add-term` | 204 | 7 | 211 | 256 |
+| `cap-edit-file` | 200 | 7 | 207 | 256 |
+| `cap-pdf-extract-text` | 195 | 9 | 204 | 256 |
+| `cap-web-search` | 193 | 7 | 200 | 256 |
+| `cap-pdf-table-to-text` | 191 | 11 | 202 | 256 |
+| `cap-artifact` | 190 | 5 | 195 | 256 |
+| `cap-translate` | 164 | 5 | 169 | 256 |
+| `cap-bash` | 149 | 5 | 154 | 256 |
+| `cap-create-folder` | 148 | 7 | 155 | 256 |
+| `cap-slides` | 148 | 5 | 153 | 256 |
+| `cap-mindmap` | 147 | 6 | 153 | 256 |
+| `cap-summary` | 141 | 5 | 146 | 256 |
+| `cap-read-file` | 99 | 7 | 106 | 256 |
+| `cap-research` | 40 | 5 | 45 | 256 |
+
+All 18 cards fit within the 256-token per-option budget; no card loses text to
+truncation. `cap-social-search` is the longest (243 raw / 250 total), followed by
+`cap-read-document` (224 / 231) and `cap-vision` (224 / 229). The remaining cards are at or
+below 216 raw tokens.
 
 This is not a re-measurement of the frozen v2 training bundle. That run documented 17
 capabilities and cards of 136–230 tokens, which is why the "no option card is truncated"
 statement above holds for the released experiment. The current Registry has 18 active
-capability cards; the longest, `cap-vision` and `cap-read-document`, measure 224 tokens and
-fit within the 256-token cap. Which capability was absent from the frozen 17-card set has
-not been verified and is not asserted here.
-
-| Capability card | Raw tokens | Per-option cap |
-|---|---:|---:|
-| `cap-vision` | **224** | 256 |
-| `cap-read-document` | 224 | 256 |
-| `cap-rag-search` | 216 | 256 |
-| `cap-social-search` | 205 | 256 |
-| `cap-add-term` | 204 | 256 |
-| `cap-pdf-extract-text` | 195 | 256 |
-| `cap-web-search` | 193 | 256 |
-| `cap-pdf-table-to-text` | 191 | 256 |
-| `cap-edit-file` | 166 | 256 |
-| `cap-translate` | 164 | 256 |
-| `cap-create-folder` | 148 | 256 |
-| `cap-slides` | 148 | 256 |
-| `cap-bash` | 147 | 256 |
-| `cap-mindmap` | 147 | 256 |
-| `cap-artifact` | 144 | 256 |
-| `cap-summary` | 141 | 256 |
-| `cap-read-file` | 84 | 256 |
-| `cap-research` | 40 | 256 |
-
-All 18 cards fit within the 256-token per-option budget. `cap-vision` and
-`cap-read-document` are the longest at 224 tokens; `cap-rag-search` is 216 and
-`cap-social-search` is 205. The remaining cards are at or below 204.
+capability cards. Which capability was absent from the frozen 17-card set has not been
+verified and is not asserted here.
 
 #### Full Card Prompts
 
@@ -296,7 +300,7 @@ params:
 - question (string, optional): optional question about the image, copied from the sentence
 ```
 
-##### `cap-social-search` (205 tokens; parameter block 73)
+##### `cap-social-search` (243 tokens; parameter block 111)
 
 ```
 ### cap-social-search
@@ -307,10 +311,10 @@ does: Search social platforms such as Reddit for discussions, recommendations, a
 negative examples:
 - (none curated)
 params:
-- limit (integer, optional): max results per platform; only if stated
-- query (string, required): search topic copied verbatim; do not rewrite, translate or expand
-- platform (string, optional): reddit / x / zhihu; omit unless named
-- subreddit (string, optional): reddit-only scope; omit unless named
+- limit (integer, optional): optional max results per platform; only when the sentence states one
+- query (string, required): the user's search TOPIC, extracted from the sentence and kept VERBATIM — do not rewrite, translate, summarize, expand or paraphrase
+- platform (string, optional): optional platform (reddit / x / zhihu); only when the sentence names one; OMIT when no specific platform is named
+- subreddit (string, optional): optional reddit-only scope; only when the sentence names one
 ```
 
 ##### `cap-read-document` (224 tokens)
@@ -404,7 +408,7 @@ params:
 - asset_id (string, required, max_len=64): asset id of the attached/opened document (from turn facts, not the sentence)
 ```
 
-##### `cap-edit-file` (166 tokens)
+##### `cap-edit-file` (200 tokens)
 
 ```
 ### cap-edit-file
@@ -415,9 +419,9 @@ does: Modify the contents of an existing workspace-local file. Use it when the u
 negative examples:
 - (none curated)
 params:
-- type (string, optional)
-- required (string, optional)
-- properties (string, optional)
+- path (string, required): Workspace-relative file path, or a drive path "My Drive/<path>".
+- new_text (string, optional): Replacement / new file content.
+- old_text (string, optional): Exact text to replace (optional).
 ```
 
 ##### `cap-translate` (164 tokens)
@@ -462,7 +466,7 @@ negative examples:
 params: none (arguments must be {})
 ```
 
-##### `cap-bash` (147 tokens)
+##### `cap-bash` (149 tokens)
 
 ```
 ### cap-bash
@@ -473,9 +477,8 @@ does: Execute a command or script in the workspace sandbox. Use it when the user
 negative examples:
 - (none curated)
 params:
-- type (string, optional)
-- required (string, optional)
-- properties (string, optional)
+- command (string, required): The shell command to run.
+- timeout (integer, optional): Timeout in seconds.
 ```
 
 ##### `cap-mindmap` (147 tokens)
@@ -491,7 +494,7 @@ negative examples:
 params: none (arguments must be {})
 ```
 
-##### `cap-artifact` (144 tokens)
+##### `cap-artifact` (190 tokens)
 
 ```
 ### cap-artifact
@@ -502,9 +505,9 @@ does: Compile a research artifact into a formally published PDF. Use it when the
 negative examples:
 - (none curated)
 params:
-- type (string, optional)
-- required (string, optional)
-- properties (string, optional)
+- action (string, required): Which action to run. One of: compile_pdf, status.
+- run_id (string, optional): status: the compile run id; compile_pdf: optional replay id override.
+- project_id (string, optional): compile_pdf: research project whose primary manuscript is compiled.
 ```
 
 ##### `cap-summary` (141 tokens)
@@ -520,7 +523,7 @@ negative examples:
 params: none (arguments must be {})
 ```
 
-##### `cap-read-file` (84 tokens)
+##### `cap-read-file` (99 tokens)
 
 ```
 ### cap-read-file
@@ -529,9 +532,8 @@ does: Read the contents of an existing file from the workspace or My Drive using
 negative examples:
 - (none curated)
 params:
-- type (string, optional)
-- required (string, optional)
-- properties (string, optional)
+- path (string, required): Workspace-relative file path, or a drive path "My Drive/<path>".
+- max_chars (integer, optional): Optional read cap.
 ```
 
 ##### `cap-research` (40 tokens)
@@ -549,13 +551,14 @@ params: none (arguments must be {})
 
 Verified in this audit:
 
-- All 18 cards were rendered with the production `render_card()` from the Registry export
-  in the working tree (`data/db_export/capabilities.jsonl`).
+- All 18 cards were rendered with the production `render_card()` from the live Registry
+  (`capabilities`), read through the same loader the serving path uses
+  (`registry.store.list_capabilities`).
 - Token counts use the project's actual Laya multilingual tokenizer at the pinned base
   revision, with the same call shape the sequence builder uses.
-- All 18 cards fit within the 256-token cap. `cap-vision` and `cap-read-document` are the
-  longest at 224 tokens; `cap-rag-search` is 216 and `cap-social-search` is 205; the
-  remaining 14 are ≤204.
+- All 18 cards fit within the 256-token cap. `cap-social-search` is the longest
+  (243 raw / 250 total), followed by `cap-read-document` (224 / 231) and `cap-vision`
+  (224 / 229); the remaining 15 are ≤216 raw tokens.
 - The card texts above were each rendered with the production `render_card()` and tokenized
   in full.
 - The card texts preserve every slot name, type, requiredness, `max_len` and extraction
@@ -563,8 +566,6 @@ Verified in this audit:
 
 Pending or unverified:
 
-- The live Registry was not queried during this audit (no database was available). The
-  numbers come from the working-tree export and could lag the live table.
 - No capability definition, migration, training row or model artifact was modified.
 
 `head_max_len` is a **combined budget**, not a length. At four option slots the
