@@ -352,35 +352,21 @@ agree. fp32 ≈ 1.29 GB, fp16/bf16 ≈ 645 MB.
 
 ## Results
 
-> **Historical run.** This section records the flat 4-way v2 bundle. The installed
-> `data/` bundle is V4 (dynamic K+1, recall_threshold_082); the 085/088 variants are
-> archived under `../data_versions/`.
-
-Best epoch 7 (selected on Validation v3 top-1 only), calibrated temperature `[5.0, 1.0, 1.0]`,
-on the frozen Final Test v3 (1 400 rows):
+`layachoice_v2_082_r1`, V4 bundle (`recall_threshold_082`, four-field input, K+1); best
+epoch 9, selected on Validation only.
 
 | Arm | Top-1 |
 |---|---|
-| Validation v3 (best epoch 7) | 0.966667 = 290/300 |
-| **Final Test v3, fine-tuned** | **0.877857** |
-| EN (692 rows) / ZH (708 rows) | 0.861272 / 0.894068 |
-| capability subset (1 286 rows) | 0.891913 |
-| `REJECT` subset (114 rows) | 0.719298 |
-| zero-shot baseline | compared by `--benchmark --baseline` |
+| Validation (2 407 rows) | 0.996676 |
+| **Final Test (9 729 rows)** | **0.998355** (9 713/9 729) |
+| en / zh / mixed | 0.998197 / 0.998306 / 0.999137 |
+| capability / `REJECT` | 0.998537 / 0.996441 |
+| zero-shot baseline | 0.416795 |
+| delta vs zero-shot | **+0.581560** |
 
-`REJECT` detection on the Final Test (positive class = `REJECT`): recall **0.719298**,
-precision **0.557823**, false-positive rate **0.050544** (TP/FP/FN/TN = 82/65/32/1221).
+`REJECT` recall **0.996441**, precision **0.995261**, false-positive rate **0.000450**
+(TP/FP/FN/TN = 840/4/3/8882). ECE **0.002576**. Temperature `[3.070228, 1.0, 1.0]`.
 
 The Final Test never gates the export: `--export` writes the best checkpoint whether or not it
 beats the zero-shot baseline, and the benchmark's `baseline_comparison.beats_baseline` records
 the verdict.
-
-**Scope.** 0.877857 is **benchmark accuracy on the frozen Final Test v3 split** — a fixed,
-curated, 1 400-row artifact over 17 known capabilities with K=3 + `REJECT` and EN/ZH only. It
-is **not** production-traffic accuracy and **not** open-world generalization. The `REJECT`
-class is the weakest part (65 capability rows wrongly rejected, 32 `REJECT` rows wrongly
-routed). The v1 and v2 splits are **not directly comparable**: v1's 93.56 % was a 3-way,
-900-row split with no `REJECT`; v2's 87.79 % is a harder 4-way split that adds the abstain
-class. The full record — splits, frozen SHA256s, the 10-epoch table, calibration, export
-verification and limitations — is in
-[`docs/experiments/LayaChoice-v2-Fine-Tuning.md`](../../../docs/experiments/LayaChoice-v2-Fine-Tuning.md).
