@@ -42,6 +42,11 @@ configs:
         path: data_versions/recall_threshold_088/test.jsonl
 ---
 
+> **Dataset:** [eric-ml-nlp/Delveta-LayaChoice-v2-Data](https://huggingface.co/datasets/eric-ml-nlp/Delveta-LayaChoice-v2-Data)
+>
+> This directory contains documentation, not the data bundles. Download the JSONL
+> files from the dataset repository above.
+
 # Delveta LayaChoice-v2 Data
 
 ## 1. Dataset Overview
