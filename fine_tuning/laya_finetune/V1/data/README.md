@@ -135,7 +135,9 @@ Delveta-LayaChoice-v1-data/
 │       └── LayaChoice_v1_final_test_raw_v3.jsonl
 ```
 
-Every row is exactly four top-level keys:
+Every row is a four-key record. Only `input` (`query` + `options`) and `label` are training
+fields; `message_id` and `language` are metadata. The split is not stored in the row; the
+containing file name is the authority.
 
 ```json
 {
@@ -154,22 +156,87 @@ Every row is exactly four top-level keys:
 ```
 
 Card bodies are abbreviated above with `…`; the stored strings are complete cards.
-
 Validation is exact-key: a row must have exactly these four keys, `input` must have exactly
-`query` and `options`, `options` must contain exactly three non-empty
-`"<capability_id>: <card>"` strings, the ids must be distinct, and
-`0 <= label < 3`. The loader rejects unknown or missing keys rather than ignoring them.
+`query` and `options`, and the option and label invariants below must hold. The loader
+rejects unknown or missing keys rather than ignoring them.
+
+| Key | Type | Present in every row | Used to build model input / target | Meaning |
+|---|---|---|---|---|
+| `message_id` | string | yes | no — metadata only | Construction sample id; per-split format listed in §6. Never rendered into the model input, target or calibration. |
+| `language` | string | yes | no — metadata only | Resolved language: `en` or `zh`. |
+| `input` | object | yes | yes — model input | Model input container; exactly `query` and `options`. |
+| `label` | integer | yes | yes — scalar class index | 0-based index of the gold option in `input.options`. The selected option is always one of the 17 capability cards. |
+
+All four keys are present in every row, but only `input` and `label` participate in
+training. `message_id` and `language` are metadata: they never enter the model input, the
+target or calibration. `label` is a slot index, not a capability class.
+
+`input` has exactly two keys, both used by the model:
+
+| Key | Type | Present in every row | Used to build model input / target | Meaning |
+|---|---|---|---|---|
+| `input.query` | string | yes | yes — request segment | The user request shown to the model. |
+| `input.options` | list[string] | yes | yes — one `[MASK]` slot each | The exact option texts, in stored option order; exactly 3 entries. |
+
+Each option string is `"<capability_id>: <card>"`. V1 has no empty card and no `REJECT`
+option; all three options are real capability cards.
+
+Three invariants hold for every row:
+
+1. `input.options` has exactly 3 entries, with three distinct capability ids drawn from the
+   17-capability roster in §3.
+2. `0 <= label < len(input.options)`.
+3. The option at `label` is the gold capability card; the other two are hard negatives.
+
+`message_id` is a construction-time sample id (not a fresh uuid4), unique within the bundle.
+It is sample metadata: it never enters the model input, the target or calibration.
+
+### 5.1 Adapter view
+
+The training adapter derives these values from a row:
+
+| Derived value | Source |
+|---|---|
+| `order` | capability id of each option, in stored option order |
+| `options` | card text of each option (the part after `"<id>: "`) |
+| `gold_index` | `label` |
+| `split` | the containing file name (`train` / `val` / `test`) |
+| `d1`, `d2` | the frozen hard-negative pair looked up from `gold`; report-only, never model input or target |
+
+`d1` and `d2` are not stored in the row. They are recovered from the gold capability via the
+frozen distractor table so the benchmark can report hard-negative and confusion rates; see
+§9.
+
+### 5.2 Fields used by training
+
+| Row field | Use |
+|---|---|
+| `input.query` | Appended to the model input as the request segment |
+| `input.options` | Each option is prefixed with one `[MASK]` marker and placed in the head |
+| `label` | Scalar class index over the row's three option slots; expanded at training time to a one-hot vector (length 3) |
+| `message_id` | Metadata only; not model input, not target |
+| `language` | Metadata only; not model input, not target |
+
+The instruction is not a row field. It comes from `manifest.instructions`
+(`Which capability should handle the user's request?`), read at render time.
 
 ## 6. Field-by-Field Explanation
 
-| Field | Type | Training field? | Meaning |
-|---|---|---|---|
-| `message_id` | string | **no** — metadata / audit | Sample id from construction: `corpus-stan-<uuid>` or `corpus-simi-<uuid>` in train, `gen-val-<12 hex>` in validation, `gen-tes-<12 hex>` in test. Never rendered into the model input, target or calibration. |
-| `language` | string | **no** — metadata / audit | `zh` or `en`. Used for per-language reporting only; never rendered. |
-| `input.query` | string | **yes** | The user turn. Rendered as the sequence `state`, appended after the option block. |
-| `input.options` | list of 3 strings | **yes** | The **exact model-visible options**, one `"<capability_id>: <card>"` per option, in stored order. |
-| `label` | integer | **yes** | 0-based gold slot in `input.options`; expanded at training time to a one-hot vector over the three marker slots. |
-| split | — | **yes**, indirectly | Not a field. Injected by the loader from the file name. |
+§5 defines the contract; this section records the per-split values and the audit role of
+each field.
+
+| Field | Per-split format / values | Audit use |
+|---|---|---|
+| `message_id` | train: `corpus-stan-<uuid>` or `corpus-simi-<uuid>`; validation: `gen-val-<12 hex>`; test: `gen-tes-<12 hex>` | Row identity and calibration membership; never model input, target or calibration feature |
+| `language` | `zh` or `en` | Per-language reporting only (train 441 zh / 415 en; validation 77 / 73; test 455 / 445) |
+| `input.query` | free text | The `state` segment, rendered after the option block |
+| `input.options` | exactly 3 strings, `"<capability_id>: <card>"` | The exact model-visible options; the adapter splits id and card |
+| `label` | integer `0`, `1` or `2` | Gold slot; one-hot length 3; not a global 0–16 capability vector |
+| split | not a field | Injected from the file name: `train.jsonl` / `val.jsonl` / `test.jsonl` |
+
+`laya.common.render_options` renders a choice option as `"%s: %s" % (capability_id, card)`,
+so the stored option string **is** the model-visible option. The adapter splits it on the
+first `": "` into an id and a card; the renderer joins them back into the identical string.
 
 `manifest.json` is not training data. It records:
 
@@ -180,10 +247,6 @@ Validation is exact-key: a row must have exactly these four keys, `input` must h
 - `base_checkpoint` (repo, revision, subfolder);
 - `training_schema_keys`, `training_fields`, `not_used_in_training`;
 - `source_files` (four SHA256 digests of the construction inputs).
-
-`laya.common.render_options` renders a choice option as `"%s: %s" % (capability_id, card)`,
-so the stored option string **is** the model-visible option. The adapter splits it on the
-first `": "` into an id and a card; the renderer joins them back into the identical string.
 
 ## 7. Candidate Cards and `B_noprov` Representation
 
