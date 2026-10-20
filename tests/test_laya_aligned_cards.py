@@ -137,4 +137,4 @@ async def test_snapshot_still_matches_the_live_registry() -> None:
     drifted = sorted(c for c in snapshot if live.get(c) != snapshot[c])
     assert not drifted, (
         f"Registry drifted from the aligned snapshot for {drifted}; "
-        "re-run fine_tuning/laya_finetune/V2/build/v2_refresh_cards_from_registry.py")
+        "re-run fine_tuning/laya_finetune/data_versions/build/v2_refresh_cards_from_registry.py")

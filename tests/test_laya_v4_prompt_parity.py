@@ -28,7 +28,7 @@ import pytest
 
 _REPO = Path(__file__).resolve().parents[1]
 _V2 = _REPO / "fine_tuning" / "laya_finetune" / "V2"
-_RUN = _V2 / "data"
+_VERSIONS = _REPO / "fine_tuning" / "laya_finetune" / "data_versions"
 for _p in (_V2, _REPO / "packages", _REPO / "deploy" / "laya"):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
@@ -77,22 +77,21 @@ except ModuleNotFoundError:
     REJECT_LABEL = _RENDERER.REJECT_LABEL
     render_choice_question = _RENDERER.render_choice_question
 
-SNAPSHOT = (_REPO / "data" / "laya_finetune" / "data_v4_build"
-            / "v2_data_pre_replacement" / "data" / "aligned"
-            / "v2_registry_snapshot.json")
+SNAPSHOT = _REPO / "tests" / "fixtures" / "laya_v4_registry_snapshot.json"
 TAG = "recall_threshold_085"
+_BUNDLE = _VERSIONS / TAG
 
 pytestmark = [
     pytest.mark.skipif(importlib.util.find_spec("laya") is None,
                        reason="laya is only installed in .venv-laya"),
     pytest.mark.skipif(
-        not (_RUN / TAG / "manifest.json").is_file(),
+        not (_BUNDLE / "manifest.json").is_file(),
         reason="V2 dynamic-option bundle not present"),
 ]
 
 
 def _rows() -> list[dict]:
-    path = _RUN / TAG / "v2_train.jsonl"
+    path = _BUNDLE / "v2_train.jsonl"
     return [json.loads(line) for line in
             path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
@@ -192,7 +191,7 @@ def test_training_and_serving_build_the_same_sequence(tokenizer) -> None:
 
 def test_manifest_instructions_are_the_production_constant() -> None:
     manifest = json.loads(
-        (_RUN / TAG / "manifest.json").read_text(encoding="utf-8"))
+        (_BUNDLE / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["instructions"] == INSTRUCTIONS
     assert manifest["reject"]["card"] == REJECT_CARD
     assert manifest["formal_card_view"] == "B_noprov"
