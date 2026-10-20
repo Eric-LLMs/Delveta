@@ -236,5 +236,20 @@
     "revision": "55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851",
     "subfolder": "multilingual"
   },
-  "smoke": false
+  "smoke": false,
+  "training_schema_keys": [
+    "message_id",
+    "language",
+    "input",
+    "label"
+  ],
+  "training_fields": [
+    "input.query",
+    "input.options",
+    "label"
+  ],
+  "not_used_in_training": [
+    "message_id",
+    "language"
+  ]
 }

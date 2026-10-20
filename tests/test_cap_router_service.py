@@ -18,7 +18,6 @@ model-agnostic). This module pins the client side of that seam:
 """
 from __future__ import annotations
 
-import gzip
 import json
 import re
 from pathlib import Path
@@ -48,8 +47,7 @@ from core.config import settings
 
 URL = "http://localhost:18092"
 FROZEN = (Path(__file__).resolve().parents[1]
-          / "fine_tuning" / "laya_finetune" / "V1" / "data"
-          / "layachoice_v1_test_b_noprov.jsonl.gz")
+          / "fine_tuning" / "laya_finetune" / "V1" / "data" / "test.jsonl")
 
 
 def _entry(cid="cap-a", *, tool="create_folder", desc="does a",
@@ -279,11 +277,13 @@ def _entry_from_option(opt: str) -> CapabilityEntry:
 
 @pytest.mark.skipif(not FROZEN.exists(), reason="frozen bundle not present")
 def test_render_card_is_byte_identical_to_the_frozen_bundle():
-    with gzip.open(FROZEN, "rt", encoding="utf-8") as fh:
+    with FROZEN.open(encoding="utf-8") as fh:
         row = json.loads(fh.readline())
-    assert row["options"], "frozen row carries no options"
-    for opt in row["options"]:
-        assert render_card(_entry_from_option(opt)) == opt
+    options = row["input"]["options"]
+    assert options, "frozen row carries no options"
+    for opt in options:
+        card = opt.split(": ", 1)[1]
+        assert render_card(_entry_from_option(card)) == card
 
 
 def test_card_carries_no_query_examples_provenance_or_matched_example():

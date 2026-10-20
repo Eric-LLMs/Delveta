@@ -6,19 +6,49 @@ directory fine-tunes the **multilingual** checkpoint on LayaChoice-v1 so that th
 chat Intent Funnel can select a capability with it, and measures the result against the same
 checkpoint un-finetuned on the same frozen test set.
 
+## Data format
+
+Every row has exactly four fields; `K = 3` options is frozen (gold + two distractors):
+
+| Field | Type | Role |
+|---|---|---|
+| `message_id` | string | sample identifier for bookkeeping; never enters the model input, the label or calibration |
+| `language` | `zh` / `en` | sample metadata; never rendered |
+| `input.query` | string | the user request, rendered as the sequence `state` |
+| `input.options` | list of 3 strings | the **exact model input**, one `"<capability_id>: <card>"` per option, in option order |
+| `label` | int | 0-based index of the gold option in `input.options` |
+
+`split` is not stored in the row: the file name (`train.jsonl` / `val.jsonl` /
+`test.jsonl`) is the authority and the loader injects it. The frozen distractor roles
+(`d1` / `d2`, scores 0.62 / 0.55) are a pure function of the gold capability, so they are
+not stored either — the loader derives them for the report. Source revisions, row counts
+and calibration indices live in `manifest.json`.
+
+`laya.common.render_options` renders a choice option as `"<capability_id>: <card>"`, so
+`input.options` is literally the model-visible text. The adapter splits it into `order` and
+the card, and the renderer rebuilds the identical string — byte-identical to what the
+published V1 model was trained on.
+
 ```
-fine_tuning/laya_finetune/
+fine_tuning/laya_finetune/V1/
   README.md                this file
+  MIGRATION_REPORT.md      pre/post-migration comparison and preservation evidence
   run.sh                   one-click: env check -> baseline -> train -> select -> temperature
                            -> benchmark -> export [-> push-to-hub]
+  layachoice_v1_dataset.py the four-field contract: adapter + manifest-checked loader
   layachoice_prepare.py    stage 1, run on the repo host: freeze the bundle (needs the DB)
   layachoice_finetune.py   stage 2: --train / --fit-temperature / --export
   layachoice_eval.py       stage 3: --baseline-zero-shot / --select / --benchmark
   data/                    the frozen bundle, self-contained and also the GitHub backup
+    train.jsonl / val.jsonl / test.jsonl
+                             the three splits (the only data training reads); the exact
+                             four-key schema is documented above
     layachoice_v1_{train,val,test}_b_noprov.jsonl.gz
+                             the pre-migration ten-column bundle, retained read-only for
+                             traceability; no pipeline stage reads it
     raw/LayaChoice_v1_{validation,final_test}_raw_v3.jsonl
     manifest.json          shas, row counts, calibration ids, base checkpoint revision
-    SHA256SUMS
+    SHA256SUMS             hashes of the four-field splits and the raw files
   out/                     training artifacts (not committed)
 ```
 

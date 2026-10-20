@@ -41,6 +41,10 @@ import laya.common as C
 HERE = Path(__file__).resolve().parent
 DATA = HERE / "data"
 DEFAULT_OUT = HERE / "out"
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
+
+from layachoice_v1_dataset import load_bundle, read_manifest  # noqa: E402
 
 # ── input-token budget (train and eval read these two; they must not diverge) ─
 # OPTION_MAX_TOKENS - the per-option hard cap. `laya.common.build_sequence` hard-codes
@@ -179,38 +183,6 @@ def install() -> None:
 
 
 # ── frozen bundle ───────────────────────────────────────────────────────────
-def read_manifest(data_dir: Path = DATA) -> dict:
-    return json.loads((data_dir / "manifest.json").read_text(encoding="utf-8"))
-
-
-def load_bundle(split: str, data_dir: Path = DATA, limit: int | None = None) -> list[dict]:
-    """Read one split of the frozen bundle, asserting it is the frozen revision."""
-    import gzip
-    path = data_dir / f"layachoice_v1_{split}_b_noprov.jsonl.gz"
-    rows = []
-    with gzip.open(path, "rt", encoding="utf-8") as fh:
-        for line in fh:
-            line = line.strip()
-            if line:
-                rows.append(json.loads(line))
-    if limit is not None:
-        return rows[:limit]
-    manifest = read_manifest(data_dir)
-    expected = manifest["rows"][split]
-    if len(rows) != expected:
-        raise RuntimeError(f"{split}: {len(rows)} rows, manifest says {expected}")
-    if split == "train":
-        src = "LayaChoice_v1_train.jsonl"
-    elif split == "val":
-        src = "LayaChoice_v1_validation_raw_v3.jsonl"
-    else:
-        src = "LayaChoice_v1_test_v3.jsonl"
-    want = manifest["source_files"][src]
-    if {r["src_sha"] for r in rows} != {want}:
-        raise RuntimeError(f"{split}: bundle rows do not carry the frozen source sha {want}")
-    return rows
-
-
 def calibration_split(n_train: int) -> tuple[list[int], list[int]]:
     """Recompute the frozen calibration holdout (seed 20260922) from the row count."""
     order = list(range(n_train))

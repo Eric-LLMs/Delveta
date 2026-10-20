@@ -22,12 +22,12 @@ the `query examples:` block and the `evidence:` provenance line removed. Reading
 `questions.tool.criteria` instead would silently train on view B, which still
 carries the provenance line that names the answer in 856/856 train rows.
 
-Output per split, gzipped JSONL, one object per line:
-    {"id", "lang", "state", "order", "options", "gold", "d1", "d2", "src_sha"}
-where `order` is the capability id per option slot and `options` are the card texts
-in that same order - the order `laya.common.render_options` iterates, so
-`options[gold]` is the gold card. `d1`/`d2` are the two frozen distractors
-(score 0.62 / 0.55).
+Output per split, plain JSONL, one object per line, exactly four fields:
+    {"message_id", "language", "input": {"query", "options"}, "label"}
+`input.options` is the exact text the model sees, one `"<capability_id>: <card>"`
+string per option, in option order; `label` is the 0-based index of the gold
+option. There is no padding and no extra column: the split is the file name,
+and the frozen distractor roles / source sha live in `manifest.json`.
 
 Runs in the repo venv (`.venv`), which carries sqlalchemy/httpx for the registry;
 `.venv-laya` is inference-only and lacks them.
@@ -40,7 +40,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import gzip
 import hashlib
 import importlib.util
 import json
@@ -146,7 +145,7 @@ def check_sources() -> dict[str, str]:
     return shas
 
 
-def bundle_from_rows(rows: list[dict], src_sha: str, split: str) -> tuple[list[dict], int]:
+def bundle_from_rows(rows: list[dict]) -> tuple[list[dict], int]:
     """Rendered LayaChoice rows -> compact B_noprov bundle rows.
 
     Returns the bundle rows plus the number of rows whose `candidate_order` differs
@@ -203,17 +202,14 @@ def bundle_from_rows(rows: list[dict], src_sha: str, split: str) -> tuple[list[d
             if leak in ("example", "substring"):
                 raise RuntimeError(f"{cid}: {FORMAL_VIEW} card for {order[slot]} leaks the query ({leak})")
 
+        language = row.get("language") or (
+            "zh" if any("\u4e00" <= ch <= "\u9fff" for ch in row["state"]) else "en")
         out.append({
-            "id": cid,
-            "split": split,
-            "lang": row.get("language") or ("zh" if any("\u4e00" <= ch <= "\u9fff" for ch in row["state"]) else "en"),
-            "state": row["state"],
-            "order": order,
-            "options": options,
-            "gold": order.index(gold),
-            "d1": d1,
-            "d2": d2,
-            "src_sha": src_sha,
+            "message_id": cid,
+            "language": language,
+            "input": {"query": row["state"],
+                      "options": [f"{c}: {crit[c]}" for c in order]},
+            "label": order.index(gold),
         })
     return out, rotated
 
@@ -263,13 +259,11 @@ def calibration_split(n_train: int) -> tuple[list[int], list[int]]:
     return calib, train
 
 
-def write_gz_jsonl(path: Path, rows: list[dict]) -> None:
-    """Gzipped JSONL with mtime=0 so the artifact hash is reproducible."""
+def write_jsonl(path: Path, rows: list[dict]) -> None:
+    """Plain UTF-8 JSONL, one four-field object per line."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    payload = "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows)
-    with open(path, "wb") as raw:
-        with gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0) as gz:
-            gz.write(payload.encode("utf-8"))
+    path.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows),
+                    encoding="utf-8", newline="\n")
 
 
 async def main() -> None:
@@ -295,29 +289,27 @@ async def main() -> None:
             raise RuntimeError(f"{split}: {len(rows)} rows, expected {EXPECTED_ROWS[split]}")
 
     bundles, rotated = {}, {}
-    for split, rows, sha_name in (
-        ("train", train_rows, "LayaChoice_v1_train.jsonl"),
-        ("val", val_rows, "LayaChoice_v1_validation_raw_v3.jsonl"),
-        ("test", test_rows, "LayaChoice_v1_test_v3.jsonl"),
-    ):
-        bundles[split], rotated[split] = bundle_from_rows(rows, src_shas[sha_name], split)
+    for split, rows in (("train", train_rows), ("val", val_rows), ("test", test_rows)):
+        bundles[split], rotated[split] = bundle_from_rows(rows)
 
     for split, rows in bundles.items():
-        langs = {r["lang"] for r in rows}
+        langs = {r["language"] for r in rows}
         if not langs <= {"zh", "en"}:
             raise RuntimeError(f"{split}: unexpected languages {langs}")
-        holes = [r["id"] for r in rows if len({r["gold"], r["d1"], r["d2"]}) != OPTION_SLOTS]
+        holes = [r["message_id"] for r in rows
+                 if not 0 <= r["label"] < OPTION_SLOTS
+                 or len({o.partition(": ")[0] for o in r["input"]["options"]}) != OPTION_SLOTS]
         if holes:
-            raise RuntimeError(f"{split}: {len(holes)} rows with duplicate slots, e.g. {holes[:3]}")
+            raise RuntimeError(f"{split}: {len(holes)} rows with bad label/options, e.g. {holes[:3]}")
 
     n_train = len(bundles["train"])
     calib_idx, train_idx = calibration_split(n_train)
-    calib_ids = [bundles["train"][i]["id"] for i in calib_idx]
+    calib_ids = [bundles["train"][i]["message_id"] for i in calib_idx]
 
     out_dir = SMOKE_DIR if args.smoke else DATA
     limit = SMOKE_ROWS if args.smoke else None
     for split, rows in bundles.items():
-        write_gz_jsonl(out_dir / f"layachoice_v1_{split}_b_noprov.jsonl.gz", rows[:limit] if limit else rows)
+        write_jsonl(out_dir / f"{split}.jsonl", rows[:limit] if limit else rows)
 
     if not args.smoke:
         RAW_DIR.mkdir(parents=True, exist_ok=True)
@@ -332,16 +324,17 @@ async def main() -> None:
         "formal_card_view": FORMAL_VIEW,
         "instructions": INSTRUCTIONS,
         "option_slots": OPTION_SLOTS,
+        "training_schema_keys": ["input", "label", "language", "message_id"],
         "option_order_rule": "insertion order of views.B_noprov.tool (= questions.tool.criteria "
                              "order), which laya.common.render_options iterates",
-        "gold_slot_distribution": {s: {str(i): sum(1 for r in rows if r["gold"] == i)
+        "gold_slot_distribution": {s: {str(i): sum(1 for r in rows if r["label"] == i)
                                        for i in range(OPTION_SLOTS)} for s, rows in bundles.items()},
         # Rows whose inert `candidate_order` (corpus908 provenance, never read by a
         # renderer) differs from the rendered option order. Recorded, not used.
         "candidate_order_diverges_from_rendered": rotated,
         "source_files": {p.name: src_shas[p.name] for p in EXPECTED_SRC_SHA},
         "rows": {"train": len(bundles["train"]), "val": len(bundles["val"]), "test": len(bundles["test"])},
-        "language": {s: {l: sum(1 for r in rows if r["lang"] == l) for l in ("zh", "en")}
+        "language": {s: {l: sum(1 for r in rows if r["language"] == l) for l in ("zh", "en")}
                      for s, rows in bundles.items()},
         "calibration": {
             "seed": CALIB_SEED,
@@ -362,7 +355,8 @@ async def main() -> None:
         (DATA / "manifest.json").write_text(
             json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         lines = ["# base_checkpoint convaiinnovations/laya@55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851/multilingual"]
-        for f in sorted(list(DATA.glob("*.gz")) + list(RAW_DIR.glob("*.jsonl"))):
+        for f in sorted([DATA / f"{s}.jsonl" for s in ("train", "val", "test")]
+                        + list(RAW_DIR.glob("*.jsonl"))):
             lines.append(f"{sha256_file(f)}  {f.relative_to(DATA).as_posix()}")
         (DATA / "SHA256SUMS").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
