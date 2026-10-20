@@ -216,8 +216,10 @@ the card text. It classifies leakage into three channels:
 - `substring` — **fatal** if the user turn appears verbatim in the card body.
 
 Because the `query examples:` block and the `evidence:` line are removed before the
-assertion, the label is not spelled out by provenance. In the frozen bundle the fatal
-channels are clean on all 1,906 rows.
+assertion, the label is not spelled out by provenance. Re-running the classifier on the
+published bundle gives **0 `example` and 0 `substring` hits** across all 5,718 options;
+there are **2 non-fatal `description` hits**, where the curated description quotes a phrase
+from the turn.
 
 **Option order.** In 100% of rows the three options are in ascending
 `capability_id` order (verified on all 1,906 rows: 856 / 150 / 900). V1 does **not**
