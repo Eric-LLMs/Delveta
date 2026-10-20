@@ -44,9 +44,9 @@ fine_tuning/laya_finetune/V2/
                                 JSONL splits are distributed via Hugging Face
     train.jsonl / val.jsonl / test.jsonl
                                 the three splits (the only data training reads); the
-                                current adapter expects `message_id`, `language`,
-                                `input`, `label` (the HF release uses the 14-key
-                                construction schema — see ../data_versions/README.md §8)
+                                four-key training schema (`message_id`, `language`,
+                                `input`, `label`) matches the adapter contract and
+                                the Hugging Face release — see ../data_versions/README.md
     manifest.json               row counts, calibration indices, K+1 option bounds,
                                 base revision, the two fields training never reads
     SHA256SUMS                  flat-bundle hash index (run.sh verify)

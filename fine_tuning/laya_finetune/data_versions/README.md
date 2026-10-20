@@ -82,35 +82,36 @@ validation top-1 only.
 
 ## 3. Row schema
 
-Every row has exactly 14 keys. The model input is `{state, order, options}`; the remaining
-keys are metadata.
+Every row has exactly four keys. This is the same contract the training adapter enforces
+(`ROW_KEYS` in `layachoice_v2_dataset.py`).
 
 | Key | Type | Meaning |
 |---|---|---|
-| `id` | string | Stable row id, `<source_query_id>-p2` |
-| `source_query_id` | string | Stable source-record id, `<source_file>:<source_row>:<csv_row_index>` |
-| `split` | string | `train`, `val` or `test`; equals the containing file |
-| `part` | string | Always `p2` (real recall) |
-| `lang` | string | Resolved language: `en`, `zh` or `mixed` |
-| `state` | string | The user request |
-| `order` | list[string] | Stored option order; each element is a capability id or `REJECT` |
-| `options` | list[string] | Rendered card texts, aligned one-to-one with `order` |
-| `gold_index` | integer | Index of the correct option in `order` / `options` |
-| `target_kind` | string | `capability` or `reject` |
-| `gold_capability_id` | string or null | Gold capability id; `null` for `REJECT` rows |
-| `reject_index` | integer | Index of the `REJECT` option; always present |
-| `shuffle` | object | `{seed_prefix, permutation}` used to place the options |
-| `src_sha` | string | SHA-256 of the frozen source CSV |
+| `message_id` | string | Stable row id |
+| `language` | string | Resolved language: `en`, `zh` or `mixed` |
+| `input` | object | Model input: `{"query": string, "options": list[string]}` |
+| `label` | integer | Index of the correct option in `input.options` |
+
+`input.query` is the user request. `input.options` is the shuffled option list in its stored
+order; each element is `"<capability_id>: <card text>"`, or the bare `<capability_id>` when
+the card is empty. The adapter splits each string back into the capability id (`order`) and
+the card text (`options`), so the model input is `{state, order, options}`.
+
+`label` is a scalar target index, not a one-hot vector. It may point at the `REJECT` option.
 
 Two invariants hold for every row:
 
-1. `order` and `options` have the same length and are positionally aligned.
-2. There is exactly one `REJECT` in `order`; its text in `options` is the frozen `REJECT`
-   card; `reject_index` points at it.
+1. `0 <= label < len(input.options)`; option counts are 1–4 (K selected capabilities plus
+   exactly one `REJECT`).
+2. Exactly one option is `REJECT`; its rendered text is the frozen `REJECT` card.
 
-For a capability row, `order[gold_index] == gold_capability_id`. For a `REJECT` row,
-`gold_index == reject_index`, `order[gold_index] == "REJECT"` and `gold_capability_id` is
-`null`. The stored `order` is the **shuffled** order; it does not encode retrieval rank.
+Row-level construction metadata (`source_query_id`, `gold_capability_id`, `shuffle`,
+`src_sha`, …) exists only in the construction workspace, not in the published rows.
+Calibration indices and K+1 bounds live in `manifest.json`.
+
+`input.options[label]` is the gold option: a capability card for a capability row, the
+`REJECT` card for a reject row. The stored order is the **shuffled** order; it does not
+encode retrieval rank.
 
 The full field contract and validation rules are in
 [DATASET_SCHEMA.md](https://huggingface.co/datasets/eric-ml-nlp/Delveta-LayaChoice-v2-Data/blob/main/DATASET_SCHEMA.md)
@@ -136,7 +137,7 @@ flowchart TD
     J --> K["K capability cards + 1 REJECT card<br/>options = K + 1, 1..4"]
     K --> L["In-place K=0 to K=1 repair<br/>action rows with a valid gold"]
     L --> M["Deterministic option shuffle<br/>reject-shuffle-v1 over the row id"]
-    M --> N["Frozen 14-key JSONL row"]
+    M --> N["Frozen 4-key training row<br/>message_id / language / input / label"]
 ```
 
 Construction order matters: the split is assigned **before** embeddings and recall, and the
@@ -217,8 +218,8 @@ Pin a revision for reproducible runs.
 
 The repository root is the flat `recall_threshold_082` bundle
 (`manifest.json` plus `train.jsonl`, `val.jsonl`, `test.jsonl`), the file layout
-`run.sh` expects at `V2/data/`. The bundle uses the 14-key construction schema; see §8
-for the adapter-schema compatibility note before pointing training at it.
+`run.sh` expects at `V2/data/`. The rows use the four-key training schema
+(`message_id`, `language`, `input`, `label`), which the current adapter accepts.
 
 ```bash
 python - <<'PY'
@@ -235,9 +236,8 @@ PY
 ```
 
 This downloads `manifest.json`, `train.jsonl`, `val.jsonl`, `test.jsonl`, `SHA256SUMS`
-and the dataset card files, without the historical `data_versions/` trees. Once the row
-schema is accepted by the adapter (§8), training reads only the manifest and the three
-splits.
+and the dataset card files, without the historical `data_versions/` trees. Training reads
+only the manifest and the three splits.
 
 ### Historical versions (085 / 088)
 
@@ -282,21 +282,22 @@ truth for downloaded bytes.
 | 085 | [manifest.json](https://huggingface.co/datasets/eric-ml-nlp/Delveta-LayaChoice-v2-Data/blob/main/data_versions/recall_threshold_085/manifest.json) | [SHA256SUMS](https://huggingface.co/datasets/eric-ml-nlp/Delveta-LayaChoice-v2-Data/blob/main/data_versions/recall_threshold_085/SHA256SUMS) |
 | 088 | [manifest.json](https://huggingface.co/datasets/eric-ml-nlp/Delveta-LayaChoice-v2-Data/blob/main/data_versions/recall_threshold_088/manifest.json) | [SHA256SUMS](https://huggingface.co/datasets/eric-ml-nlp/Delveta-LayaChoice-v2-Data/blob/main/data_versions/recall_threshold_088/SHA256SUMS) |
 
-Frozen bundle checksums (from the Hugging Face repository):
+Frozen bundle checksums at revision
+`e913457be250c3ebb0e1989f4e74ee25a0d36688` of the Hugging Face repository:
 
 | File | 082 (default) | 085 | 088 |
 |---|---|---|---|
-| `train.jsonl` | `1a9472337f64cd2a89ba06e29cb2cfd97bcb3ce4c786c684350c4030893cd3b1` | `302d022b83e2c3537d5a7decc22daed9186abbef4fd80558c1c8c6ca54ef9e47` | `f9eb897015312a874e3f8fcb582222954d8bd52f61733575bcd7df1ee64e57d4` |
-| `val.jsonl` | `943000f2e809568accac537bf82444580a97bf1327c594b6973405b81fbd9d90` | `2e3799ea8542747964eae4453beec192c8dc6bf0f63acf582366f99998a2f976` | `e9b2146ad08e57325466a5a0659a184307c56a12445f3fb03050be42b3705944` |
-| `test.jsonl` | `3abd7b3c6fdf45435a99c78bc87a415f0d0e91b41274abbdf85a5a99c23c3c15` | `80dd558465a6b25bbe043908e48562994526eac6b2fc8891a2d6b24b2ab33111` | `74c66a6907f4bb2259fce4b567ef5fbc3a5c782d8a0c53b60f854bfb62e18709` |
-| `manifest.json` | `5bb80da52f484cb10a24a23fb1f6333fb796dc6943f958e08bba473bbc101dd8` | `e0e38c80fc476e63fdc3a8769ce0e55eb7cf1bf8d28f4a70a8b96a4ab1836921` | `6ccfe2eddc72e03a6aa1644d13e107881cccbad7e6f008ccf028e0e2c3fee295` |
+| `train.jsonl` | `97ed1b54a205d3fac4dd3837e93abb779104568b94019c9a161752c7ca670c77` | `eca109f5a12abf929dcf5496235d602252357780e6144331b05c562afe71e3be` | `628241c3a2688da4957c97a3dac3358948195e08982a7c644332c6f9b4d5fd27` |
+| `val.jsonl` | `833829ce30d929a8ce502036e3f7b049ef8279770558a632efaaf6bd9e54cb03` | `890c0c4a456e1c9d4ed03e12c7d8fbbb95364c00640fb83bf2ee262be022ea01` | `cf2b87c608293faae065c5256f056fe8cbe924f8161e5ee5c8beb56c0abc9d6b` |
+| `test.jsonl` | `66c6318d57d2021a85384020f8fb52f5903f37353ec7593e3e6b07c6215dbac1` | `1977742fe562415fbfb6dc76f2dceb9a81ba0d737e6bf6caec18beed698a2dcd` | `203dc715d79247c46476b63288cb0b453c7ec33cb9c94691699533509c76fac6` |
+| `manifest.json` | `92514b46c1e090d50bcae9464112aa80ad8ba48f4e929f098afb929d7488adf8` | `7443cc774fce07319068497848f762cb5639cc5e15e98ffe1e4a8b7a4b95ea70` | `dd12efeb315c1bcfd9a7a1ba1aeafb1ced57416e6c01e40ee3df85d9169a5395` |
 
 [SHA256SUMS.all_thresholds](SHA256SUMS.all_thresholds) in this directory is a different
 record: it covers the construction workspace copies (`recall_threshold_0XX/v2_*.jsonl`,
 construction audits, `direct_reject.jsonl` and `shared/` artifacts). Those files are not the
 Hugging Face release and are not distributed with this repository.
 
-## 8. Training-code data contract and schema compatibility
+## 8. Training-code data contract
 
 The training code is not changed by this document. Its current contract:
 
@@ -312,31 +313,18 @@ The training code is not changed by this document. Its current contract:
     `SHA256SUMS.all_thresholds`. This is the construction-workspace archive layout, with
     `v2_*.jsonl` file names.
 
-**Schema difference.** The adapter validates exactly four row keys
-(`message_id`, `language`, `input`, `label`) and requires the manifest's
-`training_schema_keys` to name the same four keys. The Hugging Face release uses the
-14-key construction schema (`id`, `source_query_id`, `split`, `part`, `lang`, `state`,
-`order`, `options`, `gold_index`, `target_kind`, `gold_capability_id`, `reject_index`,
-`shuffle`, `src_sha`). The file names and split counts match, but the row contract does not:
-
-- `adapt_row` rejects a Hugging Face row as schema drift;
-- `read_manifest` and the verifier reject its 14-key `training_schema_keys`.
-
-Therefore the Hugging Face 082 bundle is **not directly readable** by the current training
-code. The local construction archive under `data_versions/recall_threshold_0XX/` carries the
-4-key rows the current adapter expects, but it is a different byte artifact (different
-SHA256), not the Hugging Face release. Using the release for training requires an adapter
-revision that accepts the 14-key schema; that is a code change subject to separate approval.
+**Schema.** The adapter validates exactly four row keys (`message_id`, `language`, `input`,
+`label`) and requires the manifest's `training_schema_keys` to name the same four keys. The
+Hugging Face bundles use this same four-key schema, and their `manifest.json` lists the same
+four keys, so the release is directly readable by the current training and verification
+code.
 
 Practical consequences:
 
-- The default entry point expects a flat bundle at `V2/data/` with the row schema accepted
-  by the adapter. Downloading the Hugging Face root bundle there gives the same file names
-  but not a readable row contract; do not replace an installed bundle without addressing
-  the schema difference above.
-- Checksums of a downloaded bundle can be checked directly with `sha256sum -c SHA256SUMS`.
-  The repository's verifier is written for the 4-key contract described above.
-- A historical version can be pointed at with `--data`; the same schema difference applies.
+- The default entry point expects a flat bundle at `V2/data/`. The Hugging Face root bundle
+  matches that layout and can be downloaded there directly (§6).
+- Checksums of a downloaded bundle can be checked with `sha256sum -c SHA256SUMS`.
+- A historical version can be pointed at with `--data`; it uses the same schema.
 - The dynamic archive layout is **not** byte-compatible with the Hugging Face bundles
   (different file names and different bytes). Do not mix a Hugging Face download into a
   `recall_threshold_0XX/` directory that is covered by `SHA256SUMS.all_thresholds`.
