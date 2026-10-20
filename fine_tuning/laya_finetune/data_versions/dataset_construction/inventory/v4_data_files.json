@@ -1,0 +1,132 @@
+[
+ {
+  "path": "ann_coverage_audit.json",
+  "size": 10564228,
+  "sha256": "272c4059630f7e5598f0f47950b462c3bfc7ee54f95fddcafecc93d8add93479"
+ },
+ {
+  "path": "boundary_cases.jsonl",
+  "size": 6912,
+  "sha256": "a616374fad4df52eb35f5162c2697b4ee7b2cbf35877e9a9d4a232dea50e6942"
+ },
+ {
+  "path": "capability_ids.json",
+  "size": 376,
+  "sha256": "ad432b329a88611a94f48ac699987a56982db58cb20d39abc8a859cee901498d"
+ },
+ {
+  "path": "capability_max_scores.npy",
+  "size": 6960080,
+  "sha256": "36f7b513ec6beffaf734ad34fbf0cf6d1f29b2c855de2afb72fb6d5fb74b5fa5"
+ },
+ {
+  "path": "query_embedding_ids.json",
+  "size": 2794224,
+  "sha256": "f6569f98ad7253424a4e32cbd8739a83f2db41f9096b43c4da4137a30d7c7d1a"
+ },
+ {
+  "path": "query_embeddings.npy",
+  "size": 197972096,
+  "sha256": "b03cce429b90422a4072aedf6168c4ad1307b9f536f9397935399535b67884ea"
+ },
+ {
+  "path": "recall_threshold_082/construction_audit.jsonl",
+  "size": 53638408,
+  "sha256": "8742607e0a442cbe9db0294e9cf07229ab328b646669ade53705c5a556d6d4f3"
+ },
+ {
+  "path": "recall_threshold_082/direct_reject.jsonl",
+  "size": 952461,
+  "sha256": "b5f69cf957f6f31f7fe9e84990ce60a3ff7686b14538be0ddc623ce58d3c0dc5"
+ },
+ {
+  "path": "recall_threshold_082/manifest.json",
+  "size": 783891,
+  "sha256": "62bdf5f4ea5ac66be977969acc8c59e36c8ab61faaa0673f0dd4eea0837e9d1a"
+ },
+ {
+  "path": "recall_threshold_082/v2_test.jsonl",
+  "size": 22235374,
+  "sha256": "6d92dd264ab3ce90a5ce56ae4f0cf98430008cfdbe29cac7dd3a809e7f2d48ab"
+ },
+ {
+  "path": "recall_threshold_082/v2_train.jsonl",
+  "size": 82353142,
+  "sha256": "c7f887b6dc19af4e817230c9ba9317e0e7b29d2cc693751639239c7986835325"
+ },
+ {
+  "path": "recall_threshold_082/v2_val.jsonl",
+  "size": 5518900,
+  "sha256": "0e95a68359675df0136c8294d235081fb65f48a6876185745c0a61570f8914f6"
+ },
+ {
+  "path": "recall_threshold_085/construction_audit.jsonl",
+  "size": 51320023,
+  "sha256": "39015e581ebe2fdc7095568c547c765dd9ecbe00adda65a44697ec31bbdd1cd0"
+ },
+ {
+  "path": "recall_threshold_085/direct_reject.jsonl",
+  "size": 2032938,
+  "sha256": "548827d6a916b83fd369bae4809ce30e77e349f021c360d171688843693720c0"
+ },
+ {
+  "path": "recall_threshold_085/manifest.json",
+  "size": 783892,
+  "sha256": "fa7db9ae7d88388b09d189be558eabbfcbe37a9bac49ddb7298390f3e77ac13d"
+ },
+ {
+  "path": "recall_threshold_085/v2_test.jsonl",
+  "size": 18239534,
+  "sha256": "286c1586421ad4d035160c7d0b35203fc38d76695e6f42869fdfac9791f69159"
+ },
+ {
+  "path": "recall_threshold_085/v2_train.jsonl",
+  "size": 67703160,
+  "sha256": "0c32acb00e00a0eac984504306237d26de98bd7f948fe6763ceeeeb92ecd445f"
+ },
+ {
+  "path": "recall_threshold_085/v2_val.jsonl",
+  "size": 4483754,
+  "sha256": "4278cb0dc0ae360ebe6c8efa7623529f7360b5870ab6215b1ac7b90569fb22c1"
+ },
+ {
+  "path": "recall_threshold_088/construction_audit.jsonl",
+  "size": 50276178,
+  "sha256": "0300483d2497c3ecb187b93a85763b1eb5070f5dbfb8a1974fb637e49e7222f8"
+ },
+ {
+  "path": "recall_threshold_088/direct_reject.jsonl",
+  "size": 4143238,
+  "sha256": "7655c8c7b21066c36ca7a83d0fc45ce755784b0d6e4c07494cb61bf68eae06d6"
+ },
+ {
+  "path": "recall_threshold_088/manifest.json",
+  "size": 783891,
+  "sha256": "f32af532f1c94547ec75295371f8cc8482f57e5b5b83c95d781974aa9c85f345"
+ },
+ {
+  "path": "recall_threshold_088/v2_test.jsonl",
+  "size": 16297860,
+  "sha256": "568685908b4977f68d3017818ba042dfc3cb939954d2fc17b898ff1f578263da"
+ },
+ {
+  "path": "recall_threshold_088/v2_train.jsonl",
+  "size": 60442968,
+  "sha256": "7c08dd76df5a93d3c5f6abc1e0bc660bddd807b12d73d0ee209985b437082322"
+ },
+ {
+  "path": "recall_threshold_088/v2_val.jsonl",
+  "size": 4017178,
+  "sha256": "3a5ca0701ba0322aa279ca48c074f16ff90e9b75b4ebd1d8ce1f80cb0bf0f869"
+ },
+ {
+  "path": "sample_manifest.csv",
+  "size": 18412259,
+  "sha256": "a917c1e189c1fb633377dfb6f14ab30b94092fc140a6adacf582500f9ce2a3c8"
+ },
+ {
+  "path": "shared_retrieval_evidence.jsonl",
+  "size": 1407411996,
+  "sha256": "435450f84b900cb13b1aded58978222d64c0aa0bb831a847b6954944e74669d4"
+ }
+]
