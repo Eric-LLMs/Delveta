@@ -64,6 +64,16 @@ fine_tuning/laya_finetune/V1/data/smoke/
 # exempted from the generic `build/` rule above so the reproducible chain is committed.
 !fine_tuning/laya_finetune/V2/build/
 
+# LayaChoice V4 data_versions — documentation, construction code and checksum records only.
+# The frozen JSONL bundles are hosted on Hugging Face
+# (eric-ml-nlp/Delveta-LayaChoice-v2-Data) and must not be committed here.
+fine_tuning/laya_finetune/data_versions/recall_threshold_*/
+fine_tuning/laya_finetune/data_versions/message_id_map.jsonl
+fine_tuning/laya_finetune/data_versions/dataset_construction/inputs/
+# Retrieval intermediates and large derived artifacts; the 18 capability ids stay tracked.
+fine_tuning/laya_finetune/data_versions/shared/*
+!fine_tuning/laya_finetune/data_versions/shared/capability_ids.json
+
 # Qwen3-0.6B parameter-extraction SFT bundle — the frozen train/validation/test
 # splits, manifest and build reports are the reproduce-and-commit artifacts;
 # `data/` is exempted from the generic rule above so the bundle is committed.

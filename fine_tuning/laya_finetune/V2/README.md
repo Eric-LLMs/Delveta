@@ -39,19 +39,27 @@ fine_tuning/laya_finetune/V2/
                                 never read; the frozen val_metrics.json is the historical
                                 flat-4-way run record, and `run.sh analysis` writes the
                                 current run's metrics under `$OUT/analysis/`)
-  data/                         the installed training bundle (recall_threshold_082, flat)
+  data/                         the installed flat bundle (recall_threshold_082); the
+                                JSONL splits are distributed via Hugging Face
     train.jsonl / val.jsonl / test.jsonl
-                                the three splits (the only data training reads);
-                                byte-identical to the archived 082 v2_* files
-    manifest.json               row counts, calibration ids, K+1 option bounds, base revision
+                                the three splits (the only data training reads); the
+                                current adapter expects `message_id`, `language`,
+                                `input`, `label` (the HF release uses the 14-key
+                                construction schema — see ../data_versions/README.md §8)
+    manifest.json               row counts, calibration indices, K+1 option bounds,
+                                base revision, the two fields training never reads
     SHA256SUMS                  flat-bundle hash index (run.sh verify)
-  ../data_versions/             archived material (not read by run.sh)
-    recall_threshold_*/         the complete 082/085/088 bundles, including each
-                                threshold's construction_audit and direct_reject
-    shared/                     shared evidence (capability ids, ANN coverage, boundary
-                                cases, retrieval scores, sample manifest)
-    dataset_construction/       the V4 build archive (BUILD_RECORD.md, scripts, inputs)
+  ../data_versions/             documentation and construction archive (not read by run.sh)
+    README.md                   version roles, scale, schema, HF download and checksums
+    recall_threshold_*/         LOCAL CONSTRUCTION ARCHIVE ONLY: v2_*.jsonl bundles and
+                                audits, git-ignored and not the HF release
+    message_id_map.jsonl        LOCAL ONLY: new `message_id` -> construction row id, for
+                                audit joins; never uploaded and never read by training
+    shared/                     construction evidence; only capability_ids.json is tracked
+    dataset_construction/       the V4 build archive (BUILD_RECORD.md, scripts, audits);
+                                inputs/*.csv is git-ignored
     build/, smoke/, audit/      historical construction, smoke and prompt-audit evidence
+    SHA256SUMS.all_thresholds   checksums for the local construction copies above
   out/                          run artifacts (not committed)
 ```
 

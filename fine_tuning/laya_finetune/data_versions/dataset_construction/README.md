@@ -4,12 +4,15 @@ This directory preserves the source code, inputs and build records used to
 construct the official V4 dataset. It is a code-and-provenance bundle, not a
 training-data directory.
 
-The generated dataset itself lives in two independent copies:
+The generated dataset is published on Hugging Face at
+[`eric-ml-nlp/Delveta-LayaChoice-v2-Data`](https://huggingface.co/datasets/eric-ml-nlp/Delveta-LayaChoice-v2-Data).
+The per-version bundles under `data_versions/` are not committed to this
+repository. A construction workspace may still hold local archive copies:
 
 - `fine_tuning/laya_finetune/data_versions/recall_threshold_{082,085,088}/` —
-  the three frozen threshold bundles. `recall_threshold_082` is also installed
-  flat under `fine_tuning/laya_finetune/V2/data/` (`train/val/test.jsonl`) for
-  training.
+  construction-workspace bundles with local `v2_*.jsonl` names, covered by
+  `SHA256SUMS.all_thresholds`. They are git-ignored and are not byte-identical
+  to the Hugging Face release, which uses `train/val/test.jsonl`.
 - `data/laya_finetune/data_v4_build/` — the complete build archive, including
   the original `full_r1` tree and the large retrieval intermediates.
 
@@ -21,7 +24,7 @@ The generated dataset itself lives in two independent copies:
 | `full_r1/logs/generation.log` | Run log of the `full_r1` generation |
 | `full_r1/reports/` | Reports emitted by the construction entry and its validation stages |
 | `data/laya_finetune/data_v4_build/data_v3/` | Upstream V3/V4 source-CSV build scripts, statistics and intermediate CSVs (kept in the data archive, not duplicated here) |
-| `inputs/laya_tool_selection_v2.csv` | Final source CSV consumed by `build_dataset.py` (same bytes as the build-time `laya_tool_selection_v4.csv`); the raw upstream inputs are recorded in `BUILD_RECORD.md` and kept under `data/BaseData/` |
+| `inputs/laya_tool_selection_v2.csv` | Final source CSV consumed by `build_dataset.py` (same bytes as the build-time `laya_tool_selection_v4.csv`); git-ignored and not distributed here — the raw upstream inputs are recorded in `BUILD_RECORD.md` and kept under `data/BaseData/` |
 | `repair/v4_k0_to_k1_inplace.py` | Official in-place K=0 -> K=1 repair |
 | `repair/verify_k0_to_k1_inplace.py` | Repair verification |
 | `repair/unify_v4_official_version.py` | Official manifest/hash/archive unification |
