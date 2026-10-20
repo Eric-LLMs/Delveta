@@ -86,7 +86,15 @@ gold, the other two are hard negatives.
 | Candidates per row | **K = 3** |
 | Capabilities | 17 |
 | Languages | `zh` / `en` |
-| Row shape | `{id, lang, state, order[3], options[3], gold, d1, d2, src_sha}` |
+| Row shape | `{message_id, language, input{query, options[3]}, label}` — the four-field contract |
+
+The bundle is stored in the four-field contract shared with v2. `input.options` holds the
+three `"<capability_id>: <card>"` strings — exactly what `laya.common.render_options` feeds
+to the model — and `label` is the 0-based gold slot. `split` is the file name, and `d1` /
+`d2` are derived from the gold capability through the frozen distractor table. The
+formal-run runtime row `{id, split, lang, state, order, options, gold, d1, d2}` is
+reconstructed from these four fields by `layachoice_v1_dataset.py`; see §7 and
+[`MIGRATION_REPORT.md`](../../fine_tuning/laya_finetune/V1/MIGRATION_REPORT.md).
 
 The `B_noprov` view is not cosmetic. The stored registry card (view B) carries an `evidence:`
 line that **names the answer in 856/856 training rows** — training on it would leak the label
@@ -113,7 +121,8 @@ The 900 Final Test rows are **445 EN / 455 ZH**, ~50–58 rows per capability.
 
 ## 7. Frozen Dataset SHA256
 
-Verified unchanged at the end of the run (`sha256sum -c data/SHA256SUMS` → all OK).
+The formal run read the pre-migration bundles; their digests are unchanged and were
+verified at the end of the run (`sha256sum -c data/SHA256SUMS` → all OK).
 
 | Artifact | SHA256 |
 |---|---|
@@ -124,6 +133,25 @@ Verified unchanged at the end of the run (`sha256sum -c data/SHA256SUMS` → all
 | `layachoice_v1_train_b_noprov.jsonl.gz` | `e968fdeddc8f02eec19f37ed29fafc5f05a591ea259c97315639d366e3de4f13` |
 | `layachoice_v1_val_b_noprov.jsonl.gz` | `3fa38aa099580b6f9a5146ac2a8e7beed0111d79d2f994adb6ca317547c90364` |
 | `layachoice_v1_test_b_noprov.jsonl.gz` | `c665004a127496f4456a0b3ccd81bd0ce10654fef7808f27e45500d3a9d9b8bb` |
+
+### Four-field republication
+
+The same rows are published as four-field JSONL under `fine_tuning/laya_finetune/V1/data/`.
+This is an encoding change only: the loader reconstructs all 1,906 formal-run runtime rows
+identically, and the frozen distractor table reproduces the stored `(d1, d2)` pair on every
+row, so the model input, targets, calibration and evaluation are unchanged and the
+benchmark is unaffected. `data/SHA256SUMS` now covers these five artifacts:
+
+| Artifact | SHA256 |
+|---|---|
+| `train.jsonl` | `41e702d72c4b63498c695bbcd867b069b176ea1228b7be15eff8d5df45a39511` |
+| `val.jsonl` | `a45b4c63631939c5d8181f1cb2e6a22ea43d3d6ebda5d01d7de66681bcc5490b` |
+| `test.jsonl` | `be2cdc95fbef658ecf7ce3b388322eb9bdde0d40610a347988ce988beace29b9` |
+| `raw/LayaChoice_v1_validation_raw_v3.jsonl` | `974a3b99cf5883c527677373b53539f3ac859ddfb0ba59ea793058d03a6710ff` |
+| `raw/LayaChoice_v1_final_test_raw_v3.jsonl` | `e0738991d193cae39531a384305dc5d3547ffdd69f9e80b062c91079f51b4613` |
+
+The three `.gz` bundles stay in the directory, unchanged, for traceability; no pipeline
+stage reads them. Full evidence: `MIGRATION_REPORT.md`.
 
 ## 8. Candidate Contract
 
@@ -918,8 +946,8 @@ repository.
 |---|---|
 | Selected model (epoch 2), FP32 weights + eval reports | [Delveta-LayaChoice-v1](https://huggingface.co/eric-ml-nlp/Delveta-LayaChoice-v1) (public) |
 | Non-selected checkpoints (epoch 1 / 3 / 4) | [Delveta-LayaChoice-v1-checkpoints](https://huggingface.co/eric-ml-nlp/Delveta-LayaChoice-v1-checkpoints) (public) |
-| Frozen dataset (bundles + raw + `SHA256SUMS`) | [`fine_tuning/laya_finetune/data/`](https://github.com/Eric-LLMs/Delveta/tree/main/fine_tuning/laya_finetune/data) |
-| Training / evaluation code | [`fine_tuning/laya_finetune/`](https://github.com/Eric-LLMs/Delveta/tree/main/fine_tuning/laya_finetune) |
+| Frozen dataset (four-field splits + raw + `SHA256SUMS`) | [`fine_tuning/laya_finetune/V1/data/`](https://github.com/Eric-LLMs/Delveta/tree/main/fine_tuning/laya_finetune/V1/data) |
+| Training / evaluation code | [`fine_tuning/laya_finetune/V1/`](https://github.com/Eric-LLMs/Delveta/tree/main/fine_tuning/laya_finetune/V1) |
 
 The SHA256 values in the table above are the authority for every published copy; the
 uploaded weights were verified against them after upload.
@@ -943,7 +971,7 @@ Stages, in order:
 
 ```bash
 # repo host, once (needs the live capability registry) — already done; bundle is frozen
-.venv/Scripts/python.exe fine_tuning/laya_finetune/layachoice_prepare.py
+.venv/Scripts/python.exe fine_tuning/laya_finetune/V1/layachoice_prepare.py
 
 # GPU box
 python layachoice_eval.py --baseline-zero-shot --out out/baseline
@@ -959,7 +987,9 @@ python layachoice_finetune.py --export --ckpt out/epoch-2 --out out/final \
 What must hold for a rerun to be comparable:
 
 1. `laya==0.3.21` and base revision `55cf4c4eb…` (asserted on load).
-2. The frozen bundle unchanged — all seven SHA256s in §7.
+2. The frozen bundle unchanged — the five digests in `data/SHA256SUMS` (§7); the
+   pre-migration `.gz` bundles the formal run read are still present with their original
+   hashes.
 3. The same three budget constants, read by **all** paths via `read_cfg` (§9).
 4. The same selection rule (§19) and the same calibration ids (§20).
 5. `git` state: the run executed from the working tree at
