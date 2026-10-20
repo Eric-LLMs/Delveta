@@ -370,3 +370,10 @@ epoch 9, selected on Validation only.
 The Final Test never gates the export: `--export` writes the best checkpoint whether or not it
 beats the zero-shot baseline, and the benchmark's `baseline_comparison.beats_baseline` records
 the verdict.
+
+## Artifacts
+
+| Artifact | Repository | Commit |
+|---|---|---|
+| Model | [eric-ml-nlp/Delveta-LayaChoice-v2](https://huggingface.co/eric-ml-nlp/Delveta-LayaChoice-v2) | `2574addf` |
+| Data | [eric-ml-nlp/Delveta-LayaChoice-v2-Data](https://huggingface.co/datasets/eric-ml-nlp/Delveta-LayaChoice-v2-Data) | `e913457b` |
