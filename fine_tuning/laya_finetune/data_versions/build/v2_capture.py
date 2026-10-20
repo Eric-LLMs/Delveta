@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""V2 dataset step 1: capture the NO-THRESHOLD production recall for the three
+"""HISTORICAL TOOL — not part of the active four-field V4 pipeline.
+
+Preserved as executed against the pre-migration intermediate rows. Do not
+migrate or reuse it for new builds; the active builder is
+``dataset_construction/full_r1/scripts/build_dataset.py``.
+
+V2 dataset step 1: capture the NO-THRESHOLD production recall for the three
 V1 query sets that V2 is derived from.
 
 Query sources (V1 frozen bundles, read-only; upstream input, not V2 training data):

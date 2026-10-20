@@ -33,7 +33,8 @@ fine_tuning/laya_finetune/V2/
   layachoice_v2_eval.py         stage 3: --baseline-zero-shot / --select / --benchmark
   layachoice_v2_verify.py       bundle verifier: hashes, schema, labels, splits, calibration,
                                 threshold consistency (stdlib only — no GPU, no tokenizer,
-                                no network; flat V2 and dynamic V4 layouts)
+                                no network; flat V2 and dynamic V4 layouts; the dynamic
+                                layout reads `SHA256SUMS.all_thresholds` or `SHA256SUMS`)
   analysis/                     per-epoch Val curves -> PNGs + val_metrics.csv
                                 (plot_val_curves.py reads val_metrics.json only; Test is
                                 never read; the frozen val_metrics.json is the historical
@@ -62,6 +63,44 @@ fine_tuning/laya_finetune/V2/
     SHA256SUMS.all_thresholds   checksums for the local construction copies above
   out/                          run artifacts (not committed)
 ```
+
+## Data format
+
+Every training row has exactly four fields:
+
+```json
+{"message_id": "0f4c0f9e-6a2b-4f8e-9f5a-7c1d2e3b4a5c",
+ "language": "en",
+ "input": {"query": "read this document and answer from it",
+           "options": ["cap-read-document: ### cap-read-document\ntool: ...",
+                       "cap-summary: ### cap-summary\ntool: ...",
+                       "REJECT: ### REJECT\ntool: none\ndoes: ..."]},
+ "label": 0}
+```
+
+* **`input.options`** is the exact text the model sees, one string per option, in
+  option order: K recalled capability cards plus exactly one `REJECT` (K+1 options, 1..4).
+  Each string is the production rendering `"<capability_id>: <card>"`; no padding.
+* **`label`** is the 0-based index of the correct option in `input.options`. It may point
+  at the `REJECT` card: `REJECT` is a normal class, not a threshold.
+* **`message_id`** is a canonical uuid4, fresh in every threshold bundle. It identifies a
+  sample for bookkeeping only: it never enters the model input, the label, calibration
+  (which is positional) or cross-version alignment.
+* **`language`** is reporting metadata. It is not used by training.
+* **`split` is not a field.** The file name (`train.jsonl` / `val.jsonl` / `test.jsonl`,
+  or the archived `v2_{split}.jsonl`) is the authority; `load_split` injects it.
+
+The exact sequence the model receives is built from `input.query` and `input.options`
+(the query is appended **after** the options):
+
+```
+[CLS] choice question: Which capability should handle the user's request?
+[SEP] [MASK] <option 0> [MASK] <option 1> ... [MASK] <option K>
+[SEP] <input.query> [SEP]
+```
+
+with the one-hot training target at `label`. Instructions and the token budget come from
+`manifest.json` / `layachoice_v2_spec.py`, not from the row.
 
 ## Environment
 
@@ -127,11 +166,18 @@ bash run.sh analysis                        # per-epoch Val curves for this run
 Add `--smoke` to any stage for a CPU run (8 rows per split, 1 training step), and
 `--python <exe>` / `--data DIR` / `--out DIR` to point at a specific interpreter or
 directories. `verify` auto-detects either the installed flat `data/` bundle or a
-multi-threshold dynamic layout; every stage defaults to the installed `data/` bundle
+multi-threshold dynamic layout, whose checksum file is `SHA256SUMS.all_thresholds`
+or `SHA256SUMS` at the layout root (`../data_versions/SHA256SUMS.all_thresholds`
+covers the three threshold directories and `shared/`). A single threshold directory
+can also be verified alone: `bash run.sh verify --data
+../data_versions/recall_threshold_085` reads the parent checksum file and filters it
+to that directory. Repository control files such as `.gitattributes` are not bundle
+files and are ignored by the checksum-coverage check. Every stage defaults to the installed `data/` bundle
 (recall_threshold_082). The other thresholds are archived, e.g.
 `bash run.sh train --data ../data_versions/recall_threshold_085`. `run.sh` never deletes an output directory, never downloads anything unpinned and
 never uploads; it stops on the first failing stage and returns non-zero. Each run appends a
-record (git sha, config, data version) to `$OUT/run_ledger.jsonl`.
+record (git sha, config, benchmark and row counts) to `$OUT/run_ledger.jsonl`; the
+`--data` path and threshold are not recorded, so keep them in the experiment note.
 
 `all` is a complete experiment: it refuses to start if `$OUT` already holds a run
 (`baseline/`, `select/`, `epoch-1/`, ...), because those stages write their results
@@ -151,7 +197,7 @@ Fine-tuning uses `transformers` + `torch` directly, not PEFT or the Trainer, bec
 |---|---|
 | checkpoint | `convaiinnovations/laya`, subfolder `multilingual`, revision `55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851` (asserted on load) |
 | encoder | `jhu-clsp/mmBERT-base`, 322 M params, ctx 1024 |
-| items | `build_sequence` → `{ids, markers, qtype=QTYPES["choice"], target, label}`; a one-hot target at `gold_index`, `label = gold_index`, over the row's K+1 slots (K capabilities + `REJECT`) |
+| items | `build_sequence` → `{ids, markers, qtype=QTYPES["choice"], target, label}`; a one-hot target at the row's `label`, over its K+1 option slots (K capabilities + `REJECT`) |
 | loss | `loss_rl + 1.0*loss_ce`, where `loss_rl` is a GRPO-style group-advantage term over `proper_reward` (log score + 0.75·spherical) at `GROUP_SIZE=4`, and `loss_ce` is a masked cross-entropy on the gold slot |
 | noise | `eps ~ N(0, sigma²)` zero-mean-projected onto the simplex-perpendicular and masked; `sigma` 0.4 → 0.1 across epochs; the advantage is standardized within the group |
 | optim | `AdamW([{encoder: 2.5e-5}, {head: 1.0e-4}], weight_decay=0.01)`, `CosineAnnealingLR(T_max=updates, eta_min=1e-6)`, `clip_grad_norm_(1.0)` |
@@ -170,13 +216,14 @@ label. The `REJECT` card text is frozen for all rows:
 
 1. **An explicit `REJECT` option.** The model assigns the abstain class probability mass
    directly instead of deriving it from a threshold.
-2. **A per-row deterministic K+1 shuffle** (seed prefix `reject-shuffle-v1`, recorded in
-   each row's `shuffle` field), so the model cannot learn a positional prior.
-3. **The target is positional.** `gold_index` marks the target slot within the row's actual
-   option count and `target_kind ∈ {capability, reject}` records the row's kind; the model
-   input is exactly `{state, order, options}`, and every other frozen key (`part`,
-   `source_query_id`, `src_sha`, `shuffle`, `lang`, `gold_index`, `target_kind`,
-   `gold_capability_id`, `reject_index`) is metadata that **never enters the sequence**.
+2. **A per-row deterministic K+1 shuffle at construction time** (seed prefix
+   `reject-shuffle-v1`, keyed by the construction row id). Only the final option order is
+   stored, in `input.options`, so the model cannot learn a positional prior.
+3. **The target is positional.** `label` marks the correct slot within the row's actual
+   option count; the model input is exactly `input.query` + `input.options`. Derived
+   views (`order`, `target_kind`, `gold_capability_id`, `reject_index`) are computed by
+   the adapter and are never stored or rendered. `message_id` and `language` are metadata
+   that **never enter the sequence**.
 4. **A dynamic bundle.** V4 carries 48,333 rows per threshold (train 36,197 / val 2,407 /
    test 9,729) with K ∈ 0..3, including an in-place K=0→K=1 repair; see
    `../data_versions/dataset_construction/BUILD_RECORD.md`.
@@ -263,7 +310,8 @@ files each split was built from.
 ## Stages
 
 The frozen bundle in `data/` is the input; the loader proves each split still describes the
-manifest (row count, split tag, and every row's declared source sha) before a run starts.
+manifest (row count, four-field schema, K+1 option bounds, unique `message_id`s) before a
+run starts.
 
 Stages 2 and 3 run on the GPU box:
 
@@ -278,13 +326,13 @@ python layachoice_v2_finetune.py --export --ckpt out/epoch-7 --out out/final \
                                  [--export-dtype preserve|fp16|bf16]
 ```
 
-Every arm writes the **complete per-row result** (`*.rows.jsonl`: id, split, language, part,
-the option order, gold, prediction, hit, per-option probabilities, confidence, which slot the
-prediction took, and the `gold_is_reject` / `pred_is_reject` flags) alongside its
-`*.report.json`; the aggregate is a derived quantity, never the only artifact. Reports carry
-top-1 accuracy, the `REJECT` block (recall / precision / false-positive rate, as a normal
-fourth class), ECE on `max(p)`, mean confidence and mean gold probability, and breakdowns by
-language, target kind, part and gold id, plus the top confusion pairs.
+Every arm writes the **complete per-row result** (`*.rows.jsonl`: `message_id`, split,
+language, the option order, gold, prediction, hit, per-option probabilities, confidence,
+which slot the prediction took, and the `gold_is_reject` / `pred_is_reject` flags) alongside
+its `*.report.json`; the aggregate is a derived quantity, never the only artifact. Reports
+carry top-1 accuracy, the `REJECT` block (recall / precision / false-positive rate, as a
+normal class), ECE on `max(p)`, mean confidence and mean gold probability, and breakdowns by
+language, target kind and gold id, plus the top confusion pairs.
 
 `--select` scores every `epoch-N` checkpoint on the frozen Validation split and writes
 `selection.json` with the per-epoch table and the chosen `best_epoch` (deterministic: highest

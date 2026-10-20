@@ -12,14 +12,14 @@ two faces drifted.
 This script makes the training card a DERIVED value of the production renderer:
 for every option it re-renders `render_card(entry)` from the production loader
 (`registry.store.list_capabilities` -> normalized `CapabilityEntry`), then writes
-NEW aligned splits (never overwriting the frozen `v2_*.jsonl`). Everything else
-in the row (state / order / gold_index / shuffle metadata) is carried through
-unchanged.
+NEW aligned splits (never overwriting the frozen bundle). Everything else in the
+row (``message_id`` / ``language`` / ``input.query`` / ``label``) is carried
+through unchanged.
 
-Every aligned row keeps the frozen 14-key schema (it is the frozen row with only
-``options`` swapped), so the existing loader adapter accepts it unchanged. The
-provenance marker lives OUTSIDE the row, in the report/snapshot, never as an
-extra row key.
+Every aligned row keeps the frozen four-field schema (it is the frozen row with
+only the card text inside ``input.options`` swapped), so the existing loader
+adapter accepts it unchanged. The provenance marker lives OUTSIDE the row, in
+the report/snapshot, never as an extra row key.
 
 Outputs (new files, ``data/aligned/`` — the frozen ``data/`` top level is left
 byte-for-byte untouched, so the bundle's ``SHA256SUMS`` exact-file check keeps
@@ -44,10 +44,12 @@ import json
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-_V2 = os.path.dirname(_HERE)
-_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(_HERE)))
+_LAYAFT = os.path.dirname(os.path.dirname(_HERE))       # fine_tuning/laya_finetune
+_V2 = os.path.join(_LAYAFT, "V2")                       # the installed bundle
+_ROOT = os.path.dirname(os.path.dirname(_LAYAFT))       # repository root
 for _p in (_V2, _ROOT, os.path.join(_ROOT, "packages")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
@@ -61,7 +63,7 @@ from core.application.chat.intent_funnel.registry import store  # noqa: E402
 
 import layachoice_v2_dataset as D  # noqa: E402
 
-DATA = os.path.join(_HERE, "..", "data")
+DATA = os.path.join(_V2, "data")
 ALIGNED = os.path.join(DATA, "aligned")
 SPLITS = ("train", "val", "test")
 
@@ -86,9 +88,14 @@ def _source_commit() -> str:
         return ""
 
 
-def _head(card: str) -> str:
-    first = card.split("\n", 1)[0].strip()
-    return first[4:] if first.startswith("### ") else ""
+def _parse_option(option: str) -> tuple[str, str]:
+    """``"<id>: <card>"`` -> (id, card); a bare id means an empty card."""
+    cid, sep, card = option.partition(": ")
+    return (cid, card) if sep else (option, "")
+
+
+def _render_option(cid: str, card: str) -> str:
+    return cid if not card else f"{cid}: {card}"
 
 
 async def _entries() -> dict:
@@ -102,7 +109,7 @@ def main() -> None:
     drift: dict[str, dict] = {}
     written: list[str] = []
     for split in SPLITS:
-        src = os.path.join(DATA, f"v2_{split}.jsonl")
+        src = D.split_path(split, Path(DATA))
         dst = os.path.join(ALIGNED, f"v2_{split}.aligned.jsonl")
         out = []
         with open(src, encoding="utf-8") as fh:
@@ -111,26 +118,27 @@ def main() -> None:
                     continue
                 row = json.loads(line)
                 new_opts = []
-                for opt in row["options"]:
-                    cid = _head(opt)
+                for opt in row["input"]["options"]:
+                    cid, card = _parse_option(opt)
                     if cid == REJECT_LABEL:
                         new = REJECT_CARD
                     else:
                         entry = entries.get(cid)
-                        new = render_card(entry) if entry is not None else opt
-                    if cid and new != opt and cid not in drift:
-                        drift[cid] = {"frozen": opt, "live": new}
-                    new_opts.append(new)
-                # The aligned row IS the frozen row with `options` swapped: no new
-                # key is added, so `adapt_row` (and thus the V2 loader) accepts it.
+                        new = render_card(entry) if entry is not None else card
+                    if cid and new != card and cid not in drift:
+                        drift[cid] = {"frozen": card, "live": new}
+                    new_opts.append(_render_option(cid, new))
+                # The aligned row IS the frozen row with the card text swapped: no
+                # new key is added, so `adapt_row` (and the V2 loader) accepts it.
                 row = dict(row)
-                row["options"] = new_opts
+                row["input"] = {"query": row["input"]["query"],
+                                "options": new_opts}
                 if set(row) != D.ROW_KEYS:
                     raise RuntimeError(
-                        f"{row.get('id')}: aligned row schema drift "
+                        f"{row.get('message_id')}: aligned row schema drift "
                         f"(missing={sorted(D.ROW_KEYS - set(row))}, "
                         f"extra={sorted(set(row) - D.ROW_KEYS)})")
-                D.adapt_row(row)   # full schema + label guard, same adapter the loader uses
+                D.adapt_row(row, split)   # full schema + label guard, same adapter the loader uses
                 out.append(row)
         with open(dst, "w", encoding="utf-8", newline="\n") as fh:
             for r in out:

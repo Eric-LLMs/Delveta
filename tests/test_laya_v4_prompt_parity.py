@@ -131,7 +131,7 @@ def tokenizer():
 def _one_row_per_k() -> list[dict]:
     by_k: dict[int, dict] = {}
     for row in _rows():
-        by_k.setdefault(len(row["order"]) - 1, row)
+        by_k.setdefault(len(row["input"]["options"]) - 1, row)
     missing = sorted(set(range(4)) - set(by_k))
     if missing:
         pytest.skip(f"smoke train split lacks K={missing}")
@@ -144,48 +144,47 @@ def test_training_and_serving_build_the_same_sequence(tokenizer) -> None:
 
     entries = _entries()
     for row in _one_row_per_k():
-        ex = D.adapt_row(row)
+        ex = D.adapt_row(row, "train")
 
         # ── the real training item ─────────────────────────────────────────
         item = R.build_item(tokenizer, ex, INSTRUCTIONS,
                             S.MAX_LEN, S.HEAD_MAX_LEN)
-        assert item["label"] == row["gold_index"]
-        assert len(item["markers"]) == len(row["order"])
+        assert item["label"] == row["label"]
+        assert len(item["markers"]) == len(ex.order)
         assert len(item["target"]) == len(item["markers"])
         assert sum(item["target"]) == 1.0
-        assert item["target"][row["gold_index"]] == 1.0
+        assert item["target"][row["label"]] == 1.0
 
         # ── the real production question ───────────────────────────────────
-        cand_ids = [cid for cid in row["order"] if cid != REJECT_LABEL]
+        cand_ids = [cid for cid in ex.order if cid != REJECT_LABEL]
         q_prod = render_choice_question(
             [SimpleNamespace(capability_id=cid) for cid in cand_ids], entries)
         assert q_prod["instructions"] == INSTRUCTIONS
         assert list(q_prod["criteria"]) == cand_ids + [REJECT_LABEL]
         for cid in cand_ids:
-            assert q_prod["criteria"][cid] == row["options"][
-                row["order"].index(cid)]
+            assert q_prod["criteria"][cid] == ex.options[ex.order.index(cid)]
         assert q_prod["criteria"][REJECT_LABEL] == REJECT_CARD
 
         internal = A.Agent._to_internal(q_prod)
         ids_prod, markers_prod = SEQ.build_sequence(
-            tokenizer, row["state"], internal, S.MAX_LEN, S.HEAD_MAX_LEN)
-        assert len(markers_prod) == len(row["order"])
+            tokenizer, ex.state, internal, S.MAX_LEN, S.HEAD_MAX_LEN)
+        assert len(markers_prod) == len(ex.order)
         assert len(ids_prod) <= S.MAX_LEN
 
         # Same question, row's presented order: the ONLY difference from the
         # production question is where the shuffled REJECT card sits.
         q_row = {"type": "choice", "instructions": INSTRUCTIONS,
-                 "criteria": dict(zip(row["order"], row["options"]))}
+                 "criteria": dict(zip(ex.order, ex.options))}
         ids_row, markers_row = SEQ.build_sequence(
-            tokenizer, row["state"], A.Agent._to_internal(q_row),
+            tokenizer, ex.state, A.Agent._to_internal(q_row),
             S.MAX_LEN, S.HEAD_MAX_LEN)
-        assert ids_row == item["ids"], f"{row['id']}: serving sequence drift"
+        assert ids_row == item["ids"], f"{row['message_id']}: serving sequence drift"
         assert markers_row == item["markers"]
-        assert len(markers_row) == len(row["order"])
+        assert len(markers_row) == len(ex.order)
 
         # If REJECT is already last, the production order is byte-identical.
-        if row["order"][-1] == REJECT_LABEL:
-            assert ids_prod == item["ids"], f"{row['id']}: production order drift"
+        if ex.order[-1] == REJECT_LABEL:
+            assert ids_prod == item["ids"], f"{row['message_id']}: production order drift"
             assert markers_prod == item["markers"]
 
 

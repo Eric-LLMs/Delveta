@@ -136,7 +136,7 @@ def decide(model, tok, examples: list[D.V2Example], cfg: dict, instructions: str
             p = p / p.sum()
             pred = int(p.argmax())
             out.append({
-                "id": ex.id, "split": ex.split, "lang": ex.lang, "part": ex.part,
+                "message_id": ex.message_id, "split": ex.split, "language": ex.language,
                 "state": ex.state, "order": list(ex.order),
                 "gold_index": ex.gold_index, "gold_id": ex.gold_id,
                 "target_kind": ex.target_kind, "reject_index": ex.reject_index,
@@ -441,8 +441,8 @@ def mode_train(args) -> None:
                      "calibration_rows": len(calib_rows),
                      "effective_train_rows": len(fit_rows),
                      "after_world_size_alignment": len(train_items_all)},
-            "calibration": {"seed": S.CALIB_SEED, "indices": manifest["calibration"]["indices"],
-                            "ids": manifest["calibration"]["ids"]},
+            "calibration": {"seed": S.CALIB_SEED,
+                            "indices": manifest["calibration"]["indices"]},
             "split_by_rank": {str(r): len(train_items_all[r::world_size])
                               for r in range(world_size)},
             "hyperparameters": {"epochs": epochs, "micro_batch": S.MICRO_BATCH,
@@ -582,7 +582,7 @@ def mode_export(args) -> None:
              "agent_temperature": reloaded, "rows": []}
     for row, res in zip(rows, answers):
         ans = res["answers"][S.QID]
-        smoke["rows"].append({"id": row.id, "gold_id": row.gold_id,
+        smoke["rows"].append({"message_id": row.message_id, "gold_id": row.gold_id,
                               "agent_choice": ans["choice"], "hit": ans["choice"] == row.gold_id,
                               "probabilities": ans["probabilities"]})
     (out / "reload_smoke.json").write_text(

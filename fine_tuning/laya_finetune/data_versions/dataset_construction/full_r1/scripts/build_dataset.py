@@ -28,6 +28,7 @@ import re
 import sys
 import time
 import unicodedata
+import uuid
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -67,12 +68,8 @@ REJECT_LABEL = "REJECT"
 V2_PART = "p2"
 SPLITS = ("train", "test", "val")
 
-# The frozen V2 training row: exactly these 14 keys, in any order.
-V2_ROW_KEYS = (
-    "id", "source_query_id", "split", "part", "lang", "state", "order",
-    "options", "gold_index", "target_kind", "gold_capability_id",
-    "reject_index", "shuffle", "src_sha",
-)
+# The frozen training row: exactly these four keys, in any order.
+V2_ROW_KEYS = ("message_id", "language", "input", "label")
 
 # Construction metadata lives ONLY in construction_audit.jsonl. It is joined
 # back by id when auditing; it never enters a training row.
@@ -897,35 +894,36 @@ def make_record(row: dict, threshold: float, cards: dict[str, str],
     return rec
 
 
-def to_v2_row(rec: dict) -> dict:
-    """Project one construction record onto the frozen V2 14-key training row.
+def render_option(cid: str, card: str) -> str:
+    """The production rendering: ``"<id>: <card>"``, or the bare id when empty."""
+    return cid if not card else f"{cid}: {card}"
 
-    The only V4 difference is the option count: K capability cards + one REJECT
-    (K+1 total, 1..4). Label semantics are V2's: a reject row carries
-    ``gold_capability_id = None`` and points at the REJECT slot.
+
+def parse_option(option: str) -> tuple[str, str]:
+    """Inverse of ``render_option``: ``"<id>: <card>"`` -> (id, card)."""
+    cid, sep, card = option.partition(": ")
+    return (cid, card) if sep else (option, "")
+
+
+def to_v2_row(rec: dict) -> dict:
+    """Project one construction record onto the frozen four-field training row.
+
+    ``input.options`` is the exact model input in option order: the library's
+    ``render_options`` emits ``"<capability_id>: <card>"`` (a bare id when the
+    card is empty). ``label`` is the 0-based index of the correct option.
+    ``message_id`` is a fresh uuid4 and is never used by training; ``split`` is
+    the file name, not a row field.
     """
-    reject = rec["target_kind"] == "reject"
+    options = [render_option(cid, card)
+               for cid, card in zip(rec["order"], rec["options"])]
     row = {
-        "id": rec["id"],
-        "source_query_id": rec["source_query_id"],
-        "split": rec["split"],
-        "part": rec["part"],
-        "lang": rec["lang"],
-        "state": rec["state"],
-        "order": list(rec["order"]),
-        "options": list(rec["options"]),
-        "gold_index": int(rec["gold_index"]),
-        "target_kind": rec["target_kind"],
-        "gold_capability_id": None if reject else rec["label"],
-        "reject_index": int(rec["reject_index"]),
-        "shuffle": {
-            "seed_prefix": rec["shuffle"]["seed_prefix"],
-            "permutation": list(rec["shuffle"]["permutation"]),
-        },
-        "src_sha": rec["src_sha"],
+        "message_id": str(uuid.uuid4()),
+        "language": rec["lang"],
+        "input": {"query": rec["state"], "options": options},
+        "label": int(rec["gold_index"]),
     }
     if tuple(row) != V2_ROW_KEYS:
-        raise RuntimeError(f"{rec['id']}: V2 projection key drift")
+        raise RuntimeError(f"{rec['id']}: training row projection key drift")
     return row
 
 
@@ -1335,33 +1333,40 @@ def write_logic_report(ctx: dict) -> None:
         "   - otherwise -> REJECT / `gold_not_retrieved` "
         "(`gold_below_threshold` or `gold_outside_top3`).",
         "7. Shuffle the K+1 options deterministically with seed prefix "
-        f"`{SHUFFLE_SEED_PREFIX}`, recomputing `gold_index` and "
-        "`reject_index`.",
+        f"`{SHUFFLE_SEED_PREFIX}` over the construction row id, then store "
+        "the final option order and the label slot.",
         "",
         "Label precedence: source No-Action is evaluated before K=0, so a "
         "No-Action row that also has K=0 is recorded as `no_action`, not "
         "`no_candidates`. The three REJECT provenances are never merged.",
         "",
-        "## Stage F - V2-format output",
+        "## Stage F - training output",
         "",
         "`v2_train.jsonl`, `v2_val.jsonl` and `v2_test.jsonl` are the training "
-        "files. Each row has EXACTLY the frozen V2 14 keys: `id`, "
-        "`source_query_id`, `split`, `part`, `lang`, `state`, `order`, "
-        "`options`, `gold_index`, `target_kind`, `gold_capability_id`, "
-        "`reject_index`, `shuffle`, `src_sha`. No threshold, candidate-count "
-        "or label-provenance field enters a training row.",
+        "files, one JSON row each with EXACTLY four keys:",
         "",
-        "The only contract difference from frozen V2 is the option count: "
-        "`order`/`options` carry K capability cards plus exactly one `REJECT` "
-        "(K+1 options, 1..4). `part` is `p2` (real recall) for every row. "
-        "`gold_index` points at the label; a reject row has "
-        "`gold_capability_id = null`. The per-row shuffle uses the V2 seed "
-        "prefix `reject-shuffle-v1` over the row id, and REJECT is shuffled "
-        "with the capability cards exactly as in V2.",
+        "```json",
+        '{"message_id": "<uuid4>", "language": "<lang>",',
+        ' "input": {"query": "<request text>",',
+        '           "options": ["<capability_id>: <card>", ...]},',
+        ' "label": <0-based index of the correct option>}',
+        "```",
+        "",
+        "`input.options` is the exact text the model sees (K capability cards "
+        "plus exactly one `REJECT`, K+1 options, 1..4). `label` addresses the "
+        "ACTUAL option count and may point at the REJECT card. `split` is the "
+        "file name, not a field. No threshold, candidate-count, label "
+        "provenance or shuffle bookkeeping enters a training row.",
+        "",
+        "`message_id` is a fresh uuid4 per row per threshold bundle. It is a "
+        "sample identifier only: it never enters the model input, the label, "
+        "calibration (which is positional) or cross-version alignment. "
+        "`language` is reporting metadata and is not used by training.",
         "",
         "Threshold, candidate scores, label provenance and the original source "
-        "gold are written to `construction_audit.jsonl`, joined by `id`. "
-        "`{split}.csv` is a human-readable audit export, not a training input.",
+        "gold are written to `construction_audit.jsonl`, joined by the "
+        "construction row id. `{split}.csv` is a human-readable audit export, "
+        "not a training input.",
         "",
         "K=0 rows carry one REJECT option and are also written to "
         "`direct_reject.jsonl` in each threshold directory for a separate "
@@ -1781,16 +1786,14 @@ def write_config(ctx: dict) -> None:
         },
         "schema": {
             "version": "V4-dynamic",
-            "training_schema": "LayaChoice-v2 14-key JSONL",
+            "training_schema": "LayaChoice four-field supervised JSONL",
             "training_keys": list(V2_ROW_KEYS),
+            "training_fields": ["input.query", "input.options", "label"],
+            "not_used_in_training": ["message_id", "language"],
             "part": V2_PART,
             "threshold_in_training_row": False,
             "construction_audit_file": "construction_audit.jsonl",
             "compatible_with_v2_loader": True,
-            "v2_loader_modified": (
-                "option-count/permutation/gold-index validation generalized "
-                "from fixed 4 to the row's actual K+1 (1..4); schema, labels, "
-                "REJECT construction and target semantics unchanged"),
             "option_slots": "K+1, K in {0,1,2,3} (1..4 options)",
             "reject_label": REJECT_LABEL,
             "card_source": (
@@ -1924,6 +1927,9 @@ def build_v2_manifest(ctx: dict, threshold: float, split_rows: dict[str, list[di
             "observed": sorted({len(r["order"]) for r in train_rows}),
         },
         "training_schema_keys": list(V2_ROW_KEYS),
+        "training_fields": ["input.query", "input.options", "label"],
+        "not_used_in_training": ["message_id", "language"],
+        "split_source": "file name ({split}.jsonl), injected by the loader",
         "part": V2_PART,
         "construction_audit_file": "construction_audit.jsonl",
         "reject": {
@@ -1934,10 +1940,15 @@ def build_v2_manifest(ctx: dict, threshold: float, split_rows: dict[str, list[di
                        "present on every row as exactly one option",
         },
         "option_order_rule": "per-row deterministic shuffle; seed prefix "
-                             f"{SHUFFLE_SEED_PREFIX} over the row id; "
+                             f"{SHUFFLE_SEED_PREFIX} over the construction row "
+                             "id (never stored in the training row); "
                              "option count = capability candidates + 1",
         "gold_slot_distribution": gold_slot,
         "source_files": source_files,
+        "source_files_note": "source_csv is the upstream pre-migration CSV "
+                             "(external to the bundle). The split and audit "
+                             "entries hash the four-field files shipped in THIS "
+                             "bundle, not the pre-migration source files.",
         "rows": {split: len(split_rows[split]) for split in SPLITS},
         "part_rows": part_rows,
         "language": language,
@@ -1946,9 +1957,9 @@ def build_v2_manifest(ctx: dict, threshold: float, split_rows: dict[str, list[di
             "calibration_rows": n_calib,
             "effective_train_rows": len(train_idx),
             "rule": "min(400, n_train // 10) over the FINAL (post-shuffle) "
-                    "train order",
+                    "train order; indices only — message_id never selects "
+                    "calibration rows",
             "indices": calib_idx,
-            "ids": [train_rows[i]["id"] for i in calib_idx],
         },
         "row_order": {
             "seed_prefix": ROW_SEED,
@@ -2045,22 +2056,39 @@ def validate_in_build(records: dict[float, list[dict]],
 
     bad_v2 = []
     for r in all_rows:
+        # The projection is validated against the construction record it comes
+        # from: the training row carries only the four frozen fields, so every
+        # derived value (query, language, option order/text, label) must agree.
         v = to_v2_row(r)
-        n = len(v["order"])
-        if set(v) != set(V2_ROW_KEYS):
-            bad_v2.append(r["id"])
-            continue
-        reject = v["target_kind"] == "reject"
-        problems = (
-            v["part"] != V2_PART,
-            not (MIN_OPTION_SLOTS <= n <= MAX_OPTION_SLOTS),
-            sorted(v["shuffle"]["permutation"]) != list(range(n)),
-            reject and (v["gold_capability_id"] is not None
-                        or v["gold_index"] != v["reject_index"]),
-            not reject and (v["gold_capability_id"]
-                            != v["order"][v["gold_index"]]
-                            or v["gold_index"] == v["reject_index"]),
-        )
+        order = list(r["order"])
+        opt_cards = list(r["options"])
+        n = len(order)
+        problems = [tuple(v) != V2_ROW_KEYS]
+        if not problems[0]:
+            opts = list(v["input"]["options"])
+            parsed = [parse_option(o) for o in opts]
+            label = v["label"]
+            problems.extend((
+                v["language"] != r["lang"],
+                v["input"]["query"] != r["state"],
+                len(opts) != n or len(opt_cards) != n,
+                [cid for cid, _ in parsed] != order,
+                [text for _, text in parsed] != opt_cards,
+                r["part"] != V2_PART,
+                r["option_count"] != n,
+                not (MIN_OPTION_SLOTS <= n <= MAX_OPTION_SLOTS),
+                sorted(r["shuffle"]["permutation"]) != list(range(n)),
+                order.count(REJECT_LABEL) != 1,
+                order[r["reject_index"]] != REJECT_LABEL,
+                not (0 <= label < n),
+                (0 <= label < n) and order[label] != r["label"],
+                (0 <= label < n) and r["target_kind"] == "reject"
+                and order[label] != REJECT_LABEL,
+                (0 <= label < n) and r["target_kind"] != "reject"
+                and order[label] != r["gold_capability_id"],
+                r["candidate_count"] !=
+                len([cid for cid in order if cid != REJECT_LABEL]),
+            ))
         if any(problems):
             bad_v2.append(r["id"])
     check("v2_training_row_projection", not bad_v2,

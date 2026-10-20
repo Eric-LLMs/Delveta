@@ -2,12 +2,12 @@
 
 The LayaChoice-v2 option cards the model trains on are a DERIVED value of the
 production renderer: ``cap_router.card_renderer.render_card`` against the live
-Registry. ``fine_tuning/laya_finetune/V2/build/v2_refresh_cards_from_registry.py``
+Registry. ``fine_tuning/laya_finetune/data_versions/build/v2_refresh_cards_from_registry.py``
 writes them to ``data/aligned/`` (the frozen ``data/`` bundle is left untouched).
 These tests pin that contract without a database and detect drift when one is
 reachable:
 
-  1. every aligned row keeps the frozen 14-key schema and passes the SAME
+  1. every aligned row keeps the frozen four-field schema and passes the SAME
      ``adapt_row`` the loader uses (so the loader can load it);
   2. every aligned card is byte-identical to ``render_card`` of the snapshot
      entry it was rendered from;
@@ -51,9 +51,10 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _head(card: str) -> str:
-    first = card.split("\n", 1)[0].strip()
-    return first[4:] if first.startswith("### ") else ""
+def _parse_option(option: str) -> tuple[str, str]:
+    """``"<id>: <card>"`` -> (id, card); a bare id means an empty card."""
+    cid, sep, card = option.partition(": ")
+    return (cid, card) if sep else (option, "")
 
 
 def _rows(split: str) -> list[dict]:
@@ -80,13 +81,13 @@ def _stub(entry: dict) -> SimpleNamespace:
 
 @pytest.mark.parametrize("split", SPLITS)
 def test_aligned_rows_keep_the_frozen_schema(split: str) -> None:
-    """The aligned row IS the frozen row with ``options`` swapped: the exact
-    14-key schema, accepted by the very adapter the loader calls."""
+    """The aligned row IS the frozen row with the card text swapped: the exact
+    four-field schema, accepted by the very adapter the loader calls."""
     rows = _rows(split)
     assert rows, f"{split}: empty aligned split"
     for row in rows:
-        assert set(row) == D.ROW_KEYS, f"{row['id']}: schema drift"
-        D.adapt_row(row)   # raises on any schema / label drift
+        assert set(row) == D.ROW_KEYS, f"{row['message_id']}: schema drift"
+        D.adapt_row(row, split)   # raises on any schema / label drift
 
 
 @pytest.mark.parametrize("split", SPLITS)
@@ -95,13 +96,16 @@ def test_aligned_cards_equal_render_card(split: str) -> None:
     for the snapshot entry it came from (REJECT == the frozen REJECT card)."""
     snapshot = _snapshot()
     for row in _rows(split):
-        for cid, card in zip(row["order"], row["options"]):
+        for option in row["input"]["options"]:
+            cid, card = _parse_option(option)
             if cid == REJECT_LABEL:
                 expected = REJECT_CARD
             else:
-                assert cid in snapshot, f"{row['id']}: {cid} missing from snapshot"
+                assert cid in snapshot, \
+                    f"{row['message_id']}: {cid} missing from snapshot"
                 expected = render_card(_stub(snapshot[cid]))
-            assert card == expected, f"{row['id']}: card for {cid} != render_card"
+            assert card == expected, \
+                f"{row['message_id']}: card for {cid} != render_card"
 
 
 def test_reject_card_is_the_single_source() -> None:
@@ -112,7 +116,10 @@ def test_reject_card_is_the_single_source() -> None:
     assert manifest["reject"]["card"] == REJECT_CARD
     for split in SPLITS:
         for row in _rows(split):
-            assert row["options"][row["reject_index"]] == REJECT_CARD
+            reject = [card for cid, card in
+                      (_parse_option(o) for o in row["input"]["options"])
+                      if cid == REJECT_LABEL]
+            assert reject == [REJECT_CARD], f"{row['message_id']}: REJECT card"
 
 
 async def test_snapshot_still_matches_the_live_registry() -> None:

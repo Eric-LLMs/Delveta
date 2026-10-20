@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""V2 data adjustment: move 400 Test rows into Train.
+"""HISTORICAL TOOL — not part of the active four-field V4 pipeline.
+
+Preserved as executed against the pre-migration 14-key rows. Do not migrate or
+reuse it for new builds; the active builder is
+``dataset_construction/full_r1/scripts/build_dataset.py``.
+
+V2 data adjustment: move 400 Test rows into Train.
 
 Data-only, no V3. Semantics:
   * Train 1712 -> 2112, Val 300 (unchanged), Test 1800 -> 1400.

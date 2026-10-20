@@ -1,37 +1,40 @@
 #!/usr/bin/env python3
 """LayaChoice-v2 dataset contract — adapter + loader.
 
-The V2 bundle is the accepted 4-way task: every row carries three capability
-cards plus one REJECT card. V4 keeps the exact same schema and label semantics
-but carries K capability cards plus one REJECT card, where K is the real number
-of recalled candidates (0..3), so a row has K+1 options (1..4). The adapter and
-loader validate the actual option count; nothing else about the contract moves.
+The installed bundle is a plain supervised dataset: every row is exactly
+
+    {"message_id": "<uuid4>", "language": "<lang>",
+     "input": {"query": "<request text>",
+               "options": ["<capability_id>: <card>", ...]},
+     "label": <0-based index of the correct option>}
+
+``input.options`` is the EXACT text the model sees, one string per option, in
+option order. ``label`` points at one of them: a capability card, or the REJECT
+card. There is no padding: K recalled candidates + REJECT = K+1 options (1..4).
+
+``message_id`` and ``language`` are sample metadata. They never enter the model
+input, the target, calibration or cross-version alignment; ``message_id`` is a
+fresh uuid4 in every threshold bundle. ``split`` is not stored in the row — the
+file name is the authority and ``load_split`` injects it.
+
 This module owns the dataset contract ONLY — it never touches a tokenizer or a
-model.
+model. The adapter derives the training-time view (``order``, ``options`` cards,
+``gold_index``) from ``input`` so the renderer keeps the same shape it always
+had:
 
-Two responsibilities live here because they share one frozen schema:
+  * ``order``      — the capability id of each option, in option order;
+  * ``options``    — the card text of each option (the part after ``"<id>: "``);
+  * ``gold_index`` — ``label``.
 
-  * the ADAPTER  (``V2Example`` / ``adapt_row``) turns one frozen JSON row into a
-    validated record whose MODEL INPUT is exactly ``{state, order, options}``.
-    Every other frozen key (``part``, ``source_query_id``, ``src_sha``,
-    ``shuffle``, ``gold_index``, ...) is metadata: carried for validation, audit
-    and the target, and structurally excluded from what a renderer may read.
-  * the LOADER   (``read_manifest`` / ``split_path`` / ``load_split``) reads the
-    split file and proves it still describes the frozen manifest (row count,
-    split tag, and every row's source sha declared for that split). The formal
-    flat bundle names its files ``{split}.jsonl``; the archived threshold
-    bundles keep the historical ``v2_{split}.jsonl`` names.
-
-``gold_index`` is the FINAL target position — the slot the model must pick. For
-a ``capability`` row that slot holds the gold capability; for a ``reject`` row it
-holds the REJECT card (and equals ``reject_index``). The index is validated
-against the row's ACTUAL option count, never a hard-coded 4.
+Metadata fields such as ``target_kind`` / ``gold_capability_id`` /
+``reject_index`` are properties derived from those three, never stored.
 """
 from __future__ import annotations
 
 import json
 import random
 import sys
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -46,37 +49,26 @@ SPLITS = ("train", "val", "test")
 
 # The exact frozen schema. An unexpected key means the bundle is not the frozen
 # revision (or carries construction metadata that must never reach the model).
-ROW_KEYS = frozenset({
-    "id", "source_query_id", "split", "part", "lang", "state", "order", "options",
-    "gold_index", "target_kind", "gold_capability_id", "reject_index", "shuffle", "src_sha",
-})
+ROW_KEYS = frozenset({"message_id", "language", "input", "label"})
+INPUT_KEYS = frozenset({"query", "options"})
 
 # The ONLY keys a renderer may ever read to build the model input.
 MODEL_INPUT_KEYS = ("state", "order", "options")
 
 TARGET_KINDS = frozenset({"capability", "reject"})
-PARTITIONS = frozenset({"p1", "p2"})
 
 
 @dataclass(frozen=True)
 class V2Example:
     """One frozen row, adapted. ``order``/``options`` are tuples so the record is
     hashable and cannot be mutated by a downstream renderer."""
-    id: str
-    source_query_id: str
+    message_id: str
     split: str
-    part: str
-    lang: str
+    language: str
     state: str
     order: tuple[str, ...]
     options: tuple[str, ...]
     gold_index: int
-    target_kind: str
-    gold_capability_id: str | None
-    reject_index: int
-    shuffle_seed_prefix: str
-    shuffle_permutation: tuple[int, ...]
-    src_sha: str
 
     @property
     def model_input(self) -> dict:
@@ -84,89 +76,128 @@ class V2Example:
         return {"state": self.state, "order": self.order, "options": self.options}
 
     @property
-    def target_index(self) -> int:
-        """The one-hot target position (== ``gold_index``)."""
-        return self.gold_index
+    def rendered_options(self) -> tuple[str, ...]:
+        """The row's ``input.options`` strings, reconstructed exactly."""
+        return tuple(cid if not card else f"{cid}: {card}"
+                     for cid, card in zip(self.order, self.options))
 
     @property
-    def is_reject(self) -> bool:
-        return self.target_kind == "reject"
+    def target_index(self) -> int:
+        """The one-hot target position (== ``label``)."""
+        return self.gold_index
 
     @property
     def gold_id(self) -> str:
         """The label at the target slot (a capability id, or ``REJECT``)."""
         return self.order[self.gold_index]
 
+    @property
+    def target_kind(self) -> str:
+        return "reject" if self.gold_id == S.REJECT_LABEL else "capability"
 
-def adapt_row(raw: dict) -> V2Example:
+    @property
+    def is_reject(self) -> bool:
+        return self.target_kind == "reject"
+
+    @property
+    def gold_capability_id(self) -> str | None:
+        return None if self.is_reject else self.gold_id
+
+    @property
+    def reject_index(self) -> int:
+        return self.order.index(S.REJECT_LABEL)
+
+
+def _parse_option(option: str, row_id: str) -> tuple[str, str]:
+    """Split one rendered option back into (capability_id, card text).
+
+    ``render_options`` emits ``"<id>: <card>"`` for a described option and the
+    bare ``"<id>"`` when the card is empty. Anything that does not round-trip
+    through that rule is not a valid model input.
+    """
+    cid, sep, card = option.partition(": ")
+    if not sep:
+        cid, card = option, ""
+    if not cid.strip():
+        raise ValueError(f"{row_id}: option {option!r} has no capability id")
+    # Capability ids never contain ":" and never pad with whitespace; anything
+    # else cannot be split back into (id, card) unambiguously.
+    if ":" in cid or cid != cid.strip():
+        raise ValueError(f"{row_id}: option {option!r} is not canonical "
+                         f"(capability id {cid!r})")
+    rebuilt = cid if not card else f"{cid}: {card}"
+    if rebuilt != option:
+        raise ValueError(f"{row_id}: option {option!r} is not canonical "
+                         f"(expected {rebuilt!r})")
+    return cid, card
+
+
+def _valid_uuid4(value: str, row_id: str) -> str:
+    try:
+        parsed = uuid.UUID(value)
+    except (ValueError, AttributeError, TypeError) as exc:
+        raise ValueError(f"{row_id}: message_id {value!r} is not a canonical uuid4") from exc
+    if parsed.version != 4 or str(parsed) != value:
+        raise ValueError(f"{row_id}: message_id {value!r} is not a canonical uuid4")
+    return value
+
+
+def adapt_row(raw: dict, split: str) -> V2Example:
     """Adapter: one frozen JSON row -> a validated ``V2Example``.
 
-    Fails loudly on any schema or semantic drift, so a bundle that is not the
-    frozen revision can never be trained on by accident.
+    ``split`` is the file-level fact and must be passed by the loader; it is
+    never read from the row. Fails loudly on any schema or semantic drift.
     """
+    if split not in SPLITS:
+        raise ValueError(f"unknown split {split!r}; expected one of {SPLITS}")
     keys = set(raw)
     if keys != ROW_KEYS:
         missing = ROW_KEYS - keys
         extra = keys - ROW_KEYS
-        raise ValueError(f"{raw.get('id')}: schema drift (missing={sorted(missing)}, "
+        raise ValueError(f"schema drift (missing={sorted(missing)}, "
                          f"extra={sorted(extra)})")
 
-    order = tuple(raw["order"])
-    options = tuple(raw["options"])
-    n_options = len(order)
-    if n_options != len(options):
-        raise ValueError(f"{raw['id']}: order/options length mismatch "
-                         f"(order={n_options}, options={len(options)})")
+    message_id = _valid_uuid4(raw["message_id"], str(raw["message_id"]))
+    language = raw["language"]
+    if not isinstance(language, str) or not language.strip():
+        raise ValueError(f"{message_id}: language must be a non-empty string")
+
+    inp = raw["input"]
+    if not isinstance(inp, dict) or set(inp) != INPUT_KEYS:
+        raise ValueError(f"{message_id}: input must carry exactly {sorted(INPUT_KEYS)}")
+    state = inp["query"]
+    if not isinstance(state, str) or not state.strip():
+        raise ValueError(f"{message_id}: input.query must be a non-empty string")
+    raw_options = inp["options"]
+    if not isinstance(raw_options, list):
+        raise ValueError(f"{message_id}: input.options must be a list")
+    n_options = len(raw_options)
     if not (S.MIN_OPTION_SLOTS <= n_options <= S.MAX_OPTION_SLOTS):
-        raise ValueError(f"{raw['id']}: expected {S.MIN_OPTION_SLOTS}.."
+        raise ValueError(f"{message_id}: expected {S.MIN_OPTION_SLOTS}.."
                          f"{S.MAX_OPTION_SLOTS} options, got {n_options}")
-    if any(not str(o).strip() for o in options):
-        raise ValueError(f"{raw['id']}: an option card is empty")
+    if any(not isinstance(o, str) or not o.strip() for o in raw_options):
+        raise ValueError(f"{message_id}: an option is empty or not a string")
 
+    parsed = [_parse_option(o, message_id) for o in raw_options]
+    order = tuple(cid for cid, _ in parsed)
+    if len(set(order)) != len(order):
+        raise ValueError(f"{message_id}: duplicate capability ids in options {order}")
     reject_slots = [i for i, cid in enumerate(order) if cid == S.REJECT_LABEL]
-    if reject_slots != [raw["reject_index"]]:
-        raise ValueError(f"{raw['id']}: REJECT must appear exactly once at reject_index "
-                         f"{raw['reject_index']}, found at {reject_slots}")
+    if len(reject_slots) != 1:
+        raise ValueError(f"{message_id}: REJECT must appear exactly once, "
+                         f"found at {reject_slots}")
 
-    gi = raw["gold_index"]
-    if not (0 <= gi < n_options):
-        raise ValueError(f"{raw['id']}: gold_index {gi} out of range "
-                         f"for {n_options} options")
-    kind = raw["target_kind"]
-    if kind not in TARGET_KINDS:
-        raise ValueError(f"{raw['id']}: unknown target_kind {kind!r}")
-    gold_cap = raw["gold_capability_id"]
-    if kind == "reject":
-        if gi != raw["reject_index"]:
-            raise ValueError(f"{raw['id']}: reject row gold_index {gi} != "
-                             f"reject_index {raw['reject_index']}")
-        if gold_cap is not None:
-            raise ValueError(f"{raw['id']}: reject row carries gold_capability_id {gold_cap!r}")
-    else:
-        if gi == raw["reject_index"]:
-            raise ValueError(f"{raw['id']}: capability row points at the REJECT slot")
-        if order[gi] != gold_cap:
-            raise ValueError(f"{raw['id']}: order[gold_index]={order[gi]!r} != "
-                             f"gold_capability_id {gold_cap!r}")
-
-    if raw["part"] not in PARTITIONS:
-        raise ValueError(f"{raw['id']}: unknown part {raw['part']!r}")
-
-    shuf = raw["shuffle"]
-    perm = tuple(shuf["permutation"])
-    if sorted(perm) != list(range(n_options)):
-        raise ValueError(f"{raw['id']}: shuffle permutation {perm} is not a permutation "
-                         f"of 0..{n_options - 1}")
+    label = raw["label"]
+    if isinstance(label, bool) or not isinstance(label, int):
+        raise ValueError(f"{message_id}: label must be an integer")
+    if not (0 <= label < n_options):
+        raise ValueError(f"{message_id}: label {label} out of range for "
+                         f"{n_options} options")
 
     return V2Example(
-        id=str(raw["id"]), source_query_id=str(raw["source_query_id"]),
-        split=str(raw["split"]), part=str(raw["part"]), lang=str(raw["lang"]),
-        state=str(raw["state"]), order=order, options=options,
-        gold_index=int(gi), target_kind=str(kind),
-        gold_capability_id=(None if gold_cap is None else str(gold_cap)),
-        reject_index=int(raw["reject_index"]),
-        shuffle_seed_prefix=str(shuf["seed_prefix"]), shuffle_permutation=perm,
-        src_sha=str(raw["src_sha"]),
+        message_id=message_id, split=split, language=language, state=state,
+        order=order, options=tuple(card for _, card in parsed),
+        gold_index=label,
     )
 
 
@@ -194,6 +225,9 @@ def read_manifest(data_dir: Path = DATA) -> dict:
     manifest = json.loads((data_dir / "manifest.json").read_text(encoding="utf-8"))
     if manifest.get("bench") != S.V2_BENCH:
         raise RuntimeError(f"manifest bench {manifest.get('bench')!r} != {S.V2_BENCH!r}")
+    if set(manifest.get("training_schema_keys", [])) != ROW_KEYS:
+        raise RuntimeError(f"manifest training_schema_keys "
+                           f"{manifest.get('training_schema_keys')!r} != {sorted(ROW_KEYS)}")
     option_slot_bounds(manifest)
     return manifest
 
@@ -225,7 +259,7 @@ def load_split(split: str, data_dir: Path = DATA, limit: int | None = None) -> l
         for line in fh:
             line = line.strip()
             if line:
-                rows.append(adapt_row(json.loads(line)))
+                rows.append(adapt_row(json.loads(line), split))
     if limit is not None:
         return rows[:limit]
 
@@ -233,25 +267,14 @@ def load_split(split: str, data_dir: Path = DATA, limit: int | None = None) -> l
     expected = manifest["rows"][split]
     if len(rows) != expected:
         raise RuntimeError(f"{split}: {len(rows)} rows, manifest says {expected}")
-    if {r.split for r in rows} != {split}:
-        raise RuntimeError(f"{split}: rows carry a foreign split tag")
+    ids = [r.message_id for r in rows]
+    if len(set(ids)) != len(ids):
+        raise RuntimeError(f"{split}: duplicate message_id in the split")
     lo, hi = option_slot_bounds(manifest)
-    out_of_contract = [r.id for r in rows if not lo <= len(r.options) <= hi]
+    out_of_contract = [r.message_id for r in rows if not lo <= len(r.options) <= hi]
     if out_of_contract:
         raise RuntimeError(f"{split}: option count outside manifest contract "
                            f"{lo}..{hi} for {out_of_contract[:5]}")
-    # A split may legitimately draw from more than one frozen source (e.g. after the
-    # Test->Train move, Train carries both the train and the test source
-    # sha). When the manifest declares the split's provenances, every row must match
-    # one; without a declaration the original single-source invariant still holds.
-    declared = manifest.get("split_provenance", {}).get(split)
-    present = {r.src_sha for r in rows}
-    if declared is None:
-        if len(present) != 1:
-            raise RuntimeError(f"{split}: rows do not carry a single frozen source sha")
-    elif present - set(declared):
-        raise RuntimeError(f"{split}: rows carry undeclared source sha(s) "
-                           f"{sorted(present - set(declared))}; declared {sorted(declared)}")
     return rows
 
 
@@ -266,14 +289,15 @@ def calibration_split(n_train: int) -> tuple[list[int], list[int]]:
 def frozen_calibration(examples: list[V2Example],
                        manifest: dict) -> tuple[list[V2Example], list[V2Example]]:
     """Split train into (calibration, effective-train) by the manifest's recorded
-    indices, after proving those indices are reproducible."""
+    indices, after proving those indices are reproducible.
+
+    Calibration membership is positional. ``message_id`` is deliberately not
+    consulted: it is a random per-bundle identifier and has no role in training.
+    """
     calib_idx, train_idx = calibration_split(len(examples))
     recorded = manifest["calibration"]["indices"]
     if calib_idx != recorded:
         raise RuntimeError(
             f"calibration indices are not reproducible: recomputed {len(calib_idx)} rows "
             f"differ from the {len(recorded)} recorded in manifest.json")
-    ids = [examples[i].id for i in calib_idx]
-    if ids != manifest["calibration"]["ids"]:
-        raise RuntimeError("calibration ids are not reproducible from the recorded indices")
     return [examples[i] for i in calib_idx], [examples[i] for i in train_idx]

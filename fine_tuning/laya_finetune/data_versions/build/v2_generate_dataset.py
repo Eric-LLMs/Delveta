@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""V2 (REJECT) dataset — full corrected scope, one build.
+"""HISTORICAL TOOL — not part of the active four-field V4 pipeline.
+
+Preserved as executed against the pre-migration 14-key rows. Do not migrate or
+reuse it for new builds; the active builder is
+``dataset_construction/full_r1/scripts/build_dataset.py``.
+
+V2 (REJECT) dataset — full corrected scope, one build.
 
 V1 is read-only. Nothing under fine_tuning/laya_finetune/ or production is touched.
 

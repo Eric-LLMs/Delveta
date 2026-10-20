@@ -1,8 +1,23 @@
-"""In-place K=0 -> K=1 repair for the full_r1 dataset.
+"""In-place K=0 -> K=1 repair for the four-field training bundle.
 
-Only rows whose audit record is an action with zero candidates and a valid
-source gold capability are touched.  Non-target lines are preserved byte for
-byte.  full_r1_repaired is read-only and used only to cross-check targets.
+Rows are the frozen four-field format:
+
+    {"message_id": "<uuid4>", "language": "<lang>",
+     "input": {"query": "...", "options": ["<id>: <card>", ...]},
+     "label": <int>}
+
+``message_id`` is random and carries no provenance, so the construction audit is
+joined through the local-only ``data_versions/message_id_map.jsonl``
+(``message_id`` -> construction row id). Rows whose audit record is an action
+with zero candidates and a valid source gold capability are repaired in place by
+injecting that gold card next to REJECT and rewriting ``input.options`` /
+``label``. Non-target lines are preserved byte for byte. ``full_r1`` is the
+old-format reference (keyed by construction id) and is used only to cross-check
+targets; the previous repair audit supplies the target id set.
+
+The script is a one-shot repair and expects a pre-repair source. On an
+already-repaired bundle no K=0 targets remain and it stops on the target-set
+mismatch instead of rewriting anything.
 
 Usage:
     python v4_k0_to_k1_inplace.py --dry-run
@@ -20,26 +35,34 @@ import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
-BASE = Path(r"e:/Work Space/Git Repositories/DeepDive/scripts/laya_finetune/data_v4_build")
-SRC = BASE / "full_r1"
-REF = BASE / "full_r1_repaired"
-OUT = BASE / "full_r1_k0_to_k1_inplace_audit"
+BASE = Path(__file__).resolve().parents[5] / "data" / "laya_finetune" / "data_v4_build"
+V2_DIR = Path(__file__).resolve().parents[3]
+SRC = V2_DIR / "data_versions"          # the installed four-field bundles
+REF = BASE / "full_r1"                  # old-format rows, keyed by construction id
+PREV_AUDIT = BASE / "full_r1_k0_to_k1_inplace_audit"
+OUT = BASE / "full_r1_k0_to_k1_inplace_audit_four_field"
+MAP = SRC / "message_id_map.jsonl"
 
 THRESHOLDS = (0.82, 0.85, 0.88)
-TAGS = {0.82: "threshold_082", 0.85: "threshold_085", 0.88: "threshold_088"}
+TAGS = {0.82: "recall_threshold_082", 0.85: "recall_threshold_085",
+        0.88: "recall_threshold_088"}
 SPLITS = ("train", "test", "val")
 REJECT = "REJECT"
 SEED_PREFIX_TMPL = "k0-to-k1-inplace-v1:{threshold}:{split}"
-ROW_KEYS = [
-    "id", "source_query_id", "split", "part", "lang", "state", "order", "options",
-    "gold_index", "target_kind", "gold_capability_id", "reject_index", "shuffle", "src_sha",
-]
-UNCHANGED_KEYS = (
-    "id", "source_query_id", "split", "part", "lang", "state", "src_sha",
-)
+ROW_KEYS = ["message_id", "language", "input", "label"]
 
-CAPS = json.loads((SRC / "data" / "capability_ids.json").read_text(encoding="utf-8"))
+CAPS = json.loads((SRC / "shared" / "capability_ids.json").read_text(encoding="utf-8"))
 CAPSET = set(CAPS)
+
+
+def parse_option(option: str) -> tuple[str, str]:
+    """``"<id>: <card>"`` -> (id, card); a bare id means an empty card."""
+    cid, sep, card = option.partition(": ")
+    return (cid, card) if sep else (option, "")
+
+
+def render_option(cid: str, card: str) -> str:
+    return cid if not card else f"{cid}: {card}"
 
 
 def sha256_bytes(data: bytes) -> str:
@@ -77,14 +100,12 @@ def load_cards() -> tuple[dict[str, str], list[dict]]:
     conflicts: list[dict] = []
     for t in THRESHOLDS:
         for split in SPLITS:
-            p = SRC / "data" / TAGS[t] / f"v2_{split}.jsonl"
+            p = SRC / TAGS[t] / f"v2_{split}.jsonl"
             for row in load_jsonl(p):
-                if len(row["order"]) != len(row["options"]):
-                    conflicts.append({"id": row["id"], "reason": "order_options_len"})
-                    continue
-                for cid, text in zip(row["order"], row["options"]):
+                for opt in row["input"]["options"]:
+                    cid, text = parse_option(opt)
                     if cid in cards and cards[cid] != text:
-                        conflicts.append({"id": row["id"], "capability": cid,
+                        conflicts.append({"id": row["message_id"], "capability": cid,
                                           "reason": "card_text_conflict"})
                     else:
                         cards[cid] = text
@@ -94,7 +115,8 @@ def load_cards() -> tuple[dict[str, str], list[dict]]:
     return cards, conflicts
 
 
-def ref_check(row: dict, gold: str, old: dict, cards: dict) -> str | None:
+def ref_check(row: dict, gold: str, new: dict, cards: dict) -> str | None:
+    """Cross-check the old-format reference row against the new-format row it maps to."""
     if len(row.get("order", [])) != 2 or len(row.get("options", [])) != 2:
         return "reference_option_count"
     if sorted(row["order"]) != sorted([gold, REJECT]):
@@ -110,9 +132,10 @@ def ref_check(row: dict, gold: str, old: dict, cards: dict) -> str | None:
     for cid, text in zip(row["order"], row["options"]):
         if cards.get(cid) != text:
             return "reference_card_text"
-    for key in UNCHANGED_KEYS:
-        if row.get(key) != old.get(key):
-            return f"reference_{key}"
+    if row.get("state") != new["input"]["query"]:
+        return "reference_query"
+    if row.get("lang") != new["language"]:
+        return "reference_language"
     return None
 
 
@@ -121,23 +144,30 @@ def build_plan(apply: bool):
     if card_conflicts:
         raise SystemExit(f"card conflicts: {card_conflicts[:10]}")
 
-    # Per-threshold audit maps and reference target id sets.
+    if not MAP.is_file():
+        raise SystemExit(f"message id map missing: {MAP}")
+
+    # Per-threshold audit maps, message_id -> construction id, and reference sets.
     audits_by_t: dict[float, dict[str, dict]] = {}
+    id_map_by_t: dict[float, dict[str, str]] = {t: {} for t in THRESHOLDS}
     ref_ids_by_t: dict[float, set[str]] = {}
     ref_detail_counts: dict[tuple[float, str], int] = Counter()
+    for rec in load_jsonl(MAP):
+        if rec["threshold"] in id_map_by_t:
+            id_map_by_t[rec["threshold"]][rec["message_id"]] = rec["old_id"]
     for t in THRESHOLDS:
         tag = TAGS[t]
         audits: dict[str, dict] = {}
-        for a in load_jsonl(SRC / "data" / tag / "construction_audit.jsonl"):
+        for a in load_jsonl(SRC / tag / "construction_audit.jsonl"):
             if a["id"] in audits:
                 raise SystemExit(f"{tag}: duplicate audit id {a['id']}")
             audits[a["id"]] = a
         audits_by_t[t] = audits
 
         ref_ids: set[str] = set()
-        for d in load_jsonl(REF / "data" / tag / "repair_detail.jsonl"):
+        for d in load_jsonl(PREV_AUDIT / "k0_to_k1_repair_detail.jsonl"):
             if d["threshold"] != t:
-                raise SystemExit(f"{tag}: repair_detail threshold mismatch {d['threshold']}")
+                continue
             ref_ids.add(d["id"])
             ref_detail_counts[(t, d["split"])] += 1
         ref_ids_by_t[t] = ref_ids
@@ -153,8 +183,9 @@ def build_plan(apply: bool):
     for t in THRESHOLDS:
         tag = TAGS[t]
         audits = audits_by_t[t]
+        id_map = id_map_by_t[t]
         for split in SPLITS:
-            path = SRC / "data" / tag / f"v2_{split}.jsonl"
+            path = SRC / tag / f"v2_{split}.jsonl"
             ref_path = REF / "data" / tag / f"v2_{split}.jsonl"
             data = path.read_bytes()
             parts, items = split_raw(data)
@@ -169,22 +200,32 @@ def build_plan(apply: bool):
             targets: list[dict] = []
             for lineno, raw in items:
                 row = json.loads(raw.decode("utf-8"))
-                rid = row["id"]
-                if rid in seen_ids:
-                    raise SystemExit(f"{path}: duplicate row id {rid}")
-                seen_ids.add(rid)
-                if rid in all_seen[t]:
-                    raise SystemExit(f"{tag}: id appears in multiple split files: {rid}")
-                all_seen[t].add(rid)
+                mid = row["message_id"]
+                rid = id_map.get(mid)
+                if mid in seen_ids:
+                    raise SystemExit(f"{path}: duplicate message_id {mid}")
+                seen_ids.add(mid)
+                if mid in all_seen[t]:
+                    raise SystemExit(f"{tag}: message_id in multiple splits: {mid}")
+                all_seen[t].add(mid)
 
-                k = len(row["order"]) - 1
+                k = len(row["input"]["options"]) - 1
                 k_before[t][k] += 1
                 after_k = k
+                if rid is None:
+                    pending.append({
+                        "threshold": t, "split": split, "id": mid,
+                        "reason": "map_missing",
+                        "detail": "message_id absent from message_id_map.jsonl",
+                    })
+                    k_after[t][after_k] += 1
+                    continue
                 a = audits.get(rid)
 
                 if k == 0 and a is None:
                     pending.append({
                         "threshold": t, "split": split, "id": rid,
+                        "message_id": mid,
                         "reason": "audit_missing",
                         "detail": "no construction_audit record",
                     })
@@ -196,72 +237,70 @@ def build_plan(apply: bool):
                     elif a.get("threshold") != t:
                         pending.append({
                             "threshold": t, "split": split, "id": rid,
+                            "message_id": mid,
                             "reason": "audit_threshold_conflict",
                             "detail": f"audit threshold={a.get('threshold')!r}",
                         })
                     elif a.get("split") != split:
                         pending.append({
                             "threshold": t, "split": split, "id": rid,
+                            "message_id": mid,
                             "reason": "audit_split_conflict",
                             "detail": f"audit split={a.get('split')!r}",
                         })
                     elif gold not in CAPSET:
                         pending.append({
                             "threshold": t, "split": split, "id": rid,
+                            "message_id": mid,
                             "reason": "invalid_source_gold",
                             "detail": f"source_gold_capability_id={gold!r}",
                         })
                     elif cc != 0:
                         pending.append({
                             "threshold": t, "split": split, "id": rid,
+                            "message_id": mid,
                             "reason": "audit_k_conflict",
                             "detail": f"audit candidate_count={cc!r} row K=0",
                         })
                     elif a.get("label_reason") != "no_candidates":
                         pending.append({
                             "threshold": t, "split": split, "id": rid,
+                            "message_id": mid,
                             "reason": "unexpected_label_reason",
                             "detail": f"label_reason={a.get('label_reason')!r}",
                         })
-                    elif row.get("split") != split:
+                    elif [parse_option(o) for o in row["input"]["options"]] != \
+                            [(REJECT, cards[REJECT])]:
                         pending.append({
                             "threshold": t, "split": split, "id": rid,
-                            "reason": "row_split_conflict",
-                            "detail": f"row split={row.get('split')!r}",
-                        })
-                    elif (row["order"] != [REJECT]
-                          or row["target_kind"] != "reject"
-                          or row.get("gold_index") != 0
-                          or row.get("reject_index") != 0):
-                        pending.append({
-                            "threshold": t, "split": split, "id": rid,
+                            "message_id": mid,
                             "reason": "row_shape_conflict",
-                            "detail": (f"order={row['order']} "
-                                       f"target_kind={row['target_kind']} "
-                                       f"gold_index={row.get('gold_index')} "
-                                       f"reject_index={row.get('reject_index')}"),
+                            "detail": f"input.options={row['input']['options']!r}",
                         })
-                    elif row.get("gold_capability_id") not in (None, gold):
+                    elif row["label"] != 0:
                         pending.append({
                             "threshold": t, "split": split, "id": rid,
-                            "reason": "row_gold_conflict",
-                            "detail": f"row gold={row.get('gold_capability_id')!r} audit gold={gold!r}",
+                            "message_id": mid,
+                            "reason": "row_label_conflict",
+                            "detail": f"label={row['label']!r} on a K=0 row",
                         })
                     else:
                         ref = ref_rows.get(rid)
                         if ref is None:
                             pending.append({
                                 "threshold": t, "split": split, "id": rid,
+                                "message_id": mid,
                                 "reason": "reference_row_missing",
-                                "detail": "id absent from full_r1_repaired",
+                                "detail": "id absent from full_r1",
                             })
                         else:
                             why = ref_check(ref, gold, row, cards)
                             if why is not None:
                                 pending.append({
                                     "threshold": t, "split": split, "id": rid,
+                                    "message_id": mid,
                                     "reason": why,
-                                    "detail": "full_r1_repaired disagrees with audit",
+                                    "detail": "full_r1 disagrees with audit",
                                 })
                             else:
                                 prefix = SEED_PREFIX_TMPL.format(threshold=t, split=split)
@@ -270,26 +309,24 @@ def build_plan(apply: bool):
                                 random.Random(seed).shuffle(perm)
                                 base_order = [gold, REJECT]
                                 order = [base_order[i] for i in perm]
-                                options = [cards[c] for c in order]
-                                new_row = dict(row)
-                                new_row["order"] = order
-                                new_row["options"] = options
-                                new_row["gold_index"] = order.index(gold)
-                                new_row["target_kind"] = "capability"
-                                new_row["gold_capability_id"] = gold
-                                new_row["reject_index"] = order.index(REJECT)
-                                new_row["shuffle"] = {
-                                    "seed_prefix": prefix,
-                                    "permutation": perm,
+                                new_row = {
+                                    "message_id": row["message_id"],
+                                    "language": row["language"],
+                                    "input": {
+                                        "query": row["input"]["query"],
+                                        "options": [render_option(c, cards[c])
+                                                    for c in order],
+                                    },
+                                    "label": order.index(gold),
                                 }
-                                new_row = {key: new_row[key] for key in ROW_KEYS}
                                 validate_new_row(new_row, old=row, gold=gold,
-                                                 perm=perm, prefix=prefix, cards=cards)
+                                                 perm=perm, cards=cards)
                                 new_line = serialize(new_row)
                                 targets.append({
                                     "lineno": lineno,
                                     "raw": raw,
                                     "old": row,
+                                    "construction_id": rid,
                                     "new": new_row,
                                     "new_line": new_line,
                                     "gold": gold,
@@ -306,9 +343,9 @@ def build_plan(apply: bool):
                 k_after[t][after_k] += 1
 
             # Target ids must be unique and present exactly once.
-            target_ids = [x["old"]["id"] for x in targets]
+            target_ids = [x["old"]["message_id"] for x in targets]
             if len(target_ids) != len(set(target_ids)):
-                raise SystemExit(f"{path}: duplicate target ids")
+                raise SystemExit(f"{path}: duplicate target message_id")
 
             plans[(t, split)] = {
                 "threshold": t,
@@ -355,34 +392,34 @@ def build_plan(apply: bool):
 
 
 def validate_new_row(row: dict, old: dict, gold: str, perm: list[int],
-                     prefix: str, cards: dict[str, str]) -> None:
+                     cards: dict[str, str]) -> None:
     if list(row.keys()) != ROW_KEYS:
         raise AssertionError(f"schema keys: {list(row.keys())}")
-    if len(row["order"]) != 2 or len(row["options"]) != 2:
+    inp = row["input"]
+    if list(inp.keys()) != ["query", "options"]:
+        raise AssertionError(f"input keys: {list(inp.keys())}")
+    parsed = [parse_option(o) for o in inp["options"]]
+    if len(parsed) != 2:
         raise AssertionError("option count")
-    if row["order"].count(REJECT) != 1 or row["order"].count(gold) != 1:
-        raise AssertionError(f"order={row['order']}")
-    if len(set(row["order"])) != 2:
+    order = [cid for cid, _ in parsed]
+    if order.count(REJECT) != 1 or order.count(gold) != 1:
+        raise AssertionError(f"order={order}")
+    if len(set(order)) != 2:
         raise AssertionError("duplicate option")
-    if row["target_kind"] != "capability":
-        raise AssertionError("target_kind")
-    if row["gold_capability_id"] != gold:
-        raise AssertionError("gold_capability_id")
-    if row["order"][row["gold_index"]] != gold:
-        raise AssertionError("gold_index")
-    if row["order"][row["reject_index"]] != REJECT:
-        raise AssertionError("reject_index")
-    if row["shuffle"] != {"seed_prefix": prefix, "permutation": perm}:
-        raise AssertionError("shuffle")
+    if isinstance(row["label"], bool) or row["label"] != order.index(gold):
+        raise AssertionError("label")
     base = [gold, REJECT]
-    if [base[i] for i in perm] != row["order"]:
+    if [base[i] for i in perm] != order:
         raise AssertionError("permutation/order")
-    for cid, text in zip(row["order"], row["options"]):
+    for cid, text in parsed:
         if cards.get(cid) != text:
             raise AssertionError(f"card text {cid}")
-    for key in UNCHANGED_KEYS:
-        if row[key] != old[key]:
-            raise AssertionError(f"changed {key}")
+    if row["message_id"] != old["message_id"]:
+        raise AssertionError("changed message_id")
+    if row["language"] != old["language"]:
+        raise AssertionError("changed language")
+    if inp["query"] != old["input"]["query"]:
+        raise AssertionError("changed query")
 
 
 def write_backup(plan: dict, out_dir: Path) -> dict:
@@ -463,22 +500,21 @@ def verify_written(plan: dict, parts: list[bytes], target_by_line: dict,
     after_items = [(i + 1, raw) for i, raw in enumerate(after_parts) if raw != b""]
     if len(after_items) != len(items):
         raise SystemExit(f"{path}: row count changed")
-    if [json.loads(raw)["id"] for _, raw in after_items] != \
-       [json.loads(raw)["id"] for _, raw in items]:
+    if [json.loads(raw)["message_id"] for _, raw in after_items] != \
+       [json.loads(raw)["message_id"] for _, raw in items]:
         raise SystemExit(f"{path}: row order changed")
 
     for lineno, item in target_by_line.items():
         row = json.loads(after_parts[lineno - 1].decode("utf-8"))
         validate_new_row(row, old=item["old"], gold=item["gold"],
-                         perm=item["permutation"], prefix=item["seed_prefix"],
-                         cards=cards)
-        if row["id"] != item["old"]["id"]:
-            raise SystemExit(f"{path}:{lineno}: id changed")
+                         perm=item["permutation"], cards=cards)
+        if row["message_id"] != item["old"]["message_id"]:
+            raise SystemExit(f"{path}:{lineno}: message_id changed")
 
     return {
         "threshold": plan["threshold"],
         "split": plan["split"],
-        "file": str(path.relative_to(BASE)),
+        "file": str(path.relative_to(SRC)),
         "before_sha256": plan["before_sha"],
         "after_sha256": sha256_file(path),
         "backup_path": backup["backup_path"],
@@ -507,17 +543,19 @@ def write_outputs(result: dict, file_audits: list[dict]) -> None:
                 for item in plan["targets"]:
                     old = item["old"]
                     audit = item["audit"]
+                    new_options = item["new"]["input"]["options"]
+                    new_order = [parse_option(o)[0] for o in new_options]
                     rec = {
-                        "id": old["id"],
-                        "source_query_id": old["source_query_id"],
+                        "message_id": old["message_id"],
+                        "construction_id": item["construction_id"],
                         "threshold": t,
                         "split": split,
                         "file_path": str(plan["path"]),
-                        "file_path_relative": str(plan["path"].relative_to(BASE)),
+                        "file_path_relative": str(plan["path"].relative_to(SRC)),
                         "original_line_number": item["lineno"],
                         "original_k": 0,
                         "repaired_k": 1,
-                        "original_target_kind": old["target_kind"],
+                        "original_target_kind": "reject",
                         "original_label": REJECT,
                         "original_gold_capability_id": item["gold"],
                         "original_gold_score": audit.get("gold_score"),
@@ -531,10 +569,10 @@ def write_outputs(result: dict, file_audits: list[dict]) -> None:
                         "candidate_source": "source_gold_injected",
                         "retrieval_score_available": False,
                         "repair_reason": "k0_gold_supervision_injection",
-                        "final_order": item["new"]["order"],
-                        "final_options": item["new"]["options"],
-                        "final_gold_index": item["new"]["gold_index"],
-                        "final_reject_index": item["new"]["reject_index"],
+                        "final_order": new_order,
+                        "final_options": new_options,
+                        "final_gold_index": item["new"]["label"],
+                        "final_reject_index": new_order.index(REJECT),
                         "reject_position": item["reject_position"],
                         "random_seed": item["seed"],
                         "seed_prefix": item["seed_prefix"],
@@ -590,7 +628,7 @@ def write_outputs(result: dict, file_audits: list[dict]) -> None:
         "reference_dir": str(REF),
         "audit_dir": str(OUT),
         "random_seed_scheme": (
-            "k0-to-k1-inplace-v1:<threshold>:<split>:<row id>; "
+            "k0-to-k1-inplace-v1:<threshold>:<split>:<construction id>; "
             "base order = [gold capability, REJECT]"
         ),
         "files": file_audits,
@@ -648,7 +686,7 @@ def write_outputs(result: dict, file_audits: list[dict]) -> None:
     for row in rows:
         lines.append(f"| {row[0]} | {row[1]} | {row[2]} | {row[3]}% | {row[4]} | {row[5]}% | {row[6]} |")
     lines.append("")
-    lines.append("随机种子规则：`k0-to-k1-inplace-v1:<threshold>:<split>:<row id>`，"
+    lines.append("随机种子规则：`k0-to-k1-inplace-v1:<threshold>:<split>:<construction id>`，"
                  "基础顺序 `[gold capability, REJECT]`，用 `random.Random(seed).shuffle([0,1])` "
                  "生成排列；每条的种子、排列和 REJECT 位置记录在明细 JSONL 中。\n")
 
@@ -656,8 +694,8 @@ def write_outputs(result: dict, file_audits: list[dict]) -> None:
     lines.append("- 目标行：K=1、恰好 1 张 capability 卡 + 1 张 REJECT、总选项 2、"
                  "Gold 索引指向正确 capability：PASS")
     lines.append("- 非目标行逐字节一致、行顺序不变、文件行数不变：PASS（0 行变更）")
-    lines.append("- 文件归属、split、query、样本 ID、`src_sha` 未改变：PASS")
-    lines.append("- 与 `full_r1_repaired` 交叉核对：目标集合、Gold capability、卡片文本一致：PASS")
+    lines.append("- 文件归属、query、`message_id`、`language` 未改变：PASS")
+    lines.append("- 与 `full_r1` 交叉核对：目标集合、Gold capability、卡片文本一致：PASS")
     lines.append(f"- 待确认样本：{len(result['pending'])}")
     lines.append("- 未启动模型训练或部署。\n")
 
@@ -733,7 +771,7 @@ def main() -> None:
     except Exception:
         # Restore every file that has a backup, then re-raise.
         for fa in file_audits:
-            p = BASE / fa["file"]
+            p = SRC / fa["file"]
             shutil.copy2(fa["backup_path"], p)
         raise
 

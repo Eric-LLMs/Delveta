@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""STEP 7 — build a smoke fixture dataset from VERBATIM frozen V2 rows.
+"""HISTORICAL TOOL — not part of the active four-field V4 pipeline.
+
+Preserved as executed: it materialises a fixture from the pre-migration 14-key
+V2 rows. It has not been migrated and is not used by the current training
+bundle.
+
+STEP 7 — build a smoke fixture dataset from VERBATIM frozen V2 rows.
 
 The smoke must push SPECIFIC cases through the real train/eval entry points, so
 mode_train must see them as its 8 smoke rows. We therefore materialise a fixture

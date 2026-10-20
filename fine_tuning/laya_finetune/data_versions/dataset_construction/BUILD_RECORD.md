@@ -116,8 +116,11 @@ Full file-level SHA-256 inventory:
 ## 6. Code and dependency versions
 
 - Repository HEAD: `fdec472`
-- `build_dataset.py`: 105,053 bytes,
-  SHA-256 `9a882b556e4a06e7527e22847a450598319655c442dec8af0a5dbc46125fc4d5`
+- `build_dataset.py` as executed: 105,053 bytes,
+  SHA-256 `9a882b556e4a06e7527e22847a450598319655c442dec8af0a5dbc46125fc4d5`.
+  The archived copy was later patched so that `validate_in_build` validates the
+  four-field training rows; the size and hash above describe the version that
+  produced the data, not the current archived file.
 - Python: 3.13.11
 - Installed at record time: `asyncpg 0.31.0`, `httpx 0.28.1`, `numpy 2.5.3`
 - The build ran from the repository's app environment. The V2 fine-tuning
@@ -144,21 +147,33 @@ changes outside this backup task.
    `inputs/` under the renamed name, and the generated directories were renamed
    to `recall_threshold_*`. Running the script as archived will fail until the
    path and tag constants are repointed.
-5. `repair/v4_k0_to_k1_inplace.py` and
-   `repair/verify_k0_to_k1_inplace.py` still use the old `threshold_*` tags and
-   reference the superseded `full_r1_repaired` directory. They are preserved
-   as executed, not rewritten.
+5. `repair/v4_k0_to_k1_inplace.py` has been repointed to the four-field
+   bundles (`v2_*.jsonl` under `recall_threshold_*`) and joins the construction
+   audit through the local-only `message_id_map.jsonl`; its old-format
+   reference is `full_r1`. `repair/verify_k0_to_k1_inplace.py` is preserved as
+   executed and still reads the old archive.
 6. `repair/unify_v4_official_version.py` also uses the old tags and the
    pre-move `scripts/laya_finetune/data_v4_build` base path.
 7. `audit/v4_schema_stats.py` targets `smoke50_r1`; the other audit scripts
-   contain base paths from before the archive move. They are read-only audit
-   tools and are not part of the generation entry point.
+   contain base paths from before the archive move and read the archived
+   14-key rows. They are read-only audit tools and are not part of the
+   generation entry point.
 8. The exact shell command, the database snapshot and the embedding-model
    revision were not recorded. Recall therefore cannot be reproduced from
    this repository alone.
 9. The `full_r1` sample manifest and construction audit record the pre-repair
    state where documented; repaired target rows are reconciled through the
    repair detail and backup files under the audit archive.
+10. `build/v2_capture.py`, `build/v2_generate_dataset.py`,
+    `build/v2_generate_final.py` and `build/v2_adjust_test_to_train.py` are the
+    historical V2 construction stages and operate on 14-key intermediate rows.
+    They are preserved as executed. `smoke/build_smoke_fixture.py` and
+    `smoke/_step7_driver.py` are likewise historical: they materialise and
+    verify a fixture from the pre-migration 14-key rows and have not been
+    migrated. All of these files carry a HISTORICAL TOOL banner. The active
+    four-field builder is `full_r1/scripts/build_dataset.py`;
+    `build/v2_refresh_cards_from_registry.py` is the only `build/` script that
+    reads the installed bundle and has been migrated to the four-field schema.
 
 ## 8. Post-build archive layout
 

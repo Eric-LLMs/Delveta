@@ -5,14 +5,14 @@
 sees:
 
     [CLS] <type> question: <instructions> [SEP] [MASK] opt0 [MASK] opt1
-    [MASK] opt2 [MASK] opt3 [SEP] state [SEP]
+    ... [SEP] state [SEP]
 
 with one marker per option. The ONLY content that enters the sequence is the
-row's ``state`` and its four option cards (``order`` + ``options`` plus the
-manifest ``instructions``). Every other frozen key — ``part``,
-``source_query_id``, ``src_sha``, ``shuffle``, ``lang``, ``gold_index``,
-``target_kind``, ``gold_capability_id``, ``reject_index`` — is metadata and is
-never rendered; the target is derived from ``gold_index`` separately.
+row's ``input.query`` (``state``) and its ``input.options`` strings, which are
+rendered in option order (the adapter splits them into an id and a card so the
+library's ``render_options`` reproduces the stored string byte for byte). The
+``label`` becomes the one-hot target. ``message_id`` and ``language`` are
+metadata and are never rendered.
 
 ``build_sequence`` is a VERBATIM copy of the frozen v1 builder
 (``../V1/layachoice_finetune.py``): a copy of ``laya.common.build_sequence`` with
@@ -127,9 +127,9 @@ def build_item(tok, ex: V2Example, instructions: str,
     q = question_of(ex, instructions)
     ids, markers = build_sequence(tok, ex.state, q, max_len, head_max_len)
     if len(markers) != len(ex.options):
-        raise RuntimeError(f"{ex.id}: {len(ex.options)} options but {len(markers)} markers "
-                           f"survive head_max_len={head_max_len}")
+        raise RuntimeError(f"{ex.message_id}: {len(ex.options)} options but "
+                           f"{len(markers)} markers survive head_max_len={head_max_len}")
     target = [0.0] * len(markers)
     target[ex.gold_index] = 1.0
     return {"ids": ids, "markers": markers, "qtype": C.QTYPES["choice"],
-            "target": target, "label": ex.gold_index, "id": ex.id}
+            "target": target, "label": ex.gold_index, "message_id": ex.message_id}

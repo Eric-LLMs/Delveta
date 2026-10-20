@@ -1,7 +1,4 @@
-# LayaChoice V4 training bundle - recall_threshold_082 (flat installed layout)
-# Training reads only manifest.json + {train,val,test}.jsonl.
-# Archived evidence: fine_tuning/laya_finetune/data_versions/
-5bb80da52f484cb10a24a23fb1f6333fb796dc6943f958e08bba473bbc101dd8  manifest.json
-3abd7b3c6fdf45435a99c78bc87a415f0d0e91b41274abbdf85a5a99c23c3c15  test.jsonl
-1a9472337f64cd2a89ba06e29cb2cfd97bcb3ce4c786c684350c4030893cd3b1  train.jsonl
-943000f2e809568accac537bf82444580a97bf1327c594b6973405b81fbd9d90  val.jsonl
+e103b2f019454e07188f60257c72ec73ecf745fda54d830a1585595309f9f85e  manifest.json
+66c6318d57d2021a85384020f8fb52f5903f37353ec7593e3e6b07c6215dbac1  test.jsonl
+97ed1b54a205d3fac4dd3837e93abb779104568b94019c9a161752c7ca670c77  train.jsonl
+833829ce30d929a8ce502036e3f7b049ef8279770558a632efaaf6bd9e54cb03  val.jsonl

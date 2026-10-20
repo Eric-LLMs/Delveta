@@ -1,3 +1,9 @@
+"""Historical one-off verifier for the pre-migration K=0 -> K=1 repair.
+
+Reads the archived 14-key bundle under ``data_v4_build/full_r1`` and the audit
+produced there, so it is kept as executed. The four-field repair tool is
+``v4_k0_to_k1_inplace.py``; this script is not part of the active pipeline.
+"""
 import json
 import random
 import hashlib

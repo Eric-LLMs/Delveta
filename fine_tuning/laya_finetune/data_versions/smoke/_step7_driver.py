@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""STEP 7 verification driver — assertions the CLI smoke cannot express.
+"""HISTORICAL TOOL — not part of the active four-field V4 pipeline.
+
+Preserved as executed against the pre-migration 14-key smoke fixture. It has
+not been migrated and is not part of the current training bundle.
+
+STEP 7 verification driver — assertions the CLI smoke cannot express.
 
 Covers, on the SAME fixture rows the real train/eval ran on:
   * loader + rendering + target shape/position per coverage case;

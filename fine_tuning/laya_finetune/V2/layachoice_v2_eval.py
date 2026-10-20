@@ -100,9 +100,8 @@ def summarise(rows: list[dict], *, arm: str, split: str, temperature, card_view:
         "ece": round(float(C.ece_score(conf, correct)), 6),
         "mean_confidence": round(float(conf.mean()), 6) if n else 0.0,
         "mean_gold_prob": round(float(np.mean([r["gold_prob"] for r in rows])), 6) if n else 0.0,
-        "by_language": _group(rows, lambda r: r["lang"]),
+        "by_language": _group(rows, lambda r: r["language"]),
         "by_target_kind": _group(rows, lambda r: r["target_kind"]),
-        "by_part": _group(rows, lambda r: r["part"]),
         "by_gold_id": _group(rows, lambda r: r["gold_id"]),
         "top_confusions": [[g, p, c] for (g, p), c in confusions.most_common(10)],
     }
