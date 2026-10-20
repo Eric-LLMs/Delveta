@@ -90,7 +90,7 @@ cap-social-search     cap-summary           cap-translate
 cap-vision            cap-web-search
 ```
 
-`cap-research` is deliberately excluded from V1. The V2 dataset includes it; see §12.
+`cap-research` is deliberately excluded from V1.
 
 ## 4. Dataset Splits and Calibration
 
@@ -336,13 +336,12 @@ All **1,906 / 1,906** runtime rows reconstruct identically on
 `(id, split, lang, state, order, options, gold, d1, d2)`, and the frozen distractor table
 reproduces the original `(d1, d2)` pair on **1,906 / 1,906** rows. The model input, the
 one-hot target, calibration membership and evaluation groupings are unchanged, so the
-published benchmark is unaffected. Full evidence is in `MIGRATION_REPORT.md` in the GitHub
-repository.
+published benchmark is unaffected.
 
 **Relationship to the retired `.gz` bundles.** The pre-migration ten-column bundles
 (`layachoice_v1_{train,val,test}_b_noprov.jsonl.gz`) were removed from this Hugging Face
-repository after the four-field bundle was published. They remain, unchanged, in the GitHub
-repository at `fine_tuning/laya_finetune/V1/data/` for traceability:
+repository after the four-field bundle was published. They remain, unchanged, in the
+dataset's version-control history for traceability:
 
 | Retired file | SHA256 |
 |---|---|
@@ -395,9 +394,7 @@ fitted on the 85 calibration rows):
 
 These numbers are benchmark accuracy on a curated 900-row artifact; see §13.
 
-## 12. Relationship to V1 Model and V2 Dataset
-
-### V1 model
+## 12. Relationship to the V1 Model
 
 | | |
 |---|---|
@@ -409,54 +406,13 @@ The published model was trained on the 771 effective rows (856 − 85 calibratio
 by validation top-1, and benchmarked once on the 900 test rows. The model repository is
 the deployment artifact; this dataset repository is the auditable data record.
 
-### V1 vs V2 dataset
-
-The V2 dataset is
-[`eric-ml-nlp/Delveta-LayaChoice-v2-Data`](https://huggingface.co/datasets/eric-ml-nlp/Delveta-LayaChoice-v2-Data).
-V1 and V2 share the recipe and the input builder but **not the task definition**:
-
-| | V1 (this dataset) | V2 |
-|---|---|---|
-| Task | choose 1 of exactly 3 real capability cards | choose among `K` candidate cards **or** `REJECT` |
-| Options per row | fixed **3** | `K + 1`, **1 to 4** |
-| Labels | **0–2** | **0–3** |
-| `REJECT` | **absent** — no reject/abstain class | exactly one `REJECT` option per row; `REJECT` may be the gold label |
-| Capabilities | **17** (no `cap-research`) | **18** (includes `cap-research`) |
-| Option order | ascending `capability_id` in 100% of rows; no shuffle | deterministic per-row shuffle over the row id |
-| `message_id` | construction id (`corpus-stan-*`, `corpus-simi-*`, `gen-val-*`, `gen-tes-*`) | fresh uuid4 per bundle |
-| `language` | `zh` / `en` | `en` / `zh` / `mixed` |
-| Volume | 1,906 rows (856 / 150 / 900) | 48,333 rows per threshold bundle |
-| Calibration | 85 rows, `min(400, 856 // 10)` | 400 rows, `min(400, n_train // 10)` |
-| Card view | `B_noprov` | `B_noprov` |
-| Sequence builder | frozen V1 builder | **verbatim copy** of the V1 builder |
-| Token budget | 256 / 768 / 1024 | 256 / 768 / 1024 (unchanged) |
-| Base checkpoint | `convaiinnovations/laya@55cf4c4e…/multilingual` | same |
-| Seed / calibration seed | 42 / `20260922` | 42 / `20260922` |
-
-`REJECT` is a V2 concept. Do not apply V2's task definition to V1: every V1 row has a real
-capability as its gold, and a V1 model has no way to abstain.
-
-**Cards are not identical across the two datasets.** The renderer layout, field order and
-the `B_noprov` view are shared, and the production `render_card` reproduces this V1 frozen
-bundle byte-for-byte (pinned by `tests/test_cap_router_service.py`). However, the two
-bundles were rendered from different capability-registry snapshots, so only **5 of the 17**
-shared capability cards are byte-identical:
-
-- **identical:** `cap-add-term`, `cap-create-folder`, `cap-mindmap`, `cap-slides`,
-  `cap-summary`;
-- **different:** `cap-artifact`, `cap-bash`, `cap-edit-file`, `cap-pdf-extract-text`,
-  `cap-pdf-table-to-text`, `cap-rag-search`, `cap-read-document`, `cap-read-file`,
-  `cap-social-search`, `cap-translate`, `cap-vision`, `cap-web-search`;
-- **only in V2:** `cap-research`.
-
-The differences are in the `does:` description text and/or the `params:` block, not in the
-row schema. A model trained on one bundle therefore did not necessarily see the other
-bundle's exact card text.
+The frozen distractor roles (`d1` / `d2`) are recovered from the gold capability at load
+time. They are not stored, are never part of the model input or the training target, and
+are used only for the benchmark's hard-negative and confusion reporting.
 
 ## 13. Limitations
 
 - **Fixed `K = 3`.** Behaviour for `K = 2` or post-truncation `K >= 4` is not represented.
-  (V2 covers the dynamic `K + 1` case and the `REJECT` class; V1 does not.)
 - **Closed label space.** 17 capabilities frozen at construction time. Capabilities added
   later — including `cap-research` — cannot be selected or evaluated.
 - **No abstain class.** V1 cannot express "no candidate is correct".
@@ -473,8 +429,6 @@ bundle's exact card text.
   differences should be read with sampling error in mind.
 - **Benchmark accuracy ≠ production accuracy.** The test split is a fixed curated artifact
   over known capabilities with a known hard-negative construction.
-- **V1 vs V2 card drift.** 12 of 17 shared cards differ in text between the bundles; V1 and
-  V2 results are not a clean card-text-controlled comparison.
 
 ## 14. Citation and Related Repositories
 
@@ -498,11 +452,4 @@ Related resources:
 
 - Fine-tuned model: [`eric-ml-nlp/Delveta-LayaChoice-v1`](https://huggingface.co/eric-ml-nlp/Delveta-LayaChoice-v1)
 - Training checkpoints: [`eric-ml-nlp/Delveta-LayaChoice-v1-checkpoints`](https://huggingface.co/eric-ml-nlp/Delveta-LayaChoice-v1-checkpoints)
-- V2 dataset: [`eric-ml-nlp/Delveta-LayaChoice-v2-Data`](https://huggingface.co/datasets/eric-ml-nlp/Delveta-LayaChoice-v2-Data)
-- Source repository: [`Eric-LLMs/Delveta`](https://github.com/Eric-LLMs/Delveta)
-  - dataset contract/loader: `fine_tuning/laya_finetune/V1/layachoice_v1_dataset.py`
-  - construction: `fine_tuning/laya_finetune/V1/layachoice_prepare.py`
-  - training / evaluation: `fine_tuning/laya_finetune/V1/layachoice_finetune.py`,
-    `layachoice_eval.py`
-  - migration evidence: `fine_tuning/laya_finetune/V1/MIGRATION_REPORT.md`
 - Experiment document: [`docs/experiments/LayaChoice-v1-Fine-Tuning.md`](https://github.com/Eric-LLMs/Delveta/blob/main/docs/experiments/LayaChoice-v1-Fine-Tuning.md)
