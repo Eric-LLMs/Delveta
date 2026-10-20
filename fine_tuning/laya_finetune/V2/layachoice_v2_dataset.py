@@ -16,9 +16,11 @@ Two responsibilities live here because they share one frozen schema:
     Every other frozen key (``part``, ``source_query_id``, ``src_sha``,
     ``shuffle``, ``gold_index``, ...) is metadata: carried for validation, audit
     and the target, and structurally excluded from what a renderer may read.
-  * the LOADER   (``read_manifest`` / ``load_split``) reads ``v2_{split}.jsonl``
-    and proves each split still describes the frozen manifest (row count, split
-    tag, and every row's source sha declared for that split).
+  * the LOADER   (``read_manifest`` / ``split_path`` / ``load_split``) reads the
+    split file and proves it still describes the frozen manifest (row count,
+    split tag, and every row's source sha declared for that split). The formal
+    flat bundle names its files ``{split}.jsonl``; the archived threshold
+    bundles keep the historical ``v2_{split}.jsonl`` names.
 
 ``gold_index`` is the FINAL target position — the slot the model must pick. For
 a ``capability`` row that slot holds the gold capability; for a ``reject`` row it
@@ -196,11 +198,28 @@ def read_manifest(data_dir: Path = DATA) -> dict:
     return manifest
 
 
+def split_path(split: str, data_dir: Path = DATA) -> Path:
+    """Resolve one split file for either installed layout.
+
+    The formal flat bundle uses ``{split}.jsonl``; the archived threshold
+    bundles keep the historical ``v2_{split}.jsonl`` names. The file bytes are
+    the same contract in both layouts, so callers never branch on the name.
+    """
+    formal = data_dir / f"{split}.jsonl"
+    if formal.is_file():
+        return formal
+    archived = data_dir / f"v2_{split}.jsonl"
+    if archived.is_file():
+        return archived
+    raise FileNotFoundError(
+        f"{split}: neither {formal.name} nor {archived.name} under {data_dir}")
+
+
 def load_split(split: str, data_dir: Path = DATA, limit: int | None = None) -> list[V2Example]:
     """Load one split and prove it still describes the frozen manifest."""
     if split not in SPLITS:
         raise ValueError(f"unknown split {split!r}; expected one of {SPLITS}")
-    path = data_dir / f"v2_{split}.jsonl"
+    path = split_path(split, data_dir)
     rows = []
     with open(path, encoding="utf-8") as fh:
         for line in fh:

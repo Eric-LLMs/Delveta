@@ -27,7 +27,8 @@ import pytest
 
 _REPO = Path(__file__).resolve().parents[1]
 _V2 = _REPO / "fine_tuning" / "laya_finetune" / "V2"
-_RUN = _V2 / "data"
+_DATA = _V2 / "data"
+_VERSIONS = _REPO / "fine_tuning" / "laya_finetune" / "data_versions"
 for _p in (_V2, _REPO / "packages"):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
@@ -46,27 +47,35 @@ THRESHOLDS = {"recall_threshold_082": 0.82, "recall_threshold_085": 0.85,
 SPLITS = ("train", "val", "test")
 PART = "p2"
 SHUFFLE_SEED_PREFIX = "reject-shuffle-v1"
-SNAPSHOT = (_REPO / "data" / "laya_finetune" / "data_v4_build"
-            / "v2_data_pre_replacement" / "data" / "aligned"
-            / "v2_registry_snapshot.json")
+SNAPSHOT = _REPO / "tests" / "fixtures" / "laya_v4_registry_snapshot.json"
 REPAIR_DETAIL = (_REPO / "data" / "laya_finetune" / "data_v4_build"
                  / "full_r1_k0_to_k1_inplace_audit"
                  / "k0_to_k1_repair_detail.jsonl")
 
+def _bundle(tag: str) -> Path:
+    """The installed flat ``data/`` holds 082; the other thresholds are archived
+    beside ``V2/`` under ``data_versions/``."""
+    flat = _DATA / "manifest.json"
+    if tag == "recall_threshold_082" and flat.is_file():
+        return _DATA
+    return _VERSIONS / tag
+
+
 pytestmark = pytest.mark.skipif(
-    not (_RUN / "recall_threshold_082" / "manifest.json").is_file(),
+    not (_bundle("recall_threshold_082") / "manifest.json").is_file(),
     reason="V2 dynamic-option bundle not present",
 )
 
 
 def _rows(tag: str, split: str) -> list[dict]:
-    path = _RUN / tag / f"v2_{split}.jsonl"
+    """The formal flat bundle is ``{split}.jsonl``; archives keep ``v2_{split}``."""
+    path = D.split_path(split, _bundle(tag))
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()
             if line.strip()]
 
 
 def _audit(tag: str) -> dict[str, dict]:
-    path = _RUN / tag / "construction_audit.jsonl"
+    path = _VERSIONS / tag / "construction_audit.jsonl"
     return {r["id"]: r for r in
             (json.loads(line) for line in
              path.read_text(encoding="utf-8").splitlines() if line.strip())}
@@ -135,7 +144,7 @@ def test_dynamic_option_count_and_reject_semantics(tag: str) -> None:
 @pytest.mark.parametrize("tag", sorted(THRESHOLDS))
 def test_real_loader_reads_the_v2_bundle(tag: str) -> None:
     """``load_split`` + ``frozen_calibration`` accept the bundle unchanged."""
-    data_dir = _RUN / tag
+    data_dir = _bundle(tag)
     manifest = D.read_manifest(data_dir)
     assert manifest["bench"] == S.V2_BENCH
     assert manifest["instructions"] == INSTRUCTIONS
@@ -156,7 +165,7 @@ def test_real_loader_reads_the_v2_bundle(tag: str) -> None:
 @pytest.mark.parametrize("tag", sorted(THRESHOLDS))
 def test_audit_carries_the_threshold_and_original_gold(tag: str) -> None:
     audit = _audit(tag)
-    manifest = json.loads((_RUN / tag / "manifest.json").read_text(encoding="utf-8"))
+    manifest = json.loads((_bundle(tag) / "manifest.json").read_text(encoding="utf-8"))
     repair_counts = manifest["repair"]["repaired_by_split"]
     seen = 0
     repaired_by_split: Counter[str] = Counter()

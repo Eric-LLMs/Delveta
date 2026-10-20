@@ -34,21 +34,24 @@ fine_tuning/laya_finetune/V2/
   layachoice_v2_verify.py       bundle verifier: hashes, schema, labels, splits, calibration,
                                 threshold consistency (stdlib only — no GPU, no tokenizer,
                                 no network; flat V2 and dynamic V4 layouts)
-  plot_val_curves.py            analysis: per-epoch Val curves -> PNGs + val_metrics.csv
-                                (reads val_metrics.json only; Test is never read)
-  val_metrics.json              the frozen per-epoch Val metrics the plot reads (run record)
-  data/                         the installed V4 bundle, one directory per threshold
-    recall_threshold_{082,085,088}/
-        v2_{train,val,test}.jsonl   the three splits
-        manifest.json               row counts, calibration ids, K+1 option bounds, base revision
-        construction_audit.jsonl    the per-row construction audit (pre-repair evidence)
-        direct_reject.jsonl         the pre-repair direct-reject rows
-    capability_ids.json, capability_max_scores.npy, query_embedding_ids.json,
-    ann_coverage_audit.json, boundary_cases.jsonl, sample_manifest.csv, SHA256SUMS
-    (shared evidence; the full archive under data/laya_finetune/data_v4_build/
-    also keeps query_embeddings.npy and shared_retrieval_evidence.jsonl)
-  dataset_construction/         the V4 build archive (BUILD_RECORD.md, scripts, inputs)
-  frozen_backup/                historical V2 pre-adjustment Test split + SHA256 record
+  analysis/                     per-epoch Val curves -> PNGs + val_metrics.csv
+                                (plot_val_curves.py reads val_metrics.json only; Test is
+                                never read; the frozen val_metrics.json is the historical
+                                flat-4-way run record, and `run.sh analysis` writes the
+                                current run's metrics under `$OUT/analysis/`)
+  data/                         the installed training bundle (recall_threshold_082, flat)
+    train.jsonl / val.jsonl / test.jsonl
+                                the three splits (the only data training reads);
+                                byte-identical to the archived 082 v2_* files
+    manifest.json               row counts, calibration ids, K+1 option bounds, base revision
+    SHA256SUMS                  flat-bundle hash index (run.sh verify)
+  ../data_versions/             archived material (not read by run.sh)
+    recall_threshold_*/         the complete 082/085/088 bundles, including each
+                                threshold's construction_audit and direct_reject
+    shared/                     shared evidence (capability ids, ANN coverage, boundary
+                                cases, retrieval scores, sample manifest)
+    dataset_construction/       the V4 build archive (BUILD_RECORD.md, scripts, inputs)
+    build/, smoke/, audit/      historical construction, smoke and prompt-audit evidence
   out/                          run artifacts (not committed)
 ```
 
@@ -115,11 +118,17 @@ bash run.sh analysis                        # per-epoch Val curves for this run
 
 Add `--smoke` to any stage for a CPU run (8 rows per split, 1 training step), and
 `--python <exe>` / `--data DIR` / `--out DIR` to point at a specific interpreter or
-directories. With the installed V4 layout, `verify` auto-detects the three threshold
-bundles under `data/`; the stages after it need one bundle, e.g.
-`bash run.sh train --data data/recall_threshold_085`. `run.sh` never deletes an output directory, never downloads anything unpinned and
+directories. `verify` auto-detects either the installed flat `data/` bundle or a
+multi-threshold dynamic layout; every stage defaults to the installed `data/` bundle
+(recall_threshold_082). The other thresholds are archived, e.g.
+`bash run.sh train --data ../data_versions/recall_threshold_085`. `run.sh` never deletes an output directory, never downloads anything unpinned and
 never uploads; it stops on the first failing stage and returns non-zero. Each run appends a
-record (git sha, config, data version) to `out/run_ledger.jsonl`.
+record (git sha, config, data version) to `$OUT/run_ledger.jsonl`.
+
+`all` is a complete experiment: it refuses to start if `$OUT` already holds a run
+(`baseline/`, `select/`, `epoch-1/`, ...), because those stages write their results
+unconditionally. Pass a fresh `--out DIR` for every experiment; individual phases stay
+resumable for an existing run directory.
 
 The GPU box needs no registry, no database and no repo checkout beyond this directory.
 
@@ -162,7 +171,7 @@ label. The `REJECT` card text is frozen for all rows:
    `gold_capability_id`, `reject_index`) is metadata that **never enters the sequence**.
 4. **A dynamic bundle.** V4 carries 48,333 rows per threshold (train 36,197 / val 2,407 /
    test 9,729) with K ∈ 0..3, including an in-place K=0→K=1 repair; see
-   `dataset_construction/BUILD_RECORD.md`.
+   `../data_versions/dataset_construction/BUILD_RECORD.md`.
 
 Everything else — base, seeds, optimiser, loss, noise, token budget — is the frozen v1
 recipe, deliberately unchanged so v2 is comparable to v1 in every respect except the task.
@@ -223,27 +232,25 @@ complete 18-card table, full card prompts and measured token counts are in
 ## Pipeline
 
 ```
-train 2112 ── exclude the frozen 211 calibration rows (seed 20260922) ──► 1901 effective
-           ──► world_size alignment (1901 // world_size * world_size) ──► per-rank shards
-Validation v3 300 ──► per-epoch top-1 ──► best_epoch = argmax (ties: earlier epoch)
-Final Test v3 1400 ──► benchmark of best_epoch only, never used to pick or to gate
+train 36,197 ── exclude the frozen 400 calibration rows (seed 20260922) ──► 35,797 effective
+             ──► world_size alignment (n // world_size * world_size) ──► per-rank shards
+Validation 2,407 ──► per-epoch top-1 ──► best_epoch = argmax (ties: earlier epoch)
+Final Test 9,729 ──► benchmark of best_epoch only, never used to pick or to gate
 ```
 
-Exclusion happens on the full 2 112 **before** any world-size truncation, so a multi-rank run
-can never pull a calibration row into training. The calibration rule is
-`min(CALIB_MAX, n // 10)` (here 211) over the final train order, seed `20260922`; the 211
-indices and ids are recorded in `manifest.json` and re-verified on every run. Selection is
-fully deterministic: `argmax` on validation top-1, ties to the earlier epoch, train loss
-recorded but never used. Top-1 is invariant under the scalar temperature, so selection does not
-depend on the calibration step.
+Exclusion happens on the full train split **before** any world-size truncation, so a multi-rank
+run can never pull a calibration row into training. The calibration rule is
+`min(CALIB_MAX, n // 10)` (here 400) over the final train order, seed `20260922`; the indices
+and ids are recorded in `manifest.json` and re-verified on every run. Selection is fully
+deterministic: `argmax` on validation top-1, ties to the earlier epoch, train loss recorded but
+never used. Top-1 is invariant under the scalar temperature, so selection does not depend on the
+calibration step.
 
-**Test→Train adjustment.** A set of 200 whole source queries (400 rows: one `p1` + one `p2` per
-source) was moved from Test into Train; the **only** field changed on any row is `split`. The
-pre-adjustment 1 800-row test is preserved as backup material
-(`frozen_backup/v2_test_1800_pre_adjustment.jsonl`, with its SHA256 record in
-`frozen_backup/FROZEN_SHA256.json`). The splits above are the final ones. `manifest.json`
-declares each split's provenance, and the loader refuses a row whose source sha the manifest
-does not declare for that split.
+**Historical flat-bundle adjustment.** In the earlier fixed-4-option V2 bundle, 200 whole
+source queries (400 rows) were moved from Test into Train, changing only the `split` field.
+That adjustment belongs to the historical run recorded under Results; the installed V4 bundle
+(36,197 / 2,407 / 9,729) has its own split assignment, and `manifest.json` records the source
+files each split was built from.
 
 ## Stages
 
@@ -290,8 +297,8 @@ agree. fp32 ≈ 1.29 GB, fp16/bf16 ≈ 645 MB.
 ## Results
 
 > **Historical run.** This section records the flat 4-way v2 bundle. The installed
-> `data/recall_threshold_*` bundles are V4 (dynamic K+1); no V4 training run has been
-> recorded yet.
+> `data/` bundle is V4 (dynamic K+1, recall_threshold_082); the 085/088 variants are
+> archived under `../data_versions/`.
 
 Best epoch 7 (selected on Validation v3 top-1 only), calibrated temperature `[5.0, 1.0, 1.0]`,
 on the frozen Final Test v3 (1 400 rows):

@@ -66,7 +66,7 @@ V1/data  (upstream query bundles, read-only)  +  production recall index / DB
                              4-way option-card shuffle, row shuffle, p1/p2 anti-adjacency
                              → v2_dataset/v2_{train,val,test}.jsonl
   → v2_adjust_test_to_train.py  move 400 Test rows (200 whole source queries) into Train
-                             → V2/data/v2_{train,val,test}.jsonl + frozen_backup of the 1800-row Test
+                             → V2/data/v2_{train,val,test}.jsonl
 ```
 
 Direction of the data semantics (must not be conflated):
@@ -74,7 +74,7 @@ Direction of the data semantics (must not be conflated):
 ```
 V1/data  (upstream input — V1 query bundles; NOT V2 training data)
    +  production recall index / DB
-        ↓   V2/build  (construct / augment / adjust)
+        ↓   data_versions/build  (construct / augment / adjust)
 V2/data  (final frozen training data)
         ↓   run.sh  (reads V2/data only)
    training
@@ -84,16 +84,18 @@ V2/data  (final frozen training data)
 `V2/data` is the only data training reads. The frozen `data/` is the finished
 result, so **a normal training reproduction does not re-run the build chain**.
 
-The Test→Train adjustment (2026-10-02) changed **only the `split` field**; the
-pre-adjustment 1800-row Test is preserved under `frozen_backup/`.
+The Test→Train adjustment (2026-10-02) changed **only the `split` field**. The
+pre-adjustment 1,800-row Test is historical material, is not part of the current
+formal dataset, and is no longer shipped; only the final splits under `V2/data/`
+are verified and used for training.
 
-> `build/` scripts are restored from the run. `v2_capture.py` depends on the
+> `data_versions/build/` scripts are restored from the run. `v2_capture.py` depends on the
 > **production recall index** (`SessionLocal` + the V1 bundles), so it re-runs
 > only in an environment with that database/DB access — it is not
 > offline-reproducible. The scripts read the V1 bundles from
-> `scripts/laya_finetune/V1/data/` (upstream input) and write inside `V2/build/`;
+> `scripts/laya_finetune/V1/data/` (upstream input) and write inside `data_versions/build/`;
 > `v2_adjust_test_to_train.py` reads and writes `V2/data/`. No machine-absolute
-> path remains in `build/`.
+> path remains in `data_versions/build/`.
 
 ## 3. Training parameters (10 epochs)
 
@@ -211,12 +213,12 @@ The on-host layout is corroborated by the assembly helper
 | `layachoice_v2_eval.py` | `f86c366a887d60284db541f03370b674d89c10cb345aa0326951e61469ae2f18` | **unverifiable** |
 | `analysis/plot_val_curves.py` | `1b8682e7e82813daa5c8e3d3313072a908eaf73a455d6a14cbd88214b5f7e951` | **unverifiable** |
 | `analysis/val_metrics.json` | `97129e7c99d8f14161b9aee7b57c85b1644a599528487bf4f9c02e6878c859b3` | unverifiable |
-| `build/v2_capture.py` | `c9adb2c5635dd21624d779bd9acc57062b7250bee08f073199e741494db5d82f` | unverifiable |
-| `build/v2_generate_final.py` | `d742cf453250f96e669cdd7f17b57e6c31ac25776f2e4a59008dbe1f8a62a040` | unverifiable |
-| `build/v2_generate_dataset.py` | `36a699ef64968cf76257d0d3bccdf9845831873873445017beaee4f643eaad66` | unverifiable |
-| `build/v2_adjust_test_to_train.py` | `82613f0dfb455cbb06725ab8a492d2bdabafe92e14529f748b19418136cb4496` | unverifiable |
-| `smoke/build_smoke_fixture.py` | `1ba41b7ed68bf22f3398e196e1427faedf0803f5755e23541418a154bf6cd76e` | unverifiable |
-| `smoke/_step7_driver.py` | `2036afa0b51053c161379906f614079fd2c04878ddb212dd9425c9cc77d62713` | unverifiable |
+| `data_versions/build/v2_capture.py` | `c9adb2c5635dd21624d779bd9acc57062b7250bee08f073199e741494db5d82f` | unverifiable |
+| `data_versions/build/v2_generate_final.py` | `d742cf453250f96e669cdd7f17b57e6c31ac25776f2e4a59008dbe1f8a62a040` | unverifiable |
+| `data_versions/build/v2_generate_dataset.py` | `36a699ef64968cf76257d0d3bccdf9845831873873445017beaee4f643eaad66` | unverifiable |
+| `data_versions/build/v2_adjust_test_to_train.py` | `82613f0dfb455cbb06725ab8a492d2bdabafe92e14529f748b19418136cb4496` | unverifiable |
+| `data_versions/smoke/build_smoke_fixture.py` | `1ba41b7ed68bf22f3398e196e1427faedf0803f5755e23541418a154bf6cd76e` | unverifiable |
+| `data_versions/smoke/_step7_driver.py` | `2036afa0b51053c161379906f614079fd2c04878ddb212dd9425c9cc77d62713` | unverifiable |
 
 **Why some rows are "unverifiable".** Only `spec`/`dataset`/`render` were shipped
 inside the published model repo (`code/`), so only those three have a golden hash
@@ -239,19 +241,19 @@ is included as the augmentation step; its logic is unchanged from the run).
 ## 9. Commands: recorded vs reconstructed
 
 **There is no recorded command log.** No `run.sh` existed on the host; no shell
-transcript was kept; the smokes' logs (`smoke/train_smoke.log`,
-`smoke/eval_benchmark.log`, `_capture.log`) capture module *output* but not the
+transcript was kept; the smokes' logs (`data_versions/smoke/train_smoke.log`,
+`data_versions/smoke/eval_benchmark.log`, `_capture.log`) capture module *output* but not the
 invocation lines. The following invocations are **reconstructed** from each
 module's argparse and from the run's output layout (§7). Treat them as a faithful
 *reconstruction*, not the original shell.
 
 ```bash
 # ── data construction (evidence: _capture.log; outputs = frozen bundle) ──
-# reads scripts/laya_finetune/V1/data/ (upstream); writes under V2/build/
+# reads scripts/laya_finetune/V1/data/ (upstream); writes under data_versions/build/
 python v2_capture.py                 # → v2_raw_recall.jsonl (1906 rows)
 python v2_generate_final.py          # → v2_final/v2_{train2,val2,test2}.jsonl
 python v2_generate_dataset.py        # augmentation (REJECT/shuffle) → v2_dataset/v2_{train,val,test}.jsonl
-python v2_adjust_test_to_train.py    # reads+writes V2/data/ → v2_{train,val,test}.jsonl + 1800-row backup
+python v2_adjust_test_to_train.py    # reads+writes V2/data/ → v2_{train,val,test}.jsonl (pre-adjustment backup not shipped)
 
 # ── training / eval / analysis (host: /root/delveta/scripts/laya_finetune/V2) ──
 python layachoice_v2_finetune.py --train --epochs 10 --data data --out out
@@ -263,7 +265,7 @@ python layachoice_v2_eval.py --benchmark --data data --ckpt out/epoch-7 --out ou
 python layachoice_v2_finetune.py --export --data data --ckpt out/epoch-7 --out out/release_v2
 python plot_val_curves.py            # run with out/analysis/val_metrics.json present
 
-# ── CPU smoke (evidence: smoke/*.log) ──
+# ── CPU smoke (evidence: data_versions/smoke/*.log) ──
 python layachoice_v2_finetune.py --train --smoke --data <smoke/data> --out <smoke/run>
 python layachoice_v2_eval.py --benchmark --smoke --data <smoke/data> --ckpt <smoke/run/epoch-1> --out <smoke/benchmark>
 ```

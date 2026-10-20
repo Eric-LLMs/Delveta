@@ -142,8 +142,8 @@ Final Test v3                1 400  ── benchmark of best_epoch only, never u
   construction.
 - **Test→Train adjustment** — 200 whole source queries (400 rows: one `p1` + one `p2` per
   source) were moved from Test into Train; the **only** field changed on any row is
-  `split`. The pre-adjustment 1 800-row test is kept as backup material
-  (`V2/frozen_backup/v2_test_1800_pre_adjustment.jsonl`). The FINAL splits are the ones
+  `split`. The pre-adjustment 1,800-row test is historical material, is not part of
+  the current formal dataset, and is no longer shipped. The FINAL splits are the ones
   above.
 
 Train / validation / test are disjoint, and the calibration ids are excluded before any

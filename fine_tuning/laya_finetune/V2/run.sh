@@ -57,6 +57,19 @@ done
 SMOKE_ARGS=()
 [[ $SMOKE -eq 1 ]] && SMOKE_ARGS=(--smoke)
 
+# `all` is a complete experiment, not a resume. The train stage already refuses an
+# existing epoch-N directory, but the baseline/select/benchmark/export stages write
+# their outputs unconditionally, so a second `all` into the same directory would
+# overwrite the earlier run's results before failing at train. Refuse up front.
+if [[ "$PHASE" == "all" ]]; then
+  for stale in baseline select benchmark calibration release_v2 analysis epoch-1; do
+    if [[ -e "$OUT/$stale" ]]; then
+      echo "refusing 'all': $OUT/$stale already exists; pass --out <fresh experiment dir>" >&2
+      exit 2
+    fi
+  done
+fi
+
 phase() { printf '\n=== %s ===\n' "$1"; }
 
 venv_py() {
@@ -183,7 +196,7 @@ PY
 do_verify() {
   phase "verify the frozen bundle (stdlib only, no GPU)"
   normalize_bundle_eol
-  "$PY" "$HERE/layachoice_v2_verify.py"
+  "$PY" "$HERE/layachoice_v2_verify.py" "$DATA"
 }
 
 do_baseline() {

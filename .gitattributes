@@ -3,3 +3,7 @@
 fine_tuning/qwen_parameter_extraction_finetune/data/*.jsonl text eol=lf
 fine_tuning/qwen_parameter_extraction_finetune/data/manifest.json text eol=lf
 fine_tuning/qwen_parameter_extraction_finetune/data/SHA256SUMS text eol=lf
+
+# Laya fine-tune checksum indexes are LF text so `sha256sum -c` works on checkout.
+fine_tuning/laya_finetune/V2/data/SHA256SUMS text eol=lf
+fine_tuning/laya_finetune/data_versions/SHA256SUMS.all_thresholds text eol=lf

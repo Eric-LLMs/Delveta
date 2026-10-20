@@ -8,11 +8,15 @@ so it can be run anywhere before spending GPU time:
 
 It accepts either installed layout under ``data/``:
 
-  * flat frozen V2 — ``data/manifest.json`` plus the three splits at the root;
+  * flat — ``data/manifest.json`` plus the three splits at the root (the installed
+    ``recall_threshold_082`` training bundle);
   * dynamic V4 — ``data/recall_threshold_{082,085,088}/`` bundles with one shared
     ``data/SHA256SUMS``.
 
-It checks, against the real files in ``data/`` and ``frozen_backup/``:
+Passing a directory as the only argument verifies that directory instead of the
+default ``data/`` (``run.sh`` passes ``--data`` through this way).
+
+It checks, against the real files in ``data/``:
 
   * every bundle file's SHA256 against ``data/SHA256SUMS`` (computed, not assumed);
   * manifest identity (``bench``, ``option_slots``) and the frozen budget / base
@@ -30,7 +34,6 @@ It checks, against the real files in ``data/`` and ``frozen_backup/``:
     manifest's frozen card;
   * that the calibration split is reproducible and disjoint from the effective train
     split;
-  * the ``frozen_backup`` pre-adjustment Test split against its recorded SHA256;
   * two static checks that the training stage never loads the Test split and that the
     Test split is never used to select a checkpoint.
 
@@ -51,8 +54,16 @@ if str(HERE) not in sys.path:
 import layachoice_v2_spec as S        # noqa: E402
 import layachoice_v2_dataset as D     # noqa: E402
 
-DATA = HERE / "data"
-BACKUP = HERE / "frozen_backup"
+def _data_dir() -> Path:
+    args = sys.argv[1:]
+    if not args:
+        return HERE / "data"
+    if len(args) == 1:
+        return Path(args[0])
+    raise SystemExit("usage: layachoice_v2_verify.py [DATA_DIR]")
+
+
+DATA = _data_dir()
 SPLITS = ("train", "val", "test")
 DYNAMIC_TAGS = ("recall_threshold_082", "recall_threshold_085", "recall_threshold_088")
 
@@ -87,7 +98,8 @@ def read_sums(path: Path) -> dict[str, str]:
 
 
 def bundle_layout() -> tuple[str, dict[str, Path]]:
-    """Installed layout: ``flat`` (frozen V2) or ``dynamic`` (V4 thresholds)."""
+    """Installed layout: ``flat`` (one bundle at the data root) or ``dynamic``
+    (the three V4 threshold bundles)."""
     if (DATA / "manifest.json").is_file():
         return "flat", {"v2": DATA}
     present = [t for t in DYNAMIC_TAGS if (DATA / t / "manifest.json").is_file()]
@@ -192,7 +204,7 @@ def verify_rows(manifest: dict, data_dir: Path,
 
     raw_keys = {
         split: {frozenset(json.loads(l)) for l in
-                (data_dir / f"v2_{split}.jsonl").read_text(encoding="utf-8").splitlines()
+                D.split_path(split, data_dir).read_text(encoding="utf-8").splitlines()
                 if l.strip()}
         for split in SPLITS
     }
@@ -239,32 +251,12 @@ def verify_calibration(manifest: dict, loaded: dict[str, list[D.V2Example]],
           all(r.split == "train" for r in calib))
 
 
-# ── 5. frozen_backup ────────────────────────────────────────────────────────
-def verify_backup() -> None:
-    print("[5] frozen_backup (historical pre-adjustment V2 Test split)")
-    meta = json.loads((BACKUP / "FROZEN_SHA256.json").read_text(encoding="utf-8"))
-    backup = BACKUP / "v2_test_1800_pre_adjustment.jsonl"
-    recorded = meta["files"]["v2_test.jsonl"]
-    actual = sha256(backup)
-    check("backup sha256 == recorded pre-adjustment v2_test.jsonl",
-          recorded == actual, f"{actual}" + ("" if recorded == actual else f" != {recorded}"))
-    n = sum(1 for line in backup.read_text(encoding="utf-8").splitlines() if line.strip())
-    check("backup row count == 1800", n == 1800, str(n))
-    current = DATA / "v2_test.jsonl"
-    if current.is_file():
-        print("  note: backup is the PRE-adjustment V2 Test and is NOT the installed flat "
-              f"Test ({sha256(current)[:8]}…).")
-    else:
-        print("  note: backup is historical V2 evidence; the installed dynamic Test lives "
-              "under data/recall_threshold_*/ and is not this file.")
-
-
-# ── 6. static checks: Test split never used for training or selection ───────
+# ── 5. static checks: Test split never used for training or selection ───────
 def verify_static() -> None:
     """The Test split must never train the model or select a checkpoint. The only
     permitted read of the Test split is the 5-row reload smoke inside the export
     stage; a read anywhere before ``mode_export`` / ``arm_benchmark`` is a failure."""
-    print("[6] static checks (Test split never trains or selects)")
+    print("[5] static checks (Test split never trains or selects)")
     fin = (HERE / "layachoice_v2_finetune.py").read_text(encoding="utf-8")
     ev = (HERE / "layachoice_v2_eval.py").read_text(encoding="utf-8")
     fin_export = fin.find("def mode_export")
@@ -301,7 +293,6 @@ def main() -> int:
         all_loaded[bundle] = loaded
     if layout == "dynamic":
         verify_threshold_consistency(all_loaded)
-    verify_backup()
     verify_static()
     print()
     if _failures:
