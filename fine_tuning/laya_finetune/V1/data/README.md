@@ -245,3 +245,9 @@ should confirm terms before redistribution.
 
 Full method, ablations, baselines and invalid runs:
 [`docs/experiments/LayaChoice-v1-Fine-Tuning.md`](https://github.com/Eric-LLMs/Delveta/blob/main/docs/experiments/LayaChoice-v1-Fine-Tuning.md).
+
+Related resources:
+
+- Model: [`eric-ml-nlp/Delveta-LayaChoice-v1`](https://huggingface.co/eric-ml-nlp/Delveta-LayaChoice-v1)
+- Scripts: [`fine_tuning/laya_finetune/V1`](https://github.com/Eric-LLMs/Delveta/tree/main/fine_tuning/laya_finetune/V1)
+- Checkpoints: [`eric-ml-nlp/Delveta-LayaChoice-v1-checkpoints`](https://huggingface.co/eric-ml-nlp/Delveta-LayaChoice-v1-checkpoints)
