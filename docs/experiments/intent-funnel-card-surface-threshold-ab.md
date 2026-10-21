@@ -4,13 +4,7 @@
 
 ### Three headline metrics
 
-- **Correct Pass Rate** — Of the 414 requests that should use a tool, how many selected the
-  correct target tool (gold tool); that is, the number of tasks the funnel handles correctly
-  for the online LLM. This measures how often the intent funnel correctly routes
-  tool-eligible tasks to the intended tool for execution. Requests that are not correctly
-  routed fall back to the LLM for handling, ensuring robust task completion. By handling
-  eligible tasks locally, the funnel can significantly reduce token consumption and response
-  latency by avoiding unnecessary LLM calls.
+- **Correct Pass Rate:** Of the 500 total requests, 414 were tool requests. This metric measures how many of these 414 requests were correctly routed to their target tools, reflecting the local intent pipeline’s effectiveness in handling tool requests. Correctly routed requests can be handled locally without additional LLM calls, reducing response latency and production token consumption.
 - **Decision Accuracy** — Of all requests evaluated by LayaChoice-v2, how many received the
   correct decision, either being passed to a tool or rejected. The denominator is the total
   number of turns that reached LayaChoice-v2.
@@ -22,8 +16,16 @@
 | Metric | 0.88 · filters out non-allowlisted intents | 0.88 · recalls non-allowlisted intents | 0.82 · filters out non-allowlisted intents | 0.82 · recalls non-allowlisted intents |
 |---|---:|---:|---:|---:|
 | Correct Pass Rate (affected by both candidate-set recall and tool selection) | 318/414 = 76.81% | 320/414 = 77.29% | 348/414 = 84.06% | 349/414 = 84.30% |
-| Decision Accuracy | 306/336 = 91.07% | 384/411 = 93.43% | 359/410 = 87.56% | 414/447 = 92.62% |
+| End-to-End Accuracy | 402/500 = 80.40% | 406/500 = 81.20% | 416/500 = 83.20% | 434/500 = 86.80% |
+| Decision Accuracy | 308/336 = 91.67% | 386/411 = 93.92% | 361/410 = 88.05% | 416/447 = 93.06% |
 | False Pass Rate | 2/86 = 2.33% | 0/86 = 0% | 18/86 = 20.93% | 1/86 = 1.16% |
+
+> **Rounds that did not reach LayaChoice-v2:** Some requests for non-allowlisted capabilities were rejected before reaching the decision model. The retrieval model's score threshold itself filtered out non-intent queries, leaving no candidates (`NO_CANDIDATE`) and resulting in immediate rejection.
+>
+> - **0.88 ·** Non-allowlisted intents filtered out by the retrieval threshold: 76 REJECTs
+> - **0.88 ·** Non-allowlisted intents retrieved but rejected by the retrieval threshold: 2 REJECTs
+> - **0.82 ·** Non-allowlisted intents filtered out by the retrieval threshold: 37 REJECTs
+> - **0.82 ·** Non-allowlisted intents retrieved but rejected by the retrieval threshold: 0 REJECTs
 
 ### Conclusions
 
@@ -141,8 +143,8 @@ correctly rejected.
 | Item | 0.88 · filters out non-allowlisted intents | 0.88 · recalls non-allowlisted intents | 0.82 · filters out non-allowlisted intents | 0.82 · recalls non-allowlisted intents |
 |---|---:|---:|---:|---:|
 | Requests that should be rejected | 86 | 86 | 86 | 86 |
-| Correctly rejected | 6/86 = 6.98% | 82/86 = 95.35% | 29/86 = 33.72% | 83/86 = 96.51% |
-| — model rejected directly | 6 | 4 | 29 | 5 |
+| Correctly rejected | 8/86 = 9.30% | 84/86 = 97.67% | 31/86 = 36.05% | 85/86 = 98.84% |
+| — model rejected directly | 8 | 6 | 31 | 7 |
 | — model picked a hidden card; system blocked it | 0 | 78 | 0 | 78 |
 | **False pass** | 2/86 = 2.33% | 0/86 = 0% | 18/86 = 20.93% | 1/86 = 1.16% |
 | No intent recalled (listed separately, not a reject) | 76 | 2 | 37 | 0 |
@@ -197,10 +199,7 @@ Each arm has a per-case audit, a conservation check (`all_ok=true`) and a run ma
 
 ### 三个主指标
 
-- **正确放行率（Correct Pass Rate）**：该用工具的 414 条请求里，有多少选中了正确的目标工具,
-  也就是帮线上 LLM 正确处理的任务量。它衡量的是：意图漏斗能不能把"该用工具的活儿"正确路由到目标工具上执行。
-  没路由对的请求不会被硬执行，而是退回给 LLM 兜底，任务照样能完成。能在本地处理掉的活儿就本地处理,
-  不用多调一次 LLM，token 和响应延迟都省下来了。
+- **正确放行率（Correct Pass Rate）**：500 条请求中，414 条属于工具请求。衡量这 414 条工具请求中，有多少被正确路由到目标工具，反映本地意图 Pipeline 对工具请求的处理能力。正确路由的请求可由本地完成处理，无需额外调用 LLM，从而降低响应延迟和线上 Token 消耗。
 - **决策准确率（Decision Accuracy）**：所有进入 LayaChoice-v2 判断的请求里，有多少拿到了正确的决策——
   要么放行给工具，要么拒绝。分母是进入 LayaChoice-v2 的总轮数。
 - **错误放行率（False Pass Rate）**：本该交给 Agent 处理、不该直接当工具执行的 86 条请求里,
@@ -209,8 +208,16 @@ Each arm has a per-case audit, a conservation check (`all_ok=true`) and a run ma
 | 指标 | 0.88 · 过滤掉不在白名单的 intent | 0.88 · 召回不在白名单的 intent | 0.82 · 过滤掉不在白名单的 intent | 0.82 · 召回不在白名单的 intent |
 |---|---:|---:|---:|---:|
 | 正确放行率（受候选集召回与工具选择共同影响） | 318/414 = 76.81% | 320/414 = 77.29% | 348/414 = 84.06% | 349/414 = 84.30% |
-| 决策准确率 | 306/336 = 91.07% | 384/411 = 93.43% | 359/410 = 87.56% | 414/447 = 92.62% |
+| 端到端准确率 | 402/500 = 80.40% | 406/500 = 81.20% | 416/500 = 83.20% | 434/500 = 86.80% |
+| 决策准确率 | 308/336 = 91.67% | 386/411 = 93.92% | 361/410 = 88.05% | 416/447 = 93.06% |
 | 错误放行率 | 2/86 = 2.33% | 0/86 = 0% | 18/86 = 20.93% | 1/86 = 1.16% |
+
+> **没有经过 LayaChoice-v2 的轮次：** 部分 non-allowlisted capability 请求在进入决策模型之前就已 REJECT——由召回模型阈值本身筛选掉非意图 query，召回没有候选（`NO_CANDIDATE`），直接 REJECT。
+>
+> - 0.88 · 过滤掉不在白名单的 intent：召回阈值 REJECT 76
+> - 0.88 · 召回不在白名单的 intent：召回阈值 REJECT 2
+> - 0.82 · 过滤掉不在白名单的 intent：召回阈值 REJECT 37
+> - 0.82 · 召回不在白名单的 intent：召回阈值 REJECT 0
 
 ### 结论
 
@@ -299,8 +306,8 @@ Each arm has a per-case audit, a conservation check (`all_ok=true`) and a run ma
 | 项目 | 0.88 · 过滤掉不在白名单的 intent | 0.88 · 召回不在白名单的 intent | 0.82 · 过滤掉不在白名单的 intent | 0.82 · 召回不在白名单的 intent |
 |---|---:|---:|---:|---:|
 | 本该拒绝的请求 | 86 | 86 | 86 | 86 |
-| 正确拒绝 | 6/86 = 6.98% | 82/86 = 95.35% | 29/86 = 33.72% | 83/86 = 96.51% |
-| 其中:模型直接拒绝 | 6 | 4 | 29 | 5 |
+| 正确拒绝 | 8/86 = 9.30% | 84/86 = 97.67% | 31/86 = 36.05% | 85/86 = 98.84% |
+| 其中:模型直接拒绝 | 8 | 6 | 31 | 7 |
 | 其中:模型选了隐藏卡,被系统拦下 | 0 | 78 | 0 | 78 |
 | **误执行** | 2/86 = 2.33% | 0/86 = 0% | 18/86 = 20.93% | 1/86 = 1.16% |
 | 没有召回意图(单列,不算拒绝) | 76 | 2 | 37 | 0 |
