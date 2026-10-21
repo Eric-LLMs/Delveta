@@ -1,43 +1,44 @@
 # LayaChoice-v2 — Fine-Tuning Laya with an Explicit REJECT Option
 
-> **Status: released.** The formal run is complete and the artifacts are closed.
-> This document is the record of that experiment; the stable architectural facts distilled
-> from it live in [architecture.md §26](../architecture.md#26-layachoice-capability-selection).
+> **Status: released.** The formal run `layachoice_v2_082_r1` is complete and its artifacts
+> are closed. This document is the record of that run; the stable architectural facts
+> distilled from it live in
+> [architecture.md §26](../architecture.md#26-layachoice-capability-selection).
 >
 > **Production integration status.** v2 is wired into production: the `cap_router` card
-> renderer emits the `REJECT` criterion (§6), the `deploy/laya` sidecar loads the v2
+> renderer emits the `REJECT` criterion (§8), the `deploy/laya` sidecar loads the v2
 > checkpoint, and the service backend maps a `REJECT` answer to a normal fourth decision
 > routed to the Agent. It runs as the `cap-router` Compose service.
 >
 > Everything below is derived from the run artifacts (`fine_tuning/laya_finetune/V2/` and the
-> frozen bundle `fine_tuning/laya_finetune/V2/data/`), not from recollection.
+> frozen bundle `recall_threshold_082` in `V2/data/`), not from recollection.
 
-> **Contract correction — V1 is fixed, V2 is dynamic.** V1 is the fixed-K build (**K = 3**).
-> V2's current contract is **dynamic K+1**: K capability cards (0..3) plus one `REJECT` card,
-> so a question carries **1..4 options**. The formal run recorded in this document used the
-> earlier **flat 4-way** build (K = 3 + `REJECT`); the installed `data/recall_threshold_*`
-> bundles are V4 (dynamic K+1) and no V4 training run has been recorded here. Sections that
-> state fixed counts describe that historical run, not the current V2 contract.
+> **Contract — V1 is fixed, V2 is dynamic.** V1 is the fixed-K build (**K = 3**). V2 is
+> **dynamic K+1**: K capability cards (0..3) plus one `REJECT` card, so a question carries
+> **1..4 options**. Run `layachoice_v2_082_r1`, recorded here, was trained and evaluated on
+> that dynamic contract, on bundle `recall_threshold_082`. It supersedes the earlier flat
+> 4-way epoch-7 run; that run's numbers are not part of this document.
 
 ## 1. Experiment Overview
 
 | | |
 |---|---|
-| Task | Choose the correct capability for a user request from the recalled candidates, **or** reject the set. Current V2: dynamic K+1 (K = 0..3, 1..4 options). The formal run below used the flat 4-way build (K = 3 + `REJECT`) |
+| Task | Choose the correct capability for a user request from the recalled candidates, **or** reject the set. Dynamic K+1 (K = 0..3, 1..4 options) |
 | Base model | `convaiinnovations/laya`, subfolder `multilingual`, revision `55cf4c4eb…` |
-| Output | `Delveta LayaChoice v2` — full-parameter fine-tune, FP32 export |
-| Data | Train 2 112 / Calibration 211 / Validation v3 300 / Final Test v3 1 400 (all frozen) |
+| Output | `Delveta LayaChoice v2` — full-parameter fine-tune, FP32 export + FP16 storage copy |
+| Data | Train 36 197 / Calibration 400 / Validation 2 407 / Final Test 9 729 (bundle `recall_threshold_082`, all frozen) |
 | Input config | `OPTION_MAX_TOKENS=256`, `head_max_len=768`, `max_len=1024` |
-| Best epoch | **7** (selected by Validation v3 top-1 only) |
-| Validation v3 (best) | **0.966667** = 290/300 |
-| Final Test v3 | **0.877857** — EN 0.861272 / ZH 0.894068 |
-| REJECT on Final Test | recall 0.719298 / precision 0.557823 / FPR 0.050544 |
-| Export | `model.safetensors`, FP32 preserve, 1 287 653 720 B, sha256 `c6331bd5…` |
+| Best epoch | **9** (selected by validation top-1 only) |
+| Validation (best) | **0.996676** = 2 399/2 407 |
+| Final Test | **0.998355** = 9 713/9 729 — en 0.998197 / zh 0.998306 / mixed 0.999137 |
+| REJECT on Final Test | recall 0.996441 / precision 0.995261 / FPR 0.000450 |
+| Zero-shot baseline | 0.416795 (fine-tuned delta **+0.581560**) |
+| Export | `model.safetensors`, FP32, 1.29 GB, sha256 `964f8fe5…` |
 
-One sentence: **v1 is the fixed 3-way build; v2 adds an explicit `REJECT` option and its
-current contract is dynamic K+1 (1..4 options)**. The formal run recorded here used the flat
-4-way build (K = 3 + `REJECT`), with the best checkpoint chosen on a separate validation
-split the test set never touched.
+One sentence: **v1 is the fixed 3-way build; v2 adds an explicit `REJECT` option under a
+dynamic K+1 contract (1..4 options)**. The released run was trained on 36 197 rows and
+reaches 0.998355 on the frozen 9 729-row test set, with the best checkpoint chosen on a
+separate validation split the test set never touched.
 
 ## 2. Objective
 
@@ -45,9 +46,9 @@ v1 answered "which of these 3 capabilities handles the request?". That framing h
 to say *"none of them"* — a turn whose true capability was not retrieved is forced onto a
 wrong candidate. The objective of v2 was to close that gap with a number:
 
-> Can the same base decision model, fine-tuned with a dedicated `REJECT` option as a
-> fourth class, learn to abstain when the correct capability is not among the candidates —
-> without giving up capability-selection accuracy?
+> Can the same base decision model, fine-tuned with a dedicated `REJECT` option in a
+> dynamic K+1 candidate set, learn to abstain when the correct capability is not among the
+> candidates — without giving up capability-selection accuracy?
 
 Not objectives: not a general chat model, not a production-traffic model, and not a
 re-opening of the v1 dataset (v1 is frozen, §5).
@@ -64,19 +65,18 @@ dynamic:
 - `REJECT` is a **normal option**, not a threshold and not a post-hoc rule — the model
   assigns it probability mass directly.
 - The option order is a **per-row deterministic K+1 shuffle** (seed prefix
-  `reject-shuffle-v1`, recorded in each row's `shuffle` field), so the model cannot learn a
-  positional prior.
-- `gold_index` marks the target slot within the row's actual option count and
-  `target_kind ∈ {capability, reject}` records which kind of target the row has.
+  `reject-shuffle-v1`); only the final order is stored, in `input.options`, so the model
+  cannot learn a positional prior.
+- The gold slot is the `label` index within the row's actual option count; the adapter
+  derives `target_kind ∈ {capability, reject}` from the option at that index.
 
-**Historical run.** The formal run recorded in this document used the earlier flat 4-way
-build: every row carried three capability cards plus one `REJECT` card, and
-`gold_index ∈ {0,1,2,3}`. That build is the source of the measured numbers below. The
-installed `data/recall_threshold_*` bundles are V4 (dynamic K+1); no V4 training run is
-recorded here.
+**This run.** `layachoice_v2_082_r1` was trained and measured on the dynamic build: every
+row carries K capability cards (K = 0..3) plus one `REJECT` card, and the gold slot is the
+position of the correct option within that row's 1..4 options. The earlier flat 4-way build
+(K = 3 + `REJECT` only) is not part of this document.
 
-In both builds, **a caller must render the `REJECT` card**. A question without it does not
-match the trained pipeline and its scores are not meaningful.
+**A caller must render the `REJECT` card.** A question without it does not match the
+trained pipeline and its scores are not meaningful.
 
 ## 4. Base Model
 
@@ -95,16 +95,17 @@ pinned to an exact revision and to `laya==0.3.21`.
 ## 5. Dataset Definition
 
 **LayaChoice-v2** is the v1 capability-selection benchmark extended with a `REJECT` option.
-Its current contract is dynamic K+1; the formal run recorded here used the flat 4-way build.
-It is derived from the frozen v1 bundle (`B_noprov` view), not rebuilt from the Registry:
+The released run uses the V4 dynamic bundle `recall_threshold_082`, installed at
+`fine_tuning/laya_finetune/V2/data/`. It is derived from the frozen v1 bundle (`B_noprov`
+view), not rebuilt from the Registry:
 
 | | |
 |---|---|
 | Card view | `B_noprov` — the production card with the `query examples:` block and the `evidence:` provenance line removed |
-| Candidates per row | **Current V2: K capability cards (0..3) + 1 `REJECT` card, 1..4 options.** Formal run: **K = 3 + `REJECT`** (`OPTION_SLOTS = 4`) |
-| Capabilities | 17 + `REJECT` = 18 possible target slots in the formal run; the current Registry has 18 active capabilities (see §9) |
-| Languages | `zh` / `en` |
-| Row shape | Current V2: `{id, lang, state, order[K+1], options[K+1], gold, gold_index, target_kind, part, …}`; formal run: `order[4]`, `options[4]` |
+| Candidates per row | **K capability cards (0..3) + 1 `REJECT` card, 1..4 options** |
+| Capabilities | 18 active capability cards (see §9), plus `REJECT` as the abstain target |
+| Languages | `zh` / `en` / `mixed` |
+| Row shape | `{message_id, language, input{query, options[K+1]}, label}`; derived views are computed by the adapter and never stored |
 
 The `REJECT` card text is frozen for all rows:
 
@@ -115,60 +116,53 @@ The `REJECT` card text is frozen for all rows:
 `REJECT` rows are of two kinds: *natural* (the source query genuinely had no matching
 capability) and *synthetic* (a capability row whose gold card was swapped for `REJECT`).
 Both are training/exam items; the frozen bundle records which is which, and that metadata
-is **never rendered** — only `state` and the four option cards enter the sequence.
+is **never rendered** — only the query and the option cards enter the sequence.
 
 v1's label-leakage argument still holds unchanged: the stored `evidence:` line names the
 answer, so it stays dropped. The `B_noprov` view is what makes the task a decision rather
 than a lookup.
 
-## 6. Splits, Calibration and the Adjustment
+## 6. Splits and Calibration
 
 ```
-source_train_rows            2 112  ── exclude the frozen 211 calibration rows (seed 20260922)
-calibration_rows               211  ──► ids recorded in manifest.json
-effective_train_rows         1 901  ── after exclusion (world-size aligned)
-Validation v3                  300  ── per-epoch top-1; the ONLY selection signal
-Final Test v3                1 400  ── benchmark of best_epoch only, never used to pick or gate
+source_train_rows           36 197  ── exclude the frozen 400 calibration rows (seed 20260922)
+calibration_rows               400  ──► indices and ids recorded in manifest.json
+effective_train_rows        35 797  ── after exclusion (world-size aligned)
+Validation                   2 407  ── per-epoch top-1; the ONLY selection signal
+Final Test                   9 729  ── benchmark of best_epoch only, never used to pick or gate
 ```
 
-- **Language** — train `zh` 1 084 / `en` 1 028; val `zh` 154 / `en` 146; test `en` 692 /
-  `zh` 708.
-- **Partitions** — every split is half `part1` / half `part2` (train 1 056/1 056, val
-  150/150, test 700/700). `part1` is the v1-style candidate set (REJECT added); `part2` is
-  the Recall-based candidate set (self-hit removed). The final schema is identical across
-  parts.
+- **Language** — train `en` 16 499 / `zh` 15 505 / `mixed` 4 193; val `en` 1 116 /
+  `zh` 1 030 / `mixed` 261; test `en` 4 438 / `zh` 4 132 / `mixed` 1 159.
+- **Option counts** — the manifest declares `K+1` with `min = 1`, `max = 4`, and the
+  observed values are 1, 2, 3 and 4. The bundle carries 48 333 rows per recall threshold
+  (train 36 197 + val 2 407 + test 9 729); only threshold `0.82` was trained.
 - **Calibration rule** — `min(400, n_train // 10)` over the FINAL (post-shuffle) train
-  order, seed `20260922`, 211 ids recorded by index; excluded from training by
-  construction.
-- **Test→Train adjustment** — 200 whole source queries (400 rows: one `p1` + one `p2` per
-  source) were moved from Test into Train; the **only** field changed on any row is
-  `split`. The pre-adjustment 1,800-row test is historical material, is not part of
-  the current formal dataset, and is no longer shipped. The FINAL splits are the ones
-  above.
+  order, seed `20260922`, 400 indices recorded; excluded from training by construction.
+- **Disjointness** — train / validation / test are disjoint by `id` and
+  `source_query_id`, and calibration rows are excluded before any world-size truncation,
+  so no rank can pull a calibration row into training.
 
-Train / validation / test are disjoint, and the calibration ids are excluded before any
-world-size truncation, so no rank can pull a calibration row into training.
+The earlier flat-bundle Test→Train adjustment is not part of this bundle; the V4 splits
+were assigned during construction and recorded in `manifest.json`.
 
 ## 7. Frozen Dataset SHA256
 
-Verified unchanged at the end of the run:
+Verified unchanged at the end of the run (`V2/data/SHA256SUMS`), and still identical in
+the published dataset repository:
 
 | Artifact | SHA256 |
 |---|---|
-| `v2_train.jsonl` | `c92c0b5f6b5fbb019f6cf1e89a107ad4d1c4fee952f4d1a024c6cb319873b720` |
-| `v2_val.jsonl` | `f7d97670c96c13330f07dad2a3aecabbae42b3194e54c2cf0dafddc8af51de7b` |
-| `v2_test.jsonl` | `eb14e0455156d6dd3f2b0ddf2fa82feaf5248b10f993a4ded57cea45261fb9ea` |
-| `manifest.json` | `224acf2f3bdec01ab6284942c1f8b87acaf9daa7c924e89a5c8e97b485dbf57e` |
-| `v2_build_report.json` | `e2a3dae1d7228ea31b7d318473edd6a795a4561b62b7ebc18f4aad8dd6fc0703` |
-| `v2_construction_audit.jsonl` | `2464e187a667d515b97f0082e18d37b66b2b3c377b6f54f681a265c7e4b6091a` |
+| `train.jsonl` | `97ed1b54a205d3fac4dd3837e93abb779104568b94019c9a161752c7ca670c77` |
+| `val.jsonl` | `833829ce30d929a8ce502036e3f7b049ef8279770558a632efaaf6bd9e54cb03` |
+| `test.jsonl` | `66c6318d57d2021a85384020f8fb52f5903f37353ec7593e3e6b07c6215dbac1` |
+| `manifest.json` (installed run bundle) | `e103b2f019454e07188f60257c72ec73ecf745fda54d830a1585595309f9f85e` |
+| `manifest.json` (published dataset repo) | `92514b46c1e090d50bcae9464112aa80ad8ba48f4e929f098afb929d7488adf8` |
 
-Source (v1) bundles the construction read from:
-
-| Artifact | SHA256 |
-|---|---|
-| `layachoice_v1_train_b_noprov.jsonl.gz` | `e968fdeddc8f02eec19f37ed29fafc5f05a591ea259c97315639d366e3de4f13` |
-| `layachoice_v1_val_b_noprov.jsonl.gz` | `3fa38aa099580b6f9a5146ac2a8e7beed0111d79d2f994adb6ca317547c90364` |
-| `layachoice_v1_test_b_noprov.jsonl.gz` | `c665004a127496f4456a0b3ccd81bd0ce10654fef7808f27e45500d3a9d9b8bb` |
+The two `manifest.json` hashes differ because the installed copy and the published
+repository package the same records differently; the three split files are byte-identical in
+both. The published dataset is
+[`Delveta-LayaChoice-v2-Data`](https://huggingface.co/datasets/eric-ml-nlp/Delveta-LayaChoice-v2-Data).
 
 ## 8. Candidate Contract
 
@@ -177,17 +171,16 @@ capability cards plus one `REJECT` card, and emits a choice over **K + 1 options
 
 | Candidate count | Behaviour |
 |---|---|
-| K = 0 | caller short-circuits on the empty set; LayaChoice is not called |
+| K = 0 | 1 option (`REJECT` only); the bundle contains such rows |
 | K = 1 | 2 options (1 capability + `REJECT`) |
 | K = 2 | 3 options (2 capabilities + `REJECT`) |
-| K = 3 | 4 options (3 capabilities + `REJECT`) — the formal-run case |
+| K = 3 | 4 options (3 capabilities + `REJECT`) |
 | K ≥ 4 | the business layer truncates to top-3 **first** (`normalize_top_k`), then LayaChoice |
 
 **Production candidate normalization must happen before LayaChoice**, not inside it. The
-formal run recorded here was trained and measured at exactly three capability candidates
-**plus the `REJECT` card**; K=0..2 and K≥4 post-truncation are **not** exercised by any
-number in this document. The current dynamic bundle (V4) has not been trained. In every
-case, a caller must render `REJECT` as one of the criteria.
+released run was trained and measured across all four observed option counts (1..4), and
+the test metrics in §14 aggregate them. K≥4 post-truncation is not represented in the
+bundle. In every case, a caller must render `REJECT` as one of the criteria.
 
 ## 9. Token Budget
 
@@ -273,11 +266,8 @@ truncation. `cap-vision` is the longest (224 raw / 229 total), followed by
 `cap-read-document` (221 / 228) and `cap-social-search` (216 / 223). The remaining cards
 are at or below 216 raw tokens.
 
-This is not a re-measurement of the frozen v2 training bundle. That run documented 17
-capabilities and cards of 136–230 tokens, which is why the "no option card is truncated"
-statement above holds for the released experiment. The current Registry has 18 active
-capability cards. Which capability was absent from the frozen 17-card set has not been
-verified and is not asserted here.
+This audit covers the 18 capability cards used by the released run. All 18 fit within the
+256-token budget, so no option card is truncated in the training sequence.
 
 #### Full Card Prompts
 
@@ -590,36 +580,47 @@ the Agent is constructed (`R.install()` in `layachoice_v2_render.py`) and passin
 | σ schedule | 0.4 → 0.1 across epochs |
 | Loss | `loss_rl + 1.0 * loss_ce`; `w_sph=0.75`, `w_rps=1.0` |
 | Gradient clip | `clip_grad_norm_(1.0)` |
-| Total optimizer updates | 600 |
+| Total optimizer updates | 11 190 (planned == actual) |
 | Precision | bf16 autocast (no `GradScaler`) |
-| Hardware | 1× NVIDIA L4 |
-| Runtime | torch `2.14.1+cu130`, transformers `5.17.0`, python `3.11`, `laya==0.3.21` |
-| Seed base | `42` |
+| Hardware | 1× NVIDIA L4 24 GB |
+| Training time | 17 673 s ≈ 4.91 h |
+| Runtime | torch `2.14.1+cu130`, transformers `5.17.0`, python `3.10.20`, `laya==0.3.21` |
+| Seed base / calibration seed | `42` / `20260922` |
 | Fine-tuning | **full-parameter** (no PEFT/LoRA) |
 
 ## 11. Epoch 1–10 Training Results
 
-From the per-epoch validation records. Validation v3 (300 rows, `B_noprov`); top-1 is
-invariant under the scalar calibration temperature. Validation `REJECT` counts are small
-(16 gold `REJECT` rows), so per-epoch `REJECT` recall/FPR are noisy.
+From the per-epoch validation records. Validation (2 407 rows, `B_noprov`); top-1 is
+invariant under the scalar calibration temperature. Validation contains 220 gold `REJECT`
+rows.
 
-| Epoch | Train loss | Val top-1 | Val ECE | Val REJECT recall | Val REJECT FPR | Val EN | Val ZH |
-|---|---|---|---|---|---|---|---|
-| 1 | 0.641706 | 85.67% | 0.080275 | 81.25% | 8.45% | 91.78% | 79.87% |
-| 2 | 0.384151 | 90.00% | 0.036385 | 93.75% | 8.10% | 93.15% | 87.01% |
-| 3 | 0.256366 | 94.00% | 0.056254 | 93.75% | 2.46% | 96.58% | 91.56% |
-| 4 | 0.132143 | 89.67% | 0.101781 | 100.00% | 8.10% | 89.73% | 89.61% |
-| 5 | 0.079365 | 94.67% | 0.054404 | 100.00% | 2.82% | 97.26% | 92.21% |
-| 6 | 0.039875 | 94.33% | 0.056691 | 100.00% | 2.82% | 97.26% | 91.56% |
-| **7** | **0.013119** | **96.67%** | **0.030319** | **100.00%** | **1.76%** | **100.00%** | **93.51%** |
-| 8 | 0.000358 | 96.33% | 0.035276 | 100.00% | 2.11% | 98.63% | 94.16% |
-| 9 | 0.000000 | 96.33% | 0.035276 | 100.00% | 2.11% | 98.63% | 94.16% |
-| 10 | 0.000000 | 96.33% | 0.035276 | 100.00% | 2.11% | 98.63% | 94.16% |
+| Epoch | Mean train loss | Sigma | Seed | Train s | Val top-1 | Val ECE | REJECT recall | REJECT FPR | REJECT precision |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 0.354976 | 0.4000 | 42 | 1678.69 | 0.990445 | 0.009463 | 0.945455 | 0.003201 | 0.967442 |
+| 2 | 0.114831 | 0.3667 | 43 | 1677.86 | 0.981305 | 0.018557 | 0.945455 | 0.013260 | 0.877637 |
+| 3 | 0.052656 | 0.3333 | 44 | 1678.71 | 0.989198 | 0.009794 | 0.909091 | 0.000914 | 0.990099 |
+| 4 | 0.033588 | 0.3000 | 45 | 1677.71 | 0.989614 | 0.010101 | 0.931818 | 0.002743 | 0.971564 |
+| 5 | 0.020002 | 0.2667 | 46 | 1678.19 | 0.972995 | 0.026366 | 0.922727 | 0.019204 | 0.828571 |
+| 6 | 0.012646 | 0.2333 | 47 | 1677.47 | 0.994184 | 0.005269 | 0.963636 | 0.001372 | 0.986047 |
+| 7 | 0.004379 | 0.2000 | 48 | 1677.15 | 0.995015 | 0.005989 | 0.963636 | 0.000914 | 0.990654 |
+| 8 | 0.003872 | 0.1667 | 49 | 1680.51 | 0.995430 | 0.004793 | 0.968182 | 0.000914 | 0.990698 |
+| **9** | **0.004162** | **0.1333** | **50** | **1677.18** | **0.996676** | **0.003710** | **0.981818** | **0.000914** | **0.990826** |
+| 10 | 0.001076 | 0.1000 | 51 | 1676.60 | 0.995430 | 0.004196 | 0.968182 | 0.000914 | 0.990698 |
 
-- Train loss collapses from 0.642 to 0; validation peaks at epoch 7.
-- Epochs 9–10 equal epoch 8 because the train loss had reached 0 and the weights stopped
-  moving.
-- ZH validation sits above EN in the later epochs, the same direction as the final test.
+- Train loss falls from 0.355 to 0.001; validation top-1 peaks at epoch 9.
+- Epoch 10 has the lowest training loss but a lower validation top-1, so it is not selected.
+
+**Final test of the selected epoch (epoch 9).** Measured on `test.jsonl` (9 729 rows)
+after temperature calibration; the test file was not used for training, selection or
+calibration. Input budget: 256 tokens per option, 768 shared by the question head and all
+options, 1 024 for the full sequence (§9).
+
+| Model | Test rows | Top-1 |
+|---|---:|---:|
+| Fine-tuned epoch 9, calibrated | 9 729 | **0.998355** (9 713 / 9 729) |
+| — capability targets | 8 886 | 0.998537 |
+| — `REJECT` targets | 843 | 0.996441 |
+| Zero-shot base model | 9 729 | 0.416795 |
 
 ## 12. Validation Selection
 
@@ -630,8 +631,7 @@ best_epoch = argmax(validation_top1); ties resolved to the EARLIER epoch
 train loss is recorded and NEVER used to select
 ```
 
-**Best epoch = 7, Validation v3 top-1 = 0.966667 = 290/300.** No tie-break was needed
-(epochs 8–10 tie at 0.963333, below epoch 7).
+**Best epoch = 9, validation top-1 = 0.996676 = 2 399/2 407.** No tie-break was needed.
 
 Top-1 is invariant under the scalar temperature, so the selection does not depend on the
 calibration step that follows it. **The Final Test never participated in selection or in
@@ -644,80 +644,95 @@ fitted for the `choice` slot only and written into the length-3 temperature vect
 
 | | |
 |---|---|
-| Calibration rows | 211 (seed 20260922, the same rows removed from training) |
-| Fitted on | epoch-7 (best checkpoint) |
-| Raw fitted value | `6.389379501342773` |
+| Calibration rows | 400 (seed 20260922, the same rows removed from training) |
+| Fitted on | epoch-9 (best checkpoint) |
+| Raw fitted value | `3.070228338241577` |
 | Clamp range | `[0.5, 5.0]` (the Agent's own `clamp_temperature`) |
-| Final written value | `5.0` — **clamped** |
-| Exported vector | `[5.0, 1.0, 1.0]` |
+| Final written value | `3.070228338241577` — no clamping |
+| Exported vector | `[3.070228338241577, 1.0, 1.0]` |
 | Fallback value | `1.2` (not used) |
 
 The clamp range is deliberately the Agent's own `[0.5, 5.0]`, so the fitted value, the
-exported config and the Agent's effective value cannot silently disagree. The raw fitted
-value exceeded the cap and was clamped to 5.0.
+exported config and the Agent's effective value cannot silently disagree.
 
 Calibration is a confidence-sharpening step only; it does not change top-1 (§12). It was
 fitted on in-distribution held-out rows only and does **not** guarantee reliable confidence
-under distribution shift (§16, §19).
+under distribution shift (§19).
 
-## 14. Final Test v3 Results
+## 14. Final Test Results
 
-Best epoch 7, calibrated temperature `[5.0, 1.0, 1.0]`, 1 400 rows:
+Best epoch 9, calibrated temperature `[3.070228338241577, 1.0, 1.0]`, 9 729 rows:
 
 | Metric | Value |
 |---|---|
-| **Top-1** | **0.877857** |
-| Error rate (= 1 − top-1) | 0.122143 |
-| EN (692 rows) | 0.861272 |
-| ZH (708 rows) | 0.894068 |
-| Capability targets (1 286 rows) | 0.891913 |
-| REJECT targets (114 rows) | 0.719298 |
-| p1 partition (700 rows) | 0.910000 |
-| p2 partition (700 rows) | 0.845714 |
-| ECE | 0.097189 |
-| Mean confidence | 0.975046 |
-| Mean gold probability | 0.871354 |
+| **Top-1** | **0.998355** (9 713 / 9 729) |
+| Error rate (= 1 − top-1) | 0.001645 |
+| ECE | 0.002576 |
+| Mean confidence | 0.995827 |
+| Mean gold probability | 0.994382 |
+
+By language (test top-1):
+
+| Language | n | Top-1 |
+|---|---:|---:|
+| en | 4 438 | 0.998197 |
+| zh | 4 132 | 0.998306 |
+| mixed | 1 159 | 0.999137 |
+
+By target kind (test top-1):
+
+| Target | n | Top-1 |
+|---|---:|---:|
+| capability | 8 886 | 0.998537 |
+| reject | 843 | 0.996441 |
 
 REJECT detection (positive class = `REJECT`):
 
 | | Value |
 |---|---|
-| Gold `REJECT` n | 114 |
-| Predicted `REJECT` n | 147 |
-| TP / FP / FN / TN | 82 / 65 / 32 / 1221 |
-| REJECT recall | 0.719298 |
-| REJECT precision | 0.557823 |
-| REJECT false-positive rate | 0.050544 |
+| Gold `REJECT` n | 843 |
+| Predicted `REJECT` n | 844 |
+| TP / FP / FN / TN | 840 / 4 / 3 / 8 882 |
+| REJECT recall | 0.996441 |
+| REJECT precision | 0.995261 |
+| REJECT false-positive rate | 0.000450 |
 
-**Scope statement — read this before quoting 87.79 %.** 0.877857 is **benchmark accuracy on
-the frozen Final Test v3 split**. It is **not** production-traffic accuracy and **not**
-open-world generalization accuracy. The split is a fixed, curated, 1 400-row artifact over
-17 known capabilities with a known hard-negative construction and K=3 + `REJECT`; it says
-nothing about capabilities introduced after the freeze or about distribution shift.
+Zero-shot comparison on the same frozen test split (checkpoint temperature, no
+calibration):
+
+| Metric | Zero-shot baseline | Fine-tuned epoch 9 |
+|---|---:|---:|
+| Top-1 | 0.416795 | **0.998355** |
+| ECE | 0.206293 | **0.002576** |
+| REJECT recall | 0.595492 | **0.996441** |
+| REJECT precision | 0.128751 | **0.995261** |
+| REJECT FPR | 0.382287 | **0.000450** |
+
+Top-1 improvement over the baseline: **+0.581560**.
+
+**Scope statement — read this before quoting 99.84 %.** 0.998355 is **benchmark accuracy
+on the frozen 9 729-row test split**. It is **not** production-traffic accuracy and **not**
+open-world generalization accuracy. The split is a fixed, curated artifact over 18 known
+capabilities with dynamic K+1; it says nothing about capabilities introduced after the
+freeze or about distribution shift.
 
 ## 15. Error / Confusion Summary
 
-Top confusion pairs on the Final Test (gold → predicted, count):
+The 9 729-row test contains **16 top-1 errors** (error rate 0.001645):
 
-| Gold → predicted | n |
-|---|---|
-| cap-edit-file → REJECT | 12 |
-| cap-mindmap → cap-vision | 12 |
-| cap-vision → REJECT | 10 |
-| cap-pdf-extract-text → REJECT | 9 |
-| cap-bash → REJECT | 8 |
-| REJECT → cap-edit-file | 7 |
-| REJECT → cap-read-file | 6 |
-| cap-social-search → cap-web-search | 6 |
-| cap-mindmap → REJECT | 6 |
-| cap-bash → cap-read-file | 5 |
+| Family | n |
+|---|---:|
+| Gold capability, predicted `REJECT` (FP) | 4 |
+| Gold `REJECT`, predicted a capability (FN) | 3 |
+| Gold capability, predicted a different capability | 9 |
+| **Total** | **16** |
 
-The residual error splits into two families. First, the **REJECT boundary is the weakest
-part**: `REJECT` recall is 71.93 % and precision 55.78 % — 65 capability rows are wrongly
-rejected and 32 `REJECT` rows are wrongly routed to a capability. Second, the
-**search cluster** (`web-search` / `social-search` / `rag-search`) and `bash`→`edit-file`
-remain, exactly as in v1 — those are the pairs whose `B_noprov` cards are most similar by
-construction.
+Of the 8 886 capability rows, 8 873 were correct, 9 were mapped to the wrong capability and
+4 were rejected. Of the 843 `REJECT` rows, 840 were correct and 3 were routed to a
+capability. The `REJECT` boundary therefore accounts for 7 of the 16 errors; the other 9
+are capability-to-capability confusions. The per-row report in the training-evidence
+repository records the individual confusion pairs; this document keeps to the aggregate
+because the row-level dump is not reproduced here.
 
 ## 16. Export and Reload Validation
 
@@ -725,14 +740,13 @@ construction.
 
 | Check | Result |
 |---|---|
-| Export dir | `V2/out/epoch-7/` → published as the model repository root |
+| Export dir | `V2/out/epoch-9/` → published as `FP32/` in the model repository |
 | Export dtype | `preserve` (FP32) |
-| Size | 1 287 653 720 B |
-| `model.safetensors` sha256 | `c6331bd5b6c044a8e4841bee8e9e69962cc2deaf1fd39bffb178703c07168b6f` |
-| Export == best checkpoint | **true** — the export is the epoch-7 weights byte-for-byte |
+| Size | 1.29 GB (decimal) |
+| `model.safetensors` sha256 | `964f8fe5dde2812ad3902d8237035bfb109885d4fefef590307bc681bd8fab14` |
+| Export == best checkpoint | **true** — the export is the epoch-9 weights byte-for-byte |
 | `laya.Agent` reload | passed, `load_state_dict(..., strict=True)` |
-| Reload smoke | **11 / 12 hits** on 12 held-out rows |
-| Temperature after reload | `[5.0, 1.0, 1.0]` — fitted == config == effective |
+| Temperature after reload | `[3.070228338241577, 1.0, 1.0]` — fitted == config == effective |
 | Exported `max_len` / `head_max_len` / `option_max_tokens` | 1024 / 768 / 256 |
 
 The reload is run through the public entry point (`laya.Agent(dir, device="cpu")`), not by
@@ -740,31 +754,155 @@ re-reading the files, so it also proves the published directory is Agent-loadabl
 
 ## 17. Artifact Sizes and SHA256
 
-Published per-epoch checkpoint weights (`eric-ml-nlp/Delveta-LayaChoice-v2-checkpoints`):
+Published weights (sizes are decimal):
 
-| Artifact | Size | SHA256 |
-|---|---|---|
-| `epoch-1/model.safetensors` | 1 287 653 720 B | `30f28e23cf8b3e0fa76fd7b1f74337b49d69b6eec3932e21ebc221314be8203f` |
-| `epoch-2/model.safetensors` | 1 287 653 720 B | `ea0f866aed715141733b25b00a643f46392b3a61230ee55e399ce1688866c2d2` |
-| `epoch-3/model.safetensors` | 1 287 653 720 B | `27dd2756ec2a7547555fcae2b2acf6d37cc10d456a132fc6754357f1487fcb5b` |
-| `epoch-4/model.safetensors` | 1 287 653 720 B | `e04b5375cf46273744d7a6e47698a258278735d74c0061eed227921fc80bc56f` |
-| `epoch-5/model.safetensors` | 1 287 653 720 B | `4572dd2d3986b58476685bdc9151458a308d15808904a54d9b09b39120d832dc` |
-| `epoch-6/model.safetensors` | 1 287 653 720 B | `a2f1046c5f8068ac13afe86516bc5ece7961eea410adabf590c1ca829218a207` |
-| `model.safetensors` (epoch 7, selected) | 1 287 653 720 B | `c6331bd5b6c044a8e4841bee8e9e69962cc2deaf1fd39bffb178703c07168b6f` |
+| Artifact | Repository | Size | SHA256 |
+|---|---|---|---|
+| `epoch-2/model.safetensors` | checkpoints | 1.29 GB | `514c7e2f1e73bafc4a523e90c99eb14a25045dff9f8b3117c323cb9acb3fb492` |
+| `epoch-4/model.safetensors` | checkpoints | 1.29 GB | `a831061b4c3218262c713bbafeb50d13265b53a6e8e906d3fa1d6c6ecd7d3994` |
+| `epoch-6/model.safetensors` | checkpoints | 1.29 GB | `31e00d302f5f7590a53f1c379862ace463b89566bff295b6e4b6b5b51476c44a` |
+| `epoch-8/model.safetensors` | checkpoints | 1.29 GB | `2d512ec730c6f06279c1ffe877ab5b00a6af495e58a2670ae3d05bc3ebfa59c7` |
+| `epoch-10/model.safetensors` | checkpoints | 1.29 GB | `131d557409dceefb546480093c2a0707848997cbe2e998a8afb5f24ec4ca1625` |
+| `FP32/model.safetensors` (epoch 9, selected) | model | 1.29 GB | `964f8fe5dde2812ad3902d8237035bfb109885d4fefef590307bc681bd8fab14` |
+| `FP16/model.safetensors` (epoch 9, storage copy) | model | 644 MB | `ce550b6a85d0a3a96083f842fa0432c2efa9d19f3acea6f9a093fa7140949f97` |
 
-Epochs 8–10 weight files are **not** published (history only; they tie epoch 8 at
-0.963333, below epoch 7). Latency/throughput numbers are deliberately omitted: no
-performance baseline was established for this model, and inventing one after the fact
-would be measuring the wrong thing (see architecture rule 17).
+Epochs 1, 3, 5 and 7 weight files are not published. The five non-deployed checkpoints are
+in `Delveta-LayaChoice-v2-checkpoints`; the epoch-9 FP32 and FP16 files are in the model
+repository. Latency/throughput numbers are deliberately omitted: no performance baseline was
+established for this model, and inventing one after the fact would be measuring the wrong
+thing (see architecture rule 17).
 
 ### Published artifacts
 
 | Artifact | Location |
 |---|---|
-| Selected model (epoch 7), FP32 weights + model card | [Delveta-LayaChoice-v2](https://huggingface.co/eric-ml-nlp/Delveta-LayaChoice-v2) (public) |
-| Non-selected checkpoints (epochs 1–6) | [Delveta-LayaChoice-v2-checkpoints](https://huggingface.co/eric-ml-nlp/Delveta-LayaChoice-v2-checkpoints) (public) |
+| Selected model (epoch 9), FP32 + FP16 directories + model card | [Delveta-LayaChoice-v2](https://huggingface.co/eric-ml-nlp/Delveta-LayaChoice-v2) (public) |
+| Non-deployed checkpoints (epochs 2, 4, 6, 8, 10) | [Delveta-LayaChoice-v2-checkpoints](https://huggingface.co/eric-ml-nlp/Delveta-LayaChoice-v2-checkpoints) (public) |
 | Frozen dataset (splits + `manifest.json` + audit) | [Delveta-LayaChoice-v2-Data](https://huggingface.co/datasets/eric-ml-nlp/Delveta-LayaChoice-v2-Data) (public) |
 | Training / evaluation code | [`fine_tuning/laya_finetune/V2/`](https://github.com/Eric-LLMs/Delveta/tree/main/fine_tuning/laya_finetune/V2) |
+
+### 17.1 Precision directories: FP32 vs FP16
+
+> **Scope.** The released model repository ships two self-contained precision directories,
+> `FP32/` and `FP16/`, carrying the same epoch-9 weights from the run recorded in this
+> document. They contain the same parameters; §17.1 measures what changes at runtime and
+> what does not.
+
+#### What was measured
+
+The two directories were compared through the production chat path: the real Electron
+client, the full `apps.api.main:app` backend, the Intent Funnel and the cap_router service
+running `laya 0.3.21` on CPU. Both arms used the same code (`857d482f`), backend process,
+database, embedding service, recall configuration, threshold and deterministic 100-row
+subset (50 `zh` + 50 `en`) of the frozen 500-row V2 set. The only variable was the mounted
+model directory. LLM argument extraction and Agent fallback were disabled, so the scores
+measure capability selection only.
+
+| Metric | FP32 | FP16 |
+|---|---:|---:|
+| Tool Selection Accuracy (n = 100) | 65.00% | 65.00% |
+| Tool Selection Accuracy (valid decisions, n = 73) | 89.04% | 89.04% |
+| Chinese accuracy (n = 50) | 60.00% | 60.00% |
+| English accuracy (n = 50) | 70.00% | 70.00% |
+| Prediction agreement | — | **100 / 100** |
+| Decision-type agreement | — | **100 / 100** |
+| FP32 correct / FP16 wrong | — | **0** |
+| FP32 wrong / FP16 correct | — | **0** |
+| Parameter memory after load | 1.29 GB (1228.0 MiB) | 1.29 GB (1228.0 MiB) |
+| cap_router selection median | 450.0 ms | 459.5 ms |
+| Container memory after batch | 1.672 GiB | 1.670 GiB |
+| Download / disk | 1261.5 MiB | 647.5 MiB |
+
+Both arms completed all 100 UI turns with zero UI, request, timeout or SSE failures, and
+produced the same decision distribution (`SELECTED 65`, `REJECT 7`, `MATCHER_HIT 1`, no
+decision 27). Confidence values differ by at most `1.0e-4` (median `0.0`), with no argmax
+change. End-to-end wall-clock differences come from the client, IPC and host load; the
+`selection_ms` that contains the inference is essentially unchanged.
+
+#### Three precisions, not one
+
+```text
+checkpoint storage dtype      runtime parameter dtype      compute dtype
+        F16              →            F32               →      F32
+   (model.safetensors)      (build_model + copy_)       (CPU, no autocast)
+```
+
+- **Checkpoint storage dtype** — how the weights are stored on disk.
+- **Runtime parameter dtype** — how the loaded weights are represented in memory.
+- **Compute dtype** — the precision used by inference operations.
+
+Only the second determines steady-state weight memory; only the third determines arithmetic
+behavior.
+
+`laya 0.3.21` builds the model with float32 parameters and copies the checkpoint tensors into
+them:
+
+1. `build_model(..., pretrained=False)` allocates the parameters as `float32`;
+2. `load_file` reads the checkpoint tensors, which are `float16`;
+3. `load_state_dict` copies each tensor into its float32 slot; PyTorch casts the dtype during
+   the copy, without checking or warning.
+
+The parameter container therefore stays float32, and memory is charged at four bytes per
+parameter. The values remain the FP16-rounded ones; only the container is float32. The loader
+exposes no dtype option. Setting `torch.set_default_dtype(torch.float16)` before construction
+does not help: much of the encoder explicitly creates float32 tensors, producing a mixed
+model (134 float32 + 35 float16 parameters) that raises `mixed dtype` on CPU.
+
+#### CPU and GPU
+
+| | CPU | GPU |
+|---|---|---|
+| Stock loader | float32 parameters, ~1.29 GB weights in memory | float32 parameters, ~1.29 GB weights in VRAM |
+| Compute precision | float32; BF16 only with `LAYA_CPU_AMP=bf16` | autocast on by default (BF16/FP16); can be disabled explicitly, on OOM fallback, or when an operator is unsupported; MPS also gates per call by batch size |
+| Explicit `model.half()` | 614.4 MiB parameters; slower on CPUs without native FP16 units | 614.4 MiB parameters; typically faster on recent GPUs |
+
+An FP16 file does not reduce weight memory on either device, because both construct float32
+parameters first. The difference is compute: a GPU defaults to mixed precision and may be
+faster; a CPU defaults to float32.
+
+#### True half-precision parameters
+
+Measured in one process with the FP16 directory on CPU:
+
+| Parameter form | Parameter memory | Warm forward |
+|---|---:|---|
+| float32 (stock) | 1228.0 MiB | 290 / 372 / 353 / 382 ms |
+| float16 + float32 `act_head` | **614.4 MiB** | 784 / 840 / 747 / 793 ms |
+| bfloat16 + float32 `act_head` | **614.4 MiB** | 847 / 972 / 1036 / 1055 ms |
+
+A fully-half model fails because `DecisionModel.forward` performs
+`pooled = h[:, 0].float()` before `act_head` (`laya/common.py:347`). Keeping the 0.8 MiB
+`act_head` in float32 makes the forward run. This probe does not modify laya, and it has not
+been re-validated on the full case set, so it is not a production result.
+
+#### INT8 scope
+
+Quantization savings depend on which tensors are converted:
+
+| Component | Size |
+|---|---:|
+| Token embedding table (`encoder.embeddings`) | 750.0 MiB |
+| Encoder linear and attention weights | 420.9 MiB |
+| Decision head (`head`) | 54.1 MiB |
+| `scorer` / `act_head` / `type_emb` | 3.1 MiB |
+
+Quantizing Linear layers alone leaves the 750 MiB embedding table in float32, for roughly
+870 MiB total — more than the 614 MiB of an FP16 parameter cast. Going materially below
+614 MiB requires compressing the embedding table as well.
+
+#### Conclusion
+
+- The FP16 directory is a **storage and distribution artifact**. It halves download and disk
+  footprint and leaves decisions unchanged.
+- Under the stock `laya==0.3.21` loader it does **not** reduce CPU memory or GPU VRAM, and it
+  does not change model latency.
+- A true reduced-memory runtime requires casting the parameters (`model.half()`, with
+  `act_head` kept in float32) or a runtime that genuinely stores and executes quantized
+  weights. Both change speed and require their own accuracy measurement; neither is implied
+  by the FP16 directory.
+
+Raw evidence (per-case rows, logs, model manifests) is kept in the scratch directory
+`logs/_e2e_formal500_v2_fp32_vs_fp16_20261021/`.
 
 ## 18. Reproducibility
 
@@ -773,7 +911,7 @@ would be measuring the wrong thing (see architecture rule 17).
 | GPU | 1× NVIDIA L4 |
 | torch | 2.14.1+cu130 |
 | transformers | 5.17.0 |
-| Python | 3.11 |
+| Python | 3.10.20 |
 | laya | 0.3.21 |
 | Base revision | `55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851` (subfolder `multilingual`) |
 | Seed base | 42; calibration split seed 20260922 |
@@ -781,51 +919,78 @@ would be measuring the wrong thing (see architecture rule 17).
 What must hold for a rerun to be comparable:
 
 1. `laya==0.3.21` and the pinned base revision (asserted on load).
-2. The frozen bundle unchanged — the six SHA256s in §7.
+2. The frozen bundle unchanged — the hashes in §7.
 3. The same three budget constants, and the same 256-token builder override (§9), on
    training, validation, final test, export and reload.
 4. The same selection rule (§12) and the same calibration ids (§13).
 
 ## 19. Known Limitations
 
-1. **The 87.79 % is benchmark accuracy on a frozen split**, not production accuracy and not
-   open-world generalization (§14).
-2. **The `REJECT` class is the weakest part.** On the final test, `REJECT` recall is
-   71.93 % / precision 55.78 %; 65 capability rows are wrongly rejected and 32 `REJECT`
-   rows are wrongly routed. `REJECT` recall on the small validation split (16 gold rejects)
-   is not a reliable estimate.
-3. **K is not validated outside the formal run's 3 + `REJECT`.** The formal run trained and
-   measured only K=3. The current V4 bundle is dynamic K+1 but has not been trained; K=1..2
-   and K≥4 post-truncation are unmeasured, and no number here covers them.
-4. **17 capabilities in the formal run.** The current Registry has 18 active capability
-   cards; capabilities added after the freeze are out of distribution by construction.
-5. **The released weights were trained on the flat 4-way build.** Serving the current dynamic
-   bundle requires the dynamic adapter; the measured numbers here do not cover that bundle.
-6. **The dataset is synthetic / curated**, not sampled from live traffic (§5).
-7. **EN/ZH only.** No claim is made for any other language.
-8. **Base-model license is undetermined.** The upstream repository went private and its
-   snapshot ships no license; no license is asserted over the derived weights.
+1. The model is trained for in-domain capability selection on the frozen
+   `recall_threshold_082` bundle. It does not generalise automatically to unseen capability
+   taxonomies, card renderings, or domains.
+2. Validation and test rows come from the same frozen benchmark family; the very high test
+   metrics should be read as in-domain performance, not open-domain robustness.
+3. The model assumes the question contains exactly one `REJECT` card and 0–3 capability
+   cards. Feeding a question without `REJECT`, or with more than three capability cards, is
+   outside the trained contract.
+4. Confidence is calibrated on 400 held-out in-distribution rows. Under distribution shift,
+   both top-1 and calibration may degrade.
+5. The 5-row loader smoke in the export stage is a load check, not an accuracy measurement;
+   the reported accuracy figures come from the full test evaluation.
+6. FP16 is a storage-precision copy. With the stock `laya` loader it runs as FP32 and does
+   not reduce runtime parameter memory or VRAM. The drift measured in §17.1 is a 100-row
+   end-to-end check, not a full test re-evaluation.
 
 ## 20. Final Conclusion
 
-The formal result, on the frozen Final Test v3 (1 400 rows, K=3 + `REJECT`):
+LayaChoice-v2 is trained for one task: given a question and a few candidate capability
+cards (plus one `REJECT` card), pick the correct card — or pick `REJECT` when the right
+capability is not among the candidates.
 
-| Arm | Top-1 |
-|---|---|
-| **256/768 fine-tuned, best epoch 7, calibrated** | **0.877857** |
-| capability-only subset (1 286 rows) | 0.891913 |
-| `REJECT` subset (114 rows) | 0.719298 |
+### Which epoch was selected
 
-- Validation v3 selected epoch 7 at **0.966667**; the Final Test never participated in
-  selection or in the export gate.
-- The exported artifact is byte-identical to the selected checkpoint (`c6331bd5…`), passes
-  `laya.Agent` `strict=True` reload, and reproduces the fitted temperature exactly.
-- v2's job is the one v1 could not do: **abstain when the right capability is not among the
-  candidates.** It does so at a **`REJECT` recall of 71.93 %** — useful but the weakest part
-  of the model, and the first target of any v3.
-- The two splits are **not directly comparable**: v1's 93.56 % was a 3-way 900-row split with
-  no `REJECT`; v2's 87.79 % is a harder 4-way split that adds the abstain class.
+The model was trained for 10 epochs. Epoch 9 was chosen using
+[`val.jsonl`](https://huggingface.co/datasets/eric-ml-nlp/Delveta-LayaChoice-v2-Data/blob/main/val.jsonl)
+(2 407 rows), where it scored **0.996676** top-1. The test file was not involved in this
+choice.
 
-Scope, restated once more because it is the easiest thing to over-read: **0.877857 is
-benchmark accuracy on a frozen, curated, K=3 + `REJECT`, 17-capability, EN/ZH split.** It is
-not a production-traffic number and not an open-world claim.
+### Final score
+
+On [`test.jsonl`](https://huggingface.co/datasets/eric-ml-nlp/Delveta-LayaChoice-v2-Data/blob/main/test.jsonl)
+(9 729 rows), epoch 9 scores **0.998355** top-1 — its first choice was the correct option in
+9 713 of 9 729 rows. The test file was not used for training, for choosing the epoch, for
+calibration, or for deciding which checkpoint to export. The per-target breakdown is in
+[§11](#11-epoch-110-training-results); the full test report is in
+[§14](#14-final-test-results).
+
+### The capability v1 did not have
+
+v1 always had to pick one of three fixed options, even when none of them was correct. v2 can
+pick `REJECT` instead:
+
+- Of the 843 test rows whose correct answer is `REJECT`, it chose `REJECT` 840 times
+  → **recall 99.64 %**.
+- Of the 844 rows where it chose `REJECT`, 840 were correct → **precision 99.53 %**.
+- Of the 8 886 rows whose correct answer is a capability, only 4 were wrongly rejected
+  (**0.045 %**).
+
+### What was published
+
+The exported
+[FP32 weights](https://huggingface.co/eric-ml-nlp/Delveta-LayaChoice-v2/blob/main/FP32/model.safetensors)
+are byte-identical to the selected checkpoint (sha256 `964f8fe5…`), load with
+`laya.Agent(strict=True)`, and reproduce the fitted temperature exactly.
+
+### How this compares with v1
+
+Not directly. [v1](LayaChoice-v1-Fine-Tuning.md) reports 93.56 %, but it was trained on
+856 rows instead of 36 197, offered a fixed 3-way choice instead of dynamic K+1, and was
+tested on 900 rows instead of 9 729.
+
+### What the number does not mean
+
+0.998355 is accuracy on this frozen benchmark: 18 capability cards, dynamic K+1,
+zh/en/mixed rows from the same benchmark family as the training data. It is not a
+production-traffic number and says nothing about unseen capabilities or open-domain
+questions.

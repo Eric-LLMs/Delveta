@@ -375,10 +375,40 @@ the verdict.
 
 | Artifact | Repository | Commit |
 |---|---|---|
-| Model | [eric-ml-nlp/Delveta-LayaChoice-v2](https://huggingface.co/eric-ml-nlp/Delveta-LayaChoice-v2) | `11a6ee27` |
+| Model | [eric-ml-nlp/Delveta-LayaChoice-v2](https://huggingface.co/eric-ml-nlp/Delveta-LayaChoice-v2) | `7865f50d` |
 | Data | [eric-ml-nlp/Delveta-LayaChoice-v2-Data](https://huggingface.co/datasets/eric-ml-nlp/Delveta-LayaChoice-v2-Data) | `e913457b` |
 
-The trained model is published in FP32, alongside a lightweight FP16 version for reduced storage and download size.
+The trained model is published in FP32, alongside an FP16 copy that reduces download and on-disk size.
 
-- **Trained Model (FP32):** [Download](https://huggingface.co/eric-ml-nlp/Delveta-LayaChoice-v2/tree/main/FP32) — 1.29 GB
-- **Lightweight FP16 Model (Half-Precision / Quantization Alternative):** [Download](https://huggingface.co/eric-ml-nlp/Delveta-LayaChoice-v2/tree/main/FP16) — 644 MB
+- **Trained Model (FP32):** [Download](https://huggingface.co/eric-ml-nlp/Delveta-LayaChoice-v2/tree/main/FP32) — 1.29 GB (decimal)
+- **FP16 copy (storage only):** [Download](https://huggingface.co/eric-ml-nlp/Delveta-LayaChoice-v2/tree/main/FP16) — 644 MB
+
+### Precision and runtime memory
+
+The FP16 directory changes the checkpoint storage dtype, not the runtime parameter dtype.
+
+- `laya==0.3.21` builds the model with float32 parameters and copies the checkpoint tensors
+  into them, so the stock `laya.Agent` holds float32 parameters for both directories.
+  Parameter memory on CPU and parameter VRAM on GPU are the same in both cases
+  (approximately 1.29 GB decimal). The parameter dtype becomes float32; the values loaded
+  from FP16 remain the FP16-rounded ones.
+- Compute precision is a separate setting. On CUDA the Agent enables autocast by default;
+  it can be disabled explicitly, on the OOM fallback path, or when an operator is
+  unsupported. MPS additionally gates autocast per call by batch size. On CPU autocast is
+  off by default; `LAYA_CPU_AMP=bf16` enables BF16, not FP16. Mixed precision is not a
+  guaranteed speedup and must be measured.
+- Runtime parameter memory only drops when the parameters themselves are stored in 16-bit
+  or INT8 form: an explicit cast (`model.half()`) or a runtime that genuinely stores and
+  executes quantized weights. The saving depends on which tensors are converted. In this
+  checkpoint the token-embedding table is approximately 750 MiB of the 1.29 GB, so
+  quantizing Linear layers alone can leave most of the footprint unchanged. Benchmark
+  speed and accuracy before adopting either path.
+- A full FP16 parameter cast also requires keeping the decision head in float32:
+  `DecisionModel.forward` casts the pooled features to float32 before `act_head`
+  (`laya/common.py:347`), so a fully-half model raises a dtype mismatch. With that
+  adjustment the FP16 parameters measured 614.4 MiB (from 1,228.0 MiB) and ran about twice
+  as slow on a CPU without native FP16 units.
+
+Keep three precisions separate: **checkpoint storage dtype**, **runtime parameter dtype**,
+and **compute dtype**. Only the second determines steady-state weight memory; only the
+third determines arithmetic behavior.
