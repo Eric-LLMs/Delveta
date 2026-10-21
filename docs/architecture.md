@@ -5228,7 +5228,7 @@ invoke no capability).
 | 0.79 | 89.60% | 95.78% | 78.48% | 21.52% | 29.82% | 20.85% | 27.82% |
 | 0.80 | 89.54% | 95.56% | 67.47% | 32.53% | 32.15% | 17.93% | 17.38% |
 | 0.81 | 89.38% | 95.20% | 55.07% | 44.93% | 30.97% | 14.47% | 9.63% |
-| 0.82 | 89.13% | 94.54% | 43.65% | 56.35% | 28.10% | 10.37% | 5.18% |
+| **0.82** | **89.13%** | **94.54%** | **43.65%** | **56.35%** | **28.10%** | **10.37%** | **5.18%** |
 | 0.83 | 88.80% | 93.66% | 33.62% | 66.38% | 23.83% | 6.80% | 2.98% |
 | 0.84 | 88.11% | 92.44% | 25.25% | 74.75% | 19.27% | 4.22% | 1.77% |
 | 0.85 | 87.17% | 91.06% | 19.07% | 80.93% | 15.33% | 2.77% | 0.97% |
@@ -5248,18 +5248,18 @@ invoke no capability).
 | 0.99 | 19.53% | 19.53% | 0.00% | 100.00% | 0.00% | 0.00% | 0.00% |
 | 1.00 | 19.42% | 19.42% | 0.00% | 100.00% | 0.00% | 0.00% | 0.00% |
 
-*Threshold 0.88 — operating point*
+*Threshold 0.82 — operating point*
 
 | Metric | Result | Description |
 |---|---:|---|
-| Action Recall@1 | 81.19% | Share of action queries whose gold capability is ranked #1 after the quality gate. |
-| Action Recall@3 | 82.98% | Share of action queries whose gold capability is within the Top-3 after the quality gate. |
-| Positive zero-candidate rate | 13.99% (507 / 3,625) | Share of action queries that end with an empty candidate pool (no card ≥ threshold). |
-| Non-Action FA@3 | 8.58% | Share of non-action queries with at least one admitted tool card (`K≥1`). |
-| NonActionFA=0 | 91.42% | Non-action queries where exactly `0/3` aggregated tool cards pass — pool empty, correctly rejected. |
-| NonActionFA=1 | 8.30% | Non-action queries where exactly `1/3` aggregated tool cards pass. |
-| NonActionFA=2 | 0.28% | Non-action queries where exactly `2/3` aggregated tool cards pass. |
-| NonActionFA=3 | 0.00% | Non-action queries where all `3/3` aggregated tool cards pass (`K≥3`). |
+| Action Recall@1 | 89.13% | Share of action queries whose gold capability is ranked #1 after the quality gate. |
+| Action Recall@3 | 94.54% | Share of action queries whose gold capability is within the Top-3 after the quality gate. |
+| Positive zero-candidate rate | 1.93% (70 / 3,625) | Share of action queries that end with an empty candidate pool (no card ≥ threshold). |
+| Non-Action FA@3 | 43.65% | Share of non-action queries with at least one admitted tool card (`K≥1`). |
+| NonActionFA=0 | 56.35% | Non-action queries where exactly `0/3` aggregated tool cards pass — pool empty, correctly rejected. |
+| NonActionFA=1 | 28.10% | Non-action queries where exactly `1/3` aggregated tool cards pass. |
+| NonActionFA=2 | 10.37% | Non-action queries where exactly `2/3` aggregated tool cards pass. |
+| NonActionFA=3 | 5.18% | Non-action queries where all `3/3` aggregated tool cards pass (`K≥3`). |
 
 For the BGE-M3 fine-tuning methodology and the Formal-500 frozen blind-test results
 (retrieval / threshold layer), see
