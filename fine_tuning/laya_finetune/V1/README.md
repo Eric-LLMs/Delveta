@@ -1,3 +1,5 @@
+> **This version is deprecated. Use [LayaChoice v2](https://github.com/Eric-LLMs/Delveta/tree/main/fine_tuning/laya_finetune/V2) instead.**
+
 # LayaChoice-v1 — fine-tuning Laya's multilingual decision model
 
 `convaiinnovations/laya` is a non-autoregressive decision engine ("system one"): an encoder
