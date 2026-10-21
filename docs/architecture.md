@@ -166,7 +166,7 @@
 | Async enrichment | gateway + arq worker split; `jobs` table is the source of truth; frontend polls `GET /jobs/{id}`; daily `session_events` retention cron in `WorkerSettings.cron_jobs`; `run_agent_turn` job reuses the shared `AgentKernel` composition (`apps/api/agent_factory.py`) for scheduled background turns; `toolkit_generate` runs the 5-stage toolkit pipeline (file mode → workspace output; session / cloud-file modes → caller's Cloud Drive, with a custom `prompt` + `name`) |
 | Session memory | PG-backed `sessions` / `messages` / `session_events`; **client Live State (summary + tail) is the normal-turn context source — zero SQL reads on hot turns**; threshold compaction folds raw rows into one 5-section structured summary behind a dual persistence barrier (`sessions.compaction` JSONB = durable checkpoint, revision CAS); per-session async write queue (one batch INSERT/turn); deferred finalize = incremental embed + first-time-only sidebar summary/title; trigger-gated proactive recall (Lane-1 brief always on) + RRF recency weighting + importance-weighted file recall + supersede-in-place user directives + 30-day audit-event retention — see [§22](#22-chat-session-memory-v2--client-live-state-authority--zero-read-turns) |
 | Migrations | the asyncpg runner (`init_db()`) applies **every** `migrations/*.sql` in sorted order — one transaction per file, each stem recorded in `schema_migrations` (replaces Alembic); `0001_init.sql` is the base install and the rest are `IF NOT EXISTS`-guarded deltas, incl. the Chat Assets migration `0024_chat_assets.sql` (§12.7) |
-| Chat | agent loop with tool use, SSE streaming; over a pure control plane — `TurnOrchestrator` resolves every turn to one `ExecutionPlan` (DIRECT / VIEWER / LOCAL_RAG / ACTION / COMPOSITE / AGENT): the L0 lexical pass, then the nodeized **Intent Funnel** chain over the LIVE capability Registry — Matcher → Recall → Capability Aggregation → `cap_router` selection (`SELECTED` / `REJECT` / `NONE`) → Argument Acquisition → Binder (§25–§28); a non-selected turn (REJECT / NONE / K<3) falls open to the Agent — then policy mapping. Single formal path (ruling): the funnel chain is always-live and a certified ACTION turn dispatches on certification alone; the four experimental L0 lanes each ride their own lane switch (all default-off, dark); every fallback is byte-identical to the Agent — [§24](#24-chat-control-plane--plan-resolution-fast-paths--intent-routing), [§25](#25-chat-intent-funnel--nodeized-routing-toolintentmodel--shared-tool-runtime) |
+| Chat | agent loop with tool use, SSE streaming; over a pure control plane — `TurnOrchestrator` resolves every turn to one `ExecutionPlan` (DIRECT / VIEWER / LOCAL_RAG / ACTION / COMPOSITE / AGENT): the L0 lexical pass, then the nodeized **Intent Funnel** chain over the LIVE capability Registry — Matcher → Recall → Capability Aggregation → `cap_router` selection (`SELECTED` / `REJECT` / `NONE`) → Argument Acquisition → Binder (§25–§28); a non-selected turn (REJECT / NONE / K = 0) falls open to the Agent — then policy mapping. Single formal path (ruling): the funnel chain is always-live and a certified ACTION turn dispatches on certification alone; the four experimental L0 lanes each ride their own lane switch (all default-off, dark); every fallback is byte-identical to the Agent — [§24](#24-chat-control-plane--plan-resolution-fast-paths--intent-routing), [§25](#25-chat-intent-funnel--nodeized-routing-toolintentmodel--shared-tool-runtime) |
 | Viewer context | chat answers about the **open viewer**: focus chip (file · page / playhead), ±20 s media-time subtitle window with video-only FOCUS / FULL / NONE classification and honest `too_large` / `unavailable` short-circuit, pinned selections / ROI / frames as explicit P0 context (image blocks carry the captured asset's id and ship a REQUIRED `vision` directive), clickable `[Vn]` citations; **documents are never intent-matched server-side** — every followed document reaches the model as a trusted **Viewer Access Context** stub routing it to `read_document` by asset id, with the page window settled **upstream** from the viewer context (the model never passes `pages`; `pages` spec, ACL-before-storage, ≤16 pages) and a post-turn `viewer.reads` trace incl. failed calls — zero changes to RAG / agent runtime / memory ([§23](#23-viewer-context-provider--the-open-document-as-reference-context), features.md *Desktop Workbench*) |
 | Research OS | tasks created atomically from the desktop chat (**＋ Research**): a cloud task folder under a picked My Drive parent — `materials/` / `outputs/` / `temp/` all guaranteed at creation — with live `task_spec.json` / `session_history.json` mirrors over authoritative scratch state; session isolation (research sessions bound 1:1 to a task, DB-marked `sessions.type=1`, hidden from the Sessions sidebar); 409-guarded cascade delete (RUNNING / RAG-INDEXED blocked, cloud folder → Trash, scratch hard-removed, bound type-1 sessions deleted); **server-owned runs** (`begin_run`/`end_run` mutex with stale-window crash recovery — a client disconnect no longer cancels a research turn) with `is_running` surfaced in every task view; `POST /research/tasks` + `GET/DELETE /research/tasks/{id}` + artifact read/promote API; **deterministic execution engine** — Python owns control flow through a 10-stage contract pipeline (`DISCOVER → FRAME → EVIDENCE → DESIGN → EXECUTE → EXPLAIN → WRITE → REVIEW → REPRODUCE → PUBLISH`) with repair-once bounded attempts, per-stage declared LLM call budgets + run-level turn/cost/no-progress caps, and guard gates at the transition fence: **strict** mode (default) parks a failed gate on a PENDING human override with zero rework on resume, lenient mode records it and continues; structural violations halt terminally (`BLOCKED`); lease-based crash recovery makes interrupted runs resumable; publication finality is the `PROMOTED` record (report + compiled PDF, optional slides via toolkit); desktop Research tab + two-layer chat header; web console read-only mirror — see [§17](#17-research-os-module), [§20](#20-research-execution-from-agent-driven-control-flow-to-a-deterministic-pipeline) |
 | Workflow core (`packages/workflow`) | domain-free run engine behind Research OS: declarative `workflow_spec` (transitions / activities / cap dimensions / hooks) + state machine with lease contest, crash recovery, retry, loop-cap grading and definition-drift detection; adapter pattern (ports + ledger/lease persistence supplied by the plugin) — [§19](#19-workflow-core-packagesworkflow) |
@@ -6341,7 +6341,7 @@ packages/core/application/chat/
     ├── cap_router/                 # selection node (§26) — the split-out selector
     │   ├── __init__.py
     │   ├── base.py                 #   CapabilitySelector seam + route (SELECTED | NONE | REJECT)
-    │   ├── card_renderer.py        #   B_noprov cards + the frozen REJECT card (4 option slots)
+    │   ├── card_renderer.py        #   B_noprov cards + the frozen REJECT card (variable slots: K + 1)
     │   └── backends/               #   off | stub | cap_router (deployed service)
     │       ├── __init__.py
     │       ├── factory.py          #   backend-name resolution -> selector (distinct responsibility)
@@ -7132,36 +7132,30 @@ matching and it does not adjudicate safety (the write-gate stays in the funnel).
 
 ### 26.2 Candidate contract
 
-The production contract is defined over candidate count `K`. Normalization of the
-candidate list is a **business-layer** step and MUST happen **before** LayaChoice is
-invoked — the model only ever receives an already-normalized list:
+Recall produces a candidate list. Before LayaChoice is called, the business layer
+groups it by capability and keeps the three highest-scoring capabilities at most. The
+model only ever receives that already-normalized list:
 
-| `K` | Path |
+| `K` (after normalization) | What happens |
 |---|---|
-| `K = 0` | the row never enters LayaChoice (no candidates — funnel short-circuits) |
-| `K = 1` | the business layer executes directly; LayaChoice is not consulted |
-| `K = 2` | **V2-ineligible** — LayaChoice is not consulted (see the 4-slot invariant) |
-| `K = 3` | LayaChoice (3 capability cards + `REJECT` = 4 option slots) |
-| `K >= 4` | the business layer truncates to the top-3 first, then LayaChoice |
+| `K = 0` | Nothing to choose from. The turn goes to the Agent; LayaChoice is not called. |
+| `K >= 1` | Every surviving capability card goes to LayaChoice. One or two cards is a normal question, not a special case. |
+| `K > 3` | Keep the three highest-scoring cards, then call LayaChoice. |
 
-The benchmark and training data are fixed at **K = 3 capability candidates plus one
-`REJECT` option** (`OPTION_SLOTS = 4`). `REJECT` is a normal fourth option — not a
-threshold and not a post-hoc rule — carried on every row, so the decision head always
-scores exactly four options. The `K >= 4` truncation is the business layer's job, not
-the model's.
+The selector always receives the `K` capability cards plus one frozen `REJECT` card, so
+a question carries `K+1` options. `REJECT` is an ordinary option — not a threshold and
+not a post-hoc rule — and the model scores it together with the capability cards. The
+training and benchmark data use the same **dynamic K+1** rule: 1 to 4 options, with
+exactly one `REJECT`. The 1-option case (`K = 0` in the data) is a `REJECT`-only
+question; production never sends it, because a `K = 0` turn exits before the selector.
 
-**4-slot hard invariant.** The v2 selector is consulted **only** for a three-capability
-candidate set — three capability cards plus the frozen `REJECT` card, exactly the four
-option slots it was trained and measured at. A `K = 2` set is **never** padded with a
-fabricated third capability and **never** sent as a three-slot question: it is a
-degradation case that exits the funnel (recorded as an ineligible turn), never a model
-call. `K < 3` is a degradation metric only; it never alters the frozen training
-distribution.
+The model was not trained or measured above three capability cards, so the `K > 3`
+truncation belongs to the business layer — the model never sees a fourth card.
 
 **Rendering requirement.** A LayaChoice call MUST render the `REJECT` card as one of the
-criteria. A caller that renders only the capability cards (a 3-option question) does not
-match the pipeline the model was trained and measured under, and its scores are not
-meaningful.
+criteria. A caller that renders only the capability cards (a K-option question with no
+`REJECT`) does not match the pipeline the model was trained and measured under, and its
+scores are not meaningful.
 
 ### 26.3 Model
 
@@ -7170,14 +7164,14 @@ meaningful.
   pinned).
 - **Fine-tuned**: **Delveta LayaChoice v2** — full-parameter fine-tune of the base
   decision model on Delveta's capability-selection task, with an explicit `REJECT`
-  option. The task is a **4-way flat classification** over three capability cards plus
-  one `REJECT` card.
+  option. The task is a **variable-length choice**: `K` capability cards plus one
+  `REJECT` card (`K+1` options, 1 to 4), not a fixed four-way classification.
 - **Superseded**: **Delveta LayaChoice v1** (3-way, no `REJECT`) is the previously
   shipped checkpoint, retained as a frozen archive. v2 is the current model.
 
 > **Integration status.** The `cap_router` card renderer emits the `REJECT` criterion
 > (§26.2), the `deploy/laya` sidecar loads the v2 checkpoint, and the `cap_router` service
-> backend maps a `REJECT` answer to a normal fourth decision that routes to the Agent.
+> backend maps a `REJECT` answer to a normal non-selection decision that routes to the Agent.
 > The `REJECT` card, the selector, and the service are served as the `cap-router` Compose
 > service (`CHAT_CAP_ROUTER_BACKEND=cap_router`).
 
@@ -7195,36 +7189,39 @@ limit. These three values are the input configuration for Delveta's long `B_nopr
 capability cards; they are an experiment-defined budget, and the underlying encoder
 context window is a separate, larger number. The v2 input builder is a byte-verbatim
 copy of `laya.common.build_sequence` with one line changed (`max_length=48` → `256`),
-and the 256/768/1024 budget was audited as sufficient at four option slots — no option
-card is truncated and the `REJECT` card enters the sequence in full.
+and the 256/768/1024 budget was audited as sufficient at the maximum of four option
+slots — no option card is truncated and the `REJECT` card enters the sequence in full.
 
 ### 26.5 Training and selection
 
 - Full-parameter fine-tuning (no adapters).
-- The best checkpoint is selected **only** by Validation v3 top-1; train loss is never
+- The best checkpoint is selected **only** by validation top-1; training loss is never
   used to select.
-- The Final Test set is never used for checkpoint selection or for any training
-  decision.
+- The test set is never used for checkpoint selection, for calibration, or for any
+  training decision.
 
-For v2, Validation v3 top-1 peaks at epoch 7 (**96.67 % = 290/300**), which is the
-selected checkpoint. On the frozen Final Test v3 (1 400 rows, `K = 3` + `REJECT`,
-curated 17-capability EN/ZH set) the selected checkpoint scores **87.79 % top-1**; the
-weak class is `REJECT` (recall 71.93 %, precision 55.78 %). These are benchmark numbers
-on a frozen curated split — not production-traffic accuracy and not an open-world
+The selected model is **epoch 9**. It scores **0.996676** top-1 on the 2 407-row
+validation set. On the frozen 9 729-row test set it scores **0.998355** top-1 — its
+first choice was correct in 9 713 of 9 729 rows. On the abstain class, 840 of the 843
+rows whose correct answer is `REJECT` were rejected (**recall 99.64 %**), and 840 of the
+844 `REJECT` answers were correct (**precision 99.53 %**). Only 4 of the 8 886
+capability rows were wrongly rejected (**0.045 %**). These are benchmark numbers on a
+frozen curated split — not production-traffic accuracy and not an open-world
 generalization claim.
 
-The v2 test number is **not directly comparable to v1's 93.56 %**: v1's frozen test was
-a 3-way 900-row split with no `REJECT` option, while v2's split adds the `REJECT` class
-and is correspondingly harder. The per-language, per-capability, per-epoch and confusion
-breakdowns live in the experiment record (§26.6).
+The test number is **not directly comparable to v1's 93.56 %**: v1 trained on 856 rows,
+offered a fixed 3-way choice with no `REJECT`, and tested on 900 rows; the current run
+trained on 36 197 rows, uses dynamic K+1 with an explicit `REJECT`, and tests on 9 729
+rows. The per-language, per-capability, per-epoch and confusion breakdowns live in the
+experiment record (§26.6).
 
 ### 26.6 Artifacts
 
 | Artifact | Home |
 |---|---|
 | Source code / experiment definition (v2) | [`fine_tuning/laya_finetune/V2/`](https://github.com/Eric-LLMs/Delveta/tree/main/fine_tuning/laya_finetune/V2) |
-| Selected model (v2, FP32 weights + eval reports) | [Delveta-LayaChoice-v2](https://huggingface.co/eric-ml-nlp/Delveta-LayaChoice-v2) |
-| Non-selected checkpoints (epochs 1–6) | [Delveta-LayaChoice-v2-checkpoints](https://huggingface.co/eric-ml-nlp/Delveta-LayaChoice-v2-checkpoints) |
+| Selected model (epoch 9; FP32 weights, FP16 storage copy, eval reports) | [Delveta-LayaChoice-v2](https://huggingface.co/eric-ml-nlp/Delveta-LayaChoice-v2) |
+| Non-selected checkpoints (epochs 2, 4, 6, 8, 10) | [Delveta-LayaChoice-v2-checkpoints](https://huggingface.co/eric-ml-nlp/Delveta-LayaChoice-v2-checkpoints) |
 | Frozen dataset (v2 bundles; shas in `manifest.json`) | [`fine_tuning/laya_finetune/V2/data/`](https://github.com/Eric-LLMs/Delveta/tree/main/fine_tuning/laya_finetune/V2/data) · [Delveta-LayaChoice-v2-Data](https://huggingface.co/datasets/eric-ml-nlp/Delveta-LayaChoice-v2-Data) |
 | Archived v1 source + data | [`fine_tuning/laya_finetune/V1/`](https://github.com/Eric-LLMs/Delveta/tree/main/fine_tuning/laya_finetune/V1) |
 
@@ -7370,7 +7367,7 @@ Recall and Laya have separate responsibilities.
 
 **Recall is responsible for retrieving a high-recall candidate pool. Laya is responsible for discriminating among the retrieved candidates and selecting the capability.**
 
-After threshold admission and candidate aggregation/normalization, Recall passes at most **Top-3 candidates** to Laya.
+After threshold admission and candidate aggregation/normalization, Recall passes at most **Top-3 candidates** to Laya. A one- or two-card set is passed as it is; a larger set is truncated to the three highest-scoring cards first.
 
 The use of Top-3 is an architectural boundary rather than merely an evaluation metric:
 
@@ -7383,7 +7380,7 @@ Threshold admission
   ↓
 Candidate aggregation / normalization
   ↓
-Top-3 candidates
+Up to Top-3 candidates (K = 1..3)
   ↓
 Laya capability discrimination
   ↓
@@ -7396,11 +7393,15 @@ The 900-query Recall evaluation shows that the correct capability is within the 
 
 This means the Top-3 candidate boundary captures the correct capability for the large majority of queries before the final capability-discrimination step.
 
-LayaChoice-v2 was evaluated under the same candidate-selection setting, with a frozen capability-selection Top-1 accuracy of:
+LayaChoice-v2 was evaluated on the current frozen test set (9 729 rows, dynamic K+1,
+18 capabilities, zh/en/mixed). The selected epoch 9 scores:
 
-> **87.79%**
+> **99.8355% top-1**
 
-This metric means that, when the correct capability is within Laya's candidate input range and a `REJECT` option is also on offer, Laya selects the correct capability with **87.79% Top-1 accuracy** (frozen Final Test, 1 400 rows). The number is lower than v1's 93.56 % in part because the task is harder: v2's frozen split adds the `REJECT` class that v1 did not carry.
+That means its first choice was the correct option in 9 713 of 9 729 rows. On the
+abstain class it reaches `REJECT` recall 99.64 % and precision 99.53 % (§26.5). The
+number is not comparable to v1's 93.56 %: the training-data scale, the option contract
+and the test-set size all differ.
 
 The two metrics measure different stages:
 
@@ -7408,7 +7409,7 @@ The two metrics measure different stages:
 Recall raw Top-3 coverage
 = whether the correct capability reaches the Laya candidate range
 
-Laya 87.79%
+Laya 99.84%
 = whether Laya selects the correct capability from that candidate range
 ```
 
@@ -7424,13 +7425,13 @@ After threshold admission and candidate aggregation / normalization, let `K` be 
 
 | `K` | Routing |
 | :----: | :------ |
-| `K = 0` | No candidate survives → **Agent** fallback. |
-| `K = 1` | Capability is already uniquely determined → enter the **Argument Path** directly; **Laya is not invoked**. |
-| `K = 2` | **V2-ineligible** → **Agent** fallback. The 4-slot contract is a hard invariant: a two-candidate set is never padded with a fabricated third capability and never sent as a three-slot question (§26.2). |
-| `K = 3` | All three candidates are passed to **Laya** for capability discrimination (3 capability cards + `REJECT` = 4 option slots). |
+| `K = 0` | No candidate survives → **Agent** fallback; Laya is not called. |
+| `K = 1` | The single card goes to **Laya**. The model may select it or reject it; the business layer never selects on the model's behalf. |
+| `K = 2` | Both cards go to **Laya**. This is a normal two-card question, not an ineligible case. |
+| `K = 3` | All three cards go to **Laya** (3 capability cards + `REJECT` = 4 options). |
 | `K >= 4` | Apply **normalization / Top-3** first, then pass the Top-3 candidates to **Laya**. |
 
-If Laya fails — unavailable, times out, returns malformed output, or selects a capability outside the provided candidate set — the request falls back to **Agent**. A `REJECT` answer is a normal fourth decision, not a failure: it routes to the same **Agent** path, never to the argument chain.
+If Laya fails — unavailable, times out, returns malformed output, or selects a capability outside the provided candidate set — the request falls back to **Agent**. A `REJECT` answer is a normal decision, not a failure: it routes to the same **Agent** path, never to the argument chain.
 
 `K` always denotes the candidate capability count **after** threshold admission and aggregation / normalization, never the size of the raw ranking.
 
