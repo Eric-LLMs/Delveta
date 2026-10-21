@@ -22,6 +22,8 @@ configs:
         path: data/test.jsonl
 ---
 
+> **本版本系统弃用，新版本见 [Delveta-LayaChoice-v2-data](https://huggingface.co/datasets/eric-ml-nlp/Delveta-LayaChoice-v2-data)。**
+
 # Delveta LayaChoice v1 — frozen dataset
 
 ## Purpose
