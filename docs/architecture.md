@@ -7276,49 +7276,14 @@ The adopted production threshold is:
 
 > **Recall threshold = 0.88**
 
-> **Calibration basis.** `0.88` is calibrated on the **real-query distribution** (the recall-only regression run: 3,625 action / 6,000 non-action queries). The 900-query table below is a **synthetic** LayaChoice benchmark whose similarity scale is lower, so its rows at high thresholds are not the production operating point. On the real distribution `0.88` retains `Action Recall@3 = 82.98%` while reducing `Non-Action FA@3` to `8.58%`.
+> **Calibration basis.** `0.88` is calibrated on the **real-query distribution** (the recall-only regression run: 3,625 action / 6,000 non-action queries). On that distribution `0.88` retains `Action Recall@3 = 82.98%` while reducing `Non-Action FA@3` to `8.58%`.
 
 The threshold is a **quality gate**, not a capability selector. A higher threshold removes more low-similarity candidates but can also remove the correct capability before it reaches the downstream discriminator. A lower threshold preserves more potentially correct capabilities but admits more non-action candidates.
 
-The threshold sweep is evaluated using two independent dimensions:
-
-| Threshold | Action Recall@1 | Action Recall@3 | Non-Action FA@3 | NonActionFA=0 | NonActionFA=1 | NonActionFA=2 | NonActionFA=3 |
-| --------: | --------------: | --------------: | --------------: | ------------: | ------------: | ------------: | ------------: |
-|      0.55 |           75.7% |           92.9% |           71.2% |          null |          null |          null |          null |
-|      0.56 |           75.7% |           92.8% |           69.2% |          null |          null |          null |          null |
-|      0.57 |           75.4% |           92.6% |           63.5% |          null |          null |          null |          null |
-|      0.58 |           75.0% |           91.9% |           63.5% |          null |          null |          null |          null |
-|      0.59 |           74.3% |           91.1% |           59.6% |          null |          null |          null |          null |
-|  **0.60** |       **74.1%** |       **90.6%** |       **55.8%** |     **null** |     **null** |     **null** |     **null** |
-|      0.61 |           72.4% |           88.1% |           55.8% |          null |          null |          null |          null |
-|      0.62 |           71.2% |           85.1% |           55.8% |          null |          null |          null |          null |
-|      0.63 |           69.4% |           82.4% |           50.0% |          null |          null |          null |          null |
-|      0.64 |           67.1% |           78.4% |           44.2% |          null |          null |          null |          null |
-|      0.65 |           65.0% |           75.3% |           42.3% |          null |          null |          null |          null |
-|      0.66 |           62.7% |           72.3% |           34.6% |          null |          null |          null |          null |
-|      0.67 |           59.2% |           67.7% |           30.8% |          null |          null |          null |          null |
-|      0.68 |           55.1% |           62.2% |           26.9% |          null |          null |          null |          null |
-|      0.69 |           50.1% |           55.2% |           25.0% |          null |          null |          null |          null |
-|      0.70 |           46.1% |           50.4% |           19.2% |          null |          null |          null |          null |
-|      0.71 |           41.4% |           44.3% |           15.4% |          null |          null |          null |          null |
-|      0.72 |           36.0% |           38.3% |           13.5% |          null |          null |          null |          null |
-|      0.73 |           32.1% |           33.7% |           13.5% |          null |          null |          null |          null |
-|      0.74 |           28.2% |           29.4% |           11.5% |          null |          null |          null |          null |
-|      0.75 |           23.9% |           24.7% |            7.7% |          null |          null |          null |          null |
-|      0.76 |           19.7% |           20.3% |            7.7% |          null |          null |          null |          null |
-|      0.77 |           16.0% |           16.6% |            7.7% |          null |          null |          null |          null |
-|      0.78 |           12.3% |           12.8% |            3.8% |          null |          null |          null |          null |
-|      0.79 |            9.6% |            9.8% |            1.9% |          null |          null |          null |          null |
-|      0.80 |            7.1% |            7.2% |            1.9% |          null |          null |          null |          null |
-|      0.81 |            5.1% |            5.2% |            1.9% |          null |          null |          null |          null |
-|      0.82 |            3.4% |            3.6% |            1.9% |          null |          null |          null |          null |
-|      0.83 |            2.4% |            2.6% |            1.9% |          null |          null |          null |          null |
-|      0.84 |            1.7% |            1.8% |            1.9% |          null |          null |          null |          null |
-|      0.85 |            1.2% |            1.3% |            0.0% |          null |          null |          null |          null |
-|      0.86 |            0.9% |            1.0% |            0.0% |          null |          null |          null |          null |
-|      0.87 |            0.6% |            0.6% |            0.0% |          null |          null |          null |          null |
-
-> The `NonActionFA=0`, `NonActionFA=1`, `NonActionFA=2` and `NonActionFA=3` metrics have not been measured for this sweep; the `null` values in those columns denote missing data and do **not** mean 0%.
+The full threshold sweep is in
+[§25.2.2 — the real-query threshold table](#2522-method-2--embedding-model-fine-tuning):
+Action Recall@1/@3, Non-Action FA@3, and the `NonActionFA=0/1/2/3` partition for
+every threshold from 0.60 to 1.00.
 
 **Action Recall@1** is the fraction of action queries for which the gold capability is ranked #1 after threshold filtering, capability aggregation, and sorting by the aggregated score.
 
