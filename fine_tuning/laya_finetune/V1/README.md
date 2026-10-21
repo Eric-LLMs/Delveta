@@ -52,6 +52,18 @@ fine_tuning/laya_finetune/V1/
   out/                     training artifacts (not committed)
 ```
 
+## Prompt parity: training vs inference
+
+Training, the benchmark arms and the export reload check all build the input through the
+same `question_of` → `build_sequence` path, with the instruction string read from
+`manifest.json` and the same 256 / 768 / 1024 budget, so their prompts are byte-identical.
+
+The deployed sidecar reuses the same builder body and constants, but it speaks the V2
+contract: its renderer appends a `REJECT` card (K + 1 options) and keeps candidates in
+score order, whereas every frozen V1 row has exactly three cards ordered by capability id
+with no `REJECT`. A V1 checkpoint must therefore be served a V1-shaped question; behind
+the V2 renderer its input is out of distribution.
+
 ## Deploy
 
 The GPU box needs no registry, no database and no repo checkout beyond this directory.
@@ -241,3 +253,9 @@ Agent would silently rewrite the fitted value and the three-way agreement would 
 The Final Test never gates the export: `run.sh` exports the best checkpoint whether or not
 it beats the zero-shot baseline, and the benchmark's `baseline_comparison.beats_baseline`
 records the verdict.
+
+## Published artifacts
+
+- Model: [`eric-ml-nlp/Delveta-LayaChoice-v1`](https://huggingface.co/eric-ml-nlp/Delveta-LayaChoice-v1)
+- Checkpoints: [`eric-ml-nlp/Delveta-LayaChoice-v1-checkpoints`](https://huggingface.co/eric-ml-nlp/Delveta-LayaChoice-v1-checkpoints)
+- Frozen dataset: [`eric-ml-nlp/Delveta-LayaChoice-v1-data`](https://huggingface.co/datasets/eric-ml-nlp/Delveta-LayaChoice-v1-data)
