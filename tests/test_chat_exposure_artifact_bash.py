@@ -54,7 +54,7 @@ from core.application.chat.intent_funnel.registry.entry import (
     derive_language,
 )
 from core.application.chat.understanding import TurnRequirements
-from core.config import settings
+from core.config import Settings, settings
 
 FUNNEL_LOGGER = "core.application.chat.intent_funnel.funnel"
 _HIDDEN = "cap-edit-file,cap-artifact,cap-bash"
@@ -82,6 +82,22 @@ def test_shipped_default_names_all_three_hidden_capabilities():
     # the shipped default (no env override) hides edit-file, artifact and bash.
     assert set(settings.chat_funnel_hidden_capabilities.split(",")) == {
         "cap-edit-file", "cap-artifact", "cap-bash"}
+
+
+def test_recall_threshold_default_is_082():
+    # The shipped default must be the value the four-arm experiment chose.
+    # Read the field default, not ``settings``: a local .env / env var must not
+    # be able to mask a wrong default.
+    assert Settings.model_fields["chat_funnel_min_score"].default == 0.82
+
+
+def test_recall_threshold_env_override(monkeypatch):
+    """CHAT_FUNNEL_MIN_SCORE overrides the default (case-insensitive field env
+    name); with the override removed the shipped default applies again."""
+    monkeypatch.setenv("CHAT_FUNNEL_MIN_SCORE", "0.88")
+    assert Settings(_env_file=None).chat_funnel_min_score == 0.88
+    monkeypatch.delenv("CHAT_FUNNEL_MIN_SCORE", raising=False)
+    assert Settings(_env_file=None).chat_funnel_min_score == 0.82
 
 
 def test_hidden_capabilities_are_not_chat_plane_candidates(monkeypatch):
@@ -216,6 +232,38 @@ async def test_hidden_recall_hits_reach_the_cap_router_and_can_be_rejected(
     assert rec.aggregated_ids == [
         {"cap-bash", "cap-artifact", "cap-a", "cap-b", "cap-c"}]
     assert out is req and _fallback(caplog) == REASON_FUNNEL_ALLOWLIST_REJECT
+
+
+async def test_non_allowlisted_candidate_reaches_the_selector(monkeypatch, caplog):
+    """The selector's INPUT is the card surface, not the allowlist: a hidden
+    capability is offered to the model, and only its pick is rejected."""
+    from core.application.chat.intent_funnel.cap_router.backends.stub import (
+        StubSelector,
+    )
+    caplog.set_level(logging.INFO, logger=FUNNEL_LOGGER)
+    entries = [_entry("cap-bash", "bash"), _entry("cap-a", "create_folder")]
+    seen: list[set[str]] = []
+
+    class _SpySelector:
+        async def select(self, query, candidates, *, entries_by_id, facts=None):
+            seen.append({c.capability_id for c in candidates})
+            return await StubSelector().select(
+                query, candidates, entries_by_id=entries_by_id, facts=facts)
+
+    _wire(monkeypatch,
+          recall_candidates=[Candidate("cap-bash", 0.95, origin="recall"),
+                             Candidate("cap-a", 0.70, origin="recall")],
+          entries=entries, hidden=_HIDDEN)
+    monkeypatch.setattr(
+        "core.application.chat.intent_funnel.cap_router.selector_for",
+        lambda backend: _SpySelector())
+
+    req = TurnRequirements()
+    out = await _route(_ctx(), req)
+
+    assert seen == [{"cap-bash", "cap-a"}]   # the hidden capability is carded
+    assert out is req                        # the Agent keeps the turn
+    assert _fallback(caplog) == REASON_FUNNEL_ALLOWLIST_REJECT
 
 
 async def test_control_without_hiding_the_same_hit_is_aggregated(monkeypatch, caplog):

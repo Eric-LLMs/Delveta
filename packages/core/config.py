@@ -142,7 +142,7 @@ class Settings(BaseSettings):
     # ends honestly with NO tool/LLM call and no session write.
     chat_capture_timeout_seconds: float = 30.0
     chat_capture_max_attempts: int = 2
-    chat_funnel_min_score: float = 0.88          # Recall quality gate — EVERY hit >= it reaches the
+    chat_funnel_min_score: float = 0.82          # Recall quality gate — EVERY hit >= it reaches the
                                                  # model; no width cap (ruling), and an
                                                  # EMPTY set short-circuits to NO_CANDIDATE (Agent)
     chat_funnel_margin: float = 0.06             # ToolIntentModel(stub) leader-vs-runner-up margin
