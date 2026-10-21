@@ -379,5 +379,5 @@ the verdict.
 | Data | [eric-ml-nlp/Delveta-LayaChoice-v2-Data](https://huggingface.co/datasets/eric-ml-nlp/Delveta-LayaChoice-v2-Data) | `e913457b` |
 
 The model repository ships two self-contained versions:
-[FP32](https://huggingface.co/eric-ml-nlp/Delveta-LayaChoice-v2/tree/main/FP32) (reference weights)
-and [FP16](https://huggingface.co/eric-ml-nlp/Delveta-LayaChoice-v2/tree/main/FP16) (half-precision copy).
+[FP32](https://huggingface.co/eric-ml-nlp/Delveta-LayaChoice-v2/tree/main/FP32)
+and [FP16](https://huggingface.co/eric-ml-nlp/Delveta-LayaChoice-v2/tree/main/FP16).
