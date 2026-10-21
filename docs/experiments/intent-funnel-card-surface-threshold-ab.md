@@ -109,10 +109,15 @@ In one sentence: it used to be "you cannot see it, so pick something else"; now 
 
 #### Grouped by how many cards the model was given
 
-K is the number of candidate cards handed to the model. K=0 means no intent was recalled:
-the model never got a chance to choose, so the turn went to the Agent.
+> **Evaluation Methodology:** Each request first passes through the retrieval stage
+> (embedding-based retrieval + score thresholding) to generate a candidate tool set. The
+> decision model, LayaChoice-v2, then selects the target tool from the candidates or predicts
+> REJECT. The table reports end-to-end correctness across the retrieval and decision stages,
+> grouped by the number of candidate cards presented to the decision model (K). K=0 means no
+> candidate cards were retrieved, so the model cannot select a tool and the request must be
+> handed off to the Agent.
 
-| Cards shown | 0.88 · filters out non-allowlisted intents | 0.88 · recalls non-allowlisted intents | 0.82 · filters out non-allowlisted intents | 0.82 · recalls non-allowlisted intents |
+| Intent candidate list size | 0.88 · filters out non-allowlisted intents | 0.88 · recalls non-allowlisted intents | 0.82 · filters out non-allowlisted intents | 0.82 · recalls non-allowlisted intents |
 |---|---:|---:|---:|---:|
 | K=0 (no intent recalled) | 76/115 = 66.09% | 2/40 = 5.00% | 37/41 = 90.24% | 0/4 = 0% |
 | K=1 | 274/295 = 92.88% | 338/355 = 95.21% | 202/222 = 90.99% | 201/206 = 97.57% |
@@ -271,9 +276,9 @@ Each arm has a per-case audit, a conservation check (`all_ok=true`) and a run ma
 
 #### 按"给了模型几张卡"分组
 
-K 就是交给模型的候选卡数量。K=0 表示没有召回意图，模型没机会选，只能交给 Agent。
+> **统计说明：** 每条请求首先经过召回阶段（Embedding + 召回阈值），生成候选工具集；随后由决策模型 LayaChoice-v2 从候选集中选择目标 Tool 或作出 REJECT 决策。下表统计整个流程最终正确选中目标 Tool 或正确判定 REJECT 的结果，并按提供给决策模型的候选卡片数量（K）分组。K=0 表示没有召回候选卡片，模型无法进行工具选择，只能交由 Agent 处理。
 
-| 给了几张卡 | 0.88 · 过滤掉不在白名单的 intent | 0.88 · 召回不在白名单的 intent | 0.82 · 过滤掉不在白名单的 intent | 0.82 · 召回不在白名单的 intent |
+| 意图候选列表数量 | 0.88 · 过滤掉不在白名单的 intent | 0.88 · 召回不在白名单的 intent | 0.82 · 过滤掉不在白名单的 intent | 0.82 · 召回不在白名单的 intent |
 |---|---:|---:|---:|---:|
 | K=0(没有召回意图) | 76/115 = 66.09% | 2/40 = 5.00% | 37/41 = 90.24% | 0/4 = 0% |
 | K=1 | 274/295 = 92.88% | 338/355 = 95.21% | 202/222 = 90.99% | 201/206 = 97.57% |
