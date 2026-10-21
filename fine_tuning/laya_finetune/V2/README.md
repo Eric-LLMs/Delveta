@@ -375,5 +375,6 @@ the verdict.
 
 | Artifact | Repository | Commit |
 |---|---|---|
-| Model | [eric-ml-nlp/Delveta-LayaChoice-v2](https://huggingface.co/eric-ml-nlp/Delveta-LayaChoice-v2) | `2574addf` |
+| Model (FP32) | [eric-ml-nlp/Delveta-LayaChoice-v2/FP32](https://huggingface.co/eric-ml-nlp/Delveta-LayaChoice-v2/tree/main/FP32) | `11a6ee27` |
+| Model (FP16) | [eric-ml-nlp/Delveta-LayaChoice-v2/FP16](https://huggingface.co/eric-ml-nlp/Delveta-LayaChoice-v2/tree/main/FP16) | `11a6ee27` |
 | Data | [eric-ml-nlp/Delveta-LayaChoice-v2-Data](https://huggingface.co/datasets/eric-ml-nlp/Delveta-LayaChoice-v2-Data) | `e913457b` |
