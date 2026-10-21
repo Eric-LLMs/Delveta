@@ -53,6 +53,7 @@ from .contract import (
     REASON_CAP_ROUTER_REJECT,
     REASON_CAP_ROUTER_UNAVAILABLE,
     REASON_CASCADE_ERROR,
+    REASON_FUNNEL_ALLOWLIST_REJECT,
     REASON_KIND_DISABLED,
     REASON_NO_CANDIDATE,
     REASON_RECALL_UNAVAILABLE,
@@ -149,7 +150,7 @@ async def run_nodes(ctx, deps, requirements, trace, *,
 
     from . import cap_router, guardrails, matcher, recall
     from .registry import active_view as registry_active_view
-    from .registry.entry import chat_plane_candidate
+    from .registry.entry import chat_plane_candidate, funnel_cardable
     from .tool_intent import select_and_extract as tool_intent
 
     message = ctx.body.message or ""
@@ -163,6 +164,14 @@ async def run_nodes(ctx, deps, requirements, trace, *,
     trace["registry"] = view.fingerprint
     entries_by_id = {
         e.capability_id: e for e in view.entries if chat_plane_candidate(e)
+    }
+    # Card surface: EVERY routable action capability, allowlist or not. The
+    # training corpus shows all of them as ordinary options, so withholding a
+    # card here would put production out of the model's input distribution and
+    # force it to pick a wrong card. The allowlist is enforced AFTER the
+    # selector decides (a pick outside it is converted into a REJECT).
+    card_entries_by_id = {
+        e.capability_id: e for e in view.entries if funnel_cardable(e)
     }
     # ── Argument-acquisition seam (turn-scoped) ──────────────────────────────────
     # The production provider is built ONCE here — it needs the live
@@ -247,25 +256,41 @@ async def run_nodes(ctx, deps, requirements, trace, *,
             min_score=(settings.chat_funnel_min_score if recall_min_score is None
                        else recall_min_score),
         )
-        # Exposure ruling (single closure point): the Recall corpus is loaded
-        # straight from the LIVE query tables, which — unlike the Matcher exact
-        # index and ``entries_by_id`` — carry NO chat-plane predicate, so a
-        # capability hidden by ``chat_funnel_hidden_capabilities`` can still
-        # surface here. Drop any hit whose capability is a row the live table
-        # STILL carries but the chat-plane predicate refuses (i.e. a hidden
-        # capability), so it never enters the candidate pool, aggregation, the
-        # cap_router candidate list, or certification. A capability ABSENT from
-        # the live table (the index running ahead of the table) is deliberately
-        # NOT dropped here: it must reach the verdict so the existing
-        # index/table-divergence guard still raises VERSION_MISMATCH. No Recall
-        # SQL change: this business-layer filter is the one place that closes the
-        # gap for every recall source at once.
+        # Card-surface ruling (single closure point): keep every recall hit the
+        # live table can render a card for (``funnel_cardable``). The
+        # hidden-capability exclusion is deliberately NOT applied here — those
+        # capabilities are cardable so the selector can identify the intent, and
+        # the allowlist is enforced on its DECISION instead (a pick outside the
+        # allowlist becomes FUNNEL_ALLOWLIST_REJECT below). This matches the
+        # LayaChoice input distribution, where every action capability appears as
+        # an ordinary option.
+        #
+        # A capability ABSENT from the live table (the index running ahead of the
+        # table) cannot be rendered — the card renderer skips it — so keeping it
+        # would only burn a top-K slot and displace a real card. Drop it and
+        # record the divergence count. No Recall SQL change: this business-layer
+        # filter is the one place that closes the gap for every recall source.
         table_rows = {e.capability_id: e for e in view.entries}
-        recall_hits = [
-            c for c in rres.candidates
-            if (row := table_rows.get(c.capability_id)) is None
-            or chat_plane_candidate(row)
-        ]
+        recall_hits: list[Candidate] = []
+        dropped_unregistered = 0
+        for hit in rres.candidates:
+            row = table_rows.get(hit.capability_id)
+            if row is None:
+                dropped_unregistered += 1   # ghost: index ahead of the table
+            elif funnel_cardable(row):
+                recall_hits.append(hit)
+            # present but not cardable (e.g. the research lane): not a fault,
+            # simply not part of the card surface
+        if dropped_unregistered:
+            # Index/table divergence is a FAULT, not a business outcome: a row
+            # the live table cannot render is a ghost. Refusing the turn keeps
+            # the old divergence guard honest (it used to fire only when the
+            # selector happened to pick the ghost; with cards now rendered from
+            # the table a ghost can never be picked, so the guard must fire here
+            # or it would silently disappear).
+            trace["recall_dropped_unregistered"] = dropped_unregistered
+            trace["fallback"] = REASON_VERSION_MISMATCH
+            return None
         if capture is not None:
             # the RAW lane: every candidate recall scored, pre any floor AND pre
             # aggregation — the offline threshold sweep recomputes buckets from
@@ -360,7 +385,7 @@ async def run_nodes(ctx, deps, requirements, trace, *,
         try:
             _t_select = time.monotonic()
             route = await selector.select(message, list(norm.candidates),
-                                          entries_by_id=entries_by_id, facts=facts)
+                                          entries_by_id=card_entries_by_id, facts=facts)
             _mark(capture, "selection_ms", _t_select)
         except cap_router.CapabilityRouterUnavailable:
             # ruling: a selector that cannot serve exits to the
@@ -386,9 +411,17 @@ async def run_nodes(ctx, deps, requirements, trace, *,
         # capability decided -> the Argument Path Router decides HOW its
         # arguments are acquired (CONTEXT_DIRECT reuses the Binder; a MODEL need
         # is executed through the injected extractor).
-        entry = entries_by_id.get(route.capability_id)
+        entry = card_entries_by_id.get(route.capability_id)
         if entry is None:  # a route the active table no longer honors: refuse
             trace["fallback"] = REASON_VERSION_MISMATCH
+            return None
+        if not chat_plane_candidate(entry):
+            # The selector identified an intent the chat plane must not execute
+            # (a hidden capability). This is a CORRECT identification, so the
+            # turn goes to the Agent through the same NORMAL REJECT exit — it is
+            # never executed, and the remaining cards are never used as a
+            # consolation pick.
+            trace["fallback"] = REASON_FUNNEL_ALLOWLIST_REJECT
             return None
         _t_acq = time.monotonic()
         out = await _acquisition_hop(requirements, deps, entry, query=message,

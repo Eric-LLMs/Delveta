@@ -128,6 +128,12 @@ REASON_CAP_ROUTER_TIMEOUT = "CAP_ROUTER_TIMEOUT"           # selector exceeded t
 # answered the frozen REJECT label, so the turn routes to the system's REAL
 # no-capability path (Agent) — never a fake tool, never the argument chain.
 REASON_CAP_ROUTER_REJECT = "CAP_ROUTER_REJECT"             # selector answered REJECT
+# The selector picked a capability that IS on a card but is NOT in the intent
+# allowlist (a hidden capability / a lane the chat plane must not
+# execute). Kept DISTINCT from CAP_ROUTER_REJECT: one is the model's own
+# abstention, the other is the business layer converting a correct out-of-surface
+# pick into the same downward exit (Agent). Merging them would erase the metric.
+REASON_FUNNEL_ALLOWLIST_REJECT = "FUNNEL_ALLOWLIST_REJECT"
 # RETIRED (§26.2 same-rule ruling): the selector is now defined over a
 # VARIABLE-length candidate set, so there is no K<3 ineligibility — every K >= 1
 # candidate set is handed to the selector. This reason code is no longer emitted

@@ -6,12 +6,14 @@ One goal, two independent surfaces — hidden from CHAT, kept on the AGENT plane
    ``cap-edit-file,cap-artifact,cap-bash``. The predicate ``chat_plane_candidate``
    drops them from the Matcher exact index AND the funnel ``entries_by_id`` (so no
    card is built and certification is refused).
-2. RECALL closure — the Recall corpus is loaded straight from the LIVE query
-   tables, which carry NO exposure predicate, so a hidden capability's sentences
-   can still surface from ``recall.recall``. The orchestrator drops any recall hit
-   whose capability is not a current chat-plane candidate, so a hidden capability
-   never enters the candidate pool, aggregation, the cap_router list, or
-   certification. No Recall SQL change — this is the single closure point.
+2. RECALL / CARD surface — the Recall corpus is loaded straight from the LIVE
+   query tables, which carry NO exposure predicate, so a hidden capability's
+   sentences can still surface from ``recall.recall``. Those hits KEEP their
+   cards (``funnel_cardable``), matching the option distribution the selector was
+   trained on; the intent allowlist is enforced on the DECISION instead — a pick
+   outside ``chat_plane_candidate`` becomes ``FUNNEL_ALLOWLIST_REJECT`` and the turn
+   falls open to the Agent. A hidden capability therefore never certifies and
+   never executes, but it is no longer invisible to the selector.
 
 The AGENT plane is untouched: ``agent_hidden_tools`` does NOT name artifact/bash,
 so the chat-process kernel still registers ``bash`` with its destructive marker and
@@ -36,6 +38,7 @@ from core.application.chat.intent_funnel.contract import (
     MATCH_HIT,
     MATCH_MISS,
     REASON_ACQUISITION_MODEL_PENDING,
+    REASON_FUNNEL_ALLOWLIST_REJECT,
     REASON_VERSION_MISMATCH,
     Candidate,
     MatchResult,
@@ -171,9 +174,11 @@ async def _route(ctx, req):
     return await funnel.route(ctx, deps=_deps(), requirements=req)
 
 
-async def test_hidden_recall_hit_never_enters_the_candidate_pool(monkeypatch, caplog):
-    """A hidden capability recalled at the TOP score is dropped before aggregation;
-    only the legit hit remains, and the funnel cannot select the hidden one."""
+async def test_hidden_recall_hit_is_carded_and_its_pick_becomes_a_whitelist_reject(
+        monkeypatch, caplog):
+    """A hidden capability recalled at the TOP score KEEPS its card (the selector
+    must see the training distribution), but the pick is converted into a REJECT
+    before certification — never executed, never re-routed to another card."""
     caplog.set_level(logging.INFO, logger=FUNNEL_LOGGER)
     entries = [_entry("cap-bash", "bash"), _entry("cap-a", "create_folder")]
     rec = _wire(monkeypatch,
@@ -183,23 +188,24 @@ async def test_hidden_recall_hit_never_enters_the_candidate_pool(monkeypatch, ca
     req = TurnRequirements()
     out = await _route(_ctx(), req)
 
-    assert rec.aggregated_ids == [{"cap-a"}]          # cap-bash dropped pre-aggregation
-    # cap-a (K=1) → the selector (stub) selects the single trusted card → ARP
-    # needs its MODEL slot → Agent, NOT a VERSION_MISMATCH from selecting the
-    # hidden cap-bash.
-    assert out is req and _fallback(caplog) == REASON_ACQUISITION_MODEL_PENDING
+    assert rec.aggregated_ids == [{"cap-bash", "cap-a"}]   # both are carded
+    # The stub picks cap-bash (margin 0.25). It is on a card but not in the
+    # allowlist, so the business layer turns the pick into the REJECT exit.
+    assert out is req and _fallback(caplog) == REASON_FUNNEL_ALLOWLIST_REJECT
 
 
-async def test_hidden_recall_hits_absent_from_the_cap_router_list(monkeypatch, caplog):
-    """With hidden hits mixed among 3 legit ones, aggregation/router see exactly
-    the 3 legit candidates — the hidden ones never reach the selector."""
+async def test_hidden_recall_hits_reach_the_cap_router_and_can_be_rejected(
+        monkeypatch, caplog):
+    """Hidden hits are ordinary candidates now: they enter aggregation and the
+    cap_router list, and a winning hidden pick is rejected — not silently
+    replaced by a lower-scored allowlisted card."""
     caplog.set_level(logging.INFO, logger=FUNNEL_LOGGER)
     entries = [_entry("cap-bash", "bash"), _entry("cap-artifact", "artifact"),
                _entry("cap-a", "create_folder"), _entry("cap-b", "create_folder"),
                _entry("cap-c", "create_folder")]
     rec = _wire(monkeypatch,
                 recall_candidates=[Candidate("cap-bash", 0.99, origin="recall"),
-                                   Candidate("cap-artifact", 0.98, origin="recall"),
+                                   Candidate("cap-artifact", 0.50, origin="recall"),
                                    Candidate("cap-a", 0.90, origin="recall"),
                                    Candidate("cap-b", 0.70, origin="recall"),
                                    Candidate("cap-c", 0.60, origin="recall")],
@@ -207,9 +213,9 @@ async def test_hidden_recall_hits_absent_from_the_cap_router_list(monkeypatch, c
     req = TurnRequirements()
     out = await _route(_ctx(), req)
 
-    assert rec.aggregated_ids == [{"cap-a", "cap-b", "cap-c"}]
-    # cap-a selected (clear margin) → MODEL slot pending; never the hidden caps.
-    assert out is req and _fallback(caplog) == REASON_ACQUISITION_MODEL_PENDING
+    assert rec.aggregated_ids == [
+        {"cap-bash", "cap-artifact", "cap-a", "cap-b", "cap-c"}]
+    assert out is req and _fallback(caplog) == REASON_FUNNEL_ALLOWLIST_REJECT
 
 
 async def test_control_without_hiding_the_same_hit_is_aggregated(monkeypatch, caplog):

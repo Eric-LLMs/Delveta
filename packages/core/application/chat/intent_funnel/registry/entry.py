@@ -62,6 +62,24 @@ def chat_plane_candidate(e: "CapabilityEntry") -> bool:
             and e.capability_id not in _hidden_capability_ids())
 
 
+def funnel_cardable(e: "CapabilityEntry") -> bool:
+    """The CARD-surface predicate, one step wider than the intent allowlist.
+
+    A capability may be offered as a card whenever it is routable and not owned
+    by another lane (enabled + active + non-research) — the hidden-capability
+    exclusion is deliberately NOT applied here. LayaChoice training data shows
+    every action capability as an ordinary option, so hiding cards before the
+    model would put production out of the model's input distribution.
+
+    The intent allowlist (:func:`chat_plane_candidate`) is enforced AFTER the
+    selector decides: a pick that is not allowlisted is converted into a REJECT and the
+    turn falls open to the Agent. Offering the card is what lets the model
+    identify the intent; it never grants execution.
+    """
+    return (e.enabled and e.status == STATUS_ACTIVE
+            and e.intent_kind != KIND_RESEARCH)
+
+
 def _hidden_capability_ids() -> frozenset[str]:
     """Parsed per call (tiny comma list, read once per entry per view build);
     EMPTY setting = the historical predicate with zero behavior change."""
