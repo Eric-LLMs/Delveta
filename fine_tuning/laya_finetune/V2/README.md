@@ -378,7 +378,7 @@ the verdict.
 | Model | [eric-ml-nlp/Delveta-LayaChoice-v2](https://huggingface.co/eric-ml-nlp/Delveta-LayaChoice-v2) | `11a6ee27` |
 | Data | [eric-ml-nlp/Delveta-LayaChoice-v2-Data](https://huggingface.co/datasets/eric-ml-nlp/Delveta-LayaChoice-v2-Data) | `e913457b` |
 
-The training run produces FP32 weights (1.29 GB). The repository also ships a
-half-precision FP16 version of the same weights (644 MB):
-[FP32](https://huggingface.co/eric-ml-nlp/Delveta-LayaChoice-v2/tree/main/FP32) ·
-[FP16](https://huggingface.co/eric-ml-nlp/Delveta-LayaChoice-v2/tree/main/FP16).
+The trained model is published in FP32, alongside a lightweight FP16 version for reduced storage and download size.
+
+- **Trained Model (FP32):** [Download](https://huggingface.co/eric-ml-nlp/Delveta-LayaChoice-v2/tree/main/FP32) — 1.29 GB
+- **Lightweight FP16 Model (Half-Precision / Quantization Alternative):** [Download](https://huggingface.co/eric-ml-nlp/Delveta-LayaChoice-v2/tree/main/FP16) — 644 MB
