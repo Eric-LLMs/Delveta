@@ -346,15 +346,14 @@ def turn_fields(cap: Cap, *, asset_id: Any = None,
 
 
 # ── gate configuration ─────────────────────────────────────────────────────────────
-def _set_gates(monkeypatch, *, backend: str = "stub") -> None:
+def _set_gates(monkeypatch) -> None:
     """Pin the routing gates: MATCH_HIT direct lane on, every fast path off."""
     monkeypatch.setattr(settings, "chat_direct_fast_path_enabled", False, raising=False)
     monkeypatch.setattr(settings, "chat_viewer_fast_path_enabled", False, raising=False)
     monkeypatch.setattr(settings, "chat_retrieval_fast_path_enabled", False, raising=False)
     monkeypatch.setattr(settings, "chat_composite_fast_path_enabled", False, raising=False)
-    # "off" would keep the legacy HIT hop (ToolIntentModel); "stub" gives the
-    # MATCH_HIT -> acquisition-hop direct lane the A-1 matrix asserts.
-    monkeypatch.setattr(settings, "chat_cap_router_backend", backend, raising=False)
+    # Every fixture cap is forced through MATCH_HIT, so the ONE selector is never
+    # consulted and no backend switch exists to pin.
     monkeypatch.setattr(settings, "chat_funnel_trace_capture", False, raising=False)
     # The slot extractor is a NETWORK seam (the unified handler branch and the
     # generic MODEL strategy both reach for it). Pin the URL off so the REAL

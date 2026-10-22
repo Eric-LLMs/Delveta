@@ -11,7 +11,7 @@
 #   - reranker    LEGACY TEI container — not wired (rerank runs in-process)   (port 18081)
 #   - tts         Kokoro-FastAPI (OpenAI-compatible)  -> /v1/audio/speech (port 18880)
 #   - stt         FunASR serving SenseVoiceSmall      -> /v1/audio/transcriptions (port 18881, loopback only)
-#   - tool-intent   Ollama serving the ToolIntentModel small tool-calling model
+#   - tool-intent   Ollama serving the argument-extractor model (never selects)
 #                 (OpenAI-compatible /v1/chat/completions, port 18091, loopback only)
 #   - llm-gateway LiteLLM proxy (unified LLM routing / keys / cost)   (port 14000)
 
@@ -136,11 +136,12 @@ services:
       retries: 12
       start_period: 120s
 
-  # ── ToolIntentModel (chat intent funnel's capability selection + argument ───
-  # extraction, ONE call per turn). Standalone, replaceable inference service:
-  # the funnel only speaks the OpenAI-compatible /v1/chat/completions card
-  # contract (packages/core/application/chat/intent_funnel/tool_intent/), so
-  # BOTH ends of the provider seam are config, never code:
+  # ── Argument extractor (chat intent funnel's MODEL-owned slot extraction).
+  # Capability SELECTION is owned by the cap_router service; this service never
+  # picks a capability. Standalone, replaceable inference service: the funnel
+  # only speaks the OpenAI-compatible /v1/chat/completions exchange
+  # (intent_funnel/argument_acquisition/extractor.py), so BOTH ends of the
+  # provider seam are config, never code:
   #   provider       = ollama (today; vLLM / llama.cpp server are drop-ins —
   #                  same OpenAI wire, zero business-logic change)
   #   model          = delveta-pe  — the fine-tuned Delveta-Qwen3-0.6B-PE-v1
@@ -151,7 +152,6 @@ services:
   # model name in business logic (config.py chat_tool_intent_local_model +
   # this env var are the ONLY places the tag appears). Host wiring (app .env,
   # gitignored):
-  #   CHAT_TOOL_INTENT_BACKEND=auto
   #   CHAT_TOOL_INTENT_LOCAL_URL=http://localhost:18091/v1
   #   CHAT_TOOL_INTENT_LOCAL_MODEL=delveta-pe:q5km   (config default; set only to deviate)
   # One-time after first boot:
@@ -185,7 +185,6 @@ services:
   # Host port is bound to loopback only, the same doctrine as stt/tool-intent:
   # the host-run API reaches it at http://localhost:18092. Host wiring (app .env,
   # gitignored):
-  #   CHAT_CAP_ROUTER_BACKEND=cap_router
   #   CHAT_CAP_ROUTER_URL=http://localhost:18092
   # LAYA_CHOICE_MODEL_DIR is the host path to the checkpoint dir (V2 by default);
   # override it in .env to point at a different release.

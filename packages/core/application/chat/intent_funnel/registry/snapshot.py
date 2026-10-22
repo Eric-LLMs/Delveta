@@ -97,7 +97,7 @@ def validate_entries(
                 "live ToolRuntime roster (the Registry cannot invent executables)"
             )
         if not e.description.strip():
-            issues.append(f"{cid}: description is required (ToolIntentModel card source)")
+            issues.append(f"{cid}: description is required (cap_router card source)")
         if not e.intent_corpus and _routable(e):
             # A non-routable row (disabled/deprecated — e.g. freshly created
             # from the Catalog before its corpus is curated) may lawfully have

@@ -26,7 +26,9 @@ from core.application.chat.intent_funnel.registry.entry import (
     QueryRecord,
     chat_plane_candidate,
 )
-from core.application.chat.intent_funnel.tool_intent.prompt import build_prompt
+from core.application.chat.intent_funnel.cap_router.card_renderer import (
+    render_choice_question,
+)
 
 
 class _NoSandbox:  # bash_tool only stores it; no execution in this file
@@ -153,8 +155,9 @@ def test_hidden_capability_cannot_be_certified(monkeypatch):
     # refuses certification.
     cand = Candidate(capability_id="cap-edit-file", score=0.95, matched_example="把这个文件改一下",
                      origin="recall", query_kind="standard", language="zh", query_id="s1")
-    prompt = build_prompt("把这个文件改一下", [cand], entries_by_id)
-    assert "cap-edit-file" not in prompt                   # no card produced
+    question = render_choice_question([cand], entries_by_id)
+    assert "cap-edit-file" not in question["criteria"]     # no card produced
+    assert set(question["criteria"]) == {"REJECT"}         # only the frozen option remains
     assert entries_by_id.get("cap-edit-file") is None      # cannot certify
 
 

@@ -42,7 +42,7 @@ from core.application.chat.executors.direct import DirectExecutor
 from core.application.chat.executors.retrieval import RetrievalExecutor
 from core.application.chat.executors.viewer import ViewerExecutor
 from core.application.chat.lifecycle import finalize_turn, handle_research_post_turn
-from core.application.chat.understanding import resolve_requirements
+from core.application.chat.understanding import resolve_source_facts
 from core.config import settings
 from core.logger import reset_log_context, set_log_context
 
@@ -95,29 +95,20 @@ class TurnOrchestrator:
 
     # ── plan resolution ──────────────────────────────────────────────────────────
     async def resolve_plan(self, ctx: ChatTurnContext, deps: ChatDeps | None = None) -> ExecutionPlan:
-        """The full Execution-Plan-Resolution funnel, in three ordered stages:
+        """The full Execution-Plan-Resolution funnel, in two ordered stages:
 
-          (1) QIR  — Intent Routing: the existing pure L0 pass first; when L0
-                     abstained from an action certification and the QIR gates are
-                     live, the semantic+decision cascade gets a chance to name ONE
-                     capability. QIR itself never plans, binds arguments or
-                     executes — it hands back a ``RouteResult`` only.
-          (2) Argument Binding — capability + raw query -> structured arguments,
-                     via the EXISTING action-binding table (``bind_arguments``).
-                     Parameters undeterminable => no route (C1: the Agent, which
-                     owns sentence-level argument understanding, keeps the turn);
-                     a binding-table inconsistency is C2 and is marked for the
-                     executor's TERMINAL path, never routed to the Agent.
-          (3) ``build_execution_plan`` — the SOLE policy mapper, unchanged: it
-                     owns feature gates, eligibility and ``source_policy``.
+          (1) Source facts — the ORIGINAL request's source restriction
+                     (``private_only`` / ``external_ok`` / web demand) is read
+                     before routing. It is fact collection, never a route.
+          (2) Intent Funnel — Matcher HIT certifies a table entry directly;
+                     MISS/AMBIGUOUS goes through Recall + candidate aggregation +
+                     cap_router (LayaChoice-v2), then argument acquisition. Every
+                     non-COMPLETE outcome returns the SAME requirements untouched,
+                     so ``build_execution_plan`` maps it to AGENT (fail-open) with
+                     the user text byte-identical.
 
-        Failure classification (NOT a catch-all): every QIR-own failure shape
-        (no snapshot, store down, timeout, low/ambiguous similarity, decision
-        NONE, QIR exception) and the C1 binding miss ABSTAIN -> the turn maps
-        to AGENT exactly as before QIR existed, user text byte-identical. A C2
-        binding-integrity fault instead plans ACTION with an integrity marker;
-        the executor issues the decided terminal message without touching the
-        seam.
+        ``build_execution_plan`` stays the SOLE policy mapper: feature gates,
+        eligibility and ``source_policy`` all live there.
         """
         policy = PolicyContext(
             direct_fast_path_enabled=settings.chat_direct_fast_path_enabled,
@@ -125,7 +116,7 @@ class TurnOrchestrator:
             retrieval_fast_path_enabled=settings.chat_retrieval_fast_path_enabled,
             composite_enabled=settings.chat_composite_fast_path_enabled,
         )
-        requirements = resolve_requirements(ctx, ctx.body.message)
+        requirements = resolve_source_facts(ctx.body.message)
         # Single path (ruling): the funnel cascade owns every turn's
         # routing attempt — gate + QIR cascade + argument binding live in
         # intent_funnel; the orchestrator keeps only the lifecycle and this

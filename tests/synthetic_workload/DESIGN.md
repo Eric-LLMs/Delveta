@@ -16,7 +16,7 @@ choices and must never be quoted as real user distribution.
 ```
 Synthetic Query (per turn)
   → Matcher → Recall (raw scores, min_score=0 top_k=10)
-  → ToolIntentModel → Adapter → Candidate Gate → Binder
+  → Candidate Aggregation → cap_router → Argument Acquisition → Binder
   → STOP            (would_execute is a FLAG, never an action)
 ```
 
@@ -26,11 +26,11 @@ shadow stays as-is per constraint #7).
 
 ## Phase-A recon facts that shape the design (code-verified)
 
-1. **The funnel never sees conversation history.** ToolIntentModel input
-   discipline (`tool_intent/base.py:5-9`): query + TurnFacts + candidate cards,
-   "No tools list, no skills, no conversation history". So per-turn funnel
-   evaluation is well-defined: each turn is scored on (query, viewer facts).
-   History influences the funnel ONLY through upstream-resolved `TurnFacts`.
+1. **The funnel never sees conversation history.** cap_router card discipline:
+   query + TurnFacts + candidate cards, no tools list, no skills, no
+   conversation history. So per-turn funnel evaluation is well-defined: each
+   turn is scored on (query, viewer facts). History influences the funnel ONLY
+   through upstream-resolved `TurnFacts`.
 2. **TurnFacts is the only session/viewer channel** (`contract.py:24-49`):
    has_viewer / viewer_asset_id / viewer_current_page / has_viewer_selection /
    has_attachment / has_turn_context. Dataset `viewer_context` maps onto these.

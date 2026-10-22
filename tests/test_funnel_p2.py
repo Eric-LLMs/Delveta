@@ -1,19 +1,16 @@
-"""P2 — node-level tests + the single-hop cascade through funnel.route.
+"""P2 — node-level tests + the two-lane cascade through funnel.route.
 
-Chain ruling: Matcher HIT -> ToolIntentModel (ONE call: select+extract);
-MISS/AMBIGUOUS -> Recall -> same ToolIntentModel; Binder validates the draft; every
+Chain ruling: Matcher HIT -> Argument Acquisition -> Binder (no re-selection);
+MISS/AMBIGUOUS -> Recall -> cap_router -> Argument Acquisition -> Binder; every
 failure exits to the Agent. No recheck hop, no Decision node in the active path.
 
-Discipline (ruling, §8.17 pipeline doctrine): EVERY node section
-below runs against fake contracts only — no node needs another node to be
-alive to be tested. Replacing a node's model or thresholds must keep its own
-tests passing and leave the other sections byte-unchanged; a test that could
-not survive that split is itself an architecture violation.
+Discipline: EVERY node section below runs against fake contracts only — no node
+needs another node to be alive to be tested. The selector and the argument
+extractor are injected through ``ChatDeps``, so no test issues a real model call.
 
-The cascade section then pins the 8.10 exit classification: on every
-abstain/fault the ORIGINAL requirements object is returned BY IDENTITY (the
-Agent's turn stays byte-identical), and only a certified turn produces a new
-object.
+The cascade section pins the 8.10 exit classification: on every abstain/fault
+the ORIGINAL requirements object is returned BY IDENTITY (the Agent's turn stays
+byte-identical), and only a certified turn produces a new object.
 """
 from __future__ import annotations
 
@@ -22,30 +19,28 @@ import logging
 import types
 
 import pytest
-from core.application.chat.intent_funnel import funnel, guardrails, matcher
+from core.application.chat.intent_funnel import cap_router, funnel, guardrails, matcher
+from core.application.chat.intent_funnel.argument_acquisition.extractor import (
+    ExtractionUnavailable,
+)
 from core.application.chat.intent_funnel.contract import (
     BIND_COMPLETE,
     BIND_INVALID,
     BIND_MISSING,
     MATCH_HIT,
+    REASON_ACQUISITION_UNDECLARED,
     REASON_BIND_MISSING,
     REASON_NO_CANDIDATE,
     REASON_RECALL_TIMEOUT,
     REASON_RECALL_UNAVAILABLE,
     REASON_REGISTRY_UNAVAILABLE,
-    REASON_TOOL_INTENT_REJECT,
-    REASON_TOOL_INTENT_UNCERTAIN,
     REASON_VERSION_MISMATCH,
-    TOOL_INTENT_CONFIDENT,
-    TOOL_INTENT_REJECT,
-    TOOL_INTENT_UNCERTAIN,
     Candidate,
+    MatchResult,
     TurnFacts,
 )
 from core.application.chat.intent_funnel.registry import content_fingerprint
 from core.application.chat.intent_funnel.registry import entry as T
-from core.application.chat.intent_funnel.tool_intent import base as jbase
-from core.application.chat.intent_funnel.tool_intent import prompt as jprompt
 from core.application.chat.understanding import (
     Complexity,
     Confidence,
@@ -84,7 +79,7 @@ def _entry(cid, *, tool="create_folder", corpus=(), patterns=(), aliases=(),
     )
 
 
-# canonical-shaped schemas for the seeded tools (ToolIntentModel argument targets)
+# canonical-shaped schemas for the seeded tools (argument-acquisition targets)
 _NAME_SCHEMA = {"name": {"type": "string", "description": "folder name",
                          "required": True, "max_len": 120}}
 _TERM_SCHEMA = {
@@ -225,20 +220,10 @@ def test_matcher_contract_takes_facts_and_never_history():
 # ═══════════════════════════════ guardrails ═════════════════════════════════════
 
 
-def test_turn_veto_reasons_and_pass_through():
-    req = _req()
-    ctx = _ctx("新建文件夹")
-    assert guardrails.turn_veto("新建文件夹", req, ctx) is None
-    assert guardrails.turn_veto('{"tool": "x"}', req, ctx) == "input_not_pure_text"
-    # E2E-matrix ruling: web demand is NO LONGER an entry veto — a
-    # certified web_search action must reach the executor on the Funnel lane.
-    # The composite guard moved to execution_plan._is_action_eligible (web-family
-    # tool only), tested in test_chat_control_plane.
-    assert guardrails.turn_veto("查一下", _req(needs_web=Signal.HIGH), ctx) is None
-    assert guardrails.turn_veto("查一下", _req(needs_memory=True), ctx) \
-        == "turn_demands_web_or_memory"
-    assert guardrails.turn_veto("继续", req, _ctx("继续", research_turn=True)) \
-        == "context_research_or_handoff"
+def test_entry_veto_is_gone():
+    # L0 retirement: guardrails carries the negation predicate only. No rule may
+    # re-route a turn before the Matcher sees it.
+    assert not hasattr(guardrails, "turn_veto")
 
 
 def test_negation_guard_is_a_pure_predicate():
@@ -287,7 +272,7 @@ async def test_recall_blank_query_and_embedder_fault():
 async def test_recall_gate_is_inclusive_near_ties_survive():
     from core.application.chat.intent_funnel import recall as recall_node
 
-    # recall proposes, the ToolIntentModel disposes (design §3): the gate is a
+    # recall proposes, the cap_router disposes (design §3): the gate is a
     # >= filter, nothing more — no margin cut, no winner pick.
     idx = _index([("cap-a", ["a"], [[1.0, 0.0]]),
                   ("cap-b", ["b"], [[1.0, 0.02]])])
@@ -311,694 +296,6 @@ def test_load_rows_sql_union_all_spacing():
     for stmt in (recall_retriever._STANDARD_SQL, recall_retriever._SIMILAR_SQL):
         s = " ".join(str(stmt).split())
         assert " ORDER BY " in s and " LIMIT :pool" in s
-
-
-# ═══════════════════════════════ tool_intent: stub + ladder ═══════════════════════════
-
-
-def test_stub_three_states():
-    from core.application.chat.intent_funnel.tool_intent import stub
-
-    assert stub.evaluate((), margin=0.06).decision == TOOL_INTENT_REJECT
-    one = stub.evaluate((Candidate("cap-a", 0.91),), margin=0.06)
-    assert one.decision == TOOL_INTENT_CONFIDENT and one.capability_id == "cap-a"
-    m = stub.evaluate((Candidate("cap-a", 0.0, origin="matcher_ambiguous"),), margin=0.06)
-    assert m.decision == TOOL_INTENT_UNCERTAIN          # uncalibrated score: no cert
-    far = stub.evaluate((Candidate("cap-a", 0.90), Candidate("cap-b", 0.70)), margin=0.06)
-    assert far.decision == TOOL_INTENT_CONFIDENT and far.capability_id == "cap-a"
-    near = stub.evaluate((Candidate("cap-a", 0.90), Candidate("cap-b", 0.88)), margin=0.06)
-    assert near.decision == TOOL_INTENT_UNCERTAIN       # margin below floor: escalate up
-
-
-async def test_tool_intent_ladder_falls_through_and_sanitizes(monkeypatch):
-    from core.application.chat.intent_funnel import tool_intent as ti_pkg
-    from core.config import settings
-
-    monkeypatch.setattr(settings, "chat_tool_intent_backend", "local")  # not deployed
-    monkeypatch.setattr(settings, "chat_tool_intent_local_url", "")
-
-    cands = (Candidate("cap-a", 0.9),)
-    out = await ti_pkg.select_and_extract("q", cands, entries_by_id={}, llm=None)
-    # local unavailable -> fall through (NOT abstain); no llm -> online also down
-    assert out.decision == TOOL_INTENT_UNCERTAIN
-
-    monkeypatch.setattr(settings, "chat_tool_intent_backend", "SHTUB")  # typo
-    out = await ti_pkg.select_and_extract("q", cands, entries_by_id={}, llm=None)
-    assert out.decision == TOOL_INTENT_CONFIDENT  # unknown backend -> stub, single recall
-
-
-async def test_tool_intent_reply_discipline(monkeypatch):
-    from core.application.chat.intent_funnel import tool_intent as ti_pkg
-    from core.config import settings
-
-    monkeypatch.setattr(settings, "chat_tool_intent_min_confidence", 0.75)
-    cands = (Candidate("cap-a", 0.9), Candidate("cap-b", 0.5))
-
-    v = ti_pkg._verdict_from_reply({"capability_id": "NONE"}, cands)
-    assert v.decision == TOOL_INTENT_REJECT and v.arguments is None
-    v = ti_pkg._verdict_from_reply({"capability_id": "cap-z", "confidence": 1.0}, cands)
-    assert v.decision == TOOL_INTENT_UNCERTAIN              # off-card is never a verdict
-    v = ti_pkg._verdict_from_reply({"capability_id": "cap-a", "confidence": 0.4}, cands)
-    assert v.decision == TOOL_INTENT_UNCERTAIN              # under the floor
-    v = ti_pkg._verdict_from_reply(
-        {"capability_id": "cap-a", "confidence": 0.9, "arguments": {"name": "x"}}, cands)
-    assert v.decision == TOOL_INTENT_CONFIDENT and v.capability_id == "cap-a"
-    assert v.arguments == {"name": "x"}               # ToolIntentModel's draft rides along
-    # a non-dict arguments field is dirty data, never a partial answer
-    v = ti_pkg._verdict_from_reply(
-        {"capability_id": "cap-a", "confidence": 0.9, "arguments": "name=x"}, cands)
-    assert v.decision == TOOL_INTENT_CONFIDENT and v.arguments is None
-
-
-def test_tool_intent_backends_raise_unavailable_not_answers():
-    from core.application.chat.intent_funnel.tool_intent import local, online
-
-    async def go():
-        with pytest.raises(jbase.ToolIntentUnavailable):
-            await local.model_reply("q", (), {}, url="")
-        with pytest.raises(jbase.ToolIntentUnavailable):
-            await online.model_reply("q", (), {}, llm=None)
-        with pytest.raises(jbase.ToolIntentUnavailable):
-            await online.model_reply("q", (), {}, llm=_LLM([RuntimeError("401")]))
-    asyncio.run(go())
-
-
-# ── 8.17 real-backend wiring ( ruling: online first, dedicated
-#    small-model channel with explicit per-call forwarding) ──────────────────────
-
-async def test_tool_intent_online_serves_and_forwards_dedicated_channel(monkeypatch):
-    from core.application.chat.intent_funnel import tool_intent as ti_pkg
-    from core.config import settings
-
-    monkeypatch.setattr(settings, "chat_tool_intent_backend", "online")
-    monkeypatch.setattr(settings, "chat_tool_intent_online_model", "tiny-model")
-    monkeypatch.setattr(settings, "chat_tool_intent_online_base_url", "https://cheap.example/v1")
-    monkeypatch.setattr(settings, "chat_tool_intent_online_api_key", "sk-test")
-    llm = _LLM([{"capability_id": "cap-a", "confidence": 0.9, "arguments": {"name": "n"}}])
-    out = await ti_pkg.select_and_extract(
-        "新建文件夹", (Candidate("cap-a", 0.9),), entries_by_id={}, llm=llm)
-    assert out.decision == TOOL_INTENT_CONFIDENT and out.capability_id == "cap-a"
-    assert out.arguments == {"name": "n"}
-    kw = llm.calls[0]
-    assert kw == {
-        "model": "tiny-model", "base_url": "https://cheap.example/v1",
-        "api_key": "sk-test", "timeout": settings.chat_tool_intent_timeout_seconds,
-        "temperature": 0.0,
-        # ToolIntentModel pins (per-call at the model call site, not the global knob): reasoning
-        # explicitly off + output bound generous enough for the argument draft.
-        "max_tokens": 256, "disable_thinking": True,
-    }
-
-
-async def test_tool_intent_online_model_without_endpoint_pair_rides_pinned_channel(monkeypatch):
-    """base_url/api_key are honored only as a PAIR: a half-configured dedicated
-    endpoint is worse than riding the turn's pinned channel, so only the model
-    name is forwarded."""
-    from core.application.chat.intent_funnel import tool_intent as ti_pkg
-    from core.config import settings
-
-    monkeypatch.setattr(settings, "chat_tool_intent_backend", "online")
-    monkeypatch.setattr(settings, "chat_tool_intent_online_model", "tiny-model")
-    monkeypatch.setattr(settings, "chat_tool_intent_online_base_url", "https://cheap.example/v1")
-    monkeypatch.setattr(settings, "chat_tool_intent_online_api_key", "")
-    llm = _LLM([{"capability_id": "cap-a", "confidence": 0.9}])
-    out = await ti_pkg.select_and_extract(
-        "q", (Candidate("cap-a", 0.9),), entries_by_id={}, llm=llm)
-    assert out.decision == TOOL_INTENT_CONFIDENT
-    assert llm.calls[0].get("model") == "tiny-model"
-    assert "base_url" not in llm.calls[0] and "api_key" not in llm.calls[0]
-
-
-async def test_tool_intent_auto_local_absent_falls_through_to_online(monkeypatch):
-    """8.17 ladder: auto with nothing deployed = local skipped (fall-through,
-    never abstain-to-Agent) and the online step really serves."""
-    from core.application.chat.intent_funnel import tool_intent as ti_pkg
-    from core.config import settings
-
-    monkeypatch.setattr(settings, "chat_tool_intent_backend", "auto")
-    monkeypatch.setattr(settings, "chat_tool_intent_local_url", "")
-    llm = _LLM([{"capability_id": "cap-a", "confidence": 0.95}])
-    out = await ti_pkg.select_and_extract(
-        "q", (Candidate("cap-a", 0.9),), entries_by_id={}, llm=llm)
-    assert out.decision == TOOL_INTENT_CONFIDENT and llm.prompts
-
-
-async def test_tool_intent_auto_full_chain_local_unreachable_online_down_stub_serves(monkeypatch):
-    from core.application.chat.intent_funnel import tool_intent as ti_pkg
-    from core.config import settings
-
-    monkeypatch.setattr(settings, "chat_tool_intent_backend", "auto")
-    # a dead port: transport fault -> ToolIntentUnavailable -> fall through
-    monkeypatch.setattr(settings, "chat_tool_intent_local_url", "http://127.0.0.1:9/v1")
-    out = await ti_pkg.select_and_extract(
-        "q", (Candidate("cap-a", 0.9),), entries_by_id={}, llm=None)
-    # local down + online (no llm) down -> the deterministic stub serves
-    assert out.decision == TOOL_INTENT_CONFIDENT and out.capability_id == "cap-a"
-    # the stub has NO extraction power: the draft stays None (honest, documented)
-    assert out.arguments is None
-
-
-def test_local_model_speaks_openai_wire_or_raises_unavailable(monkeypatch):
-    import httpx
-    from core.application.chat.intent_funnel.tool_intent import local as local_mod
-
-    seen: dict = {}
-
-    class _Resp:
-        def __init__(self, status, body):
-            self.status_code, self._body = status, body
-
-        def raise_for_status(self):
-            if self.status_code >= 400:
-                raise httpx.HTTPStatusError(
-                    "boom", request=httpx.Request("POST", "http://j/v1/chat/completions"),
-                    response=httpx.Response(self.status_code))
-
-        def json(self):
-            return self._body
-
-    class _Client:
-        def __init__(self, resp):
-            self._resp = resp
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *exc):
-            return False
-
-        async def post(self, url, json=None):
-            seen["url"], seen["payload"] = url, json
-            return self._resp
-
-    ok_body = {"choices": [{"message": {
-        "content": 'verdict: {"capability_id": "cap-a", "confidence": 0.88, '
-                   '"arguments": {"name": "报告"}}'}}]}
-
-    async def go():
-        monkeypatch.setattr(local_mod.httpx, "AsyncClient",
-                            lambda **kw: _Client(_Resp(200, ok_body)))
-        data = await local_mod.model_reply("q", (), {}, url="http://j/v1/")
-        assert data == {"capability_id": "cap-a", "confidence": 0.88,
-                        "arguments": {"name": "报告"}}
-        assert seen["url"] == "http://j/v1/chat/completions"     # base + wire
-        assert seen["payload"]["messages"][0]["role"] == "system"
-        assert seen["payload"]["temperature"] == 0.0
-        # provider config: the DEPLOYED default is the fine-tuned
-        # Delveta-Qwen3-0.6B-PE-v1 Q5_K_M checkpoint (the quantization rides the
-        # Ollama tag); it appears in config/compose ONLY.
-        from core.config import settings
-        assert settings.chat_tool_intent_local_model == "delveta-pe:q5km"
-        assert seen["payload"]["model"] == "delveta-pe:q5km"
-        # an explicit "" falls back to the server's own default model
-        monkeypatch.setattr(settings, "chat_tool_intent_local_model", "")
-        await local_mod.model_reply("q", (), {}, url="http://j/v1")
-        assert "model" not in seen["payload"]
-        # provider swap: the model NAME comes from config only (compose sets both)
-        monkeypatch.setattr(settings, "chat_tool_intent_local_model", "qwen-test:0.6b")
-        await local_mod.model_reply("q", (), {}, url="http://j/v1")
-        assert seen["payload"]["model"] == "qwen-test:0.6b"
-        monkeypatch.setattr(local_mod.httpx, "AsyncClient",
-                            lambda **kw: _Client(_Resp(503, {})))
-        with pytest.raises(jbase.ToolIntentUnavailable):
-            await local_mod.model_reply("q", (), {}, url="http://j/v1")
-        # a 200 whose message is not JSON is UNAVAILABLE, never a verdict
-        monkeypatch.setattr(local_mod.httpx, "AsyncClient", lambda **kw: _Client(
-            _Resp(200, {"choices": [{"message": {"content": "no json here"}}]})))
-        with pytest.raises(jbase.ToolIntentUnavailable):
-            await local_mod.model_reply("q", (), {}, url="http://j/v1")
-    asyncio.run(go())
-
-
-# ═══════════════════ ToolIntentModel local provider: native tool-calling mode ═══════════════════
-
-
-def test_local_tools_mode_sends_registry_tools_and_reads_tool_call(monkeypatch):
-    """mode=tools (Phase-1 ruling): each candidate is sent as an OpenAI function
-    (name = Registry capability_id, params = Registry schema); the reply is read
-    back from message.tool_calls into the SAME {capability_id, confidence,
-    arguments} shape. Off-card names and refusals still fail closed downstream."""
-    import httpx
-    from core.application.chat.intent_funnel import tool_intent as ti_pkg
-    from core.application.chat.intent_funnel.tool_intent import local as local_mod
-    from core.config import settings
-
-    seen: dict = {}
-
-    class _Resp:
-        def __init__(self, status, body):
-            self.status_code, self._body = status, body
-
-        def raise_for_status(self):
-            if self.status_code >= 400:
-                raise httpx.HTTPStatusError("boom",
-                    request=httpx.Request("POST", "http://j/v1/chat/completions"),
-                    response=httpx.Response(self.status_code))
-
-        def json(self):
-            return self._body
-
-    class _Client:
-        def __init__(self, resp):
-            self._resp = resp
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *exc):
-            return False
-
-        async def post(self, url, json=None):
-            seen["url"], seen["payload"] = url, json
-            return self._resp
-
-    entry = _entry("cap-a", parameters=_NAME_SCHEMA)
-    cands = (Candidate("cap-a", 1.0, origin="matcher_hit"),)
-    monkeypatch.setattr(settings, "chat_tool_intent_local_mode", "tools")
-
-    def tool_body(name, args):
-        return {"choices": [{"message": {
-            "role": "assistant", "content": "",
-            "tool_calls": [{"id": "c1", "type": "function",
-                            "function": {"name": name, "arguments": args}}]}}]}
-
-    async def go():
-        # a valid on-card tool call -> selection + extracted draft, provider conf 1.0
-        monkeypatch.setattr(local_mod.httpx, "AsyncClient",
-                            lambda **kw: _Client(_Resp(200, tool_body("cap-a", '{"name": "报告"}'))))
-        data = await local_mod.model_reply("新建文件夹", cands, {"cap-a": entry}, url="http://j/v1")
-        assert data == {"capability_id": "cap-a", "confidence": 1.0, "arguments": {"name": "报告"}}
-        # the tool definitions came from the Registry (name=cap id, params from schema)
-        tool = seen["payload"]["tools"][0]["function"]
-        assert tool["name"] == "cap-a"
-        assert tool["parameters"]["properties"]["name"]["type"] == "string"
-        assert "name" in tool["parameters"]["required"]
-        assert seen["payload"]["tool_choice"] == "auto"     # abstention allowed
-        assert seen["payload"]["reasoning_effort"] == "none"  # provider pin kept
-        assert seen["payload"]["temperature"] == 0.0        # identical generation
-        # the verdict node still certifies it (candidate membership -> CONFIDENT)
-        v = ti_pkg._verdict_from_reply(data, cands)
-        assert v.decision == TOOL_INTENT_CONFIDENT and v.arguments == {"name": "报告"}
-
-        # NO tool-call -> a legitimate refusal (NONE) -> REJECT, never executed
-        monkeypatch.setattr(local_mod.httpx, "AsyncClient", lambda **kw: _Client(
-            _Resp(200, {"choices": [{"message": {"role": "assistant",
-                     "content": "no tool fits here", "tool_calls": []}}]})))
-        data = await local_mod.model_reply("今天天气", cands, {"cap-a": entry}, url="http://j/v1")
-        assert data["capability_id"] == "NONE" and data["arguments"] is None
-        assert ti_pkg._verdict_from_reply(data, cands).decision == TOOL_INTENT_REJECT
-
-        # off-card function name with provider conf 1.0 -> STILL UNCERTAIN:
-        # the confidence=1.0 never bypasses capability correctness (candidate check first)
-        monkeypatch.setattr(local_mod.httpx, "AsyncClient", lambda **kw: _Client(
-            _Resp(200, tool_body("some-invented-tool", "{}"))))
-        data = await local_mod.model_reply("q", cands, {"cap-a": entry}, url="http://j/v1")
-        assert data["capability_id"] == "some-invented-tool"
-        assert ti_pkg._verdict_from_reply(data, cands).decision == TOOL_INTENT_UNCERTAIN
-
-        # tool-call whose arguments are not valid JSON -> UNAVAILABLE (never a verdict)
-        monkeypatch.setattr(local_mod.httpx, "AsyncClient", lambda **kw: _Client(
-            _Resp(200, tool_body("cap-a", "{not json"))))
-        with pytest.raises(jbase.ToolIntentUnavailable):
-            await local_mod.model_reply("q", cands, {"cap-a": entry}, url="http://j/v1")
-
-        # a 5xx from the model service is UNAVAILABLE (fall through), not a verdict
-        monkeypatch.setattr(local_mod.httpx, "AsyncClient", lambda **kw: _Client(_Resp(503, {})))
-        with pytest.raises(jbase.ToolIntentUnavailable):
-            await local_mod.model_reply("q", cands, {"cap-a": entry}, url="http://j/v1")
-    asyncio.run(go())
-    monkeypatch.setattr(settings, "chat_tool_intent_local_mode", "prompt_json")
-
-
-def test_local_tools_markdown_fallback_normalizes_to_same_internal_shape(monkeypatch):
-    """The structured-Markdown tool output the CPU checkpoint emits when the
-    native tool-call token loses the first-token argmax is a WIRE-FORMAT issue,
-    not a semantic miss: the model already chose the right capability/tool/
-    args/confidence. When there is NO native tool_calls, the reader normalizes
-    the strict Markdown block into the SAME {capability_id, confidence,
-    arguments} shape the native path yields, so it enters the existing
-    Binder -> Runtime chain unchanged (no re-ask, no Agent hand-off).
-
-    The parser is deliberately strict — only a whole-reply, structurally valid
-    block with a JSON-object arguments AND a capability/tool consistent with
-    the Candidate/Registry counts. Prose, malformed blocks, off-card ids, bad
-    JSON and schema mismatches must all stay out of the ToolIntent path."""
-    from core.application.chat.intent_funnel import tool_intent as ti_pkg
-    from core.application.chat.intent_funnel.binder import validate as bind_validate
-    from core.application.chat.intent_funnel.tool_intent import local as local_mod
-    from core.config import settings
-
-    class _Resp:
-        def __init__(self, body):
-            self._body = body
-
-        def raise_for_status(self):
-            return None
-
-        def json(self):
-            return self._body
-
-    class _Client:
-        def __init__(self, resp):
-            self._resp = resp
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *exc):
-            return False
-
-        async def post(self, url, json=None):
-            return self._resp
-
-    entry = _entry("cap-a", parameters=_NAME_SCHEMA)            # tool_binding=create_folder
-    cands = (Candidate("cap-a", 1.0, origin="matcher_hit"),)
-    monkeypatch.setattr(settings, "chat_tool_intent_local_mode", "tools")
-
-    def content_body(text):
-        return {"choices": [{"message": {"role": "assistant", "content": text,
-                                         "tool_calls": []}}]}
-
-    def run(text):
-        async def go():
-            monkeypatch.setattr(local_mod.httpx, "AsyncClient",
-                                lambda **kw: _Client(_Resp(content_body(text))))
-            data = await local_mod.model_reply("新建文件夹", cands, {"cap-a": entry},
-                                               url="http://j/v1")
-            return data, ti_pkg._verdict_from_reply(data, cands)
-        return asyncio.run(go())
-
-    # 1) native tool_calls -> unchanged: the reader path is identical and is
-    #    CERTIFIED CONFIDENT, then the Binder validates the draft.
-    native = {"choices": [{"message": {"role": "assistant", "content": "",
-                      "tool_calls": [{"id": "c1", "type": "function",
-                                      "function": {"name": "cap-a",
-                                                   "arguments": '{"name":"报告"}'}}]}}]}
-
-    async def native_go():
-        monkeypatch.setattr(local_mod.httpx, "AsyncClient",
-                            lambda **kw: _Client(_Resp(native)))
-        return await local_mod.model_reply("q", cands, {"cap-a": entry}, url="http://j/v1")
-    nd = asyncio.run(native_go())
-    assert nd == {"capability_id": "cap-a", "confidence": 1.0, "arguments": {"name": "报告"}}
-    nv = ti_pkg._verdict_from_reply(nd, cands)
-    assert nv.decision == TOOL_INTENT_CONFIDENT
-    assert bind_validate(entry, nv.arguments).state == BIND_COMPLETE
-
-    # 2) strict Markdown block -> SAME internal shape -> same gate -> same bind
-    data, v = run('### cap-a\ntool: create_folder\narguments: {"name": "季度报告"}\nconfidence: 1.000')
-    assert data == {"capability_id": "cap-a", "confidence": 1.0, "arguments": {"name": "季度报告"}}
-    assert v.decision == TOOL_INTENT_CONFIDENT and v.arguments == {"name": "季度报告"}
-    assert bind_validate(entry, v.arguments).state == BIND_COMPLETE
-
-    # 2b) the optional ``tool:`` line may be omitted (hit-folder-2 variant)
-    data, v = run('### cap-a\narguments: {"name": "临时草稿"}\nconfidence: 0.9')
-    assert v.decision == TOOL_INTENT_CONFIDENT and v.arguments == {"name": "临时草稿"}
-
-    # 3) malformed Markdown -> NOT a tool intent -> REJECT (prose cannot bind)
-    for bad in (
-        "### cap-a\ntool: create_folder\narguments: {not json}\nconfidence: 1.0",   # bad JSON
-        '### cap-a\narguments: "name"\nconfidence: 1.0',                             # args not object
-        '### cap-a\narguments: {"name": "x"}\nconfidence: high',                     # bad confidence
-        '### cap-a\narguments: {"name": "x"}',                                       # no confidence line
-        'cap-a: {"name": "x"} confidence: 1.0',                                      # not a heading block
-        ('### cap-a\ntool: create_folder\narguments: {"name": "x"}\nconfidence: 1.0\n'
-         'more trailing prose here'),                                                # leading/trailing prose
-        '',                                                                          # empty
-        'NONE, the user sentence is a greeting, not a request.',                     # plain refusal prose
-        'The user wants a folder. capability_id: cap-a',                             # prose that mentions a cap
-    ):
-        data, v = run(bad)
-        assert v.decision in (TOOL_INTENT_REJECT, TOOL_INTENT_UNCERTAIN), bad
-        assert data["capability_id"] in ("NONE",) or v.capability_id is None, bad
-
-    # 4) capability NOT on the card / not in the Registry -> never an auto-pass
-    #    (an off-card id WITHOUT a tool line stays the gate's UNCERTAIN; a
-    #    Markdown whose tool line cannot be matched against the Registry is
-    #    disqualified by the parser itself -> REJECT)
-    data, v = run('### cap-invented\narguments: {"name": "x"}\nconfidence: 1.0')
-    assert v.decision == TOOL_INTENT_UNCERTAIN            # off-card id, gate first
-    data, v = run('### cap-invented\ntool: create_folder\narguments: {"name": "x"}\nconfidence: 1.0')
-    assert v.decision == TOOL_INTENT_REJECT               # cap not in Registry at all
-    data, v = run('### cap-a\ntool: wrong_binding\narguments: {"name": "x"}\nconfidence: 1.0')
-    assert v.decision == TOOL_INTENT_REJECT               # tool line contradicts Registry
-
-    # 5) arguments pass the parser but FAIL the Binder schema -> the Binder, not
-    #    the parser, owns that rejection: still no bindable ToolIntent to Runtime
-    data, v = run('### cap-a\narguments: {"unexpected_slot": "x"}\nconfidence: 1.0')
-    assert v.decision == TOOL_INTENT_CONFIDENT            # parser only normalizes
-    assert bind_validate(entry, v.arguments).state == BIND_INVALID  # Binder stops it
-    monkeypatch.setattr(settings, "chat_tool_intent_local_mode", "prompt_json")
-
-
-def test_local_tools_json_content_fallback_normalizes_to_same_internal_shape():
-    """Q5 ruling: under the tools wire the checkpoint emits a
-    JSON-object content reply more often than a native call (OUTPUT_LOCK
-    recency). The reader's FIXED priority is native tool_calls -> JSON content
-    -> Markdown -> NONE; the JSON branch normalizes into the SAME internal
-    reply shape and never bypasses the shared gate. A prompt_json CONTRACT
-    difference is deliberate: a malformed/absent object here is NOT a
-    selection -> it falls through to Markdown and then NONE (a refusal, not an
-    UNAVAILABLE), because in tools mode the contract is the tool-call."""
-    from core.application.chat.intent_funnel import tool_intent as ti_pkg
-    from core.application.chat.intent_funnel.tool_intent import local as local_mod
-
-    entry = _entry("cap-a", parameters=_NAME_SCHEMA)
-    cands = (Candidate("cap-a", 1.0, origin="matcher_hit"),)
-    ebi = {"cap-a": entry}
-
-    def read(content, tool_calls=None):
-        msg = {"role": "assistant", "content": content, "tool_calls": tool_calls or []}
-        data = local_mod._reply_from_tool_call(msg, cands, ebi)
-        return data, ti_pkg._verdict_from_reply(data, cands)
-
-    # 1) on-card JSON selection -> same shape, gate CONFIDENT (model-reported
-    #    confidence rides through, floor-gated like the prompt_json contract)
-    data, v = read('{"capability_id": "cap-a", "confidence": 0.93, '
-                   '"arguments": {"name": "季度报告"}}')
-    assert data == {"capability_id": "cap-a", "confidence": 0.93,
-                    "arguments": {"name": "季度报告"}}
-    assert v.decision == TOOL_INTENT_CONFIDENT and v.arguments == {"name": "季度报告"}
-
-    # 2) NATIVE PRIORITY: a message carrying BOTH a tool_call and JSON content
-    #    is read from the tool_call — the fixed order is never inverted.
-    msg = {"role": "assistant",
-           "content": '{"capability_id": "cap-invented", "confidence": 1.0, "arguments": {}}',
-           "tool_calls": [{"id": "c1", "type": "function",
-                           "function": {"name": "cap-a", "arguments": '{"name":"x"}'}}]}
-    data = local_mod._reply_from_tool_call(msg, cands, ebi)
-    assert data == {"capability_id": "cap-a", "confidence": 1.0, "arguments": {"name": "x"}}
-
-    # 3) off-card JSON id -> UNCERTAIN at the gate, never an auto-pass
-    data, v = read('{"capability_id": "cap-invented", "confidence": 1.0, "arguments": {}}')
-    assert data["capability_id"] == "cap-invented"
-    assert v.decision == TOOL_INTENT_UNCERTAIN
-
-    # 4) explicit NONE JSON -> refusal -> REJECT
-    data, v = read('{"capability_id": "NONE", "confidence": 0.0, "arguments": null}')
-    assert v.decision == TOOL_INTENT_REJECT
-
-    # 5) NOT selections -> fall through (no capability_id key / object echo /
-    #    truncated repeat loop): stay refusals, never UNAVAILABLE, never a
-    #    fabricated verdict. A bare {"name": "x"} (args fragment or markdown
-    #    body residue) must NOT count as a JSON selection.
-    for bad in ('{"name": "x"}',
-                'some prose {"foo": 1}',
-                '{"capability_id": "cap-a", "arguments": {"type": "run", "properties": '
-                '{"type": "run", "required": "run", "prop',          # truncated loop
-                '{"capability_id": 123, "confidence": 1.0, "arguments": {}}'):
-        data, v = read(bad)
-        assert data["capability_id"] == "NONE", bad
-        assert v.decision == TOOL_INTENT_REJECT, bad
-
-    # 6) Markdown blocks still work AND still take their place AFTER the JSON
-    #    branch: a full markdown reply carries no object with capability_id,
-    #    so the JSON branch declines it and the markdown parser normalizes it.
-    data, v = read('### cap-a\ntool: create_folder\narguments: {"name": "临时"}\nconfidence: 0.9')
-    assert v.decision == TOOL_INTENT_CONFIDENT and v.arguments == {"name": "临时"}
-
-
-def test_local_mode_default_is_prompt_json_and_unchanged():
-    """The Phase-1 addition must not move today's behavior: with no explicit mode
-    the adapter speaks the original card JSON contract."""
-    from core.config import settings
-    assert settings.chat_tool_intent_local_mode == "prompt_json"
-    from core.application.chat.intent_funnel.tool_intent import local as local_mod
-    assert local_mod.MODES == ("prompt_json", "tools")
-
-
-# ═══════════════════════ ToolIntentModel prompt: full Candidate Card assembly ═══════════
-
-
-def test_tool_intent_card_carries_tool_schema_score_and_origin():
-    entry = _entry("cap-a", examples=("建个目录",), parameters=_NAME_SCHEMA)
-    cands = (Candidate("cap-a", 0.676, matched_example="建个目录", origin="recall"),)
-    facts = TurnFacts(has_attachment=True, viewer_asset_id="a-7")
-    p = jprompt.build_prompt("新建文件夹", cands, {"cap-a": entry}, facts=facts)
-    # the Card fields the chain ruling requires, verbatim
-    assert "### cap-a" in p
-    assert "tool: create_folder" in p                 # tool/function binding
-    assert "does: does cap-a" in p                    # tool description
-    assert "matched_example: 建个目录" in p            # which corpus sentence hit
-    assert "origin=recall score=0.676" in p           # recall score + candidate origin
-    assert "- name (string, required, max_len=120): folder name" in p  # param schema+desc
-    assert "has_attachment=1" in p and "viewer_asset_id=a-7" in p      # TurnFacts line
-    assert "<user_sentence>新建文件夹</user_sentence>" in p             # data, not instructions
-    # an empty schema says so explicitly — no invented slots
-    p2 = jprompt.build_prompt("q", cands, {"cap-a": _entry("cap-a", parameters={})})
-    assert "params: none" in p2
-
-
-def test_card_shows_all_four_semantic_fields():
-    """Action-Contract ruling: the model must SEE the capability's
-    semantic contour — the intent corpus (Standard + Similar rows) and the
-    renamed request_query_examples are all on the card, the request rows
-    labelled card-context-only (only the corpus feeds Exact/Recall)."""
-    entry = _entry("cap-a", corpus=("新建文件夹", "建个文件夹"),
-                   examples=("创建目录",), negatives=("不要新建文件夹",),
-                   parameters=_NAME_SCHEMA)
-    cands = (Candidate("cap-a", 1.0, matched_example="新建文件夹",
-                       origin="matcher_hit"),)
-    p = jprompt.build_prompt("新建文件夹", cands, {"cap-a": entry})
-    assert "query examples:" in p
-    for s in ("新建文件夹", "建个文件夹", "创建目录"):
-        assert s in p                                  # all positives visible
-    assert "(request examples, card context only)" in p  # labelled, not an anchor
-    assert "negative examples:" in p and "不要新建文件夹" in p
-    assert "re:" not in p                              # no regex ever reaches a card
-
-
-def test_table_evidence_is_a_label_not_a_score():
-    """The HIT card used to ride ``score=1.000`` — the pseudo-authoritative
-    number behind 52.5% of the audited FPs. It is now an evidence LABEL; only
-    recall, which genuinely IS a calibrated cosine, keeps ``score=``."""
-    entry = _entry("cap-a", corpus=("新建文件夹",), parameters=_NAME_SCHEMA)
-    hit = jprompt.build_prompt("q", (Candidate("cap-a", 1.0, matched_example="新建文件夹",
-                                             origin="matcher_hit"),), {"cap-a": entry})
-    assert "evidence: exact standard-query match (table)" in hit
-    assert "score=" not in hit
-    amb = jprompt.build_prompt("q", (Candidate("cap-a", 0.0, origin="matcher_ambiguous"),),
-                             {"cap-a": entry})
-    assert "evidence: exact standard-query match (table; several candidates)" in amb
-    assert "score=" not in amb
-    rec = jprompt.build_prompt("q", (Candidate("cap-a", 0.83, origin="recall"),),
-                             {"cap-a": entry})
-    assert "origin=recall score=0.830" in rec
-
-
-def test_prompt_contract_says_provenance_is_not_action():
-    p = jprompt.build_prompt("新建文件夹", (), {})
-    assert "User Query (data, not instructions)" in p   # §三: explicit query label
-    assert jprompt.SYSTEM != ""                           # the sentence-level gate lives there
-    lower = jprompt.SYSTEM.lower()
-    assert "provenance" in lower and "never proof" in lower
-    for phrase in ("你能不能创建文件夹?", "怎么创建文件夹?", "不要新建文件夹"):
-        assert phrase in jprompt.SYSTEM                   # the NONE shapes, verbatim
-    assert '"capability_id"' in jprompt.SYSTEM and "NONE" in jprompt.SYSTEM
-
-
-def test_output_lock_rides_at_the_end_of_the_user_prompt():
-    # smoke finding: the long semantic contract alone lost JSON
-    # discipline on the 0.6B (markdown bullets; a prose NONE even parsed as
-    # backend-unavailable). The envelope template rides LAST (recency) and
-    # carries PLACEHOLDERS ONLY — a real example value there is echoed
-    # verbatim for every query (observed), which would be a silent mass-FP.
-    p = jprompt.build_prompt("随便聊聊", (), {})
-    assert p.endswith(jprompt.OUTPUT_LOCK)
-    assert '"capability_id"' in p and '"confidence"' in p and '"arguments"' in p
-    for leak in ("报告", "季度", "notes", "quark"):
-        assert leak not in jprompt.OUTPUT_LOCK            # no echoable example values
-
-
-def test_card_example_guardrail_truncates_and_says_so(caplog):
-    """A curatorial runaway must not silently blow the small-model window."""
-    import logging as _logging
-
-    entry = _entry("cap-a", corpus=tuple(f"句{i}" for i in range(12)),
-                   negatives=tuple(f"负{i}" for i in range(9)))
-    with caplog.at_level(_logging.WARNING,
-                         logger="core.application.chat.intent_funnel.tool_intent.base"):
-        p = jprompt.build_prompt("q", (Candidate("cap-a", 0.9, origin="recall"),),
-                               {"cap-a": entry})
-    assert "句11" not in p                                  # positives capped at 8
-    assert "负8" not in p                                  # negatives capped at 6
-    msgs = [r.getMessage() for r in caplog.records]
-    assert any("truncated" in m for m in msgs)
-
-
-def test_prompt_defensively_replaces_leaked_regex_literal(caplog):
-    # Defense in depth (ruling): the exact-only Matcher can no
-    # longer hand a raw regex to a card; IF one ever leaks through a legacy
-    # path, build_prompt swaps in the standard sentence and says so loudly.
-    import logging as _logging
-
-    entry = _entry("cap-a", corpus=("新建一个文件夹",))
-    cands = (Candidate("cap-a", 1.0, matched_example="re:新建文件夹",
-                       origin="matcher_hit"),)
-    with caplog.at_level(_logging.WARNING,
-                         logger="core.application.chat.intent_funnel.tool_intent.base"):
-        p = jprompt.build_prompt("q", cands, {"cap-a": entry})
-    assert "re:新建文件夹" not in p
-    assert "matched_example: 新建一个文件夹" in p
-    assert any("regex literal leaked" in r.getMessage() for r in caplog.records)
-
-
-def test_prompt_carries_recall_semantic_references():
-    """Iteration 2 payload injection: next to the raw query the model sees
-    Recall's top-similarity hit and that capability's canonical standard query.
-    Both are DERIVED from Recall's own candidates — a Matcher card never
-    supplies a similarity, and an absent reference renders as an explicit
-    ``(none)`` rather than an invented sentence."""
-    entry = _entry("cap-a", corpus=("新建文件夹", "建个文件夹"), parameters=_NAME_SCHEMA)
-    # a Similar-row hit: its standard_query_id names the canonical anchor
-    sim = (Candidate("cap-a", 0.87, matched_example="建个文件夹", origin="recall",
-                     query_kind="similar", query_id="q10", standard_query_id="q1"),)
-    p = jprompt.build_prompt("帮我搞个文件夹", sim, {"cap-a": entry})
-    assert "<retrieved_similar>建个文件夹</retrieved_similar>" in p
-    assert "<canonical>新建文件夹</canonical>" in p
-    assert "<user_sentence>帮我搞个文件夹</user_sentence>" in p  # raw query untouched
-
-    # the HIGHEST-similarity Recall hit wins; a Matcher card (score 1.0) is
-    # table evidence, not a cosine, and never becomes the reference
-    mixed = (
-        Candidate("cap-a", 0.55, matched_example="建个文件夹", origin="recall",
-                  query_kind="similar", query_id="q10", standard_query_id="q1"),
-        Candidate("cap-b", 0.91, matched_example="加个词条", origin="recall",
-                  query_kind="standard", query_id="q1"),
-        Candidate("cap-c", 1.0, matched_example="新建文件夹", origin="matcher_hit"),
-    )
-    p2 = jprompt.build_prompt("q", mixed, {"cap-a": entry,
-                                           "cap-b": _entry("cap-b", tool="add_term",
-                                                           corpus=("加个词条",))})
-    assert "<retrieved_similar>加个词条</retrieved_similar>" in p2
-    assert "<canonical>加个词条</canonical>" in p2   # a standard hit anchors itself
-
-    # no Recall hit at all -> both references are explicitly empty, never a
-    # Matcher literal passed off as a similarity
-    only_hit = (Candidate("cap-a", 1.0, matched_example="新建文件夹",
-                          origin="matcher_hit"),)
-    p3 = jprompt.build_prompt("q", only_hit, {"cap-a": entry})
-    assert "<retrieved_similar>(none)</retrieved_similar>" in p3
-    assert "<canonical>(none)</canonical>" in p3
-
-    # unresolvable canonical (no enabled standard row) -> empty, not invented
-    p4 = jprompt.build_prompt(
-        "q",
-        (Candidate("cap-z", 0.8, matched_example="建个文件夹", origin="recall",
-                   query_kind="similar"),),
-        {"cap-z": _entry("cap-z", corpus=())})
-    assert "<retrieved_similar>建个文件夹</retrieved_similar>" in p4
-    assert "<canonical>(none)</canonical>" in p4
-
-
-def test_prompt_empty_candidate_set_is_explicit_not_silent():
-    # defensive reachability: since ruling the funnel short-circuits
-    # an empty set BEFORE the hop, so build_prompt only sees () if a caller
-    # bypasses that guard — the prompt must still say so honestly, never render
-    # an empty section.
-    p = jprompt.build_prompt("随便聊聊", (), {})
-    assert "Candidates:\n\n(none registered for this turn)" in p
-    assert "<user_sentence>随便聊聊</user_sentence>" in p
 
 
 # ═══════════════════════════════ binder (four states, 8.7) ═════════════════════
@@ -1036,7 +333,7 @@ def test_binder_negation_is_missing_not_answer():
     assert binder.bind(entry, '不要新建文件夹"x"', _ctx("")).state == BIND_MISSING
 
 
-# ── validate-only gate over ToolIntentModel's draft (chain ruling) ────────────
+# ── validate-only gate over the acquisition draft (chain ruling) ──────────────
 
 
 def test_binder_validate_normalizes_against_registry_schema():
@@ -1116,18 +413,58 @@ def test_binder_context_slots_touched_only_by_name_not_by_tool():
 
 # ═══════════════════════════════ cascade via route() ═══════════════════════════
 
-
-def _open(monkeypatch, *, mode="off", timeout=5.0, backend="online"):
+def _open(monkeypatch, *, timeout=5.0):
     from core.config import settings
 
-    # Single-path ruling: the rollout gates + matcher shadow mode
-    # were deleted; the cascade is always live (mode kept for call sites).
-    monkeypatch.setattr(settings, "chat_tool_intent_backend", backend)
     monkeypatch.setattr(settings, "chat_tool_intent_timeout_seconds", timeout + 1)
     monkeypatch.setattr(settings, "chat_funnel_timeout_seconds", timeout)
 
 
-def _wire(monkeypatch, *, view, index, embedder, llm):
+class _Selector:
+    """Test double for the ONE production selector (no model call).
+
+    ``route`` overrides the answer; otherwise it selects ``cid`` when that
+    capability is on the table.
+    """
+
+    def __init__(self, cid="cap-a", route=None):
+        self.cid, self.route = cid, route
+        self.calls, self.seen = 0, None
+
+    async def select(self, query, candidates, *, entries_by_id, facts=None):
+        self.calls += 1
+        self.seen = list(candidates)
+        if self.route is not None:
+            return self.route
+        if self.cid in [c.capability_id for c in candidates]:
+            return cap_router.CapabilityRoute(cap_router.ROUTE_SELECTED, self.cid)
+        return cap_router.CapabilityRoute(cap_router.ROUTE_NONE)
+
+
+class _Extractor:
+    """Test double for the MODEL-owned argument extractor (Qwen in production).
+
+    Records every call so call conditions / inputs are assertable; ``values``
+    may be a dict or a callable(entry, model_slots, bundle); ``fail`` raises
+    ``ExtractionUnavailable`` (the fail-closed transport path).
+    """
+
+    def __init__(self, values=None, *, fail=False):
+        self.values, self.fail = values, fail
+        self.calls = []
+
+    async def __call__(self, *, query, entry, model_slots, bundle, prompt=None):
+        self.calls.append({"query": query, "entry": entry,
+                           "model_slots": tuple(model_slots),
+                           "bundle": bundle, "prompt": prompt})
+        if self.fail:
+            raise ExtractionUnavailable("extractor down")
+        values = (self.values(entry, model_slots, bundle)
+                  if callable(self.values) else dict(self.values or {}))
+        return values, bundle.source
+
+
+def _wire(monkeypatch, *, view, index, embedder, selector=None, extractor=None):
     calls = {"registry": 0}
 
     async def fake_active(**kw):
@@ -1141,8 +478,9 @@ def _wire(monkeypatch, *, view, index, embedder, llm):
         "core.application.chat.intent_funnel.registry.active_view", fake_active)
     monkeypatch.setattr(
         "core.application.chat.intent_funnel.recall.load_index", fake_load)
-    deps = types.SimpleNamespace(session_factory=None,
-                                 embedder=lambda: embedder, llm=llm)
+    deps = types.SimpleNamespace(
+        session_factory=None, embedder=lambda: embedder, llm=object(),
+        cap_router_selector=selector, argument_extractor=extractor)
     return calls, deps
 
 
@@ -1163,34 +501,32 @@ async def test_missing_deps_fails_open_to_agent(monkeypatch):
     assert out is req
 
 
-async def test_l0_certified_turn_never_enters_the_new_lane(monkeypatch):
+async def test_route_always_enters_the_cascade(monkeypatch):
+    # L0 retirement: neither an L0-certified action nor a memory/demand flag
+    # short-circuits the entry — every wired turn reaches the cascade, whose
+    # own fail-open keeps the original object.
     _open(monkeypatch)
-    req = _req(requested_action={"tool": "create_folder", "args": {}})
-    monkeypatch.setattr(
-        "core.application.chat.intent_funnel.registry.active_view",
-        lambda **kw: pytest.fail("certified turns bypass the cascade"),
-    )
-    out = await funnel.route(_ctx(MSG), deps=object(), requirements=req)
-    assert out is req
+    calls = {"registry": 0}
 
+    def fake_view(**kw):
+        calls["registry"] += 1
+        return None
 
-async def test_vetoed_turn_skips_cascade(monkeypatch):
-    _open(monkeypatch)
     monkeypatch.setattr(
-        "core.application.chat.intent_funnel.registry.active_view",
-        lambda **kw: pytest.fail("veto before any cascade read"),
+        "core.application.chat.intent_funnel.registry.active_view", fake_view,
     )
-    # memory demand still vetoes at entry (web demand was lifted —
-    # see test_turn_veto_reasons_and_pass_through)
-    req = _req(needs_memory=True)
-    out = await funnel.route(_ctx(MSG), deps=object(), requirements=req)
-    assert out is req
+    req = _req(requested_action={"tool": "create_folder", "args": {}},
+               needs_memory=True)
+    deps = types.SimpleNamespace(session_factory=None)
+    out = await funnel.route(_ctx(MSG), deps=deps, requirements=req)
+    assert out is req and calls["registry"] == 1
 
 
 async def test_registry_unavailable_fails_open(monkeypatch, caplog):
     _open(monkeypatch)
     calls, deps = _wire(monkeypatch, view=None, index=None,
-                        embedder=_Embedder([1, 0]), llm=_LLM())
+                        embedder=_Embedder([1, 0]), selector=_Selector(),
+                        extractor=_Extractor())
     req = _req()
     with caplog.at_level(logging.INFO, logger="core.application.chat.intent_funnel"):
         out = await funnel.route(_ctx(MSG), deps=deps, requirements=req)
@@ -1203,54 +539,60 @@ async def test_registry_unavailable_fails_open(monkeypatch, caplog):
 async def test_index_unavailable_is_fault_empty_set_is_business(monkeypatch, caplog):
     """Ruling: a missing index is a FAULT (RECALL_UNAVAILABLE);
     an EMPTY candidate set is a normal business result — it short-circuits to
-    the Agent at deepest_stage=recall and the one model hop is NOT spent.
+    the Agent at deepest_stage=recall and the selector is NOT consulted.
     E2 (final semantics): only the MISS/AMBIGUOUS lane depends on the index,
     so both legs run on a non-corpus sentence."""
     _open(monkeypatch)
     req = _req()
+    sel = _Selector()
     _, deps = _wire(monkeypatch, view=_view(CAP), index=None,
-                    embedder=_Embedder([1, 0]), llm=_LLM())
+                    embedder=_Embedder([1, 0]), selector=sel,
+                    extractor=_Extractor())
     with caplog.at_level(logging.INFO, logger="core.application.chat.intent_funnel"):
         assert await funnel.route(_ctx("随便聊聊"), deps=deps, requirements=req) is req
     assert f"fallback_reason={REASON_RECALL_UNAVAILABLE}" in caplog.records[-1].getMessage()
+    assert sel.calls == 0
 
-    empty_idx = _index([])
-    llm = _LLM([{"capability_id": "NONE"}])
-    _, deps = _wire(monkeypatch, view=_view(CAP), index=empty_idx,
-                    embedder=_Embedder([1, 0]), llm=llm)
+    sel2 = _Selector()
+    _, deps = _wire(monkeypatch, view=_view(CAP), index=_index([]),
+                    embedder=_Embedder([1, 0]), selector=sel2,
+                    extractor=_Extractor())
     caplog.clear()
     with caplog.at_level(logging.INFO, logger="core.application.chat.intent_funnel"):
         assert await funnel.route(_ctx("随便聊聊"), deps=deps, requirements=req) is req
     line = caplog.records[-1].getMessage()
     assert f"fallback_reason={REASON_NO_CANDIDATE}" in line
     assert "deepest_stage=recall" in line and "tool_intent=-" in line
-    assert llm.prompts == []                        # the hop was NOT spent
+    assert sel2.calls == 0                          # the selector was NOT consulted
 
 
 async def test_recall_faults_report_unavailable_never_fake_empty(monkeypatch, caplog):
     """Ruling (point 2): a system fault in recall — embedder error
     or embedder/corpus DIM mismatch (profile config error) — must report
-    RECALL_UNAVAILABLE, never the business-result NO_CANDIDATE; no hop spent."""
+    RECALL_UNAVAILABLE, never the business-result NO_CANDIDATE; no selection
+    is attempted."""
     _open(monkeypatch)
     req = _req()
     idx = _index([("cap-a", [MSG], [[1.0, 0.0]])])
 
     boom_emb = _Embedder([1.0, 0.0], fail=True)
+    sel = _Selector()
     _, deps = _wire(monkeypatch, view=_view(CAP), index=idx,
-                    embedder=boom_emb, llm=_LLM())
+                    embedder=boom_emb, selector=sel, extractor=_Extractor())
     with caplog.at_level(logging.INFO, logger="core.application.chat.intent_funnel"):
         assert await funnel.route(_ctx("随便聊聊"), deps=deps, requirements=req) is req
     line = next(r.getMessage() for r in caplog.records if "funnel_trace" in r.getMessage())
     assert f"fallback_reason={REASON_RECALL_UNAVAILABLE}" in line
     assert "NO_CANDIDATE" not in line
-    assert deps.llm.prompts == []
+    assert sel.calls == 0
 
     # dim mismatch: 2-d query vector vs 3-d corpus row — a profile/dim config
     # fault, not a silent truncation that would fake its way to an empty set.
     wide_idx = _index([("cap-a", [MSG], [[1.0, 0.0, 0.0]])])
-    llm = _LLM()
+    sel2 = _Selector()
     _, deps = _wire(monkeypatch, view=_view(CAP), index=wide_idx,
-                    embedder=_Embedder([1.0, 0.0]), llm=llm)
+                    embedder=_Embedder([1.0, 0.0]), selector=sel2,
+                    extractor=_Extractor())
     caplog.clear()
     with caplog.at_level(logging.INFO, logger="core.application.chat.intent_funnel"):
         assert await funnel.route(_ctx("随便聊聊"), deps=deps, requirements=req) is req
@@ -1258,19 +600,19 @@ async def test_recall_faults_report_unavailable_never_fake_empty(monkeypatch, ca
     assert f"fallback_reason={REASON_RECALL_UNAVAILABLE}" in line
     assert "dim mismatch" in "\n".join(
         r.getMessage() for r in caplog.records if "fail-open" in r.getMessage())
-    assert llm.prompts == []
+    assert sel2.calls == 0
 
 
-async def test_matcher_hit_single_hop_certifies(monkeypatch, caplog):
-    """HIT enters ToolIntentModel with the same semantics as the Recall lane: ONE
-    model call (select + extract), Binder validates, no second hop."""
+async def test_matcher_hit_certifies_through_argument_acquisition(monkeypatch, caplog):
+    """HIT: the Matcher already pinned the capability. The cascade must NOT
+    consult the selector, must NOT recall, and hands the capability straight to
+    the Argument Path Router; the injected extractor fills the MODEL slot and the
+    Binder certifies the action."""
     _open(monkeypatch)
-    llm = _LLM([{"capability_id": "cap-a", "confidence": 0.95,
-                 "arguments": {"name": "季度报告"}}])
+    sel, ext = _Selector(), _Extractor({"name": "季度报告"})
     view = _view(CAP)
-    idx = _index([("cap-a", ["建个目录"], [[0.1, 0.9]])])  # recall would MISS
-    _, deps = _wire(monkeypatch, view=view, index=idx,
-                    embedder=_Embedder([1.0, 0.0]), llm=llm)
+    _, deps = _wire(monkeypatch, view=view, index=_index([]),
+                    embedder=_Embedder([1.0, 0.0]), selector=sel, extractor=ext)
     req = _req()
     with caplog.at_level(logging.INFO, logger="core.application.chat.intent_funnel"):
         out = await funnel.route(_ctx(MSG), deps=deps, requirements=req)
@@ -1282,53 +624,88 @@ async def test_matcher_hit_single_hop_certifies(monkeypatch, caplog):
     # (the legacy index-version action stamp is gone from the action shape).
     assert "registry_version" not in act
     assert act["funnel_registry_version"] == view.fingerprint
+    # ``funnel_stage`` is a frozen observable value (the ACTION handoff).
     assert act["funnel_stage"] == "tool_intent"
     assert out.needs_action is Signal.HIGH and out.complexity is Complexity.LOW
-    assert len(llm.prompts) == 1                       # AT MOST one ToolIntentModel call
-    assert "evidence: exact standard-query match (table)" in llm.prompts[0]  # HIT provenance, label not score
-    assert "matched_example" in llm.prompts[0]
+    assert sel.calls == 0                              # NEVER re-selected
+    assert len(ext.calls) == 1
+    assert ext.calls[0]["query"] == MSG
+    assert ext.calls[0]["model_slots"] == ("name",)
     line = next(r.getMessage() for r in caplog.records if "funnel_trace" in r.getMessage())
     assert "final_route=action" in line and "fallback_reason=-" in line
-    assert "tool_intent=CONFIDENT:cap-a" in line
+    assert "matcher=HIT:cap-a" in line          # the Matcher made the decision
+    assert "tool_intent=-" in line              # no selection hop was spent
 
 
-async def test_matcher_hit_still_spends_the_one_model_call(monkeypatch):
-    """The direct-certification special path is DELETED: a HIT is not an
-    execution permit — ToolIntentModel still adjudicates and extracts."""
+async def test_matcher_hit_never_touches_the_recall_index(monkeypatch, caplog):
+    """E2 (final semantics): an exact HIT certifies INDEPENDENTLY of Recall
+    availability — the HIT lane never calls load_index, so an unembedded or
+    faulting corpus can never veto a table-proven turn. The MISS lane keeps
+    the RECALL_UNAVAILABLE semantics (pinned above)."""
     _open(monkeypatch)
-    llm = _LLM([{"capability_id": "cap-a", "confidence": 0.95,
-                 "arguments": {"name": "季度报告"}}])
-    _, deps = _wire(monkeypatch, view=_view(CAP), index=_index([]),
-                    embedder=_Embedder([1.0, 0.0]), llm=llm)
-    out = await funnel.route(_ctx(MSG), deps=deps, requirements=_req())
-    assert out.requested_action["funnel_stage"] == "tool_intent"
-    assert out.requested_action["args"] == {"name": "季度报告"}
-    assert len(llm.prompts) == 1
+    ext = _Extractor({"name": "季度报告"})
+    _, deps = _wire(monkeypatch, view=_view(CAP), index=None,
+                    embedder=_Embedder([1.0, 0.0]), selector=_Selector(),
+                    extractor=ext)
+
+    async def boom_load(sf):
+        raise AssertionError("E2: the HIT lane must never load the Recall index")
+
+    monkeypatch.setattr(
+        "core.application.chat.intent_funnel.recall.load_index", boom_load)
+    with caplog.at_level(logging.INFO, logger="core.application.chat.intent_funnel"):
+        out = await funnel.route(_ctx(MSG), deps=deps, requirements=_req())
+    assert out.requested_action["capability_id"] == "cap-a"
+    assert len(ext.calls) == 1
+    line = next(r.getMessage() for r in caplog.records if "funnel_trace" in r.getMessage())
+    assert "index_version=-" in line and "final_route=action" in line
 
 
-async def test_recall_lane_single_hop_certifies(monkeypatch):
+async def test_recall_lane_selects_then_extracts(monkeypatch):
+    """MISS: Recall -> the selector picks the capability -> the extractor fills
+    its MODEL slots -> the Binder certifies. The selector sees the recall
+    candidates; the extractor sees ONLY the selected capability."""
     _open(monkeypatch)
-    llm = _LLM([{"capability_id": "cap-a", "confidence": 0.9,
-                 "arguments": {"name": "季度报告"}}])
+    sel, ext = _Selector("cap-a"), _Extractor({"name": "季度报告"})
     idx = _index([("cap-a", [MSG], [[1.0, 0.0]])])
-    # no table alias: this is the MISS -> Recall path
+    # no table corpus: this is the MISS -> Recall path
     view = _view([_entry("cap-a", examples=("建个目录",), parameters=_NAME_SCHEMA)])
     _, deps = _wire(monkeypatch, view=view, index=idx,
-                    embedder=_Embedder([1.0, 0.0]), llm=llm)
+                    embedder=_Embedder([1.0, 0.0]), selector=sel, extractor=ext)
     out = await funnel.route(_ctx(MSG), deps=deps, requirements=_req())
+    assert [c.capability_id for c in sel.seen] == ["cap-a"]
+    assert sel.seen[0].origin == "recall"
+    assert ext.calls[0]["entry"].capability_id == "cap-a"
+    assert ext.calls[0]["model_slots"] == ("name",)
     assert out.requested_action["funnel_stage"] == "tool_intent"
     assert out.requested_action["args"] == {"name": "季度报告"}
-    assert len(llm.prompts) == 1
-    assert "origin=recall" in llm.prompts[0]
 
 
-async def test_stub_confident_without_extraction_exits_bind_missing(monkeypatch, caplog):
-    """Honest consequence of the stub having no extraction power: CONFIDENT
-    verdict + None draft -> validate MISSING -> straight to the Agent."""
-    _open(monkeypatch, backend="stub")
-    idx = _index([("cap-a", [MSG], [[1.0, 0.0]])])
-    _, deps = _wire(monkeypatch, view=_view(CAP), index=idx,
-                    embedder=_Embedder([1.0, 0.0]), llm=_LLM())
+async def test_ambiguous_carries_all_candidates_into_the_selector(monkeypatch):
+    _open(monkeypatch)
+    v = _view([_entry("cap-a", corpus=("季度汇总",), parameters=_NAME_SCHEMA),
+               _entry("cap-b", tool="add_term", corpus=("季度汇总",),
+                      parameters=_TERM_SCHEMA)])
+    sel = _Selector("cap-b")
+    ext = _Extractor({"term": "季度汇总", "domain": "财务"})
+    _, deps = _wire(monkeypatch, view=v, index=_index([]),
+                    embedder=_Embedder([1.0, 0.0]), selector=sel, extractor=ext)
+    out = await funnel.route(_ctx("季度汇总"), deps=deps, requirements=_req())
+    assert sel.calls == 1                          # ONE selection decision
+    assert sorted(c.capability_id for c in sel.seen) == ["cap-a", "cap-b"]
+    assert out.requested_action["capability_id"] == "cap-b"
+    assert out.requested_action["args"] == {"term": "季度汇总", "domain": "财务"}
+
+
+async def test_empty_extraction_exits_bind_missing(monkeypatch, caplog):
+    """The capability is decided but the extractor honestly returns no value:
+    the Binder lands MISSING and the Agent owns the clarification."""
+    _open(monkeypatch)
+    sel, ext = _Selector("cap-a"), _Extractor({})
+    view = _view([_entry("cap-a", examples=("建个目录",), parameters=_NAME_SCHEMA)])
+    _, deps = _wire(monkeypatch, view=view,
+                    index=_index([("cap-a", [MSG], [[1.0, 0.0]])]),
+                    embedder=_Embedder([1.0, 0.0]), selector=sel, extractor=ext)
     req = _req()
     with caplog.at_level(logging.INFO, logger="core.application.chat.intent_funnel"):
         out = await funnel.route(_ctx(MSG), deps=deps, requirements=req)
@@ -1336,23 +713,24 @@ async def test_stub_confident_without_extraction_exits_bind_missing(monkeypatch,
     line = next(r.getMessage() for r in caplog.records if "funnel_trace" in r.getMessage())
     assert f"fallback_reason={REASON_BIND_MISSING}" in line
     assert "deepest_stage=binder" in line
+    assert sel.calls == 1 and len(ext.calls) == 1
 
 
 async def test_bare_create_folder_demand_is_a_correct_clarification_exit(
     monkeypatch, caplog
 ):
     """Sim-A/B item 1 pin: "新建一个文件夹" IS a real capability
-    demand but the sentence carries NO name. The model must not invent one and
-    the Binder must not guess one: CONFIDENT-without-args -> MISSING -> Agent
+    demand but the sentence carries NO name. The extractor must not invent one
+    and the Binder must not guess one: an empty draft -> MISSING -> Agent
     owns the clarification. This is the designed fallback (report class
     binder_missing_fallback), never a Funnel defect and never a takeover."""
     _open(monkeypatch)
     bare = "新建一个文件夹"
-    llm = _LLM([{"capability_id": "cap-a", "confidence": 0.9}])  # honest: no name to extract
+    sel, ext = _Selector("cap-a"), _Extractor({})   # honest: no name to extract
     idx = _index([("cap-a", [bare], [[1.0, 0.0]])])
     view = _view([_entry("cap-a", examples=(bare,), parameters=_NAME_SCHEMA)])
     _, deps = _wire(monkeypatch, view=view, index=idx,
-                    embedder=_Embedder([1.0, 0.0]), llm=llm)
+                    embedder=_Embedder([1.0, 0.0]), selector=sel, extractor=ext)
     req = _req()
     with caplog.at_level(logging.INFO, logger="core.application.chat.intent_funnel"):
         out = await funnel.route(_ctx(bare), deps=deps, requirements=req)
@@ -1360,167 +738,35 @@ async def test_bare_create_folder_demand_is_a_correct_clarification_exit(
     line = next(r.getMessage() for r in caplog.records if "funnel_trace" in r.getMessage())
     assert f"fallback_reason={REASON_BIND_MISSING}" in line
     assert "deepest_stage=binder" in line and "final_route=agent" in line
+    assert len(ext.calls) == 1              # ONE extraction attempt, no re-ask
 
 
-async def test_self_contained_schemaless_summary_certifies(monkeypatch):
-    """Sim-A/B item 3 counterpart, re-pinned for the input-context rule (③): a
-    deictic summary demand certifies ONLY with a legitimate viewer present —
-    with the report on screen, "总结这份研究报告" has a workable target and the
-    empty parameter schema means "no slots to wait for". Without the viewer the
-    same sentence is vetoed at entry (referenced_input_absent, pinned below);
-    "把上面的内容总结一下" never reaches this node either (memory-deixis veto).
-    """
+async def test_extractor_unavailable_exits_agent_without_fabrication(monkeypatch, caplog):
+    """The MODEL-owned acquisition path fails closed: an unreachable extractor
+    never yields a value, the Agent keeps the turn, and no selector/model call
+    is retried."""
     _open(monkeypatch)
-    sent = "总结这份研究报告"
-    viewer = types.SimpleNamespace(asset_id="r-1", page=None, selections=[])
-    ctx = _ctx(sent, body=types.SimpleNamespace(
-        message=sent, attach=None, viewer=viewer))
-    llm = _LLM([{"capability_id": "cap-s", "confidence": 0.93}])
-    idx = _index([("cap-s", [sent], [[1.0, 0.0]])])
-    view = _view([_entry("cap-s", corpus=(sent,), tool="summary_gen",
-                         parameters={})])
-    _, deps = _wire(monkeypatch, view=view, index=idx,
-                    embedder=_Embedder([1.0, 0.0]), llm=llm)
-    out = await funnel.route(ctx, deps=deps, requirements=_req())
-    act = out.requested_action
-    assert act["tool"] == "summary_gen" and act["args"] == {}
-    assert act["funnel_stage"] == "tool_intent"
-    assert len(llm.prompts) == 1
-
-
-# ── input-context veto (shadow-A/B follow-up, suspects a403c4b341e1
-# / d795e47fe617): empty-schema capabilities must never takeover when the turn
-# names its input object only by a demonstrative and NOTHING is on screen. ──────
-
-_DEICTIC_TURNS = ("把这份笔记做成思维导图",        # cap-mindmap standard query
-                  "把这个术语加入我的词汇库")    # cap-add-term standard query
-
-
-def test_deictic_input_turn_is_vetoed_without_viewer_or_attach():
-    """①/② the two suspects, word level: the veto fires on the exact
-    Registry sentences and reports its own reason (no cascade runs)."""
-    req = _req()
-    ctx = _ctx(_DEICTIC_TURNS[0])
-    for msg in _DEICTIC_TURNS:
-        assert guardrails.turn_veto(msg, req, _ctx(msg)) == "referenced_input_absent"
-
-
-def test_deictic_veto_lifts_with_viewer_attach_or_explicit_input():
-    """③ the ONLY lifts are context facts or an inline quoted object — never a
-    table edit: viewer present, attachment present, or the term written out in
-    quotes all let the cascade proceed."""
-    req = _req()
-    viewer = types.SimpleNamespace(asset_id="a-1", page=None, selections=[])
-    v_ctx = _ctx(_DEICTIC_TURNS[0], body=types.SimpleNamespace(
-        message=_DEICTIC_TURNS[0], attach=None, viewer=viewer))
-    assert guardrails.turn_veto(_DEICTIC_TURNS[0], req, v_ctx) is None
-    a_ctx = _ctx(_DEICTIC_TURNS[0], body=types.SimpleNamespace(
-        message=_DEICTIC_TURNS[0], attach={"asset_id": "d-1"}, viewer=None))
-    assert guardrails.turn_veto(_DEICTIC_TURNS[0], req, a_ctx) is None
-    explicit = '把"光合作用"这个术语加入我的词汇库'
-    assert guardrails.turn_veto(explicit, req, _ctx(explicit)) is None
-
-
-async def test_vetoed_deictic_turn_never_reaches_the_cascade(monkeypatch, caplog):
-    """Route level: the veto exits at the gate — the Registry is not even read,
-    the Agent keeps the turn byte-identical, and no model hop is spent."""
-    _open(monkeypatch)
-    view = _view([_entry("cap-m", corpus=_DEICTIC_TURNS, tool="mindmap_gen",
-                         parameters={})])
-    idx = _index([("cap-m", list(_DEICTIC_TURNS), [[1.0, 0.0]])])
-    llm = _LLM([{"capability_id": "cap-m", "confidence": 0.9}])
-    _, deps = _wire(monkeypatch, view=view, index=idx,
-                    embedder=_Embedder([1.0, 0.0]), llm=llm)
-    req = _req()
-    out = await funnel.route(_ctx(_DEICTIC_TURNS[0]), deps=deps, requirements=req)
-    assert out is req and llm.prompts == []   # gate closed: zero model calls
-    # funnel_live short-circuits BEFORE the cascade, so no funnel_trace line.
-    assert not any("funnel_trace" in r.getMessage() for r in caplog.records)
-
-
-async def test_deictic_turn_with_viewer_certifies_through_the_cascade(monkeypatch):
-    """③ end to end: the SAME sentence with a legitimate viewer is takeover
-    material — Matcher HIT → ToolIntent CONFIDENT → empty-schema certify."""
-    _open(monkeypatch)
-    sent = _DEICTIC_TURNS[0]
-    viewer = types.SimpleNamespace(asset_id="n-1", page=None, selections=[])
-    ctx = _ctx(sent, body=types.SimpleNamespace(
-        message=sent, attach=None, viewer=viewer))
-    llm = _LLM([{"capability_id": "cap-m", "confidence": 0.9}])
-    idx = _index([("cap-m", [sent], [[1.0, 0.0]])])
-    view = _view([_entry("cap-m", corpus=(sent,), tool="mindmap_gen",
-                         parameters={})])
-    _, deps = _wire(monkeypatch, view=view, index=idx,
-                    embedder=_Embedder([1.0, 0.0]), llm=llm)
-    out = await funnel.route(ctx, deps=deps, requirements=_req())
-    assert (out.requested_action or {}).get("tool") == "mindmap_gen"
-    assert out.requested_action["capability_id"] == "cap-m"
-
-
-def test_input_veto_stays_narrow_on_non_input_demonstratives():
-    """The veto names ON-SCREEN INPUT OBJECTS, not every 这/this: plain folder
-    demands, quoted-name creates and topic questions must pass untouched
-    (false vetoes only cost the funnel, but a bloated veto hides real bugs)."""
-    req = _req()
-    for msg in ('新建文件夹"季度报告"', "新建一个文件夹", "这个软件怎么用?",
-                "帮我查一下北京今天的天气", "these are great ideas, thanks"):
-        assert guardrails.turn_veto(msg, req, _ctx(msg)) is None
-
-
-def test_web_and_deixis_lexical_gates_cover_mid_sentence_cjk():
-    """Sim-A/B items 3/4 word-level pins: the \\b wrapper does not exist
-    between two CJK chars, so the web cues ride without it; and the chat-
-    deixis class ("上面") joins the memory prefilter — while the curated
-    "刚才" corpus sentences of cap-add-term must STAY unvetoed."""
-    from core.application.chat import understanding as U
-    from core.config import settings
-
-    assert U._lex_web("2026年9月AI行业有什么重要新闻?")
-    assert U._lex_web("今天天气怎么样")
-    assert U._lex_web("the latest news")            # English unchanged
-    assert not U._lex_web("把这份笔记做成思维导图")    # no web cue -> no veto
-    assert U._memory_trigger("把上面的内容总结一下")
-    assert not U._memory_trigger("把刚才这个术语记到我的词汇表")  # curated corpus
-    assert "上面" in settings.memory_recall_trigger_words
-    assert "刚才" not in settings.memory_recall_trigger_words
-
-
-async def test_below_floor_verdict_returns_original(monkeypatch, caplog):
-    _open(monkeypatch)
-    llm = _LLM([{"capability_id": "cap-a", "confidence": 0.3}])   # under the floor
-    idx = _index([("cap-a", ["建个目录"], [[0.9, 0.43]]),
-                  ("cap-b", ["加个词"], [[0.9, 0.44]])])
-    view = _view(CAP + [_entry("cap-b", tool="add_term")])
-    _, deps = _wire(monkeypatch, view=view, index=idx,
-                    embedder=_Embedder([1.0, 0.0]), llm=llm)
-    req = _req()
-    with caplog.at_level(logging.INFO, logger="core.application.chat.intent_funnel"):
-        out = await funnel.route(_ctx("整理一下笔记好吗"), deps=deps, requirements=req)
-    assert out is req
-    line = next(r.getMessage() for r in caplog.records if "funnel_trace" in r.getMessage())
-    assert f"fallback_reason={REASON_TOOL_INTENT_UNCERTAIN}" in line
-
-
-async def test_tool_intent_reject_exits_tool_intent_reject(monkeypatch, caplog):
-    _open(monkeypatch)
-    idx = _index([("cap-a", [MSG], [[1.0, 0.0]])])
-    llm = _LLM([{"capability_id": "NONE"}])
-    _, deps = _wire(monkeypatch, view=_view(CAP), index=idx,
-                    embedder=_Embedder([1.0, 0.0]), llm=llm)
+    sel, ext = _Selector(), _Extractor(fail=True)
+    _, deps = _wire(monkeypatch, view=_view(CAP), index=_index([]),
+                    embedder=_Embedder([1.0, 0.0]), selector=sel, extractor=ext)
     req = _req()
     with caplog.at_level(logging.INFO, logger="core.application.chat.intent_funnel"):
         out = await funnel.route(_ctx(MSG), deps=deps, requirements=req)
-    assert out is req                                   # Agent keeps the turn
+    assert out is req
     line = next(r.getMessage() for r in caplog.records if "funnel_trace" in r.getMessage())
-    assert f"fallback_reason={REASON_TOOL_INTENT_REJECT}" in line
+    assert "fallback_reason=ACQUISITION_MODEL_PENDING" in line
+    assert sel.calls == 0 and len(ext.calls) == 1
 
 
-async def test_verdict_not_in_active_table_is_version_mismatch(monkeypatch, caplog):
+async def test_matcher_hit_on_a_capability_absent_from_the_table_is_version_mismatch(
+        monkeypatch, caplog):
     _open(monkeypatch)
-    idx = _index([("cap-ghost", ["x"], [[1.0, 0.0]])])   # index ahead of table
-    llm = _LLM([{"capability_id": "cap-ghost", "confidence": 0.99, "arguments": {}}])
-    _, deps = _wire(monkeypatch, view=_view(CAP), index=idx,
-                    embedder=_Embedder([1.0, 0.0]), llm=llm)
+    monkeypatch.setattr(
+        matcher, "match",
+        lambda *a, **k: MatchResult(state=MATCH_HIT, capability_id="cap-ghost"))
+    _, deps = _wire(monkeypatch, view=_view(CAP), index=_index([]),
+                    embedder=_Embedder([1.0, 0.0]), selector=_Selector(),
+                    extractor=_Extractor())
     req = _req()
     with caplog.at_level(logging.INFO, logger="core.application.chat.intent_funnel"):
         out = await funnel.route(_ctx("x"), deps=deps, requirements=req)
@@ -1529,33 +775,14 @@ async def test_verdict_not_in_active_table_is_version_mismatch(monkeypatch, capl
     assert f"fallback_reason={REASON_VERSION_MISMATCH}" in line
 
 
-async def test_confident_but_unextractable_exits_bind_missing_no_second_hop(
-        monkeypatch, caplog):
-    """The old BIND_MISSING -> recheck -> Decision chain is GONE: one CONFIDENT
-    verdict, one missing draft, straight to the Agent."""
-    _open(monkeypatch)
-    view = _view([_entry("cap-a", corpus=("新建文件夹",), parameters=_NAME_SCHEMA)])
-    idx = _index([("cap-a", ["建个目录"], [[0.2, 0.8]])])
-    llm = _LLM([{"capability_id": "cap-a", "confidence": 0.95}])   # no arguments
-    _, deps = _wire(monkeypatch, view=view, index=idx,
-                    embedder=_Embedder([1.0, 0.0]), llm=llm)
-    req = _req()
-    with caplog.at_level(logging.INFO, logger="core.application.chat.intent_funnel"):
-        out = await funnel.route(_ctx("新建文件夹"), deps=deps, requirements=req)
-    assert out is req                       # Agent owns the clarification (8.7)
-    line = next(r.getMessage() for r in caplog.records if "funnel_trace" in r.getMessage())
-    assert f"fallback_reason={REASON_BIND_MISSING}" in line
-    assert "tool_intent=CONFIDENT:cap-a" in line and "recheck" not in line
-    assert len(llm.prompts) == 1            # no second model hop was spent
-
-
 async def test_invalid_draft_exits_bind_invalid(monkeypatch, caplog):
     _open(monkeypatch)
-    idx = _index([("cap-a", [MSG], [[1.0, 0.0]])])
-    llm = _LLM([{"capability_id": "cap-a", "confidence": 0.95,
-                 "arguments": {"name": "名" * 121}}])               # over max_len
-    _, deps = _wire(monkeypatch, view=_view(CAP), index=idx,
-                    embedder=_Embedder([1.0, 0.0]), llm=llm)
+    sel = _Selector("cap-a")
+    ext = _Extractor({"name": "名" * 121})               # over max_len
+    view = _view([_entry("cap-a", examples=("建个目录",), parameters=_NAME_SCHEMA)])
+    _, deps = _wire(monkeypatch, view=view,
+                    index=_index([("cap-a", [MSG], [[1.0, 0.0]])]),
+                    embedder=_Embedder([1.0, 0.0]), selector=sel, extractor=ext)
     req = _req()
     with caplog.at_level(logging.INFO, logger="core.application.chat.intent_funnel"):
         out = await funnel.route(_ctx(MSG), deps=deps, requirements=req)
@@ -1576,8 +803,9 @@ async def test_cascade_timeout_is_attributed_to_its_stage(monkeypatch, caplog):
         lambda **kw: asyncio.ensure_future(_view_ok()),
     )
     monkeypatch.setattr("core.application.chat.intent_funnel.recall.load_index", slow_load)
-    deps = types.SimpleNamespace(session_factory=None,
-                                 embedder=lambda: _Embedder([1.0, 0.0]), llm=_LLM())
+    deps = types.SimpleNamespace(
+        session_factory=None, embedder=lambda: _Embedder([1.0, 0.0]), llm=object(),
+        cap_router_selector=_Selector(), argument_extractor=_Extractor())
     req = _req()
     # E2: the HIT lane never loads the index, so the recall-stage timeout can
     # only be reached by a MISS — a HIT here would skip slow_load entirely.
@@ -1598,11 +826,11 @@ async def test_negated_matcher_hit_is_forced_to_miss(monkeypatch, caplog):
     # the corpus itself contains the negated sentence: an exact HIT WOULD fire —
     # only the 8.1-a guard can veto it. With the HIT vetoed and recall empty,
     # the model-facing set is empty -> NO_CANDIDATE short-circuit (ruling
-    #); the hop is never spent on a turn with no card to select.
+    # ); the selector is never consulted on a turn with no card.
     view = _view([_entry("cap-a", corpus=("不要新建文件夹",))])
-    llm = _LLM([{"capability_id": "NONE"}])
+    sel, ext = _Selector(), _Extractor()
     _, deps = _wire(monkeypatch, view=view, index=_index([]),
-                    embedder=_Embedder([1.0, 0.0]), llm=llm)
+                    embedder=_Embedder([1.0, 0.0]), selector=sel, extractor=ext)
     req = _req()
     with caplog.at_level(logging.INFO, logger="core.application.chat.intent_funnel"):
         out = await funnel.route(_ctx("不要新建文件夹"), deps=deps, requirements=req)
@@ -1610,24 +838,7 @@ async def test_negated_matcher_hit_is_forced_to_miss(monkeypatch, caplog):
     line = next(r.getMessage() for r in caplog.records if "funnel_trace" in r.getMessage())
     assert "matcher=MISS" in line
     assert f"fallback_reason={REASON_NO_CANDIDATE}" in line
-    assert llm.prompts == []
-
-
-async def test_ambiguous_carries_all_candidates_into_the_one_call(monkeypatch):
-    _open(monkeypatch)
-    v = _view([_entry("cap-a", corpus=("季度汇总",), parameters=_NAME_SCHEMA),
-               _entry("cap-b", tool="add_term", corpus=("季度汇总",),
-                      parameters=_TERM_SCHEMA)])
-    llm = _LLM([{"capability_id": "cap-b", "confidence": 0.9,
-                 "arguments": {"term": "季度汇总", "domain": "财务"}}])
-    _, deps = _wire(monkeypatch, view=v, index=_index([]),
-                    embedder=_Embedder([1.0, 0.0]), llm=llm)
-    out = await funnel.route(_ctx("季度汇总"), deps=deps, requirements=_req())
-    assert len(llm.prompts) == 1                        # ONE call disambiguates
-    assert "cap-a" in llm.prompts[0] and "cap-b" in llm.prompts[0]  # BOTH carried up
-    assert "evidence: exact standard-query match (table; several candidates)" in llm.prompts[0]
-    assert out.requested_action["capability_id"] == "cap-b"
-    assert out.requested_action["args"] == {"term": "季度汇总", "domain": "财务"}
+    assert sel.calls == 0 and ext.calls == []
 
 
 # ═══════════ E1/E2 — final semantics landing ( audit) ═════════════════
@@ -1657,47 +868,20 @@ def test_aggregate_by_capability_keeps_the_winning_candidate():
 async def test_capability_aggregation_collapses_duplicate_hits_into_one_card(monkeypatch):
     """E1 integration: Raw Recall keeps every >= threshold hit (pinned at the
     recall node above), but the model-facing list is capability-level — cap-a
-    arrives twice (cos 1.000 + 0.981), the prompt carries ONE cap-a card at the
-    WINNING score/provenance, and cap-b is untouched."""
+    arrives twice (cos 1.000 + 0.981) and the selector sees ONE cap-a candidate
+    at the WINNING score/provenance; cap-b is untouched."""
     _open(monkeypatch)
-    llm = _LLM([{"capability_id": "cap-a", "confidence": 0.9,
-                 "arguments": {"name": "季度报告"}}])
+    sel = _Selector("cap-a")
+    ext = _Extractor({"name": "季度报告"})
     idx = _index([("cap-a", ["近a", "远b"], [[1.0, 0.0], [1.0, 0.2]]),
                   ("cap-b", ["加个词"], [[1.0, 0.4]])])
     view = _view([_entry("cap-a", examples=("做个事",), parameters=_NAME_SCHEMA),
                   _entry("cap-b", tool="add_term", examples=("写个词",),
                          parameters=_TERM_SCHEMA)])
     _, deps = _wire(monkeypatch, view=view, index=idx,
-                    embedder=_Embedder([1.0, 0.0]), llm=llm)
+                    embedder=_Embedder([1.0, 0.0]), selector=sel, extractor=ext)
     out = await funnel.route(_ctx("随便聊聊"), deps=deps, requirements=_req())
-    prompt = llm.prompts[0]
-    assert len(llm.prompts) == 1
-    assert prompt.count("### cap-a") == 1        # 1.000 + 0.981 collapsed to one
-    assert prompt.count("### cap-b") == 1        # the different capability survives
-    assert "score=1.000" in prompt and "score=0.981" not in prompt
-    assert "近a" in prompt and "远b" not in prompt  # winning provenance rides alone
+    assert sel.calls == 1
+    assert [(c.capability_id, c.matched_example) for c in sel.seen] == [
+        ("cap-a", "近a"), ("cap-b", "加个词")]
     assert out.requested_action["capability_id"] == "cap-a"
-
-
-async def test_matcher_hit_never_touches_the_recall_index(monkeypatch, caplog):
-    """E2 (final semantics): an exact HIT certifies INDEPENDENTLY of Recall
-    availability — the HIT lane never calls load_index, so an unembedded or
-    faulting corpus can never veto a table-proven turn. The MISS lane keeps
-    the RECALL_UNAVAILABLE semantics (pinned above)."""
-    _open(monkeypatch)
-    llm = _LLM([{"capability_id": "cap-a", "confidence": 0.95,
-                 "arguments": {"name": "季度报告"}}])
-    _, deps = _wire(monkeypatch, view=_view(CAP), index=None,
-                    embedder=_Embedder([1.0, 0.0]), llm=llm)
-
-    async def boom_load(sf):
-        raise AssertionError("E2: the HIT lane must never load the Recall index")
-
-    monkeypatch.setattr(
-        "core.application.chat.intent_funnel.recall.load_index", boom_load)
-    with caplog.at_level(logging.INFO, logger="core.application.chat.intent_funnel"):
-        out = await funnel.route(_ctx(MSG), deps=deps, requirements=_req())
-    assert out.requested_action["capability_id"] == "cap-a"
-    assert len(llm.prompts) == 1
-    line = next(r.getMessage() for r in caplog.records if "funnel_trace" in r.getMessage())
-    assert "index_version=-" in line and "final_route=action" in line

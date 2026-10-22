@@ -29,8 +29,8 @@ def _preview_ctx(message: str):
 
 async def preview(message: str, *, deps) -> dict:
     """§8.5: run the ACTIVE (Registry, Index) pair end to end for one query —
-    Registry → Matcher → (Recall) → ToolIntentModel → Binder → Final Route —
-    and return the trace as a verdict, executing nothing."""
+    Registry → Matcher → (Recall → cap_router) → Argument Acquisition → Binder →
+    Final Route — and return the trace as a verdict, executing nothing."""
     # Runtime import (kept out of module top to break the
     # understanding -> actions -> intent_funnel import cycle; see __init__).
     from core.application.chat.understanding import (
@@ -61,6 +61,7 @@ async def preview(message: str, *, deps) -> dict:
     result = {
         "deepest_stage": trace["stage"], "matcher": trace["matcher"],
         "recall_count": trace["recall_count"], "recall_top": trace["recall_top"],
+        # The frozen event column name is kept for the one selection verdict.
         "tool_intent": trace["tool_intent"],
         "final_route": trace["final_route"], "fallback_reason": trace["fallback"],
         "registry_version": trace["registry"], "index_version": trace["index"],
@@ -70,7 +71,7 @@ async def preview(message: str, *, deps) -> dict:
         # verdict and Binder state. Read-only projection of `capture`.
         "candidates": capture.get("candidates", []),
         "recall_raw": capture.get("recall_raw", []),
-        "model_verdict": capture.get("tool_intent"),
+        "model_verdict": capture.get("cap_router"),
         "binder_state": capture.get("binder"),
     }
     if out is not None:

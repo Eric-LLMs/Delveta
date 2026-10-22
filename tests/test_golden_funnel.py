@@ -1,28 +1,28 @@
 """§8.16 Golden Set runner — executes the validation-gate regression matrix in
-``tests/golden/intent_funnel_golden.yaml`` against the REAL single-hop cascade
-(Matcher HIT / Recall -> ONE ToolIntentModel call -> Binder validate -> certified).
+``tests/golden/intent_funnel_golden.yaml`` against the REAL cascade
+(HIT -> Argument Acquisition; MISS/AMBIGUOUS -> Recall -> ONE cap_router
+selection -> Argument Acquisition -> Binder validate -> certified).
 
 Design of the fake world (kept deterministic on purpose — a golden that can
 flap is worse than no golden):
 
 * the LIVE table carries exactly the four capabilities the matrix names:
   ``cap-folder`` (Standard query row + curated Similar rows; a legacy ``re:``
-  pattern stays in storage as INERT proof — the exact-only Matcher (ruling
-  ) never reads it; corpus vector [1,0]),
+  pattern stays in storage as INERT proof — the exact-only Matcher never reads
+  it; corpus vector [1,0]),
   ``cap-vocab`` (own Standard + the shared multi-intent Similar — two caps
   curating one sentence is what produces MATCH_AMBIGUOUS now),
-  ``cap-private`` / ``cap-web`` (exact Standards behind widened kind gates);
+  ``cap-private`` / ``cap-web`` (exact Standards behind closed kind gates);
 * the embedder is a vector map: the two sanctioned paraphrases score 1.0
   against cap-folder, EVERYTHING else falls to [0.7,0.7] — cosine 0.707
   against either axis, under the 0.82 quality gate. Recall therefore never
   "resupplies" a turn the Matcher was told to miss (the negation case leans
   on exactly this);
-* the ToolIntentModel hop is a SCRIPTED deterministic stand-in (backend pinned
-  "online", deps.llm = _ScriptedToolIntent): it parses its own card prompt, keeps
-  the single-candidate rule, and extracts by quote-stripping — the same
-  contract a deployed small model serves, made flap-free. Its scripted NONE on
-  a split card set is the only negative that reaches the model; the empty-set
-  negatives exit BEFORE it with NO_CANDIDATE (ruling, zero calls);
+* both production seams are SCRIPTED deterministic stand-ins: the ONE selector
+  (``StubSelector``, injected through ``default_selector``) answers NONE on the
+  matcher-AMBIGUOUS split pair, and the argument extractor fills the pinned
+  capability's slots by quote-stripping. No real service and no real model is
+  called; the empty-set negatives exit BEFORE either seam with NO_CANDIDATE;
 * every run is pinned ``execution_mode="test"`` (8.14: a batch of goldens must
   never land cost on a user) and the embedder PROVES the pin rode every call.
 
@@ -39,12 +39,13 @@ from pathlib import Path
 
 import pytest
 import yaml
+from core.application.chat.intent_funnel import cap_router as cap_router_mod
 from core.application.chat.intent_funnel import funnel
 from core.application.chat.intent_funnel.contract import (
     REASON_BIND_MISSING,
+    REASON_CAP_ROUTER_NONE,
     REASON_KIND_DISABLED,
     REASON_NO_CANDIDATE,
-    REASON_TOOL_INTENT_REJECT,
 )
 from core.application.chat.intent_funnel.registry import content_fingerprint
 from core.application.chat.intent_funnel.registry.entry import (
@@ -68,11 +69,11 @@ GOLDEN_PATH = Path(__file__).parent / "golden" / "intent_funnel_golden.yaml"
 # YAML token -> the contract constant actually logged as fallback_reason.
 # FUNNEL_NO_CANDIDATE is in service (ruling): an empty candidate
 # set (Matcher MISS + Recall below the gate) short-circuits to the Agent with
-# NO model hop; FUNNEL_TOOL_INTENT_REJECT now means the model was actually
-# called and answered NONE (e.g. the AMBIGUOUS split-pair case).
+# NO model hop; FUNNEL_SELECTOR_NONE means the cap_router was actually
+# consulted and answered NONE (e.g. the AMBIGUOUS split-pair case).
 FALLBACK_CODES = {
     "FUNNEL_NO_CANDIDATE": REASON_NO_CANDIDATE,
-    "FUNNEL_TOOL_INTENT_REJECT": REASON_TOOL_INTENT_REJECT,
+    "FUNNEL_SELECTOR_NONE": REASON_CAP_ROUTER_NONE,
     "FUNNEL_BIND_MISSING": REASON_BIND_MISSING,
     "FUNNEL_KIND_DISABLED": REASON_KIND_DISABLED,
 }
@@ -210,34 +211,29 @@ def _ctx(query: str, ctx_body: dict):
     )
 
 
-class _ScriptedToolIntent:
-    """Deterministic stand-in for ToolIntentModel (the online seam's fake llm): parses
-    its own card prompt, applies the single-card rule, and extracts arguments
-    by quote-stripping — the same contract a deployed small model serves, with
-    zero flapping. A split card set gets the honest NONE (-> TOOL_INTENT_REJECT)."""
+class _ScriptedExtractor:
+    """Deterministic stand-in for the argument extractor: the capability is
+    already pinned, so it only fills that capability's MODEL slots by
+    quote-stripping — the same contract a deployed small model serves, with
+    zero flapping and no HTTP call."""
 
     def __init__(self):
         self.calls = 0
 
-    async def complete_json(self, prompt, **kw):
+    async def __call__(self, *, query, entry, model_slots, bundle, prompt=None):
         self.calls += 1
-        caps = re.findall(r"(?m)^### (\S+)$", prompt)
-        m = re.search(r"<user_sentence>(.*?)</user_sentence>", prompt, re.DOTALL)
-        sentence = m.group(1) if m else ""
-        if len(caps) != 1:
-            return {"capability_id": "NONE", "confidence": 1.0, "arguments": {}}
-        cap = caps[0]
-        quoted = re.search(r'"([^"]+)"', sentence)
+        cap = entry.capability_id
+        quoted = re.search(r'"([^"]+)"', query)
         if cap in ("cap-folder", "cap-private"):
             args = {"name": quoted.group(1)} if quoted else {}
         elif cap == "cap-vocab":
             args = {"term": quoted.group(1)} if quoted else {}
-            dom = re.search(r"我的(.+?)词汇库", sentence)
+            dom = re.search(r"我的(.+?)词汇库", query)
             if dom:
                 args["domain"] = dom.group(1)
         else:  # cap-web
-            args = {"query": sentence}
-        return {"capability_id": cap, "confidence": 0.95, "arguments": args}
+            args = {"query": query}
+        return args, bundle.source
 
 
 def _wire(monkeypatch, embedder: _Embedder):
@@ -255,19 +251,20 @@ def _wire(monkeypatch, embedder: _Embedder):
         "core.application.chat.intent_funnel.registry.active_view", fake_active)
     monkeypatch.setattr(
         "core.application.chat.intent_funnel.recall.load_index", fake_load)
-    # ToolIntentModel rides the online seam with the scripted double; every channel/
-    # floor config is pinned so a dev .env can never flap a golden.
-    monkeypatch.setattr(settings, "chat_tool_intent_backend", "online")
-    monkeypatch.setattr(settings, "chat_tool_intent_min_confidence", 0.75)
-    monkeypatch.setattr(settings, "chat_tool_intent_online_model", "")
-    monkeypatch.setattr(settings, "chat_tool_intent_online_base_url", "")
-    monkeypatch.setattr(settings, "chat_tool_intent_online_api_key", "")
+    # Both production seams are deterministic doubles: the ONE selector answers
+    # NONE on the matcher-AMBIGUOUS split pair, the extractor fills the decided
+    # capability's slots. Settings are pinned so a dev .env can never flap a golden.
+    from core.application.chat.intent_funnel.cap_router.backends.stub import (
+        StubSelector,
+    )
+    monkeypatch.setattr(cap_router_mod, "default_selector", lambda: StubSelector())
     monkeypatch.setattr(settings, "chat_funnel_timeout_seconds", 5.0)
     # pin the quality gate so an env-tweaked default can never flap a golden
     # (the model-facing candidate set is UNCAPPED — ruling)
     monkeypatch.setattr(settings, "chat_funnel_min_score", 0.82)
     return view, types.SimpleNamespace(
-        session_factory=None, embedder=lambda: embedder, llm=_ScriptedToolIntent(),
+        session_factory=None, embedder=lambda: embedder,
+        argument_extractor=_ScriptedExtractor(),
     )
 
 
@@ -318,7 +315,7 @@ async def test_golden_case(monkeypatch, caplog, case):
         assert expect["matcher_contains"] in m_field, trace
 
     if expect["route"] == "action":
-        assert deps.llm.calls == 1                  # the ONE ToolIntentModel hop per certified turn
+        assert deps.argument_extractor.calls == 1   # ONE extraction per certified turn
         assert out is not requirements              # certified: a NEW object
         act = out.requested_action
         assert act["capability_id"] == expect["capability"], trace
@@ -334,7 +331,7 @@ async def test_golden_case(monkeypatch, caplog, case):
         assert out.requested_action is None
         assert fb_field == FALLBACK_CODES[expect["fallback"]], trace
         if expect["fallback"] == "FUNNEL_NO_CANDIDATE":
-            assert deps.llm.calls == 0, "the empty set must not spend the hop"
+            assert deps.argument_extractor.calls == 0, "the empty set must not spend a hop"
 
     # Whenever the Matcher did NOT certify directly, the cascade went through
     # Recall — which embeds. A golden that silently skipped Recall has changed

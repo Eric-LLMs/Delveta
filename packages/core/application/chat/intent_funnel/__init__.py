@@ -1,19 +1,20 @@
 """Intent Funnel — the independent, decoupled routing lane above the Agent.
 
-Design (docs/temp.md, "Chat 意图路由重构"), chain ruling: one model
-hop per turn — Matcher HIT -> ToolIntentModel, Matcher MISS/AMBIGUOUS -> Recall ->
-ToolIntentModel (ONE call: capability selection + argument extraction from Candidate
-Cards) -> Binder (normalize/validate) -> Shared Tool Runtime. Every failure
-exits to the Agent, byte-identical. ToolIntentModel is a swappable provider
-(local primary, online fallback, stub) behind the tool_intent/ ladder.
+Chain (single-path ruling): Matcher HIT -> Argument Path Router -> Binder ->
+Shared Tool Runtime, with NO re-selection; Matcher MISS/AMBIGUOUS -> Recall ->
+Candidate Aggregation -> cap_router -> Argument Path Router -> Binder. Capability
+selection is ALWAYS the deployed cap_router service (LayaChoice); argument
+acquisition is a separate concern and only calls the extractor when the chosen
+strategy is MODEL-owned. Every failure exits to the Agent, byte-identical.
 
 Scope status: P0 moved the orchestration out of ``TurnOrchestrator``; P1 added
 the Registry/Matcher. Single path (ruling): the funnel IS the formal
 routing lane — the dark-launch gate (``chat_funnel_enabled``) and the shadow
 hook were deleted; ``funnel_live`` only keeps the fail-open safety semantics
-(missing deps / guardrail veto). The legacy QIR lane was deleted with migration
-0014 (live-table ruling) — ``funnel_live`` + ``route`` are the whole
-public surface.
+(missing deps). The legacy QIR lane was deleted with migration 0014
+(live-table ruling) and the legacy single-call ToolIntentModel selector was
+deleted with the single-chain cleanup — ``funnel_live`` + ``route`` are the
+whole public surface.
 
 Import-cycle note: ``understanding`` imports ``actions``, whose
 moved-name façade imports back into ``intent_funnel`` (``registry``/``binder``).

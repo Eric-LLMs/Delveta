@@ -14,6 +14,12 @@ code conflicts, the current code is **legacy / current implementation**, never t
 No production code, no `orchestrator` change, no `path_router`, no Qwen, no Laya, no
 `selection_transition` removal, no Binder/Executor change are performed in Step 0.
 
+> **Superseded mechanism, binding contract.** The `backend=` switch and the fused
+> `ToolIntentModel` lane named below were deleted by the single-path cleanup. The
+> contract itself — the acquisition declaration, the four ownership values, evidence
+> routing, the double readiness gate and fail-closed exits — shipped; `architecture.md`
+> §28 describes the implemented form.
+
 Scope boundary (this file): the acquisition contract that sits **between** a decided
 capability and the existing Binder. Abstract nodes only — the concrete modules
 (`path_router.py`, `context_bundle.py`, `merge.py`, the Qwen extractor) are **Step 1+**.

@@ -68,7 +68,7 @@ cases:
     difficulty: ADVERSARIAL
     expected: {funnel: AMBIGUOUS}
     variants:
-      - {q: '新建文件夹"季度报告"并把"keystone"加入我的工程词汇库', notes: "two real actions in one sentence; the single ToolIntentModel hop must answer NONE"}
+      - {q: '新建文件夹"季度报告"并把"keystone"加入我的工程词汇库', notes: "two real actions in one sentence; the single selector hop must answer REJECT"}
       - {q: '把这份文档提取一下,再建个目录放,对了还有个词要加'}
   - id: hn-wrong-target
     intent: HARD_NEGATIVE_WRONG_TARGET

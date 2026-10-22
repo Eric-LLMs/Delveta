@@ -1,13 +1,14 @@
 """Intent Funnel node contracts — the vocabulary every node speaks.
 
-Chain ruling (, single-hop correction): the active chain is
-Matcher -> (Recall on MISS/AMBIGUOUS) -> ToolIntentModel (ONE call: capability
-selection + argument extraction) -> Binder (normalize/validate only) ->
-Execute; every non-COMPLETE outcome exits to the Agent (8.10). The former
-recheck hop and the Decision LLM node are removed from the active path —
-``ToolIntentVerdict`` is ToolIntentModel's verdict+draft in one object. No node may pass
-anything else across the boundary, and per 8.8 a verdict carries routing
-metadata ONLY — never an executor, tool instance or authorization bypass.
+The production chain has two lanes (single-path ruling):
+
+* Matcher HIT -> Argument Path Router -> Binder -> Execute;
+* Matcher MISS/AMBIGUOUS -> Recall -> Candidate Aggregation -> cap_router ->
+  Argument Path Router -> Binder -> Execute.
+
+Every non-COMPLETE outcome exits to the Agent (8.10). No node may pass anything
+across the boundary except the types here, and per 8.8 routing metadata carries
+ONLY routing facts — never an executor, tool instance or authorization bypass.
 """
 from __future__ import annotations
 
@@ -114,15 +115,11 @@ class TurnFacts:
 REASON_NO_CANDIDATE = "NO_CANDIDATE"
 REASON_RECALL_TIMEOUT = "RECALL_TIMEOUT"
 REASON_RECALL_UNAVAILABLE = "RECALL_UNAVAILABLE"
-REASON_TOOL_INTENT_REJECT = "TOOL_INTENT_REJECT"
-REASON_TOOL_INTENT_UNCERTAIN = "TOOL_INTENT_UNCERTAIN"
-REASON_TOOL_INTENT_TIMEOUT = "TOOL_INTENT_TIMEOUT"
-# cap_router lane (Phase 3) — kept DISTINCT from the TOOL_INTENT_*
-# codes on purpose: the selection node that produced these is cap_router (stub |
-# cap_router), not the legacy single-call ToolIntentModel, so a trace can always
-# tell the two lanes apart (Active/Deprecated must stay distinguishable, rule 8).
+# The selection node is cap_router (the deployed LayaChoice service). These are
+# the ONLY selection-side exits: NONE (model abstained), REJECT (model chose the
+# frozen REJECT card), UNAVAILABLE (service could not serve / timed out).
 REASON_CAP_ROUTER_NONE = "CAP_ROUTER_NONE"                 # selector answered NONE
-REASON_CAP_ROUTER_UNAVAILABLE = "CAP_ROUTER_UNAVAILABLE"   # backend could not serve
+REASON_CAP_ROUTER_UNAVAILABLE = "CAP_ROUTER_UNAVAILABLE"   # selector could not serve
 REASON_CAP_ROUTER_TIMEOUT = "CAP_ROUTER_TIMEOUT"           # selector exceeded the budget
 # REJECT is the NORMAL 4th V2 decision (3 capability + REJECT): the selector
 # answered the frozen REJECT label, so the turn routes to the system's REAL
@@ -142,14 +139,13 @@ REASON_FUNNEL_ALLOWLIST_REJECT = "FUNNEL_ALLOWLIST_REJECT"
 # a live turn.
 REASON_CAP_ROUTER_INELIGIBLE = "CAP_ROUTER_INELIGIBLE"     # retired: no K<3 gate
 # Phase 4 argument-acquisition lane — the Argument Path Router's
-# downward exits on the new lane (backend=stub|cap_router). Kept DISTINCT from
-# the Binder's BIND_* codes: the node that produced these is the ARP, not the Binder.
+# downward exits. Kept DISTINCT from the Binder's BIND_* codes: the node that
+# produced these is the ARP, not the Binder.
 REASON_ACQUISITION_UNDECLARED = "ACQUISITION_UNDECLARED"   # §G: no declaration opt-in -> Agent
 REASON_ACQUISITION_MISSING = "ACQUISITION_MISSING"         # §D: no legal value for a required slot
-# Phase 4 Step 2 transitional limit: a MODEL acquisition need (QUERY_TO_EXTRACTOR
-# / QUERY_PLUS_5TURNS_TO_EXTRACTOR / MIXED) requires an extractor, which the
-# backend=off lane does not wire, so the turn exits to the Agent. Kept for the
-# lane where no extractor is injected (the production lane provides one).
+# A MODEL acquisition need (QUERY_TO_EXTRACTOR / QUERY_PLUS_5TURNS_TO_EXTRACTOR
+# / MIXED) with NO extractor injected — or an extractor that cannot serve — exits
+# to the Agent. Production wires the extractor; tests may leave it out.
 REASON_ACQUISITION_MODEL_PENDING = "ACQUISITION_MODEL_PENDING"
 REASON_REGISTRY_UNAVAILABLE = "REGISTRY_UNAVAILABLE"
 REASON_VERSION_MISMATCH = "REGISTRY_VERSION_MISMATCH"
@@ -187,8 +183,8 @@ class Candidate:
     score: float
     matched_example: str = ""
     # which stage produced this candidate ("recall" | "matcher_ambiguous"); the
-    # ToolIntentModel sees the union of Recall hits and Matcher-AMBIGUOUS escalations (8.1)
-    # and must know which ones carry a calibrated cosine score.
+    # selector sees the union of Recall hits and Matcher-AMBIGUOUS escalations
+    # (8.1) and must know which ones carry a calibrated cosine score.
     origin: str = "recall"
     # per-hit provenance (live-table ruling): EVERY recall hit ≥
     # threshold is kept — no MAX/AVG, no per-capability dedup — so a hit
@@ -204,30 +200,6 @@ class RecallResult:
     """Top-k evidence only — recall proposes, it never disposes (design §3)."""
 
     candidates: tuple[Candidate, ...] = ()
-
-
-# ── Node 3: ToolIntentModel (select_and_extract + extract, ONE call; P2 producer) ───────────────
-
-TOOL_INTENT_CONFIDENT = "CONFIDENT"
-TOOL_INTENT_UNCERTAIN = "UNCERTAIN"
-TOOL_INTENT_REJECT = "REJECT"
-
-
-@dataclass(frozen=True)
-class ToolIntentVerdict:
-    """ToolIntentModel's single-call output: WHICH capability and the argument draft.
-    ``arguments`` is the raw extraction from the same reply — the Binder only
-    normalizes/validates it; a backend without extraction power (stub) leaves it
-    None and the turn exits BIND_MISSING."""
-
-    decision: str = TOOL_INTENT_UNCERTAIN
-    capability_id: str | None = None
-    rationale: str = field(default="", repr=False)
-    arguments: dict | None = None
-    # TELEMETRY ONLY (pure additive, Phase E): the raw confidence reported by
-    # the model, kept even when the floor turned it into UNCERTAIN, so Shadow
-    # evaluation can sweep floors offline. Routing never reads this field.
-    confidence: float | None = None
 
 
 # ── Binder (wired in P0 over the existing actions.bind_arguments) ────────────────

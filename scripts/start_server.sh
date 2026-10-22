@@ -176,7 +176,6 @@ start_backend() {
   # shared with the worker, so the default lives HERE, not in core config.
   # The worker service (compose) never sets it and keeps full edit_file.
   AGENT_HIDDEN_TOOLS="${AGENT_HIDDEN_TOOLS-edit_file}" \
-    CHAT_CAP_ROUTER_BACKEND="${CHAT_CAP_ROUTER_BACKEND-cap_router}" \
     CHAT_CAP_ROUTER_URL="${CHAT_CAP_ROUTER_URL-$CAP_ROUTER_URL}" \
     "$PYTHON_BIN" -m uvicorn apps.api.main:app --host 0.0.0.0 --port 8300 >>"$UVICORN_LOG" 2>&1 &
   echo $! > "$PID_FILE"

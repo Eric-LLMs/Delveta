@@ -1,25 +1,17 @@
-"""Phase 3 — cap_router stub backend + backend factory.
+"""cap_router test double — the deterministic StubSelector contract.
 
-Pins the deterministic selector contract only: ONE capability or NONE, with the
-leader-vs-runner-up margin discipline the legacy ToolIntentModel stub proved.
-The stub authors NOTHING else — no arguments field exists on the output on
-purpose (Phase 3 does not extract arguments).
+Pins the test-double contract only: ONE capability or NONE, with the
+leader-vs-runner-up margin discipline. The stub authors NOTHING else — no
+arguments field exists on the output on purpose. It is never a production
+backend; production resolves the deployed cap_router service only.
 """
 from __future__ import annotations
 
-import pytest
 from core.application.chat.intent_funnel.cap_router import (
-    BACKEND_CAP_ROUTER,
-    BACKEND_OFF,
-    BACKEND_STUB,
     ROUTE_NONE,
     ROUTE_SELECTED,
 )
-from core.application.chat.intent_funnel.cap_router.backends import (
-    CapabilitySelector,
-    selector_for,
-)
-from core.application.chat.intent_funnel.cap_router.backends.service import CapRouterSelector
+from core.application.chat.intent_funnel.cap_router.backends import CapabilitySelector
 from core.application.chat.intent_funnel.cap_router.backends.stub import StubSelector
 from core.application.chat.intent_funnel.contract import Candidate
 
@@ -28,22 +20,11 @@ def _c(cid, score, origin="recall", **kw):
     return Candidate(cid, score, origin=origin, **kw)
 
 
-# ── the factory resolves only the shipped backend ────────────────────────────────
+# ── the double honors the ONE selector protocol ──────────────────────────────────
 
 
-def test_factory_returns_stub_and_cap_router_else_none():
-    s = selector_for(BACKEND_STUB)
-    assert isinstance(s, StubSelector)
-    assert isinstance(s, CapabilitySelector)  # honors the protocol
-    # "cap_router" resolves UNCONDITIONALLY (endpoint resolution and availability
-    # are separate concerns, ruling): a missing endpoint surfaces as
-    # CapabilityRouterUnavailable from select(), NOT as a None selector here.
-    cr = selector_for(BACKEND_CAP_ROUTER)
-    assert isinstance(cr, CapRouterSelector)
-    assert isinstance(cr, CapabilitySelector)  # honors the protocol
-    # off / unknown -> None (the caller maps Agent)
-    assert selector_for(BACKEND_OFF) is None
-    assert selector_for("wat") is None
+def test_stub_honors_the_selector_protocol():
+    assert isinstance(StubSelector(), CapabilitySelector)
 
 
 # ── the selection contract: ONE capability or NONE ───────────────────────────────

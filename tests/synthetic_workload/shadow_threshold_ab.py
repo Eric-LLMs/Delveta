@@ -7,9 +7,9 @@ Method (, "full replay" ruling + 0.58 anchor):
     the LOCKED dataset v1 (never modified);
   * for EVERY (turn, threshold t) the downstream is REPLAYED THROUGH THE
     PRODUCTION ENTRY ``funnel.cascade_shadow`` (Registry -> Matcher -> Recall
-    raw -> floor t -> ToolIntentModel -> Binder -> STOP). No reuse: even when
-    the candidate set equals the baseline's, the real model is called again
-    (this also exposes model non-determinism honestly). Per the
+    raw -> floor t -> cap_router -> Binder -> STOP). No reuse: even when
+    the candidate set equals the baseline's, the real selector is called again
+    (this also exposes selector non-determinism honestly). Per the
     ruling an EMPTY model-facing candidate set short-circuits to NO_CANDIDATE
     BEFORE the hop — rows whose set is empty at threshold t cost zero calls;
   * thresholds sweep INDEPENDENTLY, one metric table per t (the 0.58 column is
@@ -86,7 +86,8 @@ async def replay_one(turn: dict, t: float, deps, funnel_mod,
         _ctx_for(turn), deps=deps,
         **dict(R.SHADOW_RECALL, model_candidate_floor=t))
     cap = res.get("capture") or {}
-    ti = cap.get("tool_intent") or {}
+    ti = cap.get("cap_router") or {}
+    acq = cap.get("acquisition") or {}
     actual = R.classify(res)
     recall_raw = cap.get("recall_raw") or []
     exempt = {c["capability_id"]: c["score"] for c in cap.get("candidates") or []
@@ -102,13 +103,14 @@ async def replay_one(turn: dict, t: float, deps, funnel_mod,
             "expected": turn["expected"], "intent_category": turn["intent_category"],
             "scenario_category": turn["scenario_category"],
             "difficulty": turn["difficulty"], "viewer_relation": turn["viewer_relation"],
-            "threshold": t, "model_set": set_t, "model_called": "tool_intent" in cap,
+            "threshold": t, "model_set": set_t, "model_called": "cap_router" in cap,
             "matcher": res["matcher"],
             "scores": sorted([{"capability_id": c, "score": rawmap.get(c)}
                               for c in set_t], key=lambda x: -(x["score"] or 0)),
             "raw_scores_all": {c: round(s, 6) for c, s in rawmap.items()},
             "decision": ti.get("decision"), "decision_cap": ti.get("capability_id"),
-            "confidence": ti.get("confidence"), "arguments": ti.get("arguments"),
+            "confidence": ti.get("confidence"),
+            "arguments": acq.get("model_values"),
             "binder": cap.get("binder"), "fallback": res["fallback_reason"],
             "deepest_stage": res["deepest_stage"], "total_ms": res["total_ms"],
             "actual": actual}
@@ -361,7 +363,7 @@ def summarize(rows: list[dict]) -> dict:
             **_group_metrics(rs),
             "decisions": dict(Counter(r["decision"] or "-" for r in rs)),
             "fallbacks": dict(Counter(r["fallback"] for r in rs
-                                      if r["decision"] != "CONFIDENT")),
+                                      if r["decision"] != "SELECTED")),
             "by_intent_category": _by_category(rs, "intent_category"),
             "by_scenario_category": _by_category(rs, "scenario_category"),
             "categories_collapse_HN": _by_category(rs, "intent_category", True),
@@ -376,8 +378,8 @@ def summarize(rows: list[dict]) -> dict:
     causes["legend"] = {
         "A": "Recall threshold excluded the correct cap (score >=0.55 but < t)",
         "B": "near-score rival candidate contaminated the model's choice",
-        "C": "ToolIntentModel judged wrongly with the right card present "
-             "(REJECT/wrong pick/pure-QA certified)",
+        "C": "cap_router judged wrongly with the right card present "
+             "(REJECT/NONE/wrong pick/pure-QA certified)",
         "D": "Recall/registry coverage: correct cap never scored well enough",
         "E": "hard-negative boundary: the model certified an intent-adjacent query",
         "F": "other"}
@@ -442,9 +444,9 @@ async def _main() -> int:
         # any non-zero value means a row abstained BEFORE the model (a fault).
         "empty_short_circuits": sum(1 for r in rows if not r["model_called"]),
         "timeout_guards": {
-            "production_tool_intent_timeout_seconds": 4.0,
+            "production_extractor_timeout_seconds": 4.0,
             "production_funnel_timeout_seconds": 5.0,
-            "benchmark_tool_intent_timeout_seconds":
+            "benchmark_extractor_timeout_seconds":
                 settings.chat_tool_intent_timeout_seconds,
             "benchmark_funnel_timeout_seconds":
                 settings.chat_funnel_timeout_seconds,

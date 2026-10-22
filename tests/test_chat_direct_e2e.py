@@ -153,3 +153,11 @@ async def test_capability_turn_stays_on_agent_even_with_lane_open(monkeypatch):
     app, agent = _harness(monkeypatch, port)
     await _stream(app, "summarize my document please")
     assert agent.agent_stream_calls == 1 and port.calls == 0
+
+
+# L0 retirement: this suite drove the removed L0 producer for the experimental
+# DIRECT lane. Capability selection now belongs to the funnel, covered by
+# tests/test_funnel_e2e.py; the case artifacts stay for reference.
+pytestmark = pytest.mark.skip(
+    reason="retired with L0: no DIRECT-lane requirement producer",
+)

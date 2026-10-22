@@ -8,8 +8,9 @@ implements a node and nodes never read scattered rollout switches themselves.
 
 Single path (ruling): the funnel IS the product's formal routing
 lane — the old dark-launch rollout switches were deleted. What remains here
-is safety-only: missing deps fail open to the Agent, guardrails veto the
-turn, and unknown intent kinds route nothing.
+is the fail-open door (missing deps) and the per-kind gate: unknown intent
+kinds route nothing. There is no entry veto — every wired turn reaches the
+Matcher.
 """
 from __future__ import annotations
 
@@ -20,20 +21,15 @@ from .contract import (
     REASON_RECALL_TIMEOUT,
     REASON_RECALL_UNAVAILABLE,
     REASON_REGISTRY_UNAVAILABLE,
-    REASON_TOOL_INTENT_TIMEOUT,
 )
 
 
-def funnel_live(requirements, deps, ctx) -> bool:
-    """The funnel-wide door: it stays open on every chat turn except when the
-    cascade's dependencies are absent (fail-open to the Agent) or a common-layer
-    guardrail vetoes the turn (:mod:`guardrails`). There is no Funnel-vs-Agent
-    mode switch any more — abstention inside the cascade is what routes."""
-    if deps is None:
-        return False
-    from . import guardrails  # late import: keeps the module chain light
-
-    return guardrails.turn_veto(ctx.body.message or "", requirements, ctx) is None
+def funnel_live(deps) -> bool:
+    """The funnel-wide door: open whenever the cascade's dependencies are wired.
+    There is no Funnel-vs-Agent mode switch and no entry veto any more —
+    abstention inside the cascade is what routes, and the Matcher is the first
+    node that sees the turn. Missing deps fail open to the Agent."""
+    return deps is not None
 
 
 def kind_enabled(kind: str) -> bool:
@@ -49,8 +45,7 @@ def stage_reason(stage: str, *, timed_out: bool) -> str:
     if timed_out:
         return {
             "recall": REASON_RECALL_TIMEOUT,
-            "tool_intent": REASON_TOOL_INTENT_TIMEOUT,  # the ONE model hop owns the budget
-            "cap_router": REASON_CAP_ROUTER_TIMEOUT,     # Phase 3 selection node (stub|laya)
+            "cap_router": REASON_CAP_ROUTER_TIMEOUT,  # the ONE selection hop owns the budget
         }.get(stage, REASON_CASCADE_TIMEOUT)
     return {
         "registry": REASON_REGISTRY_UNAVAILABLE,

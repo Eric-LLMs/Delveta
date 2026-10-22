@@ -26,7 +26,7 @@ Helpers exported:
   * ``AutoApprovalBroker`` — resolves the ASK future allow/deny/timeout.
   * ``build_kernel`` / ``build_app`` / ``sse``   — real-assembly fixtures.
   * ``RoutingCtx`` / ``FakeBody`` + ``plan_for`` — the pure Layer-A routing probe
-    (resolve_requirements + build_execution_plan with no I/O at all).
+    (resolve_source_facts + build_execution_plan with no I/O at all).
 """
 from __future__ import annotations
 
@@ -53,7 +53,7 @@ from api.tools import create_folder_tool as create_folder_mod
 from api.tools import web_search_tool as web_search_mod
 from core.application.chat.execution_plan import PolicyContext as PPolicyContext
 from core.application.chat.execution_plan import build_execution_plan
-from core.application.chat.understanding import resolve_requirements
+from core.application.chat.understanding import resolve_source_facts
 from core.application.drive_service import DriveError
 from core.config import settings
 from core.infrastructure.db import UserRoleModel
@@ -463,7 +463,7 @@ class FakeBody:
 
 @dataclass
 class RoutingCtx:
-    """The handful of ChatTurnContext fields ``resolve_requirements`` reads."""
+    """Compatibility context shape for the pure routing probe."""
 
     body: FakeBody
     viewer_assembly: dict | None = None
@@ -474,11 +474,12 @@ class RoutingCtx:
 
 def plan_for(ctx: RoutingCtx, message: str, *, fast=True, direct=False, viewer=False,
              retrieval=False, action=True, composite=False):
-    """L0 (pure) → policy (pure): the resolved requirement set and execution plan.
+    """Source facts (pure) → policy (pure): the requirement set and execution plan.
 
-    ``fast``/``action`` are inert kwargs kept for call-site compatibility — the
-    master + ACTION gates were deleted by the single-path ruling."""
-    reqs = resolve_requirements(ctx, message)
+    With L0 retired every uncertified turn keeps the default ABSTAIN confidence, so
+    this probe now resolves AGENT for all non-funnel inputs. ``fast``/``action`` are
+    inert kwargs kept for call-site compatibility."""
+    reqs = resolve_source_facts(message)
     policy = PPolicyContext(
         direct_fast_path_enabled=direct,
         viewer_fast_path_enabled=viewer,

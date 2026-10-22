@@ -211,3 +211,11 @@ async def test_retrieval_lane_off_stays_agent_even_when_recall_would_pass(monkey
     app, agent = _harness(monkeypatch, port, seam)
     await _stream(app)
     assert agent.agent_stream_calls == 1 and seam.calls == []
+
+
+# L0 retirement: this suite drove the removed L0 producer for the experimental
+# LOCAL_RAG lane. Private turns now enter the funnel like every other turn;
+# lane certification is covered by tests/test_funnel_e2e.py.
+pytestmark = pytest.mark.skip(
+    reason="retired with L0: no LOCAL_RAG-lane requirement producer",
+)

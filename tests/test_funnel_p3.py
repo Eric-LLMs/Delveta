@@ -6,18 +6,17 @@ Pinning the P3 ruling ("扩表不改接口,逐开关灰度"):
   payload and the content fingerprint (changing a kind changes the fingerprint);
 * pre-P3 payloads and rows default to ACTION — a historical snapshot can never
   restore a widened kind that the gates do not honor;
-* an enabled-looking verdict on a CLOSED kind exits with FUNNEL_KIND_DISABLED
-  and the Agent turn stays byte-identical (8.10);
-* the interface: nothing outside the Registry changed — the cascade, the binder
-  and the executor contract are P2 shapes, untouched.
+* a decided capability on a CLOSED kind exits with FUNNEL_KIND_DISABLED and the
+  Agent turn stays byte-identical (8.10);
+* the interface: nothing outside the Registry changed — the selection /
+  acquisition seams are the same ``ChatDeps`` contracts every lane uses.
 """
 from __future__ import annotations
 
 import logging
-import re
 import types
 
-from core.application.chat.intent_funnel import funnel
+from core.application.chat.intent_funnel import cap_router, funnel
 from core.application.chat.intent_funnel.contract import REASON_KIND_DISABLED
 from core.application.chat.intent_funnel.registry import content_fingerprint
 from core.application.chat.intent_funnel.registry import snapshot as pub
@@ -123,39 +122,40 @@ class _Embedder:
         return [[1.0, 0.0] for _ in texts]
 
 
-def _open(monkeypatch, *, mode="on", private=False, backend="online"):
+def _open(monkeypatch):
     from core.config import settings
 
     # Single-path ruling: the rollout gates + matcher shadow mode were
     # deleted; ACTION is the shipped kind, every other kind fail-closes unconditionally.
-    monkeypatch.setattr(settings, "chat_tool_intent_backend", backend)
-    monkeypatch.setattr(settings, "chat_tool_intent_local_url", "")
-    monkeypatch.setattr(settings, "chat_tool_intent_min_confidence", 0.75)
-    monkeypatch.setattr(settings, "chat_tool_intent_online_model", "")
     monkeypatch.setattr(settings, "chat_tool_intent_timeout_seconds", 5.0)
     monkeypatch.setattr(settings, "chat_funnel_timeout_seconds", 5.0)
 
 
-class _ScriptedToolIntent:
-    """Deterministic ToolIntentModel double for the kind-gate lanes (the stub has no
-    extraction power by design, so certification tests ride the online seam):
-    one card -> select it and quote-strip the name; a split card set -> NONE."""
+class _Selector:
+    """Deterministic selector double (no model call): picks the top candidate."""
 
     def __init__(self):
         self.calls = 0
 
-    async def complete_json(self, prompt, **kw):
+    async def select(self, query, candidates, *, entries_by_id, facts=None):
         self.calls += 1
-        caps = re.findall(r"(?m)^### (\S+)$", prompt)
-        if len(caps) != 1:
-            return {"capability_id": "NONE", "confidence": 1.0, "arguments": {}}
-        m = re.search(r"<user_sentence>(.*?)</user_sentence>", prompt, re.DOTALL)
-        quoted = re.search(r'"([^"]+)"', m.group(1) if m else "")
-        args = {"name": quoted.group(1)} if quoted else {}
-        return {"capability_id": caps[0], "confidence": 0.95, "arguments": args}
+        return cap_router.CapabilityRoute(
+            cap_router.ROUTE_SELECTED, candidates[0].capability_id)
 
 
-def _wire(monkeypatch, *, view, llm=None):
+class _Extractor:
+    """Deterministic argument-extractor double: quote-strips the name."""
+
+    def __init__(self):
+        self.calls = 0
+
+    async def __call__(self, *, query, entry, model_slots, bundle, prompt=None):
+        self.calls += 1
+        quoted = query.split('"')
+        return ({"name": quoted[1]} if len(quoted) > 1 else {}), bundle.source
+
+
+def _wire(monkeypatch, *, view):
     async def fake_active(**kw):
         return view
 
@@ -166,13 +166,13 @@ def _wire(monkeypatch, *, view, llm=None):
         "core.application.chat.intent_funnel.registry.active_view", fake_active)
     monkeypatch.setattr(
         "core.application.chat.intent_funnel.recall.load_index", fake_load)
-    return types.SimpleNamespace(session_factory=None,
-                                 embedder=lambda: _Embedder(),
-                                 llm=llm if llm is not None else _ScriptedToolIntent())
+    return types.SimpleNamespace(
+        session_factory=None, embedder=lambda: _Embedder(), llm=object(),
+        cap_router_selector=_Selector(), argument_extractor=_Extractor())
 
 
 async def test_closed_private_kind_exits_with_reason_byte_identical(monkeypatch, caplog):
-    _open(monkeypatch, private=False)
+    _open(monkeypatch)
     view = _view([_entry("cap-p", kind=KIND_PRIVATE, corpus=(MSG,))])
     deps = _wire(monkeypatch, view=view)
     req = _req()
@@ -186,7 +186,7 @@ async def test_closed_private_kind_exits_with_reason_byte_identical(monkeypatch,
 async def test_private_kind_fail_closed_without_any_switch(monkeypatch, caplog):
     """Single-path ruling: the private rollout switch was deleted —
     non-ACTION kinds fail closed unconditionally until the lane re-ships."""
-    _open(monkeypatch, private=True)
+    _open(monkeypatch)
     view = _view([_entry("cap-p", kind=KIND_PRIVATE, corpus=(MSG,))])
     deps = _wire(monkeypatch, view=view)
     req = _req()
@@ -198,7 +198,7 @@ async def test_private_kind_fail_closed_without_any_switch(monkeypatch, caplog):
 
 
 async def test_action_kind_needs_no_extra_switch(monkeypatch):
-    _open(monkeypatch, private=False)
+    _open(monkeypatch)
     view = _view([_entry("cap-a", kind=KIND_ACTION, corpus=(MSG,))])
     deps = _wire(monkeypatch, view=view)
     out = await funnel.route(_ctx(MSG), deps=deps, requirements=_req())

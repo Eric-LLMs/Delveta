@@ -1,12 +1,13 @@
 """Guard tests for the Phase-E Cascade Shadow seam (funnel + runner).
 
 All fakes, no services: a scripted registry view, a 2-D index whose cosines
-ARE the chosen scores, and an online-backend LLM double. The tests pin the
-invariants that make a shadow run trustworthy:
+ARE the chosen scores, the deterministic StubSelector as the selection double,
+and an argument-extractor double for the only model hop left on the chain. The
+tests pin the invariants that make a shadow run trustworthy:
 
   * production is byte-identical when the seam is unused (defaults None);
   * the raw lane captures every scored candidate (min_score=0), while the
-    model still sees a floor-screened set;
+    selector still sees a floor-screened candidate set;
   * buckets are recomputed OFFLINE from the capture, recall never re-runs;
   * cascade_shadow never persists an event row, never dispatches, and pins
     execution_mode=shadow for the duration (restored after);
@@ -28,6 +29,14 @@ from core.application.chat.intent_funnel import funnel
 from core.application.chat.intent_funnel import observability as obs_mod
 from core.application.chat.intent_funnel import recall as recall_mod
 from core.application.chat.intent_funnel import registry as reg_mod
+from core.application.chat.intent_funnel.cap_router import (
+    ROUTE_REJECT,
+    ROUTE_SELECTED,
+    CapabilityRoute,
+)
+from core.application.chat.intent_funnel.cap_router.backends.stub import (
+    StubSelector,
+)
 from core.application.chat.intent_funnel.registry import entry as entry_mod
 from core.config import settings
 from core.infrastructure.request_context import (
@@ -85,26 +94,59 @@ class _Embedder:
         return [[1.0, 0.0] for _ in texts]
 
 
-class _LLM:
-    """Online ToolIntentModel double: scripted reply per query substring, and
-    it REMEMBERS the execution mode observed at call time (pin proof)."""
+class _Selector:
+    """Recording wrapper around the test-double selector: records the card set
+    it was handed, then answers with the stub's deterministic pick."""
 
-    def __init__(self, replies: dict[str, dict] | None = None):
-        self.replies = replies or {}
-        self.calls = []
+    def __init__(self, inner=None):
+        self.inner = inner or StubSelector()
+        self.seen: list[list[str]] = []
 
-    async def complete_json(self, prompt, **kw):
-        self.calls.append({"prompt": prompt, "kw": kw,
-                           "mode": get_request_execution_mode()})
-        for frag, reply in self.replies.items():
-            if frag in prompt:
-                return dict(reply)
-        return {"capability_id": "NONE"}
+    async def select(self, query, candidates, *, entries_by_id, facts=None):
+        self.seen.append([c.capability_id for c in candidates])
+        return await self.inner.select(query, candidates,
+                                       entries_by_id=entries_by_id, facts=facts)
 
 
-def _deps(llm):
+class _FixedSelector:
+    """Always answers the same pick — the scripted equivalent of a canned
+    selector for whole-workload replay."""
+
+    def __init__(self, capability_id: str):
+        self.capability_id = capability_id
+
+    async def select(self, query, candidates, *, entries_by_id, facts=None):
+        return CapabilityRoute(ROUTE_SELECTED, self.capability_id)
+
+
+class _RejectSelector:
+    async def select(self, query, candidates, *, entries_by_id, facts=None):
+        return CapabilityRoute(ROUTE_REJECT)
+
+
+class _Extractor:
+    """Argument-extractor double: the ONLY model hop left on the chain (the
+    selector is deterministic in tests). Scripted ``values`` win; otherwise
+    every requested MODEL slot is filled with a placeholder so the Binder can
+    certify. It REMEMBERS the execution mode observed at call time (pin proof)."""
+
+    def __init__(self, values: dict | None = None):
+        self.values = values
+        self.calls: list[str] = []
+        self.modes: list[str] = []
+
+    async def __call__(self, *, query, entry, model_slots, bundle, prompt=None):
+        self.calls.append(entry.capability_id)
+        self.modes.append(get_request_execution_mode())
+        if self.values is not None:
+            return dict(self.values), bundle.source
+        return {slot: "x" for slot in model_slots}, bundle.source
+
+
+def _deps(selector=None, extractor=None):
     return SimpleNamespace(session_factory=None, embedder=lambda: _Embedder(),
-                           llm=llm)
+                           cap_router_selector=selector or _Selector(),
+                           argument_extractor=extractor or _Extractor())
 
 
 @pytest.fixture
@@ -120,7 +162,6 @@ def wired(monkeypatch, request):
 
     monkeypatch.setattr(reg_mod, "active_view", fake_active_view)
     monkeypatch.setattr(recall_mod, "load_index", fake_load_index)
-    monkeypatch.setattr("core.config.settings.chat_tool_intent_backend", "online")
     # fail LOUD if the shadow path ever reaches the production persist hook
     async def no_persist(*a, **k):
         raise AssertionError("shadow must never persist an event row")
@@ -140,40 +181,43 @@ async def test_default_call_is_production_recall(wired):
     gate = settings.chat_funnel_min_score
     riding = {cap for cap, score in _SCORES.items() if score >= gate}
     assert "cap-add-term" in riding            # 0.90 clears any sane production gate
-    llm = _LLM({"cap": {"capability_id": "cap-add-term", "confidence": 0.9,
-                        "arguments": {"term": "keystone", "domain": "工程"}}})
+    selector = _Selector()
+    extractor = _Extractor({"term": "keystone", "domain": "工程"})
     ctx = R.ctx_for("帮我把 keystone 收录到工程词汇库", None, session_bound=False)
     trace = funnel._new_trace()
-    out = await funnel._run_cascade(ctx, _deps(llm), _req(), trace)
+    out = await funnel._run_cascade(ctx, _deps(selector, extractor), _req(), trace)
     assert out is not None and out.requested_action["capability_id"] == "cap-add-term"
     # the gate ran INSIDE recall: exactly the cosines >= the config gate were kept ...
     assert trace["recall_count"] == len(riding)
-    prompt = llm.calls[0]["prompt"]
-    for cap in _SCORES:                        # ... and each card reached the model iff it rode
-        assert (f"### {cap}" in prompt) == (cap in riding)
+    # ... and each card reached the selector iff it cleared the gate.
+    assert set(selector.seen[0]) == riding
+    assert extractor.calls == ["cap-add-term"]
 
 
 @pytest.mark.asyncio
 async def test_shadow_lane_keeps_raw_scores_and_floors_the_model_set(wired):
-    llm = _LLM({"keystone": {"capability_id": "cap-add-term", "confidence": 0.9,
-                             "arguments": {"term": "keystone", "domain": "工程"}}})
+    selector = _Selector()
+    extractor = _Extractor({"term": "keystone", "domain": "工程"})
     ctx = R.ctx_for("把 keystone 加入工程词汇库", None, session_bound=False)
-    result = await funnel.cascade_shadow(ctx, deps=_deps(llm), **R.SHADOW_RECALL)
+    result = await funnel.cascade_shadow(ctx, deps=_deps(selector, extractor),
+                                         **R.SHADOW_RECALL)
     cap = result["capture"]
     # raw lane: EVERY candidate recall scored survived (constraint 3)
     raw = {c["capability_id"]: c["score"] for c in cap["recall_raw"]}
     assert raw == {"cap-add-term": 0.9, "cap-create-folder": 0.6,
                    "cap-pdf-extract-text": 0.3}
-    # model-facing set at floor 0.58: the 0.30 card is gone, 0.60 rides
-    assert {c["capability_id"] for c in cap["candidates"]} >= {"cap-add-term",
-                                                               "cap-create-folder"}
-    assert cap["tool_intent"]["decision"] == "CONFIDENT"
-    assert cap["tool_intent"]["confidence"] == pytest.approx(0.9)
+    # selector-facing set at floor 0.58: the 0.30 card is gone, 0.60 rides
+    assert set(selector.seen[0]) >= {"cap-add-term", "cap-create-folder"}
+    assert "cap-pdf-extract-text" not in selector.seen[0]
+    # the ONE selection verdict, then the extractor fills the MODEL slots
+    assert cap["cap_router"]["decision"] == "SELECTED"
+    assert cap["cap_router"]["capability_id"] == "cap-add-term"
+    assert cap["cap_router"]["confidence"] == pytest.approx(0.9)
     assert cap["binder"] == "COMPLETE"
     assert result["would_execute"]["capability_id"] == "cap-add-term"
-    # the pin: the model call happened inside execution_mode=shadow; the token
-    # reset restored the ambient default afterwards
-    assert llm.calls[0]["mode"] == "shadow"
+    # the pin: the extractor call happened inside execution_mode=shadow; the
+    # token reset restored the ambient default afterwards
+    assert extractor.modes == ["shadow"]
     assert get_request_execution_mode() == "production"
     assert result["execution_mode"] == "shadow"
 
@@ -206,12 +250,12 @@ async def test_aggregation_collapses_hits_but_recall_raw_stays_raw(wired, monkey
         return dup_index
 
     monkeypatch.setattr(recall_mod, "load_index", fake_load)
-    llm = _LLM({"cap": {"capability_id": "cap-add-term", "confidence": 0.9,
-                        "arguments": {"term": "keystone", "domain": "工程"}}})
+    selector = _Selector()
+    extractor = _Extractor({"term": "keystone", "domain": "工程"})
     ctx = R.ctx_for("把 keystone 加入工程词汇库", None, session_bound=False)
     trace = funnel._new_trace()
     capture: dict = {}
-    out = await funnel._run_cascade(ctx, _deps(llm), _req(), trace,
+    out = await funnel._run_cascade(ctx, _deps(selector, extractor), _req(), trace,
                                     recall_min_score=0.5, capture=capture)
     assert out is not None and out.requested_action["capability_id"] == "cap-add-term"
     # raw capture: untouched by aggregation — BOTH cap-add-term hits ride
@@ -223,20 +267,22 @@ async def test_aggregation_collapses_hits_but_recall_raw_stays_raw(wired, monkey
     # model-facing set: capability-level — one cap-add-term card at the WIN
     add = [c for c in capture["candidates"] if c["capability_id"] == "cap-add-term"]
     assert len(add) == 1 and add[0]["score"] == 0.95 and add[0]["matched_example"] == "ex-hi"
-    prompt = llm.calls[0]["prompt"]
-    assert prompt.count("### cap-add-term") == 1     # 0.90 duplicate collapsed
-    assert "ex-lo" not in prompt                    # loser provenance is gone
+    # the selector saw exactly ONE cap-add-term card (0.90 duplicate collapsed)
+    assert selector.seen[0].count("cap-add-term") == 1
+    assert set(selector.seen[0]) == {"cap-add-term", "cap-create-folder"}
 
 
 @pytest.mark.asyncio
 async def test_shadow_abstains_never_dispatches_never_persists(wired):
     """A REJECT verdict is an Agent exit with metadata only — no would_execute."""
-    llm = _LLM({"今天天气": {"capability_id": "NONE"}})
+    selector, extractor = _RejectSelector(), _Extractor()
     ctx = R.ctx_for("今天天气怎么样", None, session_bound=False)
-    result = await funnel.cascade_shadow(ctx, deps=_deps(llm), **R.SHADOW_RECALL)
+    result = await funnel.cascade_shadow(ctx, deps=_deps(selector, extractor),
+                                         **R.SHADOW_RECALL)
     assert result["would_execute"] is None
-    assert result["fallback_reason"] == "TOOL_INTENT_REJECT"
-    assert result["capture"]["tool_intent"]["decision"] == "REJECT"
+    assert result["fallback_reason"] == "CAP_ROUTER_REJECT"
+    assert result["capture"]["cap_router"]["decision"] == "REJECT"
+    assert extractor.calls == []          # a REJECT never enters argument acquisition
 
 
 # ── offline buckets (recomputed from capture, no recall re-run) ───────────────────
@@ -247,8 +293,11 @@ def _capture_for(pick: str | None):
             "candidates": [{"capability_id": c, "score": s, "origin": "recall",
                             "matched_example": ""} for c, s in _SCORES.items()
                            if s >= 0.58],
-            "tool_intent": ({"decision": "CONFIDENT", "capability_id": pick}
-                            if pick else {"decision": "REJECT", "capability_id": None})}
+            "cap_router": ({"decision": "SELECTED", "capability_id": pick,
+                            "confidence": 0.9}
+                           if pick else {"decision": "REJECT",
+                                         "capability_id": None,
+                                         "confidence": None})}
 
 
 def test_bucket_sets_and_attribution():
@@ -272,7 +321,8 @@ def test_model_set_respects_top_k_cap():
     cap = {"recall_raw": [{"capability_id": f"c{i}", "score": 0.9 - i * 0.05,
                            "origin": "recall", "matched_example": ""}
                           for i in range(6)],
-           "candidates": [], "tool_intent": {"decision": "REJECT", "capability_id": None}}
+           "candidates": [],
+           "cap_router": {"decision": "REJECT", "capability_id": None}}
     assert len(R.model_set_at(cap, 0.58, 3)) == 3      # floor-survivors capped at k
 
 
@@ -327,9 +377,10 @@ async def test_replay_whole_sessions_and_fold_matches_dataset(wired):
     214-record natural workload runs through the production node body, L1
     singletons first and sessions whole (never flattened), and the session
     virtual state equals exactly the cumulative expected deltas."""
-    llm = _LLM({"": {"capability_id": "cap-create-folder", "confidence": 0.9,
-                     "arguments": {"name": "anything"}}})
-    turns = await R.replay_records(version="v1-pilot", deps=_deps(llm))
+    selector = _FixedSelector("cap-create-folder")
+    extractor = _Extractor({"name": "anything"})
+    turns = await R.replay_records(version="v1-pilot",
+                                   deps=_deps(selector, extractor))
     cases, sessions, _ = R.load_dataset("v1-pilot")
     assert len(turns) == len(cases) + sum(len(s["turns"]) for s in sessions)
     assert all(t["record"] == "query_case" for t in turns[:len(cases)])
@@ -345,7 +396,7 @@ async def test_replay_whole_sessions_and_fold_matches_dataset(wired):
             state = R.apply_delta(state, t["expected"].get("state_delta"))
         assert row["virtual_state_final"] == state             # ground-truth fold only
         # canned funnel agrees where the label is TOOL-ish; the predicate is
-        # recomputed, not assumed (an all-CONFIDENT canned pick must NOT agree
+        # recomputed, not assumed (an always-SELECTED canned pick must NOT agree
         # with the deliberate AGENT labels).
         assert row["trajectory_match"] == all(
             t["agrees"] for t in turns

@@ -2,13 +2,12 @@
 
 The live-table ruling deleted the legacy QIR lane; the
 single-path ruling deleted the dark-launch rollout gates: these tests pin the
-fail-open shapes (absent deps -> route returns the SAME object), the gate rules
-that keep the funnel from overriding L0, and the node contracts the single-hop
-chain runs on.
+fail-open shapes (absent deps -> route returns the SAME object), the deps-only
+gate, and the node contracts the single-hop chain runs on. Every wired turn
+reaches the Matcher; no entry rule may re-route it first.
 """
 import types
 
-import pytest
 from core.application.chat import intent_funnel
 from core.application.chat.intent_funnel import contract
 from core.application.chat.intent_funnel.funnel import funnel_live, route
@@ -28,7 +27,7 @@ async def test_route_without_deps_returns_same_requirements_object(monkeypatch):
 
 
 async def test_route_delegates_when_gate_live(monkeypatch):
-    monkeypatch.setattr(intent_funnel.funnel, "funnel_live", lambda r, d, c: True)
+    monkeypatch.setattr(intent_funnel.funnel, "funnel_live", lambda d: True)
 
     sentinel = TurnRequirements(needs_action=Signal.HIGH)
 
@@ -36,66 +35,49 @@ async def test_route_delegates_when_gate_live(monkeypatch):
         return sentinel
 
     monkeypatch.setattr(intent_funnel.funnel, "_cascade", fake_cascade)
-    out = await route(object(), deps=object(), requirements=TurnRequirements())
+    ctx = types.SimpleNamespace(body=types.SimpleNamespace(message="create a folder x"))
+    out = await route(ctx, deps=object(), requirements=TurnRequirements())
     assert out is sentinel
 
 
 async def test_route_skips_cascade_when_fail_open(monkeypatch):
-    monkeypatch.setattr(intent_funnel.funnel, "funnel_live", lambda r, d, c: False)
+    monkeypatch.setattr(intent_funnel.funnel, "funnel_live", lambda d: False)
 
     async def boom_cascade(ctx, deps, requirements):  # must never run
         raise AssertionError("fail-open exit but cascade executed")
 
     monkeypatch.setattr(intent_funnel.funnel, "_cascade", boom_cascade)
     req = TurnRequirements()
-    assert await route(object(), deps=object(), requirements=req) is req
+    ctx = types.SimpleNamespace(body=types.SimpleNamespace(message="hi"))
+    assert await route(ctx, deps=object(), requirements=req) is req
 
 
-async def test_route_never_touches_an_l0_certified_turn(monkeypatch):
-    # Migration compat boundary: a turn L0 already certified exits before the
-    # gate is even consulted.
-    monkeypatch.setattr(intent_funnel.funnel, "funnel_live",
-                        lambda r, d, c: pytest.fail("gate consulted on L0 turn"))
+async def test_route_has_no_entry_veto(monkeypatch):
+    # L0 retirement: nothing in the requirements can short-circuit the cascade.
+    # The old L0-certified early return and the turn_veto gate are gone — the
+    # funnel_cascade always gets the turn when deps are wired.
+    seen = []
+
+    async def fake_cascade(ctx, deps, requirements):
+        seen.append(requirements)
+        return requirements
+
+    monkeypatch.setattr(intent_funnel.funnel, "_cascade", fake_cascade)
     req = TurnRequirements(requested_action={"tool": "t", "args": {}})
-    assert await route(object(), deps=object(), requirements=req) is req
+    ctx = types.SimpleNamespace(body=types.SimpleNamespace(message="create a folder x"))
+    assert await route(ctx, deps=object(), requirements=req) is req
+    assert seen == [req]
 
 
-# ── funnel_live(): the gate rules ────────────────────────────────────────────────
+# ── funnel_live(): the fail-open door ───────────────────────────────────────────
 
 
-def _live_ctx(message="create a folder"):
-    return types.SimpleNamespace(body=types.SimpleNamespace(message=message))
-
-
-def test_gate_is_live_by_default_dark_only_without_deps(monkeypatch):
-    # Single-path ruling: no rollout switch can close the gate any
-    # more — it is open on every turn; absent deps is the only switchless door.
-    assert funnel_live(TurnRequirements(), deps=object(), ctx=_live_ctx()) is True
-    assert funnel_live(TurnRequirements(), deps=None, ctx=_live_ctx()) is False
-
-
-def test_gate_defers_demanding_turns_to_guardrails(monkeypatch):
-    # E2E-matrix ruling: web demand no longer vetoes at entry (the
-    # certified web_search action must be able to run on the Funnel lane);
-    # memory demand still defers to the Agent.
-    webby = TurnRequirements(needs_web=Signal.HIGH)
-    assert funnel_live(webby, deps=object(), ctx=_live_ctx()) is True
-    memory = TurnRequirements(needs_memory=True)
-    assert funnel_live(memory, deps=object(), ctx=_live_ctx()) is False
-    research = TurnRequirements()
-    ctx = _live_ctx()
-    ctx.research_turn = True
-    assert funnel_live(research, deps=object(), ctx=ctx) is False
-    handoff = TurnRequirements()
-    ctx2 = _live_ctx()
-    ctx2.effective_handoff = "some-mode"
-    assert funnel_live(handoff, deps=object(), ctx=ctx2) is False
-
-
-def test_gate_refuses_non_pure_user_text(monkeypatch):
-    assert funnel_live(
-        TurnRequirements(), deps=object(), ctx=_live_ctx("[Attached: report.pdf] summarize"),
-    ) is False
+def test_gate_is_deps_only(monkeypatch):
+    # Single-path ruling: no rollout switch or entry veto can close the gate any
+    # more — it is open whenever deps are wired; absent deps is the only door,
+    # and it fails open to the Agent.
+    assert funnel_live(deps=object()) is True
+    assert funnel_live(deps=None) is False
 
 
 # ── contracts ────────────────────────────────────────────────────────────────────
@@ -123,20 +105,25 @@ def test_reason_code_constants_avoid_bare_ambiguous():
 def test_contracts_are_frozen():
     for cls in (
         contract.MatchResult, contract.Candidate, contract.RecallResult,
-        contract.ToolIntentVerdict, contract.BoundArguments, contract.TurnFacts,
+        contract.BoundArguments, contract.TurnFacts,
     ):
         assert cls.__dataclass_params__.frozen, cls.__name__
     # chain ruling: the Decision node is gone from the contract, and
     # with it the second-hop recheck entry point.
     assert not hasattr(contract, "DecisionResult")
-    from core.application.chat.intent_funnel import tool_intent
-    assert not hasattr(tool_intent, "recheck")
+    # single-path ruling: the legacy ToolIntentModel package, its verdict type
+    # and the selector backend switch are all deleted — one production lane.
+    from core.application.chat.intent_funnel import cap_router
+    from core.application.chat.intent_funnel import funnel as funnel_mod
+    from core.config import settings
+    assert not hasattr(contract, "ToolIntentVerdict")
+    assert not hasattr(funnel_mod, "tool_intent")
+    assert not hasattr(cap_router, "BACKENDS")
+    assert not hasattr(settings, "chat_cap_router_backend")
     # naming ruling: "Model A" was a placeholder and Judge/Decision
-    # were historical — the responsibility name (ToolIntentModel) is the ONLY
-    # vocabulary allowed in the contract and package namespaces.
+    # were historical.
     bad = ("judge", "model_a", "modela", "decision")
     assert not [n for n in dir(contract) if any(b in n.lower() for b in bad)]
-    assert not [n for n in dir(tool_intent) if any(b in n.lower() for b in bad)]
     # live-table ruling: the QIR adapter lane is deleted outright —
     # no IntentVerdict/AgentFallback survivors, the funnel certifies by
     # returning an ACTION TurnRequirements or the fail-open original.

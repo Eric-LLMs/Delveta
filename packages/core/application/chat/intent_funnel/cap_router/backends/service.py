@@ -24,8 +24,8 @@ Failure contract (ruling): a missing endpoint, a timeout, a transport
 error, a malformed/unexpected reply, a missing answer, a non-choice answer, or a
 choice outside {candidate ids} ∪ {REJECT} all raise
 :class:`~..base.CapabilityRouterUnavailable`. The caller maps that to the Agent —
-selection NEVER falls back to the extractor or the legacy ToolIntentModel, so the
-cap_router metrics can never be polluted by another model.
+selection NEVER falls back to a second model, so the cap_router metrics can
+never be polluted by another model.
 """
 from __future__ import annotations
 
@@ -44,12 +44,11 @@ QID = "capability"
 
 
 class CapRouterSelector:
-    """The :class:`..CapabilitySelector` for ``chat_cap_router_backend="cap_router"``.
+    """The production :class:`..CapabilitySelector` (the deployed cap_router service).
 
     Constructed unconditionally by the factory — the endpoint is NOT checked at
-    construction (resolution and availability are separate concerns, ruling
-    ). A missing endpoint surfaces as
-    :class:`CapabilityRouterUnavailable` from :meth:`select`.
+    construction (resolution and availability are separate concerns). A missing
+    endpoint surfaces as :class:`CapabilityRouterUnavailable` from :meth:`select`.
     """
 
     async def select(self, query: str, candidates, *, entries_by_id: dict,

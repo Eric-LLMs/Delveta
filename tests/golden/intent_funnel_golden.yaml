@@ -10,9 +10,10 @@
 #
 # expectations speak the 8.10 vocabulary: route + capability + funnel_stage,
 # or final agent + fallback_reason (+ matcher/tool_intent trace fragment).
-# Chain ruling 2026-09-24: the active lane is Matcher/Recall -> ONE ToolIntentModel
-# call -> Binder validate -> certified, so every ACTION row carries
-# stage: tool_intent (there is no matcher-direct stage any more).
+# Chain ruling: Matcher HIT -> Argument Acquisition -> Binder -> certified;
+# MISS/AMBIGUOUS -> Recall -> ONE cap_router selection -> Argument Acquisition
+# -> Binder -> certified. Every ACTION row carries stage: tool_intent (the
+# frozen handoff column name).
 # Action-Contract ruling 2026-09-25: the Matcher is EXACT-ONLY over the curated
 # intent corpus (regex is inert storage). Ruling 2026-09-26 supersedes the same
 # date's "empty set still reaches the model" note: with no Matcher card and no
@@ -26,8 +27,8 @@ cases:
   - id: det_match_exact_standard
     group: deterministic_match
     query: '新建文件夹"季度报告"'
-    # the standard corpus sentence matches EXACTLY -> HIT; the HIT lane enters
-    # the same single ToolIntentModel hop as Recall (chain ruling 2026-09-24).
+    # the standard corpus sentence matches EXACTLY -> HIT; the HIT lane goes
+    # straight to argument acquisition and is never re-selected.
     expect: {route: action, capability: cap-folder, tool: create_folder,
              stage: tool_intent, kind: action}
 
@@ -62,19 +63,18 @@ cases:
   - id: ambiguous_two_intents_escalates
     group: ambiguity_multi_intent
     # ONE sentence curated under BOTH action caps — the only way the
-    # exact-only Matcher can produce AMBIGUOUS; the one ToolIntentModel hop
-    # answers NONE on the split pair (no arbiter exists any more) — Agent keeps
-    # the turn.
+    # exact-only Matcher can produce AMBIGUOUS; the ONE cap_router selection
+    # answers NONE on the split pair — Agent keeps the turn.
     query: '新建文件夹"季度报告"并把"keystone"加入我的工程词汇库'
-    expect: {route: agent, fallback: FUNNEL_TOOL_INTENT_REJECT,
+    expect: {route: agent, fallback: FUNNEL_SELECTOR_NONE,
              matcher_contains: "AMBIGUOUS"}
 
   - id: missing_argument_last_question
     group: missing_argument
     query: '新建文件夹'
-    # a curated synonym -> HIT; ToolIntentModel selects cap-folder but the
-    # sentence carries no quotable name -> Binder validate exits MISSING
-    # (8.7): the Agent owns the clarification, no second hop tries to rescue it.
+    # a curated synonym -> HIT; the capability is cap-folder but the sentence
+    # carries no quotable name -> Binder validate exits MISSING (8.7): the
+    # Agent owns the clarification, no second hop tries to rescue it.
     expect: {route: agent, fallback: FUNNEL_BIND_MISSING,
              matcher_contains: "HIT:cap-folder"}
 

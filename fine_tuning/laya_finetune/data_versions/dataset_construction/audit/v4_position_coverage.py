@@ -20,7 +20,6 @@ except ModuleNotFoundError:
     from types import ModuleType
     CHAIN = ("core", "core.application", "core.application.chat",
              "core.application.chat.intent_funnel",
-             "core.application.chat.intent_funnel.tool_intent",
              "core.application.chat.intent_funnel.cap_router")
     for n in [m for m in sys.modules if m == "core" or m.startswith("core.")]:
         del sys.modules[n]

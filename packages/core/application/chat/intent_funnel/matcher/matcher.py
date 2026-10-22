@@ -10,12 +10,12 @@ NOT match data: they cannot produce a HIT at all.
 
 A HIT proves the sentence was CURATED as this action — it does not prove a new,
 similar sentence is an action; everything non-exact escalates to Recall +
-ToolIntentModel (chain ruling). Global guards (negation, research/handoff veto)
+cap_router (chain ruling). Global guards (negation, research/handoff veto)
 live in the funnel common layer, not here — 8.1-a ruling.
 
 Escalation discipline (8.1): no hit -> MISS (falls to Recall); one hit -> HIT;
 several capabilities hit -> MATCH_AMBIGUOUS carrying ALL candidate ids upward
-for ToolIntentModel. The Matcher itself never picks.
+for cap_router. The Matcher itself never picks.
 
 Package map: :mod:`.normalize` (canonical text), :mod:`.index` (exact-lookup
 index + fingerprint cache), this module (the one deterministic pass).

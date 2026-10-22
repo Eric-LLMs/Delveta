@@ -163,3 +163,13 @@ async def test_run_tool_binds_agent_so_the_sandbox_funnel_still_sees_the_tool(mo
     assert captured["execution"].agent is agent           # guards resolve the tool
     assert captured["execution"].name == "create_folder"
     assert captured["execution"].arguments == {"name": "archive"}
+
+
+# L0 retirement: this suite drove the removed L0 producer for ACTION. ACTION is
+# now certified only by the funnel (Matcher HIT / Recall + LayaChoice-v2); the
+# certified-execution path is covered end-to-end by tests/test_funnel_e2e.py.
+import pytest as _pytest  # noqa: E402
+
+pytestmark = _pytest.mark.skip(
+    reason="retired with L0: ACTION is certified by the funnel, not L0",
+)

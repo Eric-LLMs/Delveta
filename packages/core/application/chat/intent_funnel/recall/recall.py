@@ -2,7 +2,7 @@
 
 Discipline (chain ruling + live-table ruling): cosine
 here is a QUALITY GATE (filter obvious garbage), the "which one" decision
-belongs to the ToolIntentModel. The index is the LIVE corpus itself —
+belongs to the cap_router. The index is the LIVE corpus itself —
 ``capability_standard_queries`` / ``capability_similar_queries`` are the
 runtime truth, so there is no version predicate and no snapshot pair any more.
 

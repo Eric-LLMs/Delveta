@@ -1,19 +1,16 @@
-"""cap_router — capability selection node (cap_router service | stub | off).
+"""cap_router — capability selection node (the deployed cap_router service).
 
 Implementation map: :mod:`.base` holds the backend-independent contract
 (``CapabilitySelector`` + ``CapabilityRoute`` with SELECTED / NONE / REJECT);
-:mod:`.card_renderer` renders the 4-slot payload (3 capability cards + the
-frozen REJECT card); :mod:`.backends` resolves the configured backend name to a
-concrete selector via :func:`selector_for`. The node is wired into the funnel
-orchestrator on the split lane (§25.6/§26)."""
+:mod:`.card_renderer` renders the variable-length card payload (K capability
+cards + the frozen REJECT card); :mod:`.backends` resolves the ONE production
+selector via :func:`default_selector` (``StubSelector`` is a test double,
+injected through ``ChatDeps.cap_router_selector``). The node is wired into the
+funnel orchestrator for every non-HIT turn."""
 from __future__ import annotations
 
-from .backends import selector_for
+from .backends import default_selector
 from .base import (
-    BACKEND_CAP_ROUTER,
-    BACKEND_OFF,
-    BACKEND_STUB,
-    BACKENDS,
     ROUTE_NONE,
     ROUTE_REJECT,
     ROUTE_SELECTED,
@@ -23,8 +20,7 @@ from .base import (
 )
 
 __all__ = [
-    "BACKENDS", "BACKEND_OFF", "BACKEND_STUB", "BACKEND_CAP_ROUTER",
     "ROUTE_SELECTED", "ROUTE_NONE", "ROUTE_REJECT",
     "CapabilityRoute", "CapabilityRouterUnavailable", "CapabilitySelector",
-    "selector_for",
+    "default_selector",
 ]

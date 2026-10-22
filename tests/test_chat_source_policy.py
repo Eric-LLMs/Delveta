@@ -35,17 +35,9 @@ from core.application.chat.execution_plan import (
     PolicyContext,
     build_execution_plan,
 )
-from core.application.chat.understanding import resolve_requirements
+from core.application.chat.understanding import resolve_source_facts
 
-from tests.test_chat_retrieval_e2e import (
-    HIT,
-    PRIVATE_Q,
-    FakePort,
-    FakeSeam,
-    _gates,
-    _harness,
-    _stream,
-)
+PRIVATE_Q = "what does my knowledge base say about gd"
 
 ALL_ON = PolicyContext(
     direct_fast_path_enabled=True,
@@ -68,10 +60,10 @@ def _ctx(message: str) -> ChatTurnContext:
 
 
 def _facts(message: str):
-    return resolve_requirements(_ctx(message), message)
+    return resolve_source_facts(message)
 
 
-# ── L0 source facts (narrow by design: a false positive fences the Agent) ────────────
+# ── source facts (narrow by design: a false positive fences the Agent) ──────────────
 
 @pytest.mark.parametrize("msg", [
     ONLY_Q,
@@ -110,19 +102,19 @@ def test_external_permission_not_overfired():
 # ── policy mapping: source policy rides the plan, independent of execution ───────────
 
 def test_source_policy_states():
-    assert build_execution_plan(_facts(PRIVATE_Q), ALL_ON).source_policy == "private_first"
+    # Source facts never select a route: an uncertified turn maps to AGENT even
+    # with every experimental lane switched on. What survives is the fence the
+    # ORIGINAL request imposes on that Agent turn.
+    assert build_execution_plan(_facts(PRIVATE_Q), ALL_ON).kind is PlanKind.AGENT
     assert build_execution_plan(_facts(ONLY_Q), ALL_ON).source_policy == "private_only"
     # Explicit permission -> no fence on the eventual escalation (funnel governs).
     assert build_execution_plan(_facts(EXT_OK_Q), ALL_ON).source_policy is None
-    # Mixed private+web never enters the fast path AND keeps the normal funnel.
+    # Mixed private+web is a contradiction: no fence, normal funnel.
     plan = build_execution_plan(_facts(MIXED_Q), ALL_ON)
     assert plan.kind is PlanKind.AGENT and plan.source_policy is None
 
 
 def test_neutral_requirements_carry_no_source_policy():
-    # Single-path ruling replaced the dark-launch pair: resolved
-    # facts always ride the plan ("facts ride"), and only a NEUTRAL
-    # requirement set (never produced on a live turn) fences nothing.
     req = _facts(ONLY_Q)
     plain = PolicyContext()
     assert build_execution_plan(req, plain).source_policy == "private_only"
@@ -148,9 +140,9 @@ def test_sink_always_on_single_path(monkeypatch):
     # the SOURCE POLICY on every turn whose original request carries the fact.
     import core.config as cfg
     monkeypatch.setattr(cfg.settings, "chat_retrieval_fast_path_enabled", True, raising=False)
-    ctx = _ctx(PRIVATE_Q)
+    ctx = _ctx(ONLY_Q)
     _resolve(ctx)
-    assert (ctx.agent_context or {}).get("source_policy") == "private_first"
+    assert (ctx.agent_context or {}).get("source_policy") == "private_only"
 
 
 def test_explicit_permission_sink_nothing(monkeypatch):
@@ -214,77 +206,3 @@ def test_research_grant_unaffected_by_the_new_funnel():
         TURN_CTX.reset(token)
 
 
-# ── e2e through the real /chat/stream router ─────────────────────────────────────────
-
-class _BoomSeam(FakeSeam):
-    async def retrieve(self, query, top_k=5, filters=None):
-        self.calls.append((query, top_k, filters))
-        raise RuntimeError("embedding service down")
-
-
-async def test_ordinary_private_empty_escalation_fenced_and_honest(monkeypatch):
-    _gates(monkeypatch, fast=True, retrieval=True)
-    port, seam = FakePort(), FakeSeam([])
-    app, agent = _harness(monkeypatch, port, seam)
-    await _stream(app)
-    assert agent.agent_stream_calls == 1
-    assert agent.contexts[0]["source_policy"] == "private_first"
-    text = agent.user_texts[0]
-    assert text.startswith("[Private retrieval note")
-    assert "no sufficient evidence" in text            # honest disclosure demanded
-    assert "NEVER present general knowledge or web content" in text  # no misattribution
-    assert "restricted to private sources" in text     # web ban stated (and enforced)
-    assert port.generated == 0
-
-
-async def test_retrieval_failure_escalation_fenced(monkeypatch):
-    _gates(monkeypatch, fast=True, retrieval=True)
-    port, seam = FakePort(), _BoomSeam([])
-    app, agent = _harness(monkeypatch, port, seam)
-    await _stream(app)
-    assert agent.contexts[0]["source_policy"] == "private_first"
-    assert "restricted to private sources" in agent.user_texts[0]
-
-
-async def test_explicit_kb_only_escalation_fenced_strictest(monkeypatch):
-    _gates(monkeypatch, fast=True, retrieval=True)
-    port, seam = FakePort(), FakeSeam([])
-    app, agent = _harness(monkeypatch, port, seam)
-    await _stream(app, message=ONLY_Q)
-    assert agent.agent_stream_calls == 1
-    assert agent.contexts[0]["source_policy"] == "private_only"
-    assert "restricted to private sources" in agent.user_texts[0]
-
-
-async def test_explicit_permission_escalates_without_fence_but_with_honesty(monkeypatch):
-    _gates(monkeypatch, fast=True, retrieval=True)
-    port, seam = FakePort(), FakeSeam([])
-    app, agent = _harness(monkeypatch, port, seam)
-    await _stream(app, message=EXT_OK_Q)
-    # The Agent may widen to the web (the funnel, not this code, decides)...
-    assert not (agent.contexts[0] or {}).get("source_policy")
-    # ...but still must not misattribute: the disclosure note rides, without a web ban.
-    text = agent.user_texts[0]
-    assert text.startswith("[Private retrieval note")
-    assert "NEVER present general knowledge or web content" in text
-    assert "restricted to private sources" not in text
-
-
-async def test_mixed_private_web_goes_straight_to_agent_unfenced(monkeypatch):
-    _gates(monkeypatch, fast=True, retrieval=True)
-    port, seam = FakePort(), FakeSeam(HIT)
-    app, agent = _harness(monkeypatch, port, seam)
-    await _stream(app, message=MIXED_Q)
-    assert agent.agent_stream_calls == 1
-    assert seam.calls == []  # mixed demands never touch the fast path at all
-    assert not (agent.contexts[0] or {}).get("source_policy")
-
-
-async def test_successful_fast_path_unchanged_under_policy(monkeypatch):
-    _gates(monkeypatch, fast=True, retrieval=True)
-    port, seam = FakePort(), FakeSeam(HIT)
-    app, agent = _harness(monkeypatch, port, seam)
-    events, done = await _stream(app)
-    assert events == ["content", "content", "done"]
-    assert done["answer"] == "It steps"
-    assert agent.agent_stream_calls == 0 and port.generated == 1

@@ -25,7 +25,6 @@ from pathlib import Path
 import httpx
 import pytest
 from core.application.chat.intent_funnel.cap_router import (
-    BACKEND_CAP_ROUTER,
     ROUTE_REJECT,
     ROUTE_SELECTED,
     CapabilityRouterUnavailable,
@@ -121,12 +120,12 @@ async def _select(monkeypatch, client=None, *, candidates=None, entries=None,
         entries_by_id=entries if entries is not None else {})
 
 
-# ── the factory resolves the real backend ────────────────────────────────────────
+# ── the factory resolves the ONE production selector ─────────────────────────────
 
 
-def test_factory_resolves_cap_router():
-    from core.application.chat.intent_funnel.cap_router.backends import selector_for
-    assert isinstance(selector_for(BACKEND_CAP_ROUTER), CapRouterSelector)
+def test_default_selector_is_the_service():
+    from core.application.chat.intent_funnel.cap_router.backends import default_selector
+    assert isinstance(default_selector(), CapRouterSelector)
 
 
 # ── failure contract: everything unusable -> CapabilityRouterUnavailable ─────────

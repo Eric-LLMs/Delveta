@@ -58,7 +58,6 @@ except ModuleNotFoundError:
     _CHAIN = (
         "core", "core.application", "core.application.chat",
         "core.application.chat.intent_funnel",
-        "core.application.chat.intent_funnel.tool_intent",
         "core.application.chat.intent_funnel.cap_router",
     )
     for _name in [m for m in sys.modules

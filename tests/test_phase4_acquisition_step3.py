@@ -1,7 +1,7 @@
 """Phase 4 Step 3 — MIXED argument merge WIRING.
 
-Drives the REAL cascade (``run_nodes``) on the new lane
-(``chat_cap_router_backend != off``) and pins the merge contract:
+Drives the REAL cascade (``run_nodes``) on the single production lane and pins
+the merge contract:
 
 * SYSTEM_BINDER slot + MODEL slot -> the ARP derives **MIXED**;
 * ``merge`` combines the injected ``system_values`` with the injected
@@ -14,10 +14,9 @@ Drives the REAL cascade (``run_nodes``) on the new lane
 * ``asset_id`` (SYSTEM_BINDER) is NOT authoritative here: the Binder still
   resolves it from TurnFacts, so a divergent seam value loses to the fact truth
   (decision, option (a));
-* no legacy ``select_and_extract`` on the new lane; the MODEL strategies use the
-  injected ``argument_extractor`` (or the test seam's ``model_values``), and a
-  MODEL need with neither exits ``ACQUISITION_MODEL_PENDING`` to the Agent;
-* ``backend=off`` keeps the legacy lane byte-for-byte.
+* a HIT is never re-selected; the MODEL strategies use the injected
+  ``argument_extractor`` (or the test seam's ``model_values``), and a MODEL need
+  with neither exits ``ACQUISITION_MODEL_PENDING`` to the Agent.
 
 Test data is REAL where a real asset id matters: the id is a real upload blob
 (``data/objects/uploads/<uuid>/chunk_0``, ``%PDF`` magic), READ-ONLY. The MODEL
@@ -31,9 +30,9 @@ from pathlib import Path
 
 import pytest
 
+from core.application.chat.intent_funnel import cap_router as cap_router_mod
 from core.application.chat.intent_funnel import matcher as matcher_mod
 from core.application.chat.intent_funnel import orchestrator as orch_mod
-from core.application.chat.intent_funnel import tool_intent as tool_intent_mod
 from core.application.chat.intent_funnel.argument_acquisition import (
     AcquisitionInputs,
     SlotDecl,
@@ -65,7 +64,6 @@ from core.application.chat.intent_funnel.registry.entry import (
     derive_language,
 )
 from core.application.chat.understanding import TurnRequirements
-from core.config import settings
 
 UPLOADS = Path(__file__).resolve().parents[1] / "data" / "objects" / "uploads"
 
@@ -191,8 +189,7 @@ class _Rec:
         self.legacy: list = []
 
 
-def _wire(monkeypatch, entry: CapabilityEntry, *, backend: str,
-          legacy_verdict=None) -> _Rec:
+def _wire(monkeypatch, entry: CapabilityEntry) -> _Rec:
     view = RegistryLiveView(fingerprint=content_fingerprint([entry]), entries=(entry,))
     rec = _Rec()
 
@@ -203,18 +200,15 @@ def _wire(monkeypatch, entry: CapabilityEntry, *, backend: str,
         return MatchResult(state=MATCH_HIT, capability_id=entry.capability_id,
                            matched_literal="打开这个文件")
 
-    async def fake_select_and_extract(query, candidates, *, entries_by_id,
-                                      llm=None, facts=None):
-        rec.legacy.append(query)
-        if legacy_verdict is None:
-            raise AssertionError("legacy select_and_extract must not run on the new lane")
-        return legacy_verdict
+    class _NoSelect:
+        async def select(self, query, candidates, *, entries_by_id, facts=None):
+            rec.legacy.append(query)
+            raise AssertionError("the selector must never run on a HIT lane")
 
     monkeypatch.setattr(
         "core.application.chat.intent_funnel.registry.active_view", fake_active)
     monkeypatch.setattr(matcher_mod, "match", fake_match)
-    monkeypatch.setattr(tool_intent_mod, "select_and_extract", fake_select_and_extract)
-    monkeypatch.setattr(settings, "chat_cap_router_backend", backend)
+    monkeypatch.setattr(cap_router_mod, "default_selector", lambda: _NoSelect())
     return rec
 
 
@@ -224,8 +218,8 @@ def _deps(provider, extractor=None):
         acquisition_inputs=provider, argument_extractor=extractor)
 
 
-async def _run(monkeypatch, *, entry, ctx, inputs, backend="stub", extractor=None):
-    rec = _wire(monkeypatch, entry, backend=backend)
+async def _run(monkeypatch, *, entry, ctx, inputs, extractor=None):
+    rec = _wire(monkeypatch, entry)
     provider = (lambda cid: inputs.get(cid)) if inputs is not None else None
     req = TurnRequirements()
     trace = new_trace()
@@ -438,26 +432,3 @@ async def test_context_direct_has_no_model_side(monkeypatch, real_pdf):
     assert not rec.legacy
 
 
-# ── C. backend=off: the legacy lane is untouched ─────────────────────────────────
-
-
-async def test_backend_off_keeps_legacy_lane(monkeypatch, real_pdf):
-    from core.application.chat.intent_funnel.contract import (
-        TOOL_INTENT_CONFIDENT,
-        ToolIntentVerdict,
-    )
-
-    cid, _ = real_pdf
-    entry = _entry("cap-open-pdf", _MIXED_PARAMS)
-    verdict = ToolIntentVerdict(TOOL_INTENT_CONFIDENT, "cap-open-pdf",
-                                arguments={"asset_id": cid, "pages": "9"})
-    rec = _wire(monkeypatch, entry, backend="off", legacy_verdict=verdict)
-    req = TurnRequirements()
-    trace = new_trace()
-    capture: dict = {}
-    out = await orch_mod.run_nodes(_ctx("打开这个文件第9页", open_asset_id=cid),
-                                   _deps(None), req, trace, capture=capture)
-    assert rec.legacy                                     # legacy hop WAS used
-    assert out is not req
-    assert out.requested_action["args"]["pages"] == "9"   # legacy extraction result
-    assert "acquisition" not in capture                   # ARP never entered

@@ -126,7 +126,7 @@ class CapabilityEntry:
     similar_queries: tuple[QueryRecord, ...] = ()
     # capability_negatives rows (card boundary context; never in Recall).
     negatives: tuple[str, ...] = ()
-    # CANONICAL parameter schema — the ToolIntentModel Candidate Card assembles from
+    # CANONICAL parameter schema — the Candidate Card assembles from
     # HERE. Shape:
     # {name: {"type": str, "description": str, "required": bool, "max_len": int?}}
     parameters: dict[str, Any] = field(default_factory=dict)

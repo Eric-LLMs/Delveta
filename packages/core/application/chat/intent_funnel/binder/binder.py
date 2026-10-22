@@ -1,9 +1,9 @@
-"""Node 4 — active Binder: ToolIntentModel draft + Registry schema -> BoundArguments.
+"""Node 4 — the Binder: argument draft + Registry schema -> BoundArguments.
 
 Four states, never a naked None (8.7): the argument truth is a STATE, and the
-non-COMPLETE states exit to the Agent (chain ruling: the recheck
-hop is gone — on the active path the Binder VALIDATES ToolIntentModel's
-extraction (:func:`validate`) and never extracts itself from the SENTENCE).
+non-COMPLETE states exit to the Agent. On the active path the Binder VALIDATES
+whatever the capability handler / Argument Path Router / extractor produced
+(:func:`validate`) and never extracts from the SENTENCE itself.
 Context-sourced slots are the deliberate second source (E2E-matrix ruling
 see :func:`_resolve_context_slots`): asset identity comes from
 TurnFacts, never from the model. The Binder executes nothing (8.8: routing
@@ -56,7 +56,7 @@ def _resolve_context_slots(args, facts, schema: dict) -> dict:
 
 
 def validate(entry, args, facts=None):
-    """Normalize/validate ToolIntentModel's argument DRAFT against the
+    """Normalize/validate the argument DRAFT against the
     Registry's CANONICAL parameter schema (``entry.parameters``, 0007
     ruling), with context-sourced slots resolved from the turn's settled
     FACTS before the schema gate runs. The Binder still extracts nothing from

@@ -1,26 +1,29 @@
 """Funnel orchestration — the one active control flow over the nodes.
 
-Registry → Matcher → (Recall on MISS/AMBIGUOUS) → Candidate Aggregation →
-ToolIntentModel (ONE call) → Binder → certified TurnRequirements, every
-non-COMPLETE outcome exiting to the Agent byte-identically (8.10).
+The production chain has exactly two lanes:
 
-Phase 4 seam: when ``chat_cap_router_backend != off`` the decided
-capability — a MATCH_HIT directly, or a MISS/AMBIGUOUS via ``Recall ->
-Aggregation -> K normalization -> cap_router -> SELECTED|REJECT|NONE`` — feeds
-the **Argument Path Router** (:mod:`.argument_acquisition.path_router`), which
-derives the acquisition strategy from the capability's declaration + injected
-inputs. A MATCH_HIT is NEVER re-selected (no Recall, no Aggregation, no
-cap_router). CONTEXT_DIRECT reuses the existing Binder/certified handoff; a
-MODEL acquisition need (QUERY_TO_EXTRACTOR / QUERY_PLUS_5TURNS_TO_EXTRACTOR /
-MIXED) is executed through the injected extractor. Every non-certified outcome
-(REJECT, NONE, K<3 ineligibility, an acquisition-undeclared or -MISSING
-capability, a selector that cannot serve) exits to the Agent. With the default
-``off`` every turn takes the fully-legacy hop, byte-identical.
-This module
-owns sequencing, the wall-clock budget and fail-open classification ONLY —
-node algorithms, SQL, prompts, parsing and schema validation live in their own
-packages; rollout gating and reason naming live in :mod:`.policy`; the trace
-record, its log line and the event row live in :mod:`.observability`.
+* ``Matcher HIT``   -> Argument Path Router -> Binder -> certified requirements;
+  no Recall, no candidate aggregation, no selector. The Matcher already pinned
+  the capability, so re-selecting it would be a second, competing decision.
+* ``MISS/AMBIGUOUS`` -> Recall -> Candidate Aggregation -> K normalization ->
+  cap_router -> Argument Path Router -> Binder -> certified requirements.
+
+The **Argument Path Router** (:mod:`.argument_acquisition.path_router`) derives
+the acquisition strategy from the capability's declaration + injected inputs.
+CONTEXT_DIRECT reuses the existing Binder/certified handoff; a MODEL acquisition
+need (QUERY_TO_EXTRACTOR / QUERY_PLUS_5TURNS_TO_EXTRACTOR / MIXED) is executed
+through the injected extractor. Every non-certified outcome (NO_CANDIDATE,
+REJECT, NONE, an acquisition-undeclared or -MISSING capability, a selector that
+cannot serve) exits to the Agent with the user text byte-identical (8.10).
+
+There is exactly ONE production selector (the deployed cap_router service) and
+no backend switch: selection never falls back to a second model. A test injects
+its own selector through ``deps.cap_router_selector``.
+
+This module owns sequencing, the wall-clock budget and fail-open classification
+ONLY — node algorithms, SQL, prompts, parsing and schema validation live in
+their own packages; rollout gating and reason naming live in :mod:`.policy`;
+the trace record, its log line and the event row live in :mod:`.observability`.
 """
 from __future__ import annotations
 
@@ -58,11 +61,7 @@ from .contract import (
     REASON_NO_CANDIDATE,
     REASON_RECALL_UNAVAILABLE,
     REASON_REGISTRY_UNAVAILABLE,
-    REASON_TOOL_INTENT_REJECT,
-    REASON_TOOL_INTENT_UNCERTAIN,
     REASON_VERSION_MISMATCH,
-    TOOL_INTENT_CONFIDENT,
-    TOOL_INTENT_REJECT,
     Candidate,
     TurnFacts,
 )
@@ -151,7 +150,6 @@ async def run_nodes(ctx, deps, requirements, trace, *,
     from . import cap_router, guardrails, matcher, recall
     from .registry import active_view as registry_active_view
     from .registry.entry import chat_plane_candidate, funnel_cardable
-    from .tool_intent import select_and_extract as tool_intent
 
     message = ctx.body.message or ""
     facts = TurnFacts.of(ctx)
@@ -205,13 +203,11 @@ async def run_nodes(ctx, deps, requirements, trace, *,
             "matched_literal": mres.matched_literal,
         }
 
-    # ── New lane, MATCH_HIT: the Matcher already pinned the capability (§A.10 / ─
-    # §I). HIT -> Argument Path Router DIRECTLY: NO re-selection — no Recall, no
+    # ── MATCH_HIT: the Matcher already pinned the capability (§A.10 / §I). ─────
+    # HIT -> Argument Path Router DIRECTLY: NO re-selection — no Recall, no
     # Candidate Aggregation, no cap_router. It short-circuits BEFORE candidate
-    # assembly so none of those nodes runs. ``backend=off`` keeps the legacy HIT
-    # hop (select_and_extract) further below.
-    backend = settings.chat_cap_router_backend
-    if backend != cap_router.BACKEND_OFF and mres.state == MATCH_HIT:
+    # assembly so none of those nodes runs, and no selector is ever consulted.
+    if mres.state == MATCH_HIT:
         trace["stage"] = "capability"
         entry = entries_by_id.get(mres.capability_id)
         if entry is None:  # a HIT the active table no longer honors: refuse
@@ -225,92 +221,86 @@ async def run_nodes(ctx, deps, requirements, trace, *,
         _mark(capture, "acquisition_ms", _t_acq)
         return out
 
-    # ── One candidate set, ONE convergence point: a HIT enters ToolIntentModel with the ─
-    # same semantics as a Recall lane — the direct-certification special path is
-    # deleted (chain ruling). Recall runs only when the table missed.
+    # ── MISS/AMBIGUOUS lane: Recall -> Aggregation -> cap_router (the one
+    # convergence point). A MATCH_HIT returned above, so it is never
+    # re-selected here.
     # Live-table ruling (RAW lane): every recall hit >= threshold is
     # kept AS IS at the raw stage — no MAX/AVG, no per-capability dedup THERE —
     # a capability may legitimately arrive several times through different
     # sentences. The no-dedup ruling scopes to Raw Recall only: the Capability
-    # Candidate Aggregation below (Raw Recall -> ToolIntentModel) then collapses
-    # the raw hits into ONE capability-level candidate per capability_id.
+    # Candidate Aggregation below then collapses the raw hits into ONE
+    # capability-level candidate per capability_id.
     candidates: list[Candidate] = []
     if mres.state == MATCH_AMBIGUOUS:
         for cid in mres.candidates:
             candidates.append(Candidate(cid, 0.0, origin="matcher_ambiguous"))
-    elif mres.state == MATCH_HIT:
-        candidates.append(Candidate(
-            mres.capability_id, 1.0, matched_example=mres.matched_literal,
-            origin="matcher_hit", query_kind="standard",
-        ))
-    if mres.state != MATCH_HIT:
-        # E2: Recall availability is ONLY a MISS/AMBIGUOUS-lane dependency.
-        trace["stage"] = "recall"
-        index = await recall.load_index(deps.session_factory)
-        if index is None:
-            trace["fallback"] = REASON_RECALL_UNAVAILABLE  # corpus not embedded yet
-            return None
-        trace["index"] = index.version
-        rres = await recall.recall(
-            index, message, embedder=deps.embedder(),
-            min_score=(settings.chat_funnel_min_score if recall_min_score is None
-                       else recall_min_score),
-        )
-        # Card-surface ruling (single closure point): keep every recall hit the
-        # live table can render a card for (``funnel_cardable``). The
-        # hidden-capability exclusion is deliberately NOT applied here — those
-        # capabilities are cardable so the selector can identify the intent, and
-        # the allowlist is enforced on its DECISION instead (a pick outside the
-        # allowlist becomes FUNNEL_ALLOWLIST_REJECT below). This matches the
-        # LayaChoice input distribution, where every action capability appears as
-        # an ordinary option.
-        #
-        # A capability ABSENT from the live table (the index running ahead of the
-        # table) cannot be rendered — the card renderer skips it — so keeping it
-        # would only burn a top-K slot and displace a real card. Drop it and
-        # record the divergence count. No Recall SQL change: this business-layer
-        # filter is the one place that closes the gap for every recall source.
-        table_rows = {e.capability_id: e for e in view.entries}
-        recall_hits: list[Candidate] = []
-        dropped_unregistered = 0
-        for hit in rres.candidates:
-            row = table_rows.get(hit.capability_id)
-            if row is None:
-                dropped_unregistered += 1   # ghost: index ahead of the table
-            elif funnel_cardable(row):
-                recall_hits.append(hit)
-            # present but not cardable (e.g. the research lane): not a fault,
-            # simply not part of the card surface
-        if dropped_unregistered:
-            # Index/table divergence is a FAULT, not a business outcome: a row
-            # the live table cannot render is a ghost. Refusing the turn keeps
-            # the old divergence guard honest (it used to fire only when the
-            # selector happened to pick the ghost; with cards now rendered from
-            # the table a ghost can never be picked, so the guard must fire here
-            # or it would silently disappear).
-            trace["recall_dropped_unregistered"] = dropped_unregistered
-            trace["fallback"] = REASON_VERSION_MISMATCH
-            return None
-        if capture is not None:
-            # the RAW lane: every candidate recall scored, pre any floor AND pre
-            # aggregation — the offline threshold sweep recomputes buckets from
-            # THIS list (Phase E); aggregation must never overwrite it.
-            capture["recall_raw"] = [
-                {"capability_id": c.capability_id, "score": c.score,
-                 "origin": c.origin, "matched_example": c.matched_example,
-                 "query_kind": c.query_kind, "language": c.language,
-                 "query_id": c.query_id}
-                for c in recall_hits
-            ]
-        candidates.extend(recall_hits)
+    # E2: Recall availability is ONLY a MISS/AMBIGUOUS-lane dependency.
+    trace["stage"] = "recall"
+    index = await recall.load_index(deps.session_factory)
+    if index is None:
+        trace["fallback"] = REASON_RECALL_UNAVAILABLE  # corpus not embedded yet
+        return None
+    trace["index"] = index.version
+    rres = await recall.recall(
+        index, message, embedder=deps.embedder(),
+        min_score=(settings.chat_funnel_min_score if recall_min_score is None
+                   else recall_min_score),
+    )
+    # Card-surface ruling (single closure point): keep every recall hit the
+    # live table can render a card for (``funnel_cardable``). The
+    # hidden-capability exclusion is deliberately NOT applied here — those
+    # capabilities are cardable so the selector can identify the intent, and
+    # the allowlist is enforced on its DECISION instead (a pick outside the
+    # allowlist becomes FUNNEL_ALLOWLIST_REJECT below). This matches the
+    # LayaChoice input distribution, where every action capability appears as
+    # an ordinary option.
+    #
+    # A capability ABSENT from the live table (the index running ahead of the
+    # table) cannot be rendered — the card renderer skips it — so keeping it
+    # would only burn a top-K slot and displace a real card. Drop it and
+    # record the divergence count. No Recall SQL change: this business-layer
+    # filter is the one place that closes the gap for every recall source.
+    table_rows = {e.capability_id: e for e in view.entries}
+    recall_hits: list[Candidate] = []
+    dropped_unregistered = 0
+    for hit in rres.candidates:
+        row = table_rows.get(hit.capability_id)
+        if row is None:
+            dropped_unregistered += 1   # ghost: index ahead of the table
+        elif funnel_cardable(row):
+            recall_hits.append(hit)
+        # present but not cardable (e.g. the research lane): not a fault,
+        # simply not part of the card surface
+    if dropped_unregistered:
+        # Index/table divergence is a FAULT, not a business outcome: a row
+        # the live table cannot render is a ghost. Refusing the turn keeps
+        # the old divergence guard honest (it used to fire only when the
+        # selector happened to pick the ghost; with cards now rendered from
+        # the table a ghost can never be picked, so the guard must fire here
+        # or it would silently disappear).
+        trace["recall_dropped_unregistered"] = dropped_unregistered
+        trace["fallback"] = REASON_VERSION_MISMATCH
+        return None
+    if capture is not None:
+        # the RAW lane: every candidate recall scored, pre any floor AND pre
+        # aggregation — the offline threshold sweep recomputes buckets from
+        # THIS list (Phase E); aggregation must never overwrite it.
+        capture["recall_raw"] = [
+            {"capability_id": c.capability_id, "score": c.score,
+             "origin": c.origin, "matched_example": c.matched_example,
+             "query_kind": c.query_kind, "language": c.language,
+             "query_id": c.query_id}
+            for c in recall_hits
+        ]
+    candidates.extend(recall_hits)
     trace["recall_count"] = len(candidates)
     if candidates:
         top = max(candidates, key=lambda c: c.score)
         trace["recall_top"] = f"{top.capability_id}@{top.score:.3f}"
     # ── Capability Candidate Aggregation (final semantics) ──────────
-    # Between Raw Recall and ToolIntentModel: group the query-level candidates
+    # Between Raw Recall and cap_router: group the query-level candidates
     # by capability_id and keep ONE candidate per capability (see
-    # :mod:`candidate_aggregation`); the model sees capability-level cards.
+    # :mod:`candidate_aggregation`); the selector sees capability-level cards.
     cands = sorted(
         candidate_aggregation.aggregate_by_capability(candidates),
         key=lambda c: c.score, reverse=True)
@@ -324,7 +314,7 @@ async def run_nodes(ctx, deps, requirements, trace, *,
         ]
     if model_candidate_floor is not None:
         cands = candidate_aggregation.apply_model_floor(cands, model_candidate_floor)
-    # Empty candidate set -> Agent, no model hop (ruling, supersedes
+    # Empty candidate set -> Agent, no selector hop (ruling, supersedes
     # the "Action Detection is UNCONDITIONAL" note): with no Matcher
     # HIT/AMBIGUOUS card AND no Recall hit at/above the quality gate there is
     # nothing for the single hop to select from. NO_CANDIDATE is back as the
@@ -333,137 +323,107 @@ async def run_nodes(ctx, deps, requirements, trace, *,
         trace["fallback"] = REASON_NO_CANDIDATE
         return None
 
-    # ── Node 2: capability SELECTION ────────────────────────────────────────────
-    # Phase 4 split: the NEW lane (backend != off) serves ONLY the
-    # MISS/AMBIGUOUS selection here:
-    #
+    # ── Node 2: capability SELECTION (the ONLY non-HIT lane) ────────────────────
     #     MISS/AMBIGUOUS -> Recall -> Aggregation -> K normalization
-    #                    -> cap_router (stub | cap_router) -> SELECTED | REJECT | NONE
+    #                    -> cap_router -> SELECTED | REJECT | NONE
     #
     # ... then the decided capability feeds the Argument Path Router (below). A
-    # MATCH_HIT on the new lane already returned above (HIT -> ARP). The ``else``
-    # is the backend=off compatibility/rollback lane: the FULL legacy single-call
-    # ToolIntentModel hop for HIT *and* MISS/AMBIGUOUS, byte-identical (K
-    # normalization is a new-lane business step and never runs on that lane).
-    if backend != cap_router.BACKEND_OFF:
-        trace["stage"] = "cap_router"
-        selector = cap_router.selector_for(backend)
-        if selector is None:  # unknown backend: never falls through
-            trace["fallback"] = REASON_CAP_ROUTER_UNAVAILABLE
-            return None
-        # Business-layer K normalization (§26.2) — the SAME rule for every
-        # backend: the selector only ever sees a list of at most K candidates.
-        # There is NO K=1 direct path and NO K=2 ineligibility: EVERY non-empty
-        # candidate set (K >= 1) is handed to the selector, which may SELECT one
-        # of the shown cards or legitimately REJECT; the business layer never
-        # selects a capability on the model's behalf and never fabricates a
-        # confidence. Applied AFTER the backend is resolved, so an unknown
-        # backend can never be laundered into a direct selection. backend=off
-        # never reaches here.
-        raw_k = len(cands)
-        norm = candidate_aggregation.normalize_top_k(cands)
-        effective_k = len(norm.candidates)
-        # Variable-length option accounting: the model is handed ``effective_k``
-        # capability cards plus the frozen REJECT card appended by the card
-        # renderer. The selector is consulted for EVERY K >= 1; there is no
-        # special-cased slot count.
-        option_slots = effective_k + 1
-        trace["raw_k"] = raw_k
-        trace["post_gate_k"] = raw_k
-        trace["effective_k"] = effective_k
-        trace["option_slots"] = option_slots
-        if capture is not None:
-            # K telemetry recorded BEFORE the selector call, so a turn that
-            # times out or finds the service unavailable still exposes exactly
-            # what it was handed (raw/effective K, option slots). Overwritten
-            # below with the decision once the selector returns.
-            capture["cap_router"] = {
-                "decision": None, "capability_id": None, "confidence": None,
-                "provenance": "", "raw_k": raw_k, "post_gate_k": raw_k,
-                "effective_k": effective_k, "option_slots": option_slots,
-            }
-        try:
-            _t_select = time.monotonic()
-            route = await selector.select(message, list(norm.candidates),
-                                          entries_by_id=card_entries_by_id, facts=facts)
-            _mark(capture, "selection_ms", _t_select)
-        except cap_router.CapabilityRouterUnavailable:
-            # ruling: a selector that cannot serve exits to the
-            # Agent; selection NEVER falls back to another model (the metric
-            # would be polluted).
-            trace["fallback"] = REASON_CAP_ROUTER_UNAVAILABLE
-            return None
-        trace["cap_router"] = f"{route.decision}:{route.capability_id or '-'}"
-        if capture is not None:
-            capture["cap_router"] = {
-                "decision": route.decision, "capability_id": route.capability_id,
-                "confidence": route.confidence, "provenance": route.provenance,
-                "raw_k": raw_k, "post_gate_k": raw_k, "effective_k": effective_k,
-                "option_slots": option_slots,
-            }
-        if not route.selected:
-            # REJECT is a NORMAL decision → the system's REAL no-capability path
-            # (Agent). NONE is a separate, distinct outcome. Neither ever enters
-            # the argument chain.
-            trace["fallback"] = (REASON_CAP_ROUTER_REJECT if route.rejected
-                                 else REASON_CAP_ROUTER_NONE)
-            return None
-        # capability decided -> the Argument Path Router decides HOW its
-        # arguments are acquired (CONTEXT_DIRECT reuses the Binder; a MODEL need
-        # is executed through the injected extractor).
-        entry = card_entries_by_id.get(route.capability_id)
-        if entry is None:  # a route the active table no longer honors: refuse
-            trace["fallback"] = REASON_VERSION_MISMATCH
-            return None
-        if not chat_plane_candidate(entry):
-            # The selector identified an intent the chat plane must not execute
-            # (a hidden capability). This is a CORRECT identification, so the
-            # turn goes to the Agent through the same NORMAL REJECT exit — it is
-            # never executed, and the remaining cards are never used as a
-            # consolation pick.
-            trace["fallback"] = REASON_FUNNEL_ALLOWLIST_REJECT
-            return None
-        _t_acq = time.monotonic()
-        out = await _acquisition_hop(requirements, deps, entry, query=message,
-                                     facts=facts, view=view, trace=trace,
-                                     capture=capture, provider=acq_provider,
-                                     history=history)
-        _mark(capture, "acquisition_ms", _t_acq)
-        return out
-
-    # backend=off compatibility/rollback lane: the legacy single-call
-    # ToolIntentModel selection hop, UNCHANGED (HIT and MISS/AMBIGUOUS alike).
-    trace["stage"] = "tool_intent"
-    jv = await tool_intent(message, cands, entries_by_id=entries_by_id,
-                       llm=deps.llm, facts=facts)
-    trace["tool_intent"] = f"{jv.decision}:{jv.capability_id or '-'}"
+    # MATCH_HIT already returned above (HIT -> ARP) and never reaches this node.
+    # There is exactly ONE production selector (the deployed cap_router
+    # service); a test injects its own through ``deps.cap_router_selector``.
+    trace["stage"] = "cap_router"
+    selector = getattr(deps, "cap_router_selector", None) or cap_router.default_selector()
+    # Business-layer K normalization (§26.2): the selector only ever sees a list
+    # of at most K candidates. There is NO K=1 direct path and NO K=2
+    # ineligibility: EVERY non-empty candidate set (K >= 1) is handed to the
+    # selector, which may SELECT one of the shown cards or legitimately REJECT;
+    # the business layer never selects a capability on the model's behalf and
+    # never fabricates a confidence.
+    raw_k = len(cands)
+    norm = candidate_aggregation.normalize_top_k(cands)
+    effective_k = len(norm.candidates)
+    # Variable-length option accounting: the model is handed ``effective_k``
+    # capability cards plus the frozen REJECT card appended by the card
+    # renderer. The selector is consulted for EVERY K >= 1; there is no
+    # special-cased slot count.
+    option_slots = effective_k + 1
+    trace["raw_k"] = raw_k
+    trace["post_gate_k"] = raw_k
+    trace["effective_k"] = effective_k
+    trace["option_slots"] = option_slots
     if capture is not None:
-        capture["tool_intent"] = {
-            "decision": jv.decision, "capability_id": jv.capability_id,
-            "confidence": jv.confidence, "arguments": jv.arguments,
-            "rationale": jv.rationale,
+        # K telemetry recorded BEFORE the selector call, so a turn that
+        # times out or finds the service unavailable still exposes exactly
+        # what it was handed (raw/effective K, option slots). Overwritten
+        # below with the decision once the selector returns.
+        capture["cap_router"] = {
+            "decision": None, "capability_id": None, "confidence": None,
+            "provenance": "", "raw_k": raw_k, "post_gate_k": raw_k,
+            "effective_k": effective_k, "option_slots": option_slots,
         }
-    if jv.decision != TOOL_INTENT_CONFIDENT:
-        trace["fallback"] = (
-            REASON_TOOL_INTENT_REJECT if jv.decision == TOOL_INTENT_REJECT
-            else REASON_TOOL_INTENT_UNCERTAIN
-        )
+    try:
+        _t_select = time.monotonic()
+        route = await selector.select(message, list(norm.candidates),
+                                      entries_by_id=card_entries_by_id, facts=facts)
+        _mark(capture, "selection_ms", _t_select)
+    except cap_router.CapabilityRouterUnavailable:
+        # ruling: a selector that cannot serve exits to the
+        # Agent; selection NEVER falls back to another model (the metric
+        # would be polluted).
+        trace["fallback"] = REASON_CAP_ROUTER_UNAVAILABLE
         return None
-    entry = entries_by_id.get(jv.capability_id)
-    if entry is None:  # a verdict the active table no longer honors: refuse
+    trace["cap_router"] = f"{route.decision}:{route.capability_id or '-'}"
+    # The event row's ``tool_intent`` column predates the split (migration
+    # 0008); the schema is frozen, so the ONE selection verdict is mirrored
+    # there too. It is the cap_router decision, never a second model hop.
+    trace["tool_intent"] = trace["cap_router"]
+    if capture is not None:
+        capture["cap_router"] = {
+            "decision": route.decision, "capability_id": route.capability_id,
+            "confidence": route.confidence, "provenance": route.provenance,
+            "raw_k": raw_k, "post_gate_k": raw_k, "effective_k": effective_k,
+            "option_slots": option_slots,
+        }
+    if not route.selected:
+        # REJECT is a NORMAL decision → the system's REAL no-capability path
+        # (Agent). NONE is a separate, distinct outcome. Neither ever enters
+        # the argument chain.
+        trace["fallback"] = (REASON_CAP_ROUTER_REJECT if route.rejected
+                             else REASON_CAP_ROUTER_NONE)
+        return None
+    # capability decided -> the Argument Path Router decides HOW its
+    # arguments are acquired (CONTEXT_DIRECT reuses the Binder; a MODEL need
+    # is executed through the injected extractor).
+    entry = card_entries_by_id.get(route.capability_id)
+    if entry is None:  # a route the active table no longer honors: refuse
         trace["fallback"] = REASON_VERSION_MISMATCH
         return None
-    return _certify(requirements, entry, jv.arguments, facts=facts, view=view,
-                    trace=trace, capture=capture)
+    if not chat_plane_candidate(entry):
+        # The selector identified an intent the chat plane must not execute
+        # (a hidden capability). This is a CORRECT identification, so the
+        # turn goes to the Agent through the same NORMAL REJECT exit — it is
+        # never executed, and the remaining cards are never used as a
+        # consolation pick.
+        trace["fallback"] = REASON_FUNNEL_ALLOWLIST_REJECT
+        return None
+    _t_acq = time.monotonic()
+    out = await _acquisition_hop(requirements, deps, entry, query=message,
+                                 facts=facts, view=view, trace=trace,
+                                 capture=capture, provider=acq_provider,
+                                 history=history)
+    _mark(capture, "acquisition_ms", _t_acq)
+    return out
+
 
 
 def _certify(requirements, entry, args, *, facts, view, trace, capture):
     """Capability -> kind gate -> Binder validate -> certified ACTION metadata.
 
-    Shared by the legacy lane and the ARP's CONTEXT_DIRECT. ``args`` is the
-    argument DRAFT (legacy: the model's extraction; ARP: the legal system values
-    supplied via ``acquisition_inputs``) — the Binder still resolves context
-    slots from the turn facts and is the final gate (never modified here)."""
+    The ONE certification gate every acquisition strategy exits through.
+    ``args`` is the argument DRAFT (whatever the capability handler, the
+    Argument Path Router or the extractor produced) — the Binder still resolves
+    context slots from the turn facts and is the final gate (never modified
+    here)."""
     from . import binder
 
     import time
@@ -488,6 +448,8 @@ def _certify(requirements, entry, args, *, facts, view, trace, capture):
         }.get(bound.state, REASON_BIND_MISSING)
         return None
     trace["stage"] = "certified"
+    # ``funnel_stage`` is part of the observable ACTION handoff (preview, shadow
+    # and existing clients read it); its value is frozen for compatibility.
     return certified(requirements, entry, bound.args, view.fingerprint,
                      stage="tool_intent")
 

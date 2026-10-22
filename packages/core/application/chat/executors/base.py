@@ -96,6 +96,13 @@ class ChatDeps:
     # The cascade reads it duck-typed, so legacy deps objects (and deps=None) keep
     # working unchanged.
     acquisition_inputs: Any = None
+    # Capability-selection seam for TESTS ONLY: a ``CapabilitySelector`` (the
+    # deterministic StubSelector or a fake) that the cascade prefers over the
+    # production cap_router service. None = the deployed service
+    # (``cap_router.default_selector()``). There is no configuration switch and
+    # no second selection model: production always uses the service, and a
+    # selector failure exits to the Agent.
+    cap_router_selector: Any = None
     # Phase 4 extraction seam: ``await extract(*, query, entry, model_slots,
     # bundle) -> (values, source)`` — the MODEL-owned argument extractor for one
     # already-decided capability (current implementation: Qwen, wired in

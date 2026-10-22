@@ -1,9 +1,8 @@
 """Phase 2 contract pins — vocabulary + opt-in rule.
 
-These tests pin the DECLARATION contract only; no behavior is exercised and the
-cascade is not wired (``chat_cap_router_backend`` stays "off"). They lock the
-decisions made across the Phase 1/2 review so a later refactor cannot silently
-re-introduce a default SlotDecl or a wrong ownership/source pairing.
+These tests pin the DECLARATION contract only; no behavior is exercised. They
+lock the decisions made across the Phase 1/2 review so a later refactor cannot
+silently re-introduce a default SlotDecl or a wrong ownership/source pairing.
 """
 from __future__ import annotations
 
@@ -31,9 +30,12 @@ from core.application.chat.intent_funnel.argument_acquisition import (
 from core.config import settings
 
 
-def test_backend_enum_and_default_off():
-    assert cap_router.BACKENDS == ("off", "stub", "cap_router")
-    assert settings.chat_cap_router_backend == "off"
+def test_there_is_no_backend_switch():
+    # Production has exactly ONE selector (the deployed cap_router service). The
+    # legacy off/stub/cap_router enum and its config key are deleted, so no
+    # deployment can silently keep the old selection lane alive.
+    assert not hasattr(cap_router, "BACKENDS")
+    assert not hasattr(settings, "chat_cap_router_backend")
 
 
 def test_ownership_sources_subset_invariant():

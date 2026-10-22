@@ -1,16 +1,13 @@
-"""cap_router backend: deterministic capability selection (Phase 3 wiring).
+"""cap_router test double: deterministic capability selection.
 
-The transition stub of the cap_router lane. It inherits the leader-vs-runner-up
-margin discipline the cosine corpus proved (the SAME rule the legacy
-ToolIntentModel stub applied), but answers exactly ONE question — *which*
-capability (or NONE). It authors nothing else: no arguments, no Binder contact,
-no context resolution, no model call.
-
-Phase 3 scope: this stub exists to verify the
+This is NOT a production backend — production has exactly one selector, the
+deployed cap_router service. :class:`StubSelector` exists so tests can drive the
 ``MISS/AMBIGUOUS -> Recall -> Aggregation -> cap_router -> ONE|NONE`` wiring
-with ``backend=stub``. The real LayaChoice backend lands later and replaces it
-behind the SAME :class:`..CapabilitySelector` protocol, without touching the
-contract or the cascade.
+without a model call; tests inject it through ``ChatDeps.cap_router_selector``.
+It inherits the leader-vs-runner-up margin discipline the cosine corpus proved,
+but answers exactly ONE question — *which* capability (or NONE). It authors
+nothing else: no arguments, no Binder contact, no context resolution, no model
+call.
 
 Margins: a single candidate with a trustworthy provenance (a calibrated cosine
 ``recall`` or a deterministic ``matcher_hit``) selects; a race selects only when

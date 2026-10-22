@@ -161,3 +161,13 @@ async def test_composite_lane_off_routes_viewer_or_agent_not_composite(monkeypat
     app, agent = _harness(monkeypatch, port, seam)
     await _stream_viewer(app)
     assert agent.agent_stream_calls == 1 and seam.calls == []
+
+
+# L0 retirement: this suite drove the removed L0 producer for the experimental
+# COMPOSITE lane. The pair certification no longer exists; see
+# tests/test_funnel_e2e.py for the funnel's single capability lane.
+import pytest as _pytest  # noqa: E402
+
+pytestmark = _pytest.mark.skip(
+    reason="retired with L0: no COMPOSITE-lane requirement producer",
+)

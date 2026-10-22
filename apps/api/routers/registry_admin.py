@@ -638,7 +638,7 @@ async def get_live_view(_: AuthAdmin = Depends(require_admin)) -> dict:
 async def post_preview_route(
     body: RegistryPreviewRouteRequest, _: AuthAdmin = Depends(require_admin),
 ) -> dict:
-    """Matcher -> Recall -> ToolIntentModel -> Binder against the LIVE tables.
+    """Matcher -> Recall -> cap_router -> Binder against the LIVE tables.
     Side-effect-free by construction (the funnel never touches run_tool, 8.8)
     and writes nothing; every embedding/LLM call it makes is billed under
     ``execution_mode=preview`` (8.14)."""

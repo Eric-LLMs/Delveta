@@ -131,7 +131,8 @@ class Settings(BaseSettings):
     # LOCAL_RAG recall depth — same default as the agent's rag_search tool (top_k=5).
     chat_retrieval_top_k: int = 5
     # ── Intent Funnel (docs/temp.md §3/§8): the single-hop, always-live chain ──
-    # Matcher→Recall→ToolIntentModel(select+extract)→Binder(verify-only) with
+    # Matcher HIT → Argument Path Router; MISS/AMBIGUOUS → Recall → Aggregation
+    # → cap_router(select) → Argument Acquisition → Binder(verify-only), with
     # fail-open Agent fallback. The QIR legacy cascade was deleted with migration
     # 0014 — this is the only table-driven routing lane.
     chat_funnel_timeout_seconds: float = 5.0     # whole-cascade wall clock, then Agent
@@ -145,7 +146,7 @@ class Settings(BaseSettings):
     chat_funnel_min_score: float = 0.82          # Recall quality gate — EVERY hit >= it reaches the
                                                  # model; no width cap (ruling), and an
                                                  # EMPTY set short-circuits to NO_CANDIDATE (Agent)
-    chat_funnel_margin: float = 0.06             # ToolIntentModel(stub) leader-vs-runner-up margin
+    chat_funnel_margin: float = 0.06             # StubSelector (test double) + eval-script margin
     # Phase 6 observability: when ON, each funnel event row also carries
     # trace_json (rebuilt candidate-card summary + query + verdict — never the
     # full prompt). Dark launch: OFF keeps the write path byte-identical.
@@ -167,62 +168,33 @@ class Settings(BaseSettings):
     # three stay fully registered and callable on the Agent/Worker/Research planes
     # with their destructive/permission/sandbox/approval chain untouched.
     chat_funnel_hidden_capabilities: str = "cap-edit-file,cap-artifact,cap-bash"
-    # ToolIntentModel backend ladder (8.17 + chain ruling):
-    # "stub" | "local" | "online" | "auto" (local→online→stub). ToolIntentModel is a
-    # swappable PROVIDER: the funnel only speaks the OpenAI-compatible card
-    # contract in tool_intent/base.py — no model name or inference backend appears
-    # in Matcher/Recall/Binder/Runtime business logic.
-    chat_tool_intent_backend: str = "stub"
-    chat_tool_intent_min_confidence: float = 0.75      # model verdicts below this escalate
-    # Local ToolIntentModel = the Docker ``tool-intent`` service (Ollama today,
+    # ── ARGUMENT EXTRACTOR (Qwen service) ────────────────────────────
+    # These keys configure ONLY the MODEL-owned argument extractor used by the
+    # Argument Path Router (QUERY_TO_EXTRACTOR / QUERY_PLUS_5TURNS_TO_EXTRACTOR /
+    # MIXED). They no longer configure any selection backend: capability
+    # selection is always the cap_router service below.
+    # The local extractor is the Docker ``tool-intent`` service (Ollama today,
     # replaceable). chat_tool_intent_local_url is an OpenAI-compatible BASE
-    # (e.g. http://tool-intent:11434/v1); "" keeps the honest
-    # "not deployed -> ToolIntentUnavailable -> fall through the ladder" semantics.
-    chat_tool_intent_local_url: str = ""               # deployed local tool-intent model endpoint ("" = none)
+    # (e.g. http://tool-intent:11434/v1); "" means the extractor is not deployed,
+    # so a MODEL acquisition need exits ACQUISITION_MODEL_PENDING to the Agent.
+    chat_tool_intent_local_url: str = ""               # deployed extractor endpoint ("" = none)
     # Provider config (NOT business logic): which concrete model the local
     # service serves. Current default = the fine-tuned Delveta-Qwen3-0.6B-PE-v1
     # checkpoint the deployed ``tool-intent`` service serves (Q5_K_M) — Ollama
     # encodes the quantization in the tag; swap provider/model via this key +
     # TOOL_INTENT_OLLAMA_MODEL (compose), never by touching the chain.
     chat_tool_intent_local_model: str = "delveta-pe:q5km"
-    # Output discipline of the LOCAL provider (Adapter-layer, NOT chain logic):
-    #   "prompt_json" — the original card contract: SYSTEM asks for a JSON reply
-    #                   and the adapter brace-parses it (what a base instruct model
-    #                   like qwen3:0.6b emits well). DEFAULT = today's behavior.
-    #   "tools"       — native function-calling: one OpenAI tool per candidate
-    #                   (name = Registry capability_id, params = Registry schema);
-    #                   the adapter reads message.tool_calls back into the SAME
-    #                   {capability_id, arguments} ModelResult. Chosen for tool-tuned
-    #                   checkpoints that leak markdown/prose under prompt_json.
-    # The reply->verdict translation still validates capability_id against the
-    # candidate set and defers argument correctness to the Binder either way.
-    chat_tool_intent_local_mode: str = "prompt_json"
-    # Online model rides a DEDICATED small-model channel (8.17 "小模型层"), explicit
-    # per-call forwarding like the session-summary seam; "" model = ride the pinned
-    # turn channel (legacy behavior), base_url+api_key must be set together to pin
-    # a dedicated endpoint, else only the model name is forwarded.
-    chat_tool_intent_online_model: str = ""
-    chat_tool_intent_online_base_url: str = ""
-    chat_tool_intent_online_api_key: str = ""
     chat_tool_intent_timeout_seconds: float = 4.0      # per-call guardrail inside the 5s cascade
 
-    # ── cap_router lane (Phase 2) ────────────────────────────────────
-    # Capability SELECTION node backend. The new split chain
-    # (Recall -> Aggregation -> cap_router -> Argument Path Router -> extractor)
-    # is OPT-IN: "off" keeps the existing single-call select_and_extract hop
-    # BYTE-IDENTICAL (rollback / compatibility lane). "stub" = deterministic
-    # selector (wiring tests only); "cap_router" = the deployed cap_router service
-    # (current capability-selection model implementation: LayaChoice). The new
-    # lane is dev/test/shadow ONLY until a separate ruling opens it.
-    chat_cap_router_backend: str = "off"               # "off" | "stub" | "cap_router"
+    # ── cap_router (the ONLY capability-selection node) ──────────────
     # cap_router = Delveta's stable capability-selection SERVICE, served OUT OF
     # PROCESS by the `deploy/laya` sidecar (`POST /v1/systemone`, one choice
     # question per turn). The current model implementation behind it is LayaChoice;
     # swapping that model must not change this contract. This is a BASE url such as
     # http://localhost:18092; "" keeps the honest "not deployed ->
     # CapabilityRouterUnavailable -> Agent" semantics (ruling: a
-    # cap_router failure NEVER falls back to the extractor or the legacy
-    # ToolIntentModel). The model directory is supplied to the SERVICE via
+    # cap_router failure NEVER falls back to another selection model or to the
+    # argument extractor). The model directory is supplied to the SERVICE via
     # LAYA_CHOICE_MODEL_DIR (a read-only bind mount) — it is never referenced in
     # this process and never baked into the image.
     chat_cap_router_url: str = ""                      # deployed cap_router endpoint ("" = none)

@@ -30,7 +30,7 @@ def trace_json(capture: dict | None, ctx) -> dict | None:
         "query": getattr(getattr(ctx, "body", None), "message", None),
         "matcher": capture.get("matcher"),
         "candidates": capture.get("candidates", []),
-        "model_verdict": capture.get("tool_intent"),
+        "model_verdict": capture.get("cap_router"),
         "cap_router": capture.get("cap_router"),
         "acquisition": capture.get("acquisition"),
         "entry": capture.get("entry"),

@@ -3,8 +3,9 @@
 Pinning the P4 rulings:
 
 * 8.5: the console can dry-run ONE query through the WHOLE chain
-  (Registry → Matcher → Recall → ToolIntentModel → Binder → Final Route)
-  with zero side effects — run_tool is not even on the preview object graph;
+  (Registry → Matcher → (Recall → cap_router) → Argument Acquisition → Binder →
+  Final Route) with zero side effects — run_tool is not even on the preview
+  object graph;
 * the preview bypasses per-turn gating entirely (it drives the cascade body
   directly — single-path ruling left no production rollout gate at
   all), but it IS gated per-kind exactly like routing (入表≠开闸 holds);
@@ -21,11 +22,10 @@ Pinning the P4 rulings:
 """
 from __future__ import annotations
 
-import re
 import types
 
 import pytest
-from core.application.chat.intent_funnel import funnel
+from core.application.chat.intent_funnel import cap_router, funnel
 from core.application.chat.intent_funnel.contract import (
     REASON_KIND_DISABLED,
     REASON_NO_CANDIDATE,
@@ -101,28 +101,28 @@ def _open(monkeypatch, *, mode="off", private=False, funnel_on=True):
 
     # Single-path ruling: the rollout gates + matcher shadow mode +
     # private kind switch were deleted (kwargs kept for call-site compatibility).
-    # certification lanes need real argument drafts: ride the online seam with
-    # the scripted ToolIntentModel double (the stub's zero extraction power is pinned
-    # in test_funnel_p2; here the ops plane is the subject)
-    monkeypatch.setattr(settings, "chat_tool_intent_backend", "online")
-    monkeypatch.setattr(settings, "chat_tool_intent_min_confidence", 0.75)
-    monkeypatch.setattr(settings, "chat_tool_intent_online_model", "")
     monkeypatch.setattr(settings, "chat_tool_intent_timeout_seconds", 4.0)
     monkeypatch.setattr(settings, "chat_funnel_timeout_seconds", 5.0)
 
 
-class _ScriptedToolIntent:
-    """Deterministic single-hop double: one card -> select it and quote-strip
-    the name slot; a split card set -> the honest NONE."""
+class _Selector:
+    """Deterministic selector double (no model call): picks the top candidate."""
 
-    async def complete_json(self, prompt, **kw):
-        caps = re.findall(r"(?m)^### (\S+)$", prompt)
-        if len(caps) != 1:
-            return {"capability_id": "NONE", "confidence": 1.0, "arguments": {}}
-        m = re.search(r"<user_sentence>(.*?)</user_sentence>", prompt, re.DOTALL)
-        quoted = re.search(r'"([^"]+)"', m.group(1) if m else "")
-        args = {"name": quoted.group(1)} if quoted else {}
-        return {"capability_id": caps[0], "confidence": 0.95, "arguments": args}
+    async def select(self, query, candidates, *, entries_by_id, facts=None):
+        return cap_router.CapabilityRoute(
+            cap_router.ROUTE_SELECTED, candidates[0].capability_id)
+
+
+class _Extractor:
+    """Deterministic argument-extractor double: quote-strips the name slot."""
+
+    def __init__(self):
+        self.calls = 0
+
+    async def __call__(self, *, query, entry, model_slots, bundle, prompt=None):
+        self.calls += 1
+        quoted = query.split('"')
+        return ({"name": quoted[1]} if len(quoted) > 1 else {}), bundle.source
 
 
 class _FakeSession:
@@ -158,7 +158,9 @@ def _wire(monkeypatch, *, view, index=None, embedder=None, llm=None,
     return types.SimpleNamespace(
         session_factory=session_factory,
         embedder=lambda: (embedder or _Embedder()),
-        llm=llm if llm is not None else _ScriptedToolIntent(),
+        llm=llm,
+        cap_router_selector=_Selector(),
+        argument_extractor=_Extractor(),
     )
 
 
@@ -180,8 +182,8 @@ async def test_preview_certifies_and_reports_the_whole_chain(monkeypatch):
     assert res["route"]["capability_id"] == "cap-a"
     assert res["route"]["tool"] == "create_folder"
     assert res["route"]["args"] == {"name": "季度报告"}
-    # single-hop chain: every certified lane exits through the ToolIntentModel stage
-    # (the old "matcher" direct-certification stage is deleted)
+    # single-hop chain: every certified lane exits through the argument-acquisition
+    # stage (the old "matcher" direct-certification stage is deleted)
     assert res["route"]["funnel_stage"] == "tool_intent"
     assert res["route"]["funnel_kind"] == KIND_ACTION
 

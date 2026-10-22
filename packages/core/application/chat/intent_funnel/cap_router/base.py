@@ -7,30 +7,25 @@ nothing else: it never authors arguments, never touches the Binder, never
 resolves context, never calls Qwen. Argument acquisition is a separate node
 (:mod:`..argument_acquisition`).
 
-Backend ladder (``settings.chat_cap_router_backend``):
-  ``off``         — the new split chain is NOT used; the legacy single-call hop stays
-                    byte-identical (rollback / compatibility lane);
-  ``stub``        — deterministic selector (wiring/E2E tests only, no model);
-  ``cap_router``  — the deployed cap_router service (current model impl: LayaChoice).
+There is exactly ONE production selector: the deployed cap_router service
+(current model impl: LayaChoice). ``StubSelector`` exists ONLY as a test double
+and is injected through ``ChatDeps.cap_router_selector``; it is never selected
+by configuration in production.
 
 Failure contract (ruling): a ``cap_router`` failure — timeout, service
 unavailable, malformed output, or an off-candidate capability id — exits to the
-Agent. Selection NEVER falls back to the extractor; otherwise the cap_router E2E
-metrics would be polluted by the very model under test.
+Agent. Selection NEVER falls back to the argument extractor or to a second
+selection model; otherwise the cap_router metrics would be polluted by the very
+model under test.
 
 The backend seam is :class:`CapabilitySelector`, defined here as the node's
-abstract contract. Backend resolution (``selector_for``) and the concrete
-backends live in :mod:`.backends`.
+abstract contract. The production resolution (``default_selector``) and the
+concrete selectors live in :mod:`.backends`.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Protocol, Sequence, runtime_checkable
-
-BACKEND_OFF = "off"
-BACKEND_STUB = "stub"
-BACKEND_CAP_ROUTER = "cap_router"
-BACKENDS = (BACKEND_OFF, BACKEND_STUB, BACKEND_CAP_ROUTER)
 
 ROUTE_SELECTED = "SELECTED"
 ROUTE_NONE = "NONE"

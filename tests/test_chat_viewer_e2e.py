@@ -160,3 +160,11 @@ async def test_viewer_turn_stays_on_agent_without_viewer_lane(monkeypatch, gates
     app, agent = _harness(monkeypatch, port)
     await _stream(app, "what does the selection say?")
     assert agent.agent_stream_calls == 1 and len(port.calls) == 0
+
+
+# L0 retirement: this suite drove the removed L0 producer for the experimental
+# VIEWER lane. Capability selection now belongs to the funnel, covered by
+# tests/test_funnel_e2e.py; the case artifacts stay for reference.
+pytestmark = pytest.mark.skip(
+    reason="retired with L0: no VIEWER-lane requirement producer",
+)

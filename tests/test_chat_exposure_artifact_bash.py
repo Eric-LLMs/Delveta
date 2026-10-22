@@ -32,6 +32,7 @@ from agent.tools.fs_tools import register_fs_tools
 from agent.tools.tool_gateway import ToolCatalog
 from agent.tools.tool_permissions import ToolPermission
 from core.application.chat.intent_funnel import candidate_aggregation as agg_mod
+from core.application.chat.intent_funnel import cap_router as cap_router_mod
 from core.application.chat.intent_funnel import matcher as matcher_mod
 from core.application.chat.intent_funnel import recall as recall_mod
 from core.application.chat.intent_funnel.contract import (
@@ -179,7 +180,11 @@ def _wire(monkeypatch, *, recall_candidates, entries, hidden):
     monkeypatch.setattr(recall_mod, "recall", fake_recall)
     monkeypatch.setattr(agg_mod, "aggregate_by_capability", spy_agg)
     monkeypatch.setattr(settings, "chat_funnel_hidden_capabilities", hidden, raising=False)
-    monkeypatch.setattr(settings, "chat_cap_router_backend", "stub")
+    # The deterministic test double stands in for the ONE deployed selector.
+    from core.application.chat.intent_funnel.cap_router.backends.stub import (
+        StubSelector,
+    )
+    monkeypatch.setattr(cap_router_mod, "default_selector", lambda: StubSelector())
     monkeypatch.setattr(settings, "chat_funnel_min_score", 0.60)
     monkeypatch.setattr(settings, "chat_funnel_margin", 0.06)
     return rec
@@ -254,9 +259,8 @@ async def test_non_allowlisted_candidate_reaches_the_selector(monkeypatch, caplo
           recall_candidates=[Candidate("cap-bash", 0.95, origin="recall"),
                              Candidate("cap-a", 0.70, origin="recall")],
           entries=entries, hidden=_HIDDEN)
-    monkeypatch.setattr(
-        "core.application.chat.intent_funnel.cap_router.selector_for",
-        lambda backend: _SpySelector())
+    monkeypatch.setattr(cap_router_mod, "default_selector",
+                        lambda: _SpySelector())
 
     req = TurnRequirements()
     out = await _route(_ctx(), req)
@@ -298,7 +302,6 @@ async def test_chat_cannot_certify_a_hidden_capability(monkeypatch, caplog):
         "core.application.chat.intent_funnel.registry.active_view", fake_active)
     monkeypatch.setattr(matcher_mod, "match", fake_match)
     monkeypatch.setattr(settings, "chat_funnel_hidden_capabilities", _HIDDEN, raising=False)
-    monkeypatch.setattr(settings, "chat_cap_router_backend", "stub")
 
     req = TurnRequirements()
     out = await _route(_ctx(), req)

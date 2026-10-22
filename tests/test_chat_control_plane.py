@@ -1,15 +1,15 @@
-"""Control-plane contracts under the single-path ruling + Phase 2 DIRECT gating.
+"""Control-plane contracts under the single-path ruling.
 
 The router-level SSE compatibility is already covered end-to-end by
 test_viewer_chat (TestClient + fake kernel asserts frame shapes). What is pinned
-here is the pure policy + understanding surface:
+here is the pure policy surface:
 
 * ``TurnRequirements`` defaults to an abstain;
 * the default policy (all experimental lanes off) keeps routing on AGENT — the
   formal path certifies ACTION only, everything else rides its own lane gate;
-* Phase 2: a short, pure, zero-demand turn maps to DIRECT ONLY under the DIRECT
-  gate; any capability demand, memory flag, or a closed gate routes to AGENT;
-* L0: the in-process signal engine sets confidence correctly from cheap facts;
+* the pure mapper still maps a HIGH-confidence requirement set to its lane under
+  that lane's gate; only the funnel's Matcher/Recall cascade can produce such a
+  set now that L0's signal engine is gone;
 * the orchestrator's registry resolves the right branch and degrades unmapped kinds
   to the agent branch, never hard-failing.
 """
@@ -27,7 +27,6 @@ from core.application.chat.understanding import (
     Confidence,
     Signal,
     TurnRequirements,
-    resolve_requirements,
 )
 
 
@@ -137,114 +136,34 @@ def test_private_plus_other_demand_stays_agent_fail_closed():
         assert build_execution_plan(_rag_req(**over), _all_on()).kind is PlanKind.AGENT, over
 
 
-def test_viewer_ground_eligible_rules():
-    from core.application.chat.understanding import _viewer_ground_eligible
-
-    b = lambda kind, img=None: SimpleNamespace(kind=kind, image_asset_id=img)
-    assert _viewer_ground_eligible({"status": "injected", "blocks": [b("selection")]}) is True
-    assert _viewer_ground_eligible({"status": "injected", "blocks": [b("page")]}) is True
-    # image/roi/frame → needs the vision tool → NOT eligible (media path stays on Agent).
-    assert _viewer_ground_eligible({"status": "injected", "blocks": [b("frame", img="9")]}) is False
-    # stub (document open, nothing injected) → NOT eligible (Open != Inject).
-    assert _viewer_ground_eligible({"status": "stub", "blocks": []}) is False
-    assert _viewer_ground_eligible({"status": "injected", "blocks": []}) is False
-    assert _viewer_ground_eligible(None) is False
-
-
-def test_l0_viewer_injected_text_is_high_but_stub_is_not():
-    # HIGH only for an already-injected TEXT turn with the viewer as the sole demand.
-    inj = _ctx(message="what does this say", viewer={
-        "status": "injected",
-        "blocks": [SimpleNamespace(kind="selection", image_asset_id=None)],
-    })
-    assert resolve_requirements(inj, "what does this say").confidence is Confidence.HIGH
-    # A stub (readable doc open, no selection) must NOT be HIGH → stays on the Agent.
-    stub = _ctx(message="summarize the document", viewer={"status": "stub", "blocks": []})
-    assert resolve_requirements(stub, "summarize the document").confidence is not Confidence.HIGH
-
-
 def test_reason_is_traceable():
     assert "agent" in build_execution_plan(TurnRequirements(), PolicyContext()).reason
 
 
-# ── L0 signal engine ────────────────────────────────────────────────────────────
+def test_l0_signal_engine_is_gone():
+    # L0 retirement: the module owns source facts + the requirements contract only.
+    # No lexical or context-based route certification may reappear here.
+    from core.application.chat import understanding
 
-def _ctx(*, message, attach=None, viewer=None, research=False, handoff=None):
-    from core.application.chat.context import ChatTurnContext
-    return ChatTurnContext(
-        body=SimpleNamespace(message=message, attach=attach),
-        user=None, user_id="u", guest_token=None, log_user=None, tier="free",
-        notice=None, model=None, base_url=None, api_key=None, business_name=None,
-        credential_id=None, user_text=message, owned_asset_id=None, inline_image=None,
-        viewer_assembly=viewer, research_turn=research, effective_handoff=handoff,
-    )
-
-
-def test_l0_short_pure_turn_is_high():
-    req = resolve_requirements(_ctx(message="hello there"), "hello there")
-    assert req.confidence is Confidence.HIGH
-    assert req.needs_private is Signal.LOW and req.needs_memory is False
-
-
-def test_l0_capability_and_memory_demands_are_not_high():
-    cases = {
-        "web": "what is the latest news",
-        "memory": "do you remember what we discussed earlier",
-        "long": "x" * 500,
-    }
-    for name, msg in cases.items():
-        req = resolve_requirements(_ctx(message=msg), msg)
-        assert req.confidence is not Confidence.HIGH, name
-    # Phase 4 note: "summarize my document" IS now certified HIGH — but as a SOLE
-    # private demand it can only map to LOCAL_RAG (own gate). The Phase 2 guarantee it
-    # pinned stays pinned: a private demand is NEVER DIRECT-eligible.
-    from core.application.chat.execution_plan import _is_direct_eligible
-
-    priv = "summarize my document"
-    req = resolve_requirements(_ctx(message=priv), priv)
-    assert req.needs_private is Signal.HIGH and req.confidence is Confidence.HIGH
-    assert not _is_direct_eligible(req)
-    # …and with the retrieval gate closed it still lands on the Agent.
-    direct_only = PolicyContext(direct_fast_path_enabled=True)
-    assert build_execution_plan(req, direct_only).kind is PlanKind.AGENT
-
-
-def test_l0_hard_context_facts_win():
-    # A plain message is still not a direct turn when a viewer/attach/research is bound.
-    assert resolve_requirements(_ctx(message="explain", viewer={"status": "injected"}), "explain").confidence is not Confidence.HIGH
-    assert resolve_requirements(_ctx(message="explain", attach={"kind": "asset", "asset_id": "1"}), "explain").confidence is not Confidence.HIGH
-    req = resolve_requirements(_ctx(message="continue", research=True, handoff={"kind": "research"}), "continue")
-    assert req.needs_action is Signal.HIGH and req.confidence is Confidence.LOW
-
-
-# ── Phase 4 L0: private-corpus question certification ──────────────────────────────
-
-def test_l0_private_question_is_high_for_local_rag():
-    # A lexical private demand with no other capability is certified HIGH — the
-    # policy maps it to LOCAL_RAG only when the Phase 4 gate is on.
-    msg = "what does my knowledge base say about gradient descent"
-    req = resolve_requirements(_ctx(message=msg), msg)
-    assert req.needs_private is Signal.HIGH and req.confidence is Confidence.HIGH
-    assert build_execution_plan(req, _all_on()).kind is PlanKind.LOCAL_RAG
-
-
-def test_l0_attach_and_mixed_private_demands_are_not_high():
-    # Attach = read_document (precise tool read), NOT semantic recall — stays uncritical.
-    msg = "what does my document say about x"
-    att = _ctx(message=msg, attach={"kind": "asset", "asset_id": "1"})
-    req = resolve_requirements(att, msg)
-    assert req.confidence is not Confidence.HIGH and req.needs_private is Signal.HIGH
-    # Private + time-sensitive mixes private with public — Agent arbitrates.
-    mixed = "what does my knowledge base say about today's news"
-    req = resolve_requirements(_ctx(message=mixed), mixed)
-    assert req.confidence is not Confidence.HIGH
-    # Private + memory: recall authority stays with MemoryService (Agent).
-    mem = "do you remember what my knowledge base says about x"
-    req = resolve_requirements(_ctx(message=mem), mem)
-    assert req.confidence is not Confidence.HIGH
+    assert not hasattr(understanding, "resolve_requirements")
+    assert not hasattr(understanding, "_viewer_ground_eligible")
+    assert not hasattr(understanding, "_lex_action")
+    assert not hasattr(understanding, "_memory_trigger")
 
 
 # ── orchestrator registry ─────────────────────────────────────────────────────────
+
+
+def _ctx(*, message="hi"):
+    from core.application.chat.context import ChatTurnContext
+    return ChatTurnContext(
+        body=SimpleNamespace(message=message, attach=None),
+        user=None, user_id="u", guest_token=None, log_user=None, tier="free",
+        notice=None, model=None, base_url=None, api_key=None, business_name=None,
+        credential_id=None, user_text=message, owned_asset_id=None, inline_image=None,
+        viewer_assembly=None, research_turn=False, effective_handoff=None,
+    )
+
 
 def test_orchestrator_resolves_agent_plan_and_executor():
     from core.application.chat.executors.agent import AgentExecutor

@@ -4,11 +4,11 @@
   },
   "dataset_version": "v1-pilot",
   "output_hashes": {
-    "hard_negative.jsonl": "2a664708673bea0e",
-    "natural_workload.jsonl": "3fdebd40181ffa4e",
-    "query_cases.jsonl": "18fcbed73f812ab9",
+    "hard_negative.jsonl": "68a80d692bd117c9",
+    "natural_workload.jsonl": "eb09fed533efc741",
+    "query_cases.jsonl": "5f385c9bd959ba0c",
     "session_trajectories.jsonl": "dc35f4703ada4501",
-    "stress_workload.jsonl": "76621625580ee321",
+    "stress_workload.jsonl": "ca27c78b7cf1a1c3",
     "tool_positive.jsonl": "f755170b82ccfa37"
   },
   "provenance": "workload_design — designed synthetic mixture, NOT a real-user distribution",
@@ -23,7 +23,7 @@
   "source_hashes": {
     "chit_chat.yaml": "e922291c9fee0cc2",
     "context_drift.yaml": "bde246735a113e0d",
-    "hard_negative.yaml": "4e153dfac8a7f0c9",
+    "hard_negative.yaml": "9f82a04674d92487",
     "learning.yaml": "9f7514eaedbccb44",
     "life_assistant.yaml": "d5a6841fc5169bf8",
     "reading.yaml": "b9dec1efc92de7f5",

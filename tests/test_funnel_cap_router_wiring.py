@@ -2,12 +2,12 @@
 
 Pins the LOCKED business rules:
 
-* ``backend=off``  -> the FULL legacy chain, byte-identical (HIT and MISS/AMB);
-* ``backend=stub`` -> the NEW lane: MISS/AMBIGUOUS selects via cap_router (stub),
-  then the decided capability feeds the Argument Path Router;
-* a MATCH_HIT on the NEW lane goes STRAIGHT to the Argument Path Router — it is
-  NEVER re-selected (no Recall, no Aggregation, no cap_router, no legacy
-  ``select_and_extract``), because the Matcher already pinned the capability;
+* there is exactly ONE production selector (the deployed cap_router service);
+  tests inject a double through ``ChatDeps.cap_router_selector`` — there is no
+  backend switch and no legacy selection lane;
+* a MATCH_HIT goes STRAIGHT to the Argument Path Router — it is NEVER re-selected
+  (no Recall, no Aggregation, no cap_router), because the Matcher already pinned
+  the capability;
 * the selector is consulted for EVERY non-empty candidate set (K >= 1): there is
   no K=1 business-direct path and no K=2 ineligibility. K=1 hands over the single
   card, K=2 hands over both, K >= 4 is truncated to the top-3; only K=0 skips the
@@ -17,9 +17,7 @@ Pins the LOCKED business rules:
   Qwen fallback;
 * the production acquisition provider is built per turn when ``deps`` carries
   none, so a decided capability WITH parameters is declared and its MODEL slots
-  need the extractor (absent here -> ``ACQUISITION_MODEL_PENDING`` -> Agent);
-* the phase-3 transition shim is GONE: ``selection_transition`` was deleted and
-  ``CAP_ROUTER_HIT_DEFERRED`` no longer exists — the ARP replaces both.
+  need the extractor (absent here -> ``ACQUISITION_MODEL_PENDING`` -> Agent).
 
 Aggregation is NOT modified; the spies below only observe it.
 """
@@ -34,22 +32,19 @@ from core.application.chat.intent_funnel import cap_router as cap_router_mod
 from core.application.chat.intent_funnel import funnel
 from core.application.chat.intent_funnel import matcher as matcher_mod
 from core.application.chat.intent_funnel import recall as recall_mod
-from core.application.chat.intent_funnel import tool_intent as tool_intent_mod
+from core.application.chat.intent_funnel.cap_router.backends.stub import StubSelector
 from core.application.chat.intent_funnel.contract import (
     MATCH_AMBIGUOUS,
     MATCH_HIT,
     MATCH_MISS,
     REASON_ACQUISITION_MODEL_PENDING,
-    REASON_BIND_MISSING,
     REASON_CAP_ROUTER_NONE,
     REASON_CAP_ROUTER_REJECT,
     REASON_CAP_ROUTER_UNAVAILABLE,
     REASON_NO_CANDIDATE,
-    TOOL_INTENT_CONFIDENT,
     Candidate,
     MatchResult,
     RecallResult,
-    ToolIntentVerdict,
 )
 from core.application.chat.intent_funnel.registry import content_fingerprint
 from core.application.chat.intent_funnel.registry.entry import (
@@ -84,9 +79,11 @@ def _ctx(message=MSG):
     )
 
 
-def _deps():
+def _deps(selector=None):
+    """``selector=None`` exercises the PRODUCTION path (the deployed service)."""
     return types.SimpleNamespace(
-        session_factory=None, embedder=lambda: object(), llm=object())
+        session_factory=None, embedder=lambda: object(), llm=object(),
+        cap_router_selector=selector)
 
 
 def _fallback(caplog) -> str:
@@ -97,11 +94,9 @@ def _fallback(caplog) -> str:
 
 
 class _Rec:
-    """Spy recorder for every node the wired cascade could touch."""
+    """Spy recorder for every node the cascade could touch."""
 
     def __init__(self):
-        self.legacy = []      # legacy select_and_extract calls
-        self.factory = []     # cap_router.selector_for(backend) calls
         self.recall = []      # recall.load_index calls
         self.aggregate = []   # candidate_aggregation.aggregate_by_capability calls
 
@@ -166,91 +161,57 @@ def _wire(monkeypatch, *, state, recall_candidates=_ONE,
     monkeypatch.setattr(agg_mod, "aggregate_by_capability", spy_agg)
     monkeypatch.setattr(settings, "chat_funnel_min_score", 0.82)
     monkeypatch.setattr(settings, "chat_funnel_margin", 0.06)
-
-    async def fake_select_and_extract(query, candidates, *, entries_by_id,
-                                      llm=None, facts=None):
-        rec.legacy.append((query, len(candidates)))
-        return ToolIntentVerdict(TOOL_INTENT_CONFIDENT, "cap-a", arguments=None)
-
-    monkeypatch.setattr(tool_intent_mod, "select_and_extract", fake_select_and_extract)
-
-    real_factory = cap_router_mod.selector_for
-
-    def spy_factory(backend):
-        rec.factory.append(backend)
-        return real_factory(backend)
-
-    monkeypatch.setattr(cap_router_mod, "selector_for", spy_factory)
     return rec
 
 
-async def _run(monkeypatch, caplog, *, state, backend, recall_candidates=_ONE,
-               cids=("cap-a", "cap-b")):
+async def _run(monkeypatch, caplog, *, state, selector=None,
+               recall_candidates=_ONE, cids=("cap-a", "cap-b")):
     caplog.set_level(logging.INFO, logger=FUNNEL_LOGGER)
     rec = _wire(monkeypatch, state=state, recall_candidates=recall_candidates,
                 cids=cids)
-    monkeypatch.setattr(settings, "chat_cap_router_backend", backend)
     req = TurnRequirements()
-    out = await funnel.route(_ctx(), deps=_deps(), requirements=req)
+    out = await funnel.route(_ctx(), deps=_deps(selector), requirements=req)
     return out, req, rec, _fallback(caplog)
 
 
-# ── backend=off: the FULL legacy chain is untouched ──────────────────────────────
+# ── MISS/AMBIGUOUS -> Recall -> Aggregation -> cap_router ─────────────────────────
 
 
-async def test_off_miss_uses_legacy_hop(monkeypatch, caplog):
-    out, req, rec, fb = await _run(monkeypatch, caplog, state=MATCH_MISS, backend="off")
-    assert rec.legacy and not rec.factory
-    assert out is req and fb == REASON_BIND_MISSING
-
-
-async def test_off_hit_uses_legacy_hop(monkeypatch, caplog):
-    # off keeps the OLD HIT path (legacy select_and_extract) — the rollback lane.
-    out, req, rec, fb = await _run(monkeypatch, caplog, state=MATCH_HIT, backend="off")
-    assert rec.legacy and not rec.factory
-    assert not rec.recall            # HIT never recalls, even in the old chain
-    assert out is req
-
-
-# ── backend=stub: MISS/AMBIGUOUS -> Recall -> Aggregation -> cap_router ───────────
-
-
-async def test_stub_miss_routes_through_cap_router(monkeypatch, caplog):
+async def test_miss_routes_through_cap_router(monkeypatch, caplog):
     # K=3: the selector is consulted and picks cap-a (clear margin).
-    out, req, rec, fb = await _run(monkeypatch, caplog, state=MATCH_MISS, backend="stub",
-                                   recall_candidates=_THREE, cids=("cap-a", "cap-b", "cap-c"))
-    assert rec.factory == ["stub"]   # cap_router consulted
+    out, req, rec, fb = await _run(monkeypatch, caplog, state=MATCH_MISS,
+                                   selector=StubSelector(),
+                                   recall_candidates=_THREE,
+                                   cids=("cap-a", "cap-b", "cap-c"))
     assert rec.recall and rec.aggregate
-    assert not rec.legacy            # the legacy hop is NOT used on the new lane
     # cap_router selected cap-a -> the ARP: the production acquisition provider is
     # built per turn (deps carries none) so the capability IS declared; its
     # required MODEL slot needs the extractor, which deps does not inject here.
     assert out is req and fb == REASON_ACQUISITION_MODEL_PENDING
 
 
-async def test_stub_ambiguous_routes_through_cap_router(monkeypatch, caplog):
+async def test_ambiguous_routes_through_cap_router(monkeypatch, caplog):
     # three ambiguous table patterns (K=3) + one recall hit: the mixed provenance
     # makes the stub answer NONE (the ARP is never reached).
     out, req, rec, fb = await _run(
-        monkeypatch, caplog, state=MATCH_AMBIGUOUS, backend="stub",
+        monkeypatch, caplog, state=MATCH_AMBIGUOUS, selector=StubSelector(),
         recall_candidates=_ONE, cids=("cap-a", "cap-b", "cap-c"))
-    assert rec.factory == ["stub"] and rec.recall and rec.aggregate
-    assert not rec.legacy
+    assert rec.recall and rec.aggregate
     assert out is req and fb == REASON_CAP_ROUTER_NONE
 
 
-# ── backend=stub + HIT: capability decided -> ARP directly, no re-selection ───────
+# ── HIT: capability decided -> ARP directly, no re-selection ─────────────────────
 
 
-async def test_stub_hit_goes_to_arp_without_reselection(monkeypatch, caplog):
-    # The Matcher pinned the capability; the new lane must NOT re-select it
-    # (neither cap_router nor legacy select_and_extract) and must short-circuit
-    # BEFORE Recall / Aggregation. It goes STRAIGHT to the Argument Path Router:
-    # the production provider declares the capability, whose required MODEL slot
-    # needs the extractor (not injected here) -> Agent.
-    out, req, rec, fb = await _run(monkeypatch, caplog, state=MATCH_HIT, backend="stub")
-    assert not rec.factory           # no cap_router selection
-    assert not rec.legacy            # no legacy capability selection
+async def test_hit_goes_to_arp_without_reselection(monkeypatch, caplog):
+    # The Matcher pinned the capability; the cascade must NOT re-select it and
+    # must short-circuit BEFORE Recall / Aggregation. It goes STRAIGHT to the
+    # Argument Path Router: the production provider declares the capability,
+    # whose required MODEL slot needs the extractor (not injected here) -> Agent.
+    sel = _Recording()
+    out, req, rec, fb = await _run(monkeypatch, caplog, state=MATCH_HIT,
+                                   selector=sel)
+    assert sel.calls == 0            # no cap_router selection
     assert not rec.recall            # no Recall
     assert not rec.aggregate         # no Candidate Aggregation
     assert out is req and fb == REASON_ACQUISITION_MODEL_PENDING
@@ -259,57 +220,46 @@ async def test_stub_hit_goes_to_arp_without_reselection(monkeypatch, caplog):
 # ── NONE / unavailable fallbacks ─────────────────────────────────────────────────
 
 
-async def test_stub_none_exits_cap_router_none(monkeypatch, caplog):
+async def test_none_exits_cap_router_none(monkeypatch, caplog):
     # a too-close three-candidate race (all trusted): the stub never resolves it
     out, req, rec, fb = await _run(
-        monkeypatch, caplog, state=MATCH_MISS, backend="stub",
+        monkeypatch, caplog, state=MATCH_MISS, selector=StubSelector(),
         recall_candidates=_THREE_CLOSE, cids=("cap-a", "cap-b", "cap-c"))
-    assert rec.factory == ["stub"] and not rec.legacy
     assert out is req and fb == REASON_CAP_ROUTER_NONE
 
 
 async def test_reject_route_exits_cap_router_reject(monkeypatch, caplog):
     # The V2 4th decision: the model answers REJECT -> ROUTE_REJECT -> the real
     # no-capability path (Agent). It never enters the argument chain.
-    caplog.set_level(logging.INFO, logger=FUNNEL_LOGGER)
-    rec = _wire(monkeypatch, state=MATCH_MISS, recall_candidates=_THREE,
-                cids=("cap-a", "cap-b", "cap-c"))
     sel = _Recording(route=cap_router_mod.CapabilityRoute(
         cap_router_mod.ROUTE_REJECT, None))
-    monkeypatch.setattr(cap_router_mod, "selector_for", lambda backend: sel)
-    monkeypatch.setattr(settings, "chat_cap_router_backend", "cap_router")
-    req = TurnRequirements()
-    out = await funnel.route(_ctx(), deps=_deps(), requirements=req)
-    assert out is req and _fallback(caplog) == REASON_CAP_ROUTER_REJECT
-    assert not rec.legacy
-
-
-async def test_undeployed_backend_exits_unavailable(monkeypatch, caplog):
-    # "cap_router" is a valid enum value; its selector resolves, but the endpoint
-    # is not deployed ("" url) -> select() raises -> never falls through.
     out, req, rec, fb = await _run(monkeypatch, caplog, state=MATCH_MISS,
-                                   backend="cap_router", recall_candidates=_THREE,
+                                   selector=sel, recall_candidates=_THREE,
                                    cids=("cap-a", "cap-b", "cap-c"))
-    assert rec.factory == ["cap_router"] and not rec.legacy
+    assert sel.calls == 1
+    assert out is req and fb == REASON_CAP_ROUTER_REJECT
+
+
+async def test_undeployed_service_exits_unavailable(monkeypatch, caplog):
+    # No selector injected -> the PRODUCTION default (the deployed service). Its
+    # endpoint is not configured in tests -> select() raises -> never falls
+    # through to another model.
+    out, req, rec, fb = await _run(monkeypatch, caplog, state=MATCH_MISS,
+                                   recall_candidates=_THREE,
+                                   cids=("cap-a", "cap-b", "cap-c"))
     assert out is req and fb == REASON_CAP_ROUTER_UNAVAILABLE
 
 
 async def test_selector_that_raises_exits_unavailable(monkeypatch, caplog):
-    caplog.set_level(logging.INFO, logger=FUNNEL_LOGGER)
-    # K=3 so the selector is consulted (every K >= 1 reaches the selector now).
-    rec = _wire(monkeypatch, state=MATCH_MISS, recall_candidates=_THREE,
-                cids=("cap-a", "cap-b", "cap-c"))
-
     class _Boom:
         async def select(self, query, candidates, *, entries_by_id, facts=None):
             raise cap_router_mod.CapabilityRouterUnavailable("transport down")
 
-    monkeypatch.setattr(cap_router_mod, "selector_for", lambda backend: _Boom())
-    monkeypatch.setattr(settings, "chat_cap_router_backend", "stub")
-    req = TurnRequirements()
-    out = await funnel.route(_ctx(), deps=_deps(), requirements=req)
-    assert out is req and _fallback(caplog) == REASON_CAP_ROUTER_UNAVAILABLE
-    assert not rec.legacy
+    # K=3 so the selector is consulted (every K >= 1 reaches the selector now).
+    out, req, rec, fb = await _run(monkeypatch, caplog, state=MATCH_MISS,
+                                   selector=_Boom(), recall_candidates=_THREE,
+                                   cids=("cap-a", "cap-b", "cap-c"))
+    assert out is req and fb == REASON_CAP_ROUTER_UNAVAILABLE
 
 
 # ── K normalization (§26.2): business layer shapes what the selector sees ─────────
@@ -320,10 +270,12 @@ class _Recording:
 
     def __init__(self, route=None):
         self.seen = None
+        self.calls = 0
         self.route = route
 
     async def select(self, query, candidates, *, entries_by_id, facts=None):
         self.seen = list(candidates)
+        self.calls += 1
         if self.route is not None:
             return self.route
         return cap_router_mod.CapabilityRoute(
@@ -335,74 +287,50 @@ async def test_k1_consults_the_selector_with_the_single_candidate(
     # K=1 is an ordinary candidate set: the single card is handed to the selector,
     # which selects it (or may legitimately REJECT). The business layer never
     # selects a capability directly and never fabricates a confidence.
-    caplog.set_level(logging.INFO, logger=FUNNEL_LOGGER)
-    rec = _wire(monkeypatch, state=MATCH_MISS, recall_candidates=_ONE)
     sel = _Recording()
-    monkeypatch.setattr(cap_router_mod, "selector_for", lambda backend: sel)
-    monkeypatch.setattr(settings, "chat_cap_router_backend", "cap_router")
-    req = TurnRequirements()
-    out = await funnel.route(_ctx(), deps=_deps(), requirements=req)
+    out, req, rec, fb = await _run(monkeypatch, caplog, state=MATCH_MISS,
+                                   selector=sel, recall_candidates=_ONE)
     assert [c.capability_id for c in sel.seen] == ["cap-a"]
-    assert not rec.legacy
-    assert out is req and _fallback(caplog) == REASON_ACQUISITION_MODEL_PENDING
+    assert out is req and fb == REASON_ACQUISITION_MODEL_PENDING
 
 
 async def test_k1_selector_may_reject(monkeypatch, caplog):
     # K=1 is not a forced pick: the selector may answer REJECT (the real
     # no-capability path) even with a single card on the table.
-    caplog.set_level(logging.INFO, logger=FUNNEL_LOGGER)
-    rec = _wire(monkeypatch, state=MATCH_MISS, recall_candidates=_ONE)
     sel = _Recording(route=cap_router_mod.CapabilityRoute(
         cap_router_mod.ROUTE_REJECT, None))
-    monkeypatch.setattr(cap_router_mod, "selector_for", lambda backend: sel)
-    monkeypatch.setattr(settings, "chat_cap_router_backend", "cap_router")
-    req = TurnRequirements()
-    out = await funnel.route(_ctx(), deps=_deps(), requirements=req)
+    out, req, rec, fb = await _run(monkeypatch, caplog, state=MATCH_MISS,
+                                   selector=sel, recall_candidates=_ONE)
     assert [c.capability_id for c in sel.seen] == ["cap-a"]
-    assert not rec.legacy
-    assert out is req and _fallback(caplog) == REASON_CAP_ROUTER_REJECT
+    assert out is req and fb == REASON_CAP_ROUTER_REJECT
 
 
 async def test_k2_consults_the_selector_with_both_candidates(monkeypatch, caplog):
     # K=2 is NOT an ineligible/degradation case: both cards reach the selector.
-    caplog.set_level(logging.INFO, logger=FUNNEL_LOGGER)
-    rec = _wire(monkeypatch, state=MATCH_MISS, recall_candidates=_TWO)
     sel = _Recording()
-    monkeypatch.setattr(cap_router_mod, "selector_for", lambda backend: sel)
-    monkeypatch.setattr(settings, "chat_cap_router_backend", "cap_router")
-    req = TurnRequirements()
-    out = await funnel.route(_ctx(), deps=_deps(), requirements=req)
+    out, req, rec, fb = await _run(monkeypatch, caplog, state=MATCH_MISS,
+                                   selector=sel, recall_candidates=_TWO)
     assert [c.capability_id for c in sel.seen] == ["cap-a", "cap-b"]
-    assert not rec.legacy
-    assert out is req and _fallback(caplog) == REASON_ACQUISITION_MODEL_PENDING
+    assert out is req and fb == REASON_ACQUISITION_MODEL_PENDING
 
 
 async def test_k2_selector_may_reject(monkeypatch, caplog):
-    caplog.set_level(logging.INFO, logger=FUNNEL_LOGGER)
-    rec = _wire(monkeypatch, state=MATCH_MISS, recall_candidates=_TWO)
     sel = _Recording(route=cap_router_mod.CapabilityRoute(
         cap_router_mod.ROUTE_REJECT, None))
-    monkeypatch.setattr(cap_router_mod, "selector_for", lambda backend: sel)
-    monkeypatch.setattr(settings, "chat_cap_router_backend", "cap_router")
-    req = TurnRequirements()
-    out = await funnel.route(_ctx(), deps=_deps(), requirements=req)
+    out, req, rec, fb = await _run(monkeypatch, caplog, state=MATCH_MISS,
+                                   selector=sel, recall_candidates=_TWO)
     assert [c.capability_id for c in sel.seen] == ["cap-a", "cap-b"]
-    assert out is req and _fallback(caplog) == REASON_CAP_ROUTER_REJECT
+    assert out is req and fb == REASON_CAP_ROUTER_REJECT
 
 
 async def test_k0_no_candidate_never_consults_the_selector(monkeypatch, caplog):
     # K=0 is the ONLY case that skips the selector: NO_CANDIDATE exits before the
     # cap_router stage is even entered.
-    caplog.set_level(logging.INFO, logger=FUNNEL_LOGGER)
-    rec = _wire(monkeypatch, state=MATCH_MISS, recall_candidates=[])
     sel = _Recording()
-    monkeypatch.setattr(cap_router_mod, "selector_for", lambda backend: sel)
-    monkeypatch.setattr(settings, "chat_cap_router_backend", "cap_router")
-    req = TurnRequirements()
-    out = await funnel.route(_ctx(), deps=_deps(), requirements=req)
-    assert sel.seen is None
-    assert not rec.factory and not rec.legacy
-    assert out is req and _fallback(caplog) == REASON_NO_CANDIDATE
+    out, req, rec, fb = await _run(monkeypatch, caplog, state=MATCH_MISS,
+                                   selector=sel, recall_candidates=[])
+    assert sel.calls == 0
+    assert out is req and fb == REASON_NO_CANDIDATE
 
 
 async def test_k_at_least_4_truncates_to_top3_before_the_selector(
@@ -412,17 +340,12 @@ async def test_k_at_least_4_truncates_to_top3_before_the_selector(
             Candidate("cap-b", 0.90, origin="recall"),
             Candidate("cap-c", 0.85, origin="recall"),
             Candidate("cap-d", 0.80, origin="recall")]
-    caplog.set_level(logging.INFO, logger=FUNNEL_LOGGER)
-    rec = _wire(monkeypatch, state=MATCH_MISS, recall_candidates=four,
-                cids=("cap-a", "cap-b", "cap-c", "cap-d"))
     sel = _Recording()
-    monkeypatch.setattr(cap_router_mod, "selector_for", lambda backend: sel)
-    monkeypatch.setattr(settings, "chat_cap_router_backend", "cap_router")
-    req = TurnRequirements()
-    out = await funnel.route(_ctx(), deps=_deps(), requirements=req)
+    out, req, rec, fb = await _run(monkeypatch, caplog, state=MATCH_MISS,
+                                   selector=sel, recall_candidates=four,
+                                   cids=("cap-a", "cap-b", "cap-c", "cap-d"))
     assert [c.capability_id for c in sel.seen] == ["cap-a", "cap-b", "cap-c"]
-    assert not rec.legacy
-    assert out is req and _fallback(caplog) == REASON_ACQUISITION_MODEL_PENDING
+    assert out is req and fb == REASON_ACQUISITION_MODEL_PENDING
 
 
 async def test_trace_and_capture_expose_k_and_option_slots(monkeypatch, caplog):
@@ -433,25 +356,13 @@ async def test_trace_and_capture_expose_k_and_option_slots(monkeypatch, caplog):
     _wire(monkeypatch, state=MATCH_MISS, recall_candidates=_TWO)
     sel = _Recording(route=cap_router_mod.CapabilityRoute(
         cap_router_mod.ROUTE_REJECT, None))
-    monkeypatch.setattr(cap_router_mod, "selector_for", lambda backend: sel)
-    monkeypatch.setattr(settings, "chat_cap_router_backend", "cap_router")
     trace, capture = orch.observability.new_trace(), {}
     req = TurnRequirements()
-    await orch.run_nodes(_ctx(), _deps(), req, trace, capture=capture)
+    await orch.run_nodes(_ctx(), _deps(sel), req, trace, capture=capture)
     assert trace["raw_k"] == 2 and trace["post_gate_k"] == 2
     assert trace["effective_k"] == 2 and trace["option_slots"] == 3
     assert capture["cap_router"]["effective_k"] == 2
     assert capture["cap_router"]["option_slots"] == 3
-
-
-async def test_hit_never_consults_the_cap_router_selector(monkeypatch, caplog):
-    # the Matcher pinned the capability; the cap_router lane must short-circuit to
-    # the ARP before Recall / Aggregation / any selector resolution.
-    out, req, rec, fb = await _run(monkeypatch, caplog, state=MATCH_HIT,
-                                   backend="cap_router")
-    assert not rec.factory and not rec.legacy
-    assert not rec.recall and not rec.aggregate
-    assert out is req and fb == REASON_ACQUISITION_MODEL_PENDING
 
 
 # ── Phase 4: the ARP is wired; the Phase 3 shim is deleted ───────────────────────

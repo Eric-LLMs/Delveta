@@ -1,32 +1,22 @@
-"""cap_router backend RESOLUTION — configured name -> selector, or None.
+"""cap_router production resolution — the ONE selector the funnel uses.
 
-Backend resolution is a distinct responsibility from any backend itself: each
-backend module (:mod:`.stub`, :mod:`.service`) defines its selector; THIS module
-owns the ONE place that maps a configured backend name to it. The caller maps
-``None`` to the Agent (``CAP_ROUTER_UNAVAILABLE``) — selection never falls
-through to another model (ruling).
+There is no backend ladder and no configuration switch: every production
+MISS/AMBIGUOUS turn is adjudicated by the deployed ``cap_router`` service.
+``StubSelector`` is a TEST DOUBLE only; a test injects it through
+``ChatDeps.cap_router_selector`` and the cascade prefers that injection.
+
+Service availability is NOT resolved here: whether the endpoint is deployed is
+discovered by :meth:`CapRouterSelector.select` (raising
+``CapabilityRouterUnavailable``), which the caller maps to the Agent.
 """
 from __future__ import annotations
 
-from ..base import BACKEND_CAP_ROUTER, BACKEND_STUB, CapabilitySelector
+from ..base import CapabilitySelector
 
 
-def selector_for(backend: str) -> CapabilitySelector | None:
-    """Resolve a configured backend name to its selector, or None when the
-    backend cannot serve (``off`` / unknown). The caller maps None to the Agent
-    via ``CAP_ROUTER_UNAVAILABLE`` — selection never falls through to another
-    model (ruling).
+def default_selector() -> CapabilitySelector:
+    """The production selector. Constructed unconditionally — a missing endpoint
+    surfaces as ``CapabilityRouterUnavailable`` from ``select``, never here."""
+    from .service import CapRouterSelector
 
-    ``cap_router`` ALWAYS resolves to a :class:`CapRouterSelector` — backend
-    resolution and service availability are separate concerns: whether the
-    service is deployed is discovered by :meth:`CapRouterSelector.select`
-    (raising ``CapabilityRouterUnavailable``), never by returning None here."""
-    if backend == BACKEND_STUB:
-        from .stub import StubSelector
-
-        return StubSelector()
-    if backend == BACKEND_CAP_ROUTER:
-        from .service import CapRouterSelector
-
-        return CapRouterSelector()
-    return None
+    return CapRouterSelector()

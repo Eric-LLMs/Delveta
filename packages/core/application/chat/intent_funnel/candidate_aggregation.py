@@ -1,11 +1,11 @@
-"""Capability Candidate Aggregation — the data-shaping stage between Recall and ToolIntentModel.
+"""Capability Candidate Aggregation — the data-shaping stage between Recall and cap_router.
 
 Final semantics: Recall keeps EVERY hit >= threshold at the raw
 stage (a capability may legitimately arrive several times through different
 sentences); this stage collapses the query-level candidates into ONE
-capability-level card per capability before the model sees them. Pure list
+capability-level card per capability before the selector sees them. Pure list
 transform — no embedding, no SQL, no retrieval, no adjudication (which
-capability wins is the ToolIntentModel's call, not here).
+capability wins is the cap_router's call, not here).
 """
 from __future__ import annotations
 
@@ -64,7 +64,7 @@ def aggregate_by_capability(candidates: list[Candidate]) -> list[Candidate]:
     """Collapse query-level candidates to ONE per capability_id: the highest-
     scoring hit rides with ITS own provenance; ties keep the earlier arrival
     (matcher seed first). Raw Recall keeps every >= threshold hit — this stage
-    sits strictly between the raw assembly and ToolIntentModel, so the model
+    sits strictly between the raw assembly and cap_router, so the selector
     only ever sees capability-level cards."""
     best: dict[str, Candidate] = {}
     for c in candidates:

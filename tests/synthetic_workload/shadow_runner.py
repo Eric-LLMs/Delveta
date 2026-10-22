@@ -2,10 +2,11 @@
 PRODUCTION node body, stop at the Binder.
 
 Chain per turn (constraint set): Registry → Matcher → (Recall,
-raw lane: min_score=0, every hit kept) → ToolIntentModel (ONE call on the
-model-floor-screened union) → Binder validate → STOP. No Runtime, no
-Dispatch, no event row, no settings mutation — :func:`cascade_shadow` is the
-single funnel entry and it only produces routing metadata (8.8).
+raw lane: min_score=0, every hit kept) → Candidate Aggregation → cap_router
+(ONE selector call on the floor-screened set; the HIT lane skips it) →
+Argument Acquisition → Binder validate → STOP. No Runtime, no Dispatch, no
+event row, no settings mutation — :func:`cascade_shadow` is the single funnel
+entry and it only produces routing metadata (8.8).
 
 Replay policy:
   * sessions are replayed WHOLE, turn by turn, never flattened (constraint 4);
@@ -155,8 +156,8 @@ def bucket_attribution(capture: dict, buckets=BUCKETS,
     """Per-bucket attribution of the ONE observed model pick: picked cap in
     the bucket's set -> valid; no pick -> no_pick; pick outside the set ->
     unobserved (this turn provides no evidence for that bucket)."""
-    ti = capture.get("tool_intent") or {}
-    pick = ti.get("capability_id") if ti.get("decision") == "CONFIDENT" else None
+    ti = capture.get("cap_router") or {}
+    pick = ti.get("capability_id") if ti.get("decision") == "SELECTED" else None
     out = {}
     for t in buckets:
         s = model_set_at(capture, t, top_k)
@@ -206,7 +207,8 @@ async def replay_records(*, version: str = "v1-pilot", limit: int | None = None,
             "actual": actual, "agrees": agrees(rec["expected"], actual),
             "deepest_stage": result["deepest_stage"],
             "fallback_reason": result["fallback_reason"],
-            "matcher": result["matcher"], "tool_intent": result["tool_intent"],
+            "matcher": result["matcher"],
+            "cap_router": capture.get("cap_router"),
             "total_ms": result["total_ms"],
             "capture": capture,
             "buckets": bucket_attribution(capture),
@@ -241,8 +243,8 @@ def aggregate(turns: list[dict], sessions: list[dict]) -> dict:
     stage = Counter(t["deepest_stage"] for t in all_turns)
     fb = Counter(t["fallback_reason"] for t in all_turns
                  if t["actual"]["funnel"] != "TOOL")
-    ti = Counter((t["capture"].get("tool_intent") or {}).get("decision", "-")
-                 for t in all_turns if "tool_intent" in t["capture"])
+    ti = Counter((t["capture"].get("cap_router") or {}).get("decision", "-")
+                 for t in all_turns if "cap_router" in t["capture"])
     binder = Counter(t["capture"].get("binder", "-")
                      for t in all_turns if "binder" in t["capture"])
     sweep = {}
@@ -267,14 +269,14 @@ def aggregate(turns: list[dict], sessions: list[dict]) -> dict:
             row["agree"] += int(t["agrees"])
         return g
 
-    # ── per-stage stats across the WHOLE order (Matcher → Recall → ToolIntent
+    # ── per-stage stats across the WHOLE order (Matcher → Recall → cap_router
     # → Adapter(entry resolution) → Candidate Gate(kind) → Binder → STOP) ──────
     matcher_state = Counter(t["matcher"].split(":", 1)[0] for t in all_turns)
     recall_runs = sum(1 for t in all_turns if "recall_raw" in t["capture"])
     confs = [c["confidence"] for t in all_turns
-             if (c := t["capture"].get("tool_intent") or {}).get("confidence") is not None]
+             if (c := t["capture"].get("cap_router") or {}).get("confidence") is not None]
     gates = {
-        # Adapter: a CONFIDENT verdict the active table no longer honors
+        # Adapter: a SELECTED verdict the active table no longer honors
         "adapter_version_mismatch": fb.get("REGISTRY_VERSION_MISMATCH", 0),
         # Candidate Gate: kind in the table but its rollout switch is closed
         "candidate_gate_kind_disabled": fb.get("FUNNEL_KIND_DISABLED", 0),
@@ -288,7 +290,7 @@ def aggregate(turns: list[dict], sessions: list[dict]) -> dict:
         "case_id": t["case_id"], "intent": t["intent_category"],
         "query": t["user_query"], "matcher": t["matcher"],
         "recall_top": (t["capture"].get("recall_raw") or [{}]),
-        "tool_intent": t["capture"].get("tool_intent"),
+        "cap_router": t["capture"].get("cap_router"),
         "binder": t["capture"].get("binder"), "expected": t["expected"],
     } for t in hard_neg if t["actual"]["funnel"] == "TOOL"]
     ms = [t["total_ms"] for t in all_turns]
@@ -307,7 +309,7 @@ def aggregate(turns: list[dict], sessions: list[dict]) -> dict:
             "matcher_states": dict(matcher_state),
             "recall_lanes_run": recall_runs,
             "recall_lanes_skipped_hit": len(all_turns) - recall_runs,
-            "tool_intent_decisions": dict(ti),
+            "cap_router_decisions": dict(ti),
             "adapter_and_gates": gates,
             "binder_states": dict(binder),
             "certified": stage.get("certified", 0),
@@ -320,7 +322,7 @@ def aggregate(turns: list[dict], sessions: list[dict]) -> dict:
         "confusion_expected_x_actual": {f"{e}->{a}": n for (e, a), n in sorted(conf.items())},
         "deepest_stage": dict(stage),
         "fallback_reasons": dict(fb),
-        "tool_intent_decisions": dict(ti),
+        "cap_router_decisions": dict(ti),
         "binder_states": dict(binder),
         "raw_recall_scores": {
             "n": len(scores),
@@ -381,16 +383,13 @@ def write_run(turns: list[dict], session_rows: list[dict], report: dict, *,
     manifest = {
         "run_id": run_id, "dataset_version": version,
         "shadow_params": dict(SHADOW_RECALL, buckets=list(BUCKETS)),
-        "backend_pins": {
-            "chat_tool_intent_backend": settings.chat_tool_intent_backend,
-        },
         "production_settings_untouched": {
             "chat_funnel_min_score": settings.chat_funnel_min_score,
         },
         "timeout_guards": {
-            "production_tool_intent_timeout_seconds": 4.0,
+            "production_extractor_timeout_seconds": 4.0,
             "production_funnel_timeout_seconds": 5.0,
-            "benchmark_tool_intent_timeout_seconds":
+            "benchmark_extractor_timeout_seconds":
                 settings.chat_tool_intent_timeout_seconds,
             "benchmark_funnel_timeout_seconds":
                 settings.chat_funnel_timeout_seconds,
@@ -466,11 +465,14 @@ async def _main() -> int:
 
     # real deps: the SAME bundle production wires (chat.py); shadow writes files
     # only — no event rows, no dispatch, no settings mutation.
-    from api.routers.chat import _embedder, llm
+    from api.routers.chat import _embedder, _extract_arguments
     from core.infrastructure.db import SessionLocal
 
+    # cap_router_selector is deliberately absent: a real run resolves the ONE
+    # deployed selector (cap_router.default_selector()).
     _DEPS = types.SimpleNamespace(session_factory=SessionLocal,
-                                  embedder=_embedder, llm=llm)
+                                  embedder=_embedder,
+                                  argument_extractor=_extract_arguments)
     t0 = time.monotonic()
     turns = await replay_records(version=args.version, limit=args.limit)
     sessions = build_session_rows(turns, args.version)
@@ -480,7 +482,7 @@ async def _main() -> int:
           f"{len(turns)} turns, agree {report['overall_agree']}/{report['turns']}, "
           f"sessions exact {report['sessions']['trajectory_exact']}/{report['sessions']['n']})")
     print(json.dumps({k: report[k] for k in ("deepest_stage", "fallback_reasons",
-                                             "tool_intent_decisions", "binder_states",
+                                             "cap_router_decisions", "binder_states",
                                              "raw_recall_scores")},
                      ensure_ascii=False, indent=2))
     return 0

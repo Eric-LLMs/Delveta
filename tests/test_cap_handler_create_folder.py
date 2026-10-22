@@ -35,7 +35,7 @@ from agent.tools.definition import classify_permissions
 from agent.tools.tool_permissions import ToolPermission
 from api.tools import create_folder_tool
 from core.application.chat.intent_funnel import matcher as matcher_mod
-from core.application.chat.intent_funnel import tool_intent as tool_intent_mod
+from core.application.chat.intent_funnel import cap_router as cap_router_mod
 from core.application.chat.intent_funnel.argument_acquisition import AcquisitionInputs
 from core.application.chat.intent_funnel.cap_handler import (
     HANDLERS,
@@ -56,7 +56,6 @@ from core.application.chat.intent_funnel.registry.entry import (
     derive_language,
 )
 from core.application.chat.understanding import TurnRequirements
-from core.config import settings
 
 FUNNEL_LOGGER = "core.application.chat.intent_funnel.funnel"
 
@@ -182,6 +181,17 @@ class _Rec:
         self.legacy: list = []
 
 
+class _NoSelect:
+    """Selector guard: a HIT-lane test fails loudly if selection is re-entered."""
+
+    def __init__(self, rec: "_Rec") -> None:
+        self.rec = rec
+
+    async def select(self, query, candidates, *, entries_by_id, facts=None):
+        self.rec.legacy.append(query)
+        raise AssertionError("the selector must never run on a HIT lane")
+
+
 def _wire(monkeypatch, entry: CapabilityEntry):
     view = RegistryLiveView(fingerprint=content_fingerprint([entry]), entries=(entry,))
     rec = _Rec()
@@ -193,16 +203,11 @@ def _wire(monkeypatch, entry: CapabilityEntry):
         return MatchResult(state=MATCH_HIT, capability_id=entry.capability_id,
                            matched_literal="在工作区新建一个文件夹")
 
-    async def fake_select_and_extract(query, candidates, *, entries_by_id,
-                                      llm=None, facts=None):
-        rec.legacy.append(query)
-        raise AssertionError("legacy select_and_extract must never run on the new lane")
-
     monkeypatch.setattr(
         "core.application.chat.intent_funnel.registry.active_view", fake_active)
     monkeypatch.setattr(matcher_mod, "match", fake_match)
-    monkeypatch.setattr(tool_intent_mod, "select_and_extract", fake_select_and_extract)
-    monkeypatch.setattr(settings, "chat_cap_router_backend", "stub")
+    # A HIT is already decided: the ONE selector must never be consulted.
+    monkeypatch.setattr(cap_router_mod, "default_selector", lambda: _NoSelect(rec))
     return rec, view
 
 

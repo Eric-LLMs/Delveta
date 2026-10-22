@@ -178,7 +178,7 @@ class OpenAILLM:
         """
         kwargs: dict = {
             "model": mdl, "messages": messages, "stream": True,
-            # None keeps the historical 0.3; per-call overrides (ToolIntentModel) ask for 0.0.
+            # None keeps the historical 0.3; per-call overrides may ask for 0.0.
             "temperature": 0.3 if temperature is None else temperature,
         }
         if max_tokens is not None:
@@ -196,7 +196,7 @@ class OpenAILLM:
             # NOTE the ``usage_out is not None`` guard: some providers (deepseek)
             # send a usage chunk even when include_usage was NOT requested —
             # writing through a None sink used to raise TypeError, which made
-            # every usage_out-less complete_json caller (QIR decision) fail-open
+            # every usage_out-less complete_json caller would fail-open
             # on exactly those channels.
             if usage is not None and usage_out is not None:
                 usage_out["prompt_tokens"] = getattr(usage, "prompt_tokens", 0) or 0
@@ -246,8 +246,8 @@ class OpenAILLM:
         full-context generations (toolkit); under the streaming wire it is an idle-between-
         chunks deadline, not a total-generation cutoff. ``images`` (data-URL list) makes
         the user turn multimodal — used by the deck visual-understanding pass.
-        ``max_tokens``/``disable_thinking`` are pinned per-call by the funnel ToolIntentModel
-        ( latency experiments); every other caller keeps the old behavior.
+        ``max_tokens``/``disable_thinking`` are pinned per-call by structured-output
+        callers; every other caller keeps the old behavior.
         """
         client, mdl = self._call_channel(model, base_url, api_key, timeout=timeout)
         try:

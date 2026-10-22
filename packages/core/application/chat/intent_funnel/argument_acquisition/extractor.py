@@ -6,10 +6,9 @@ the Argument Path Router says must be acquired, ask the current extractor model
 the sanctioned context bundle (the query alone, or the query plus the last 5
 user turns — assembled by :mod:`.context_bundle`, never widened here).
 
-This adapter NEVER selects a capability and NEVER calls the legacy fused
-``tool_intent.select_and_extract``: the capability is already pinned upstream
-(cap_router SELECTED / Matcher HIT), so a selection here would be a second,
-competing decision. The Binder stays the final gate.
+This adapter NEVER selects a capability: the capability is already pinned
+upstream (cap_router SELECTED / Matcher HIT), so a selection here would be a
+second, competing decision. The Binder stays the final gate.
 
 Wire: NATIVE function calling (the online half of the SFT contract). The request
 sends ONE tool — ``name == entry.capability_id``, ``parameters`` exposing ONLY the
@@ -20,8 +19,8 @@ capability, or ``function.arguments`` that is not a JSON object, is a hard
 reply with NO native call falls back to the strict content discipline.
 
 The model is a DEPLOYMENT, not part of this contract: the endpoint/model/timeout
-are read from the existing local tool-intent config (``chat_tool_intent_local_*``)
-and the current implementation IS Qwen — recorded in telemetry as
+are read from the local extractor config (``chat_tool_intent_local_*``) and the
+current implementation IS Qwen — recorded in telemetry as
 :data:`EXTRACTOR_NAME`. A transport/malformed failure raises
 :class:`ExtractionUnavailable` so the caller maps it to the Agent (fail-closed);
 an EMPTY but well-formed reply is a normal empty extraction (the Binder then

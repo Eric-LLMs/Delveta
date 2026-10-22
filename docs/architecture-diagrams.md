@@ -311,23 +311,23 @@ flowchart TB
     end
 
     subgraph resolve["TurnOrchestrator.resolve_plan — lifecycle only; routing absorbed into intent_funnel.route() (P0 move)"]
-        L0["L0 lexical facts · resolve_requirements<br/>sole exact matcher · in-process · no model call"]
-        RT["intent_funnel.route(ctx, deps, requirements)<br/>shadow hook first (chat_matcher_mode off/shadow/on)<br/>· L0-certified turn passes through untouched"]
-        FN["Intent Funnel single-hop (chat_funnel_enabled)<br/>LIVE Registry tables → Matcher (exact-only) → (Recall) →<br/>ONE ToolIntentModel call select + extract ·<br/>ladder stub→local→online → Binder validate<br/>certified ACTION {capability_id · fingerprint TOCTOU stamp}"]
+        L0["Source facts · resolve_source_facts<br/>private_only / external_ok · no model call"]
+        RT["intent_funnel.route(ctx, deps, requirements)<br/>single path · no rollout switch"]
+        FN["Intent Funnel — two lanes, one chain<br/>LIVE Registry tables → Matcher (exact-only) →<br/>HIT: Argument Acquisition → Binder<br/>MISS/AMBIGUOUS: Recall → Aggregation → cap_router →<br/>Argument Acquisition → Binder validate<br/>certified ACTION {capability_id · fingerprint TOCTOU stamp}"]
         MAP["build_execution_plan — sole policy mapper<br/>per-kind gates · sole-demand eligibility · source_policy"]
         L0 --> RT
-        RT -- "funnel_live: master + action gate + guardrails.turn_veto<br/>(negation / research / handoff vetoes as code)" --> FN --> MAP
-        RT -- "gate closed / abstain — the ORIGINAL requirements object" --> MAP
+        RT -- "funnel_live: deps wired (no entry veto; negation forces HIT→MISS)" --> FN --> MAP
+        RT -- "abstain — the ORIGINAL requirements object" --> MAP
     end
 
     AUTH --> L0
-    FN -. "ABSTAIN — NO_CANDIDATE · TOOL_INTENT_REJECT / UNCERTAIN / TIMEOUT ·<br/>BIND_MISSING / AMBIGUOUS / INVALID · REGISTRY / RECALL_UNAVAILABLE ·<br/>VERSION_MISMATCH · KIND_DISABLED · CASCADE_TIMEOUT — byte-identical" .-> AG
+    FN -. "ABSTAIN — NO_CANDIDATE · CAP_ROUTER_NONE / REJECT / UNAVAILABLE ·<br/>ACQUISITION_UNDECLARED / MISSING / MODEL_PENDING ·<br/>BIND_MISSING / AMBIGUOUS / INVALID · REGISTRY / RECALL_UNAVAILABLE ·<br/>VERSION_MISMATCH · KIND_DISABLED · CASCADE_TIMEOUT — byte-identical" .-> AG
 
-    subgraph gates["Feature gates (config.py) — ALL default OFF · dark launch"]
-        GQ["chat_funnel_enabled (chain master) + per-kind switches<br/>chat_funnel_private/web_enabled<br/>(the legacy chat_qir_* set was deleted with migration 0014)"]
+    subgraph gates["Feature gates (config.py)"]
+        GQ["funnel: single path — funnel_live = deps wired<br/>(no rollout switch; the legacy chat_qir_* set was<br/>deleted with migration 0014)"]
         GF["fast_paths_enabled (master switch)<br/>+ per-kind: direct · viewer · retrieval<br/>· action (5A) · composite (5B)<br/>closed ⇒ that PlanKind never maps"]
     end
-    GQ -. "gates route()'s cascade lane" .-> RT
+    GQ -. "single path: always live when deps are wired" .-> RT
     GF -. "gates build_execution_plan · all closed ⇒ every turn maps to AGENT" .-> MAP
 
     MAP --> K{"PlanKind"}
@@ -373,19 +373,17 @@ flowchart TB
 > Agent clarifies user incompleteness (C1) and is never the recovery channel for system faults,
 > decided denials, or mid-write uncertainty.
 > Design: [architecture.md §24 — Chat Control Plane](architecture.md#24-chat-control-plane--plan-resolution-fast-paths--intent-routing),
-> [§25 — Chat Intent Funnel](architecture.md#25-chat-intent-funnel--nodeized-routing-toolintentmodel--shared-tool-runtime).
+> [§25 — Chat Intent Funnel](architecture.md#25-chat-intent-funnel--nodeized-routing-selector--shared-tool-runtime).
 
-**Intent Funnel — the single-hop routing chain end to end.** `funnel.route` runs inside plan
-resolution: the LIVE Registry tables load first, the Matcher consults
-the curated query corpus only (exact), Recall runs on any non-HIT and nominates candidates
-without adjudicating, exactly
-ONE ToolIntentModel call selects the capability and drafts its arguments (the stub backend is
-margin rules only — no model, no extraction), and the Binder only validates against the Registry
-schema.
+**Intent Funnel — two lanes, one chain, end to end.** `funnel.route` runs inside plan
+resolution: the LIVE Registry tables load first, and the Matcher consults the curated query
+corpus only (exact). A HIT is already decided, so it goes straight to argument acquisition and is
+never re-selected. Every non-HIT runs Recall (candidates only, no adjudication), Candidate
+Aggregation, then exactly ONE `cap_router` selection call (the deployed LayaChoice service; its
+stub is a test double only). The Argument Path Router then decides HOW the chosen capability's
+arguments are acquired, and the Binder only validates against the Registry schema.
 Every abstain, denial or fault exits fail-open to the Agent byte-identical; execution is
 never the funnel's — a certified turn dispatches through the same shared waterfall.
-
-![Intent Funnel — Matcher → Recall → ToolIntentModel → Binder → Runtime / Agent](./images/intent-funnel.png)
 
 <details>
 <summary>Mermaid source (for editing — regenerate via mermaid.ink)</summary>
@@ -393,59 +391,49 @@ never the funnel's — a certified turn dispatches through the same shared water
 ```mermaid
 flowchart TB
     %% Invariants: the funnel produces routing metadata only · every abstain/fault returns the
-    %% ORIGINAL TurnRequirements object (byte-identical, zero pollution) · at most ONE model call
-    %% per turn (chain ruling 2026-09-24) · gates default OFF · an off-card id is never a verdict.
+    %% ORIGINAL TurnRequirements object (byte-identical, zero pollution) · a HIT is never
+    %% re-selected · one selector hop on every MISS/AMBIGUOUS turn · an off-card id is never a verdict.
 
     USER["chat turn · resolve_plan →<br/>funnel.route(ctx, deps, requirements)"]
 
     subgraph lane[" "]
         direction LR
-        subgraph entry["Entry gates — ALL default OFF, dark launch"]
+        subgraph entry["Entry — single path"]
             direction TB
-            SHADOW["shadow hook · chat_matcher_mode off/shadow/on<br/>Matcher runs in the dark, would_* telemetry,<br/>routing untouched"]
-            L0B["L0 already certified ⇒ untouched<br/>(coexistence boundary)"]
-            GATE["funnel_live = chat_funnel_enabled + fast_paths_enabled<br/>+ action switch + guardrails.turn_veto:<br/>non-pure-text · web/memory demand · research/handoff<br/>vetoes as CODE, not table data"]
-            SHADOW --> L0B --> GATE
+            GATE["funnel_live = deps wired (no rollout switch · no entry veto)<br/>every wired turn reaches the Matcher;<br/>guardrails.negated forces a would-be HIT to MISS"]
         end
-        USER --> SHADOW
+        USER --> GATE
 
-        subgraph cascade["Single-hop cascade (wall-clock budget chat_funnel_timeout_seconds)"]
+        subgraph cascade["Two lanes, one chain (wall-clock budget chat_funnel_timeout_seconds)"]
             direction TB
             REG["LIVE Registry tables (capabilities + query rows) —<br/>the routing truth, fingerprint-cached; Recall corpus index<br/>loads on the MISS lane<br/>missing ⇒ REGISTRY_UNAVAILABLE / RECALL_UNAVAILABLE"]
             M["Node 1 · Matcher — EXACT-only over the live query corpus<br/>(enabled Standard + Similar rows; patterns/aliases are inert<br/>legacy storage, never read — ruling 2026-09-25)<br/>negation guard before certifying (common layer)<br/>HIT · MISS · MATCH_AMBIGUOUS (one sentence under two<br/>caps — all claimants up)"]
             R["Node 2 · Recall — TWO independent vector searches<br/>(Standard + Similar rows, ONE query embedding)<br/>every hit ≥ min_score kept with provenance — quality gate,<br/>no merge/dedup, never adjudicates (origin=recall)"]
-            CAND["ONE candidate set, one convergence point<br/>matcher_hit 1.0 · matcher_ambiguous 0.0 ride alongside<br/>recall (every hit ≥ min_score — no width cap) · EMPTY set<br/>short-circuits to NO_CANDIDATE, zero model hops (2026-09-26)"]
-            TI["Node 3 · ToolIntentModel — at most ONE model call:<br/>select capability AND draft arguments<br/>chat_tool_intent_backend picks the chain:<br/>auto = local → online → stub (Unavailable falls through)<br/>stub = margin rules, NO model, NO extraction<br/>(arguments None ⇒ schema'd turns exit BIND_MISSING)"]
-            B["Node 4 · Binder.validate — pure schema gate<br/>Registry canonical parameters · extracts nothing<br/>COMPLETE / MISSING / AMBIGUOUS / INVALID<br/>(non-COMPLETE exits straight to the Agent, BIND_*)"]
+            CAND["Candidate Aggregation — ONE card per capability_id<br/>matcher_ambiguous 0.0 rides alongside recall · EMPTY set<br/>short-circuits to NO_CANDIDATE, zero selector hops"]
+            SEL["Node 3 · cap_router — the ONE production selector<br/>(deployed LayaChoice service: K cards + frozen REJECT)<br/>SELECTED · NONE · REJECT; unavailable / timeout /<br/>illegal label ⇒ CAP_ROUTER_UNAVAILABLE, never a<br/>second model"]
+            ACQ["Node 4 · Argument Acquisition (Argument Path Router)<br/>CONTEXT_DIRECT · QUERY_TO_EXTRACTOR ·<br/>QUERY_PLUS_5TURNS_TO_EXTRACTOR · MIXED · MISSING<br/>the extractor fills ONLY MODEL-owned slots ·<br/>then the kind gate"]
+            B["Binder.validate — pure schema gate<br/>Registry canonical parameters · extracts nothing<br/>COMPLETE / MISSING / AMBIGUOUS / INVALID<br/>(non-COMPLETE exits straight to the Agent, BIND_*)"]
             REG --> M
-            M -- "any non-HIT: MISS / AMBIGUOUS" --> R --> CAND
-            M -- "HIT" --> CAND
+            M -- "any non-HIT: MISS / AMBIGUOUS" --> R --> CAND --> SEL --> ACQ
+            M -- "HIT — never re-selected" --> ACQ
         end
         GATE --> REG
     end
     style lane fill:none,stroke:none
 
-    subgraph adapters["Local Adapter — one internal reply shape from either wire format"]
-        direction TB
-        TI -- "prompt_json mode" --> PJ["brace-parse the JSON reply"]
-        TI -- "tools mode" --> NT["native tool_calls<br/>one OpenAI function per candidate<br/>name = Registry capability_id"]
-        NT -. "no tool_calls in reply →" .-> MD["structured-Markdown fallback<br/>### cap / tool: / arguments: / confidence:<br/>strict whole-reply fullmatch · prose never matches<br/>tool line cross-checked against the Registry"]
-        PJ --> GATE2["verdict gate (same for every format):<br/>NONE ⇒ REJECT · off-card ⇒ UNCERTAIN ·<br/>below floor ⇒ UNCERTAIN · else CONFIDENT + args"]
-        NT -- "tool_calls" --> GATE2
-        MD -- "parsed block" --> GATE2
-    end
-    CAND --> TI
-
     subgraph exits["Fail-open exits — reason codes carry the stage prefix"]
         direction LR
         AG["Agent fallback — ReactLoopAgent, full autonomy<br/>original query BYTE-IDENTICAL · never a<br/>side effect precedes the fallback"]
-        REASONS["REGISTRY_UNAVAILABLE · RECALL_TIMEOUT /<br/>UNAVAILABLE · NO_CANDIDATE (empty set, zero hops) ·<br/>TOOL_INTENT_REJECT / UNCERTAIN / TIMEOUT ·<br/>REGISTRY_VERSION_MISMATCH · FUNNEL_KIND_DISABLED ·<br/>BIND_MISSING / AMBIGUOUS / INVALID ·<br/>CASCADE_TIMEOUT / CASCADE_ERROR"]
+        REASONS["REGISTRY_UNAVAILABLE · RECALL_TIMEOUT /<br/>UNAVAILABLE · NO_CANDIDATE (empty set, zero hops) ·<br/>CAP_ROUTER_NONE / REJECT / UNAVAILABLE / TIMEOUT ·<br/>FUNNEL_ALLOWLIST_REJECT · ACQUISITION_UNDECLARED /<br/>MISSING / MODEL_PENDING · REGISTRY_VERSION_MISMATCH ·<br/>FUNNEL_KIND_DISABLED · BIND_MISSING / AMBIGUOUS / INVALID ·<br/>CASCADE_TIMEOUT / CASCADE_ERROR"]
         REASONS -.- AG
     end
-    GATE2 -- "REJECT / UNCERTAIN" --> AG
-    GATE2 -- CONFIDENT --> POST["post-verdict gates (funnel.py, between the<br/>verdict and the Binder): entry still in the active<br/>table? · kind_enabled? — deny ⇒ fail-open to Agent"]
-    POST -. "REGISTRY_VERSION_MISMATCH /<br/>FUNNEL_KIND_DISABLED" .-> AG
-    POST --> B
+    SEL -- "NONE / REJECT" --> AG
+    POST["post-decision gates (orchestrator.py, before acquisition):<br/>entry still in the active table? · chat-plane allowlist?<br/>— deny ⇒ fail-open to Agent"]
+    SEL -- "SELECTED" --> POST
+    POST -. "REGISTRY_VERSION_MISMATCH /<br/>FUNNEL_ALLOWLIST_REJECT" .-> AG
+    POST --> ACQ
+    ACQ -- "not COMPLETE" --> AG
+    ACQ --> B
     B -- "not COMPLETE" --> AG
 
     CERT["Certified ACTION turn — NEW TurnRequirements<br/>requested_action {tool, args, capability_id,<br/>funnel_registry_version = Registry fingerprint<br/>(the single TOCTOU stamp), funnel_stage, funnel_kind}"]
@@ -458,7 +446,7 @@ flowchart TB
     EX --> RW
     AG -- "every agent tool call" --> RW
 
-    OBS["funnel_trace + session event row (execution_mode-tagged)<br/>deepest stage · matcher · recall top · tool-intent verdict ·<br/>final route · per-stage latency — the tuning panel"]
+    OBS["funnel_trace + session event row (execution_mode-tagged)<br/>deepest stage · matcher · recall top · cap_router verdict ·<br/>acquisition strategy · final route · per-stage latency"]
     B -.- OBS
 ```
 
@@ -466,14 +454,13 @@ flowchart TB
 
 > **Intent-Funnel invariants** — nodes speak only through `contract.py` structures; the Matcher
 > holds zero hardcoded business rules (safety vetoes are funnel-common-layer code); Recall filters,
-> never decides; exactly ONE ToolIntentModel call per turn (the recheck second hop was measured to
-> add zero information and deleted); a backend's own failure is an `Unavailable` fall-through, never
-> a fabricated verdict; the Adapter accepts both wire formats a tool-tuned model emits
-> (native function-calls and its structured Markdown block) but strictness is asymmetric — a
-> well-formed block always binds, prose never pretends to be a call; every non-COMPLETE outcome
-> leaves the Agent's input byte-identical; the funnel executes nothing — certified and agent turns
-> traverse the same waterfall.
-> Design: [architecture.md §25 — Chat Intent Funnel](architecture.md#25-chat-intent-funnel--nodeized-routing-toolintentmodel--shared-tool-runtime).
+> never decides; a Matcher HIT is never re-selected; exactly ONE `cap_router` selection call per
+> non-HIT turn, and a selector failure is an `Unavailable` exit to the Agent — never a second model
+> and never a fabricated verdict; capability determination and argument acquisition are separate
+> concerns, so Qwen runs only when the Argument Path Router chose a MODEL strategy; every
+> non-COMPLETE outcome leaves the Agent's input byte-identical; the funnel executes nothing —
+> certified and agent turns traverse the same waterfall.
+> Design: [architecture.md §25 — Chat Intent Funnel](architecture.md#25-chat-intent-funnel--nodeized-routing-selector--shared-tool-runtime).
 
 > [architecture.md](architecture.md) is the single source of truth for the full design —
 > tech stack, repository layout, agent-kernel internals, tool runtime, data model, and deployment

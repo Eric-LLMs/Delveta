@@ -193,9 +193,8 @@ verify_admin_login() {
 start_backend() {
   mkdir -p "$LOG_DIR"
   # Chat-plane edit_file hiding (see start_server.sh): API-process env only.
-  # cap_router lane is enabled here (process env), pointing at the local service.
+  # cap_router points at the local selection service (process env).
   AGENT_HIDDEN_TOOLS="${AGENT_HIDDEN_TOOLS-edit_file}" \
-    CHAT_CAP_ROUTER_BACKEND="${CHAT_CAP_ROUTER_BACKEND-cap_router}" \
     CHAT_CAP_ROUTER_URL="${CHAT_CAP_ROUTER_URL-$CAP_ROUTER_URL}" \
     "$PYTHON_BIN" -m uvicorn apps.api.main:app --port 8300 >>"$UVICORN_LOG" 2>&1 &
   echo $! > "$PID_FILE"

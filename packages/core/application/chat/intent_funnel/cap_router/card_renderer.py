@@ -17,15 +17,41 @@ It must NOT carry query examples, a provenance/``evidence:`` line, or a
 ``matched_example:`` line — those were deliberately withheld from training, and a
 card that added them would be out of distribution.
 
-Byte-identity is the point, so the schema/negative helpers are IMPORTED from the
-production prompt module rather than re-typed: ``_params_block`` renders the
-Registry parameter schema, and the negative-example cap is the same constant the
-production card applies. This module renders the card and assembles the single
+Byte-identity is the point, so the schema/negative helpers live HERE — this
+module owns the only card renderer the system has. ``render_params_block``
+renders the Registry parameter schema, and ``MAX_NEGATIVE_EXAMPLES`` is the cap
+the frozen bundle applied. This module renders the card and assembles the single
 choice question; it never calls a model, a Binder or the Registry.
 """
 from __future__ import annotations
 
-from ..tool_intent.prompt import _MAX_NEGATIVE_EXAMPLES, _params_block
+# The frozen bundle's per-card negative-example cap.
+MAX_NEGATIVE_EXAMPLES = 6
+
+
+def render_params_block(entry) -> str:
+    """Render the canonical parameter schema (Registry ``parameters``) — the
+    argument-extraction target. Empty schema -> an explicit none line so the
+    model returns ``arguments: {}`` rather than inventing slots."""
+    params = entry.parameters or {}
+    if not params:
+        return "params: none (arguments must be {})"
+    lines = ["params:"]
+    for name, spec in params.items():
+        spec = spec if isinstance(spec, dict) else {}
+        bits = [str(spec.get("type") or "string")]
+        if spec.get("required"):
+            bits.append("required")
+        else:
+            bits.append("optional")
+        if spec.get("max_len") is not None:
+            bits.append(f"max_len={spec['max_len']}")
+        desc = str(spec.get("description") or "").strip()
+        line = f"- {name} ({', '.join(bits)})"
+        if desc:
+            line += f": {desc}"
+        lines.append(line)
+    return "\n".join(lines)
 
 # The instructions string the frozen dataset was built and benchmarked under
 # (fine_tuning/laya_finetune/data/manifest.json -> "instructions"). It is part of the
@@ -57,10 +83,10 @@ def render_card(entry) -> str:
         f"does: {entry.description}",
     ]
     negatives = [f"- {str(x).strip()}" for x in (entry.negatives or ()) if str(x).strip()]
-    negatives = negatives[:_MAX_NEGATIVE_EXAMPLES]
+    negatives = negatives[:MAX_NEGATIVE_EXAMPLES]
     lines.append("negative examples:\n"
                  + ("\n".join(negatives) if negatives else "- (none curated)"))
-    lines.append(_params_block(entry))
+    lines.append(render_params_block(entry))
     return "\n".join(lines)
 
 

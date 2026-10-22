@@ -3825,7 +3825,7 @@
           card.append(
             field("Capability ID", idIn),
             field("Tool binding", tool, "Executed when this capability is certified"),
-            field("Description", desc, "One-liner shown on the ToolIntentModel card"),
+            field("Description", desc, "One-liner shown on the capability card"),
             field("Intent kind", kind),
             field("Status", status),
             field("Replacement capability", repl, "Meaningful for deprecated rows"),
@@ -3975,7 +3975,7 @@
           const refresh = () => renderRegistryPage();
           const card = el("div", "legacy-card");
           card.appendChild(el("div", "section-title", "Negative Queries"));
-          card.appendChild(el("div", "hint", "ToolIntentModel card boundary ONLY — negatives are never embedded, never Exact Match, never Recall (they must not be recallable at all)."));
+          card.appendChild(el("div", "hint", "capability-card boundary ONLY — negatives are never embedded, never Exact Match, never Recall (they must not be recallable at all)."));
           for (const r of cur.negative) {
             const row = el("div", "kv-row");
             row.style.cssText = "display:flex;gap:8px;align-items:center;flex-wrap:wrap";
@@ -4041,7 +4041,7 @@
           // 4. Request query examples — card context, NOT corpus
           const lcard = el("div", "legacy-card");
           lcard.appendChild(el("div", "section-title", "Request query examples (card context only)"));
-          lcard.appendChild(el("div", "hint", "request_query_examples on the capability row — ToolIntentModel card context only. Never Exact Match, never Recall: the corpus is the Queries plane (Standard/Similar rows), nothing else."));
+          lcard.appendChild(el("div", "hint", "request_query_examples on the capability row — capability-card context only. Never Exact Match, never Recall: the corpus is the Queries plane (Standard/Similar rows), nothing else."));
           const ex = el("textarea"); ex.rows = 6; ex.value = JSON.stringify(cap.request_query_examples || [], null, 2);
           lcard.appendChild(field("request_query_examples (JSON array)", ex));
           const exSave = el("button", "btn primary", "Save (live)");
@@ -4131,7 +4131,7 @@
           // Full-chain query dry-run against the LIVE tables
           const routeCard = el("div", "legacy-card");
           routeCard.appendChild(el("div", "section-title", "Query dry-run (live tables)"));
-          routeCard.appendChild(el("div", "hint", "Matcher → Recall → ToolIntentModel → Binder → Final Route over the live corpus, side-effect free; model/embedding usage is billed as preview."));
+          routeCard.appendChild(el("div", "hint", "Matcher → Recall → cap_router → Binder → Final Route over the live corpus, side-effect free; model/embedding usage is billed as preview."));
           const q = el("textarea"); q.rows = 2; q.placeholder = "e.g. 创建一个叫 notes 的文件夹";
           const runBtn = el("button", "btn ghost", "Run");
           runBtn.type = "button";

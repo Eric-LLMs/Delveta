@@ -91,7 +91,7 @@ async def cascade_shadow(ctx, *, deps, requirements=None,
                 "turn_key": turn_key or None,
                 "matcher": capture.get("matcher"),
                 "candidates": capture.get("candidates", []),
-                "model_verdict": capture.get("tool_intent"),
+                "model_verdict": capture.get("cap_router"),
                 "would_execute": {
                     k: _act.get(k) for k in
                     ("capability_id", "args", "funnel_stage", "funnel_kind")

@@ -1,7 +1,7 @@
 """Phase 4 Step 2 — Argument Path Router WIRING.
 
-Drives the REAL cascade (``funnel.route`` -> orchestrator) on the new lane
-(``chat_cap_router_backend != off``) and pins the wiring contract:
+Drives the REAL cascade (``funnel.route`` -> orchestrator) on the single
+production lane and pins the wiring contract:
 
 * MATCH_HIT -> Argument Path Router DIRECTLY: no Recall, no Candidate
   Aggregation, no cap_router, no re-selection;
@@ -30,8 +30,8 @@ from pathlib import Path
 
 import pytest
 
+from core.application.chat.intent_funnel import cap_router as cap_router_mod
 from core.application.chat.intent_funnel import matcher as matcher_mod
-from core.application.chat.intent_funnel import tool_intent as tool_intent_mod
 from core.application.chat.intent_funnel.argument_acquisition import (
     AcquisitionInputs,
     SlotDecl,
@@ -58,7 +58,6 @@ from core.application.chat.intent_funnel.registry.entry import (
     derive_language,
 )
 from core.application.chat.understanding import TurnRequirements
-from core.config import settings
 
 FUNNEL_LOGGER = "core.application.chat.intent_funnel.funnel"
 UPLOADS = Path(__file__).resolve().parents[1] / "data" / "objects" / "uploads"
@@ -172,16 +171,15 @@ def _wire(monkeypatch, entry: CapabilityEntry) -> _Rec:
         return MatchResult(state=MATCH_HIT, capability_id=entry.capability_id,
                            matched_literal="打开这个文件")
 
-    async def fake_select_and_extract(query, candidates, *, entries_by_id,
-                                      llm=None, facts=None):
-        rec.legacy.append(query)
-        raise AssertionError("legacy select_and_extract must never run on the new lane")
+    class _NoSelect:
+        async def select(self, query, candidates, *, entries_by_id, facts=None):
+            rec.legacy.append(query)
+            raise AssertionError("the selector must never run on a HIT lane")
 
     monkeypatch.setattr(
         "core.application.chat.intent_funnel.registry.active_view", fake_active)
     monkeypatch.setattr(matcher_mod, "match", fake_match)
-    monkeypatch.setattr(tool_intent_mod, "select_and_extract", fake_select_and_extract)
-    monkeypatch.setattr(settings, "chat_cap_router_backend", "stub")
+    monkeypatch.setattr(cap_router_mod, "default_selector", lambda: _NoSelect())
     return rec, view
 
 

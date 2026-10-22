@@ -8,12 +8,12 @@ partially-parameterized turn loses nothing: it falls through to the Agent + LLM 
 tool/skill/workflow machinery exactly as before the fast path existed.
 
 Since the structure rulings (docs/temp.md 落点对表) this module carries
-ONLY the L0 flow-control layer and the governance vocabulary. It is a TERMINAL
-leaf: nothing importable from here may reach back into the funnel — funnel and
-understanding import this module at their top level, so the moved names below are
-served by an EXPLICIT lookup table, never by function-level imports.
+ONLY the shared guards and the governance vocabulary: L0's lexical direct-tool
+pass was deleted — capability recognition belongs to the Intent Funnel's
+Matcher alone. It is a TERMINAL leaf: nothing importable from here may reach
+back into the funnel, so the moved names below are served by an EXPLICIT lookup
+table, never by function-level imports.
 
-  * :func:`match_direct_tool` — the L0 exact pass over the binding table;
   * :func:`is_negated_request` — the global negation guard (the funnel's
     :func:`guardrails.negated` is its public re-export);
   * the executor-governance exceptions (:class:`ActionSchemaError`,
@@ -96,41 +96,10 @@ _NEGATION_GUARD = re.compile(
 
 
 def is_negated_request(text: str) -> bool:
-    """Sentence-level negation in front of an allowlisted action verb. Shared by the
-    L0 exact pass and the QIR argument-binding funnel — one guard, two call sites."""
+    """Sentence-level negation in front of an allowlisted action verb. The Matcher
+    applies it before certifying a HIT (``guardrails.negated``); the argument
+    binder shares the same guard."""
     return bool(_NEGATION_GUARD.search(text or ""))
-
-
-def match_direct_tool(text: str, ctx) -> dict | None:
-    """L0 recognition: the turn demands EXACTLY one allowlisted tool, fully-parameterized.
-
-    Returns a normalized request ``{"tool": …, "args": …}`` or ``None``. ``None`` is
-    the LOSSLESS fallback contract: no phrase, a negated request, two matches
-    (ambiguity), or a spec whose extractor found undetermined parameters all leave
-    the turn on the normal Agent path with its original text and full tool/skill/
-    workflow authority.
-
-    The binding table is resolved through the lazy façade below (call time, never
-    import time — this module is a terminal leaf of the chat layer)."""
-    if not text:
-        return None
-    if is_negated_request(text):
-        return None  # "不要新建文件夹「X」" must never certify a write
-    stripped = text.strip()
-    hits: list[tuple[str, dict[str, str]]] = []
-    for spec in _moved()["DIRECT_TOOLS"].values():
-        assert spec.extract is not None
-        args = spec.extract(stripped, ctx)
-        if args:
-            hits.append((spec.tool, args))
-    if len(hits) != 1:
-        return None
-    tool, args = hits[0]
-    return {"tool": tool, "args": args}
-
-
-# Back-compatible alias (tests/imports may reference the earlier name).
-match_action = match_direct_tool
 
 
 # ── moved definitions, kept reachable through this historic import surface ─────────
