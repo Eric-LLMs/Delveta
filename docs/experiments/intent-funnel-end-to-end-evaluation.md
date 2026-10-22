@@ -18,7 +18,7 @@
   This measures how often non-allowlist requests were
   incorrectly allowed through.
 
-> **Column legend:** `use` = `intent_rule_no_model` kept; `delete` = removed; `allow` = recall of non-allowlist intents allowed; `filter` = non-allowlist intents filtered out before recall. Columns read *threshold · rule path · recall policy*.
+> **Column legend:** `use` = the `intent_rule_no_model` path is kept; `delete` = the `intent_rule_no_model` path is removed; `allow` = non-allowlist intents are recalled as candidates; `filter` = non-allowlist intents are dropped after threshold recall and before capability aggregation. Columns read *threshold · rule path · recall policy*.
 
 | Metric | 0.88 · delete · allow | 0.82 · delete · allow | 0.88 · use · filter | 0.88 · use · allow | 0.82 · use · filter | 0.82 · use · allow |
 |---|---|---|---|---|---|---|
@@ -66,7 +66,7 @@ The 500 queries split into three mutually exclusive groups that sum to 500:
 
 **Corresponding breakdown at 0.88.** Under the same definitions, **500 = 457 + 40 + 3**: 457 rows entered LayaChoice-v2, giving Decision Accuracy **428/457 = 93.65%** (`LAYA_SELECT` 344 + `LAYA_REJECT` 5 + `FUNNEL_ALLOWLIST_REJECT` 79). Of the 40 `NO_CANDIDATE` rows, 38 are tool requests and score as failures, while 2 are non-allowlist requests (`cap-artifact`, `f5-ar-05` / `w3-ar-04`) correctly handed to the Agent and scored as correct. All 3 `MATCHER_HIT` rows are correct. End-to-End Accuracy is therefore **433/500 = 86.60%** (428 + 3 + 2). Neither threshold has any `LAYA_NO_DECISION` or `OTHER` rows.
 
-> The first two columns are this run after deleting `intent_rule_no_model` with non-allowlist intents recalled (commit `833651f`). The last four columns are the historical baseline using `intent_rule_no_model`, split by whether non-allowlist intents are filtered out before recall, using the same frozen per-case audit as the rest of this report. Their Decision Accuracy numerators exclude the 2 requests that legacy intent rules handled directly (`intent_rule_no_model`) in every baseline arm, because they never reached LayaChoice-v2; the denominators (336 / 411 / 410 / 447) never contained these 2 REJECT judgments or their other handling results. See the `intent_rule_no_model` deletion comparison below for the before/after comparison.
+> The first two columns are this run after deleting `intent_rule_no_model` with non-allowlist intents recalled (commit `833651f`). The last four columns are the historical baseline using `intent_rule_no_model`, split by whether non-allowlist intents are dropped after threshold recall and before capability aggregation, using the same frozen per-case audit as the rest of this report. Their Decision Accuracy numerators exclude the 2 requests that legacy intent rules handled directly (`intent_rule_no_model`) in every baseline arm, because they never reached LayaChoice-v2; the denominators (336 / 411 / 410 / 447) never contained these 2 REJECT judgments or their other handling results. See the `intent_rule_no_model` deletion comparison below for the before/after comparison.
 
 > **Rounds that did not reach LayaChoice-v2:** Some requests for non-allowlist capabilities were rejected before reaching the decision model. The retrieval model's score threshold itself filtered out non-intent queries, leaving no candidates (`NO_CANDIDATE`) and resulting in immediate rejection.
 >
@@ -124,8 +124,8 @@ Old: recall → filter out non-allowlist intents → intent candidate set recall
 New: recall → intent candidate set recall (all tools, allowing recall of non-allowlist intents) → model chooses → if the predicted tool is non-allowlist → reject
 ```
 
-- **Where the intent allowlist applies**: before the change it was checked right after recall,
-  so non-allowlist intents were dropped before the intent candidate set recall.
+- **Where the intent allowlist applies**: before the change it was checked right after threshold
+  recall, so non-allowlist intents were dropped before capability aggregation.
   After the change non-allowlist intents are recalled, every candidate reaches the model, and the
   allowlist is checked on the decision.
 - **Intent candidate set recall stage**: every enabled, non-research tool enters the intent
@@ -168,7 +168,7 @@ In one sentence: it used to be "you cannot see it, so pick something else"; now 
 > candidate cards were retrieved, so the model cannot select a tool and the request must be
 > handed off to the Agent.
 
-> **Column legend:** `use` = `intent_rule_no_model` kept; `delete` = removed; `allow` = recall of non-allowlist intents allowed; `filter` = non-allowlist intents filtered out before recall. Columns read *threshold · rule path · recall policy*.
+> **Column legend:** `use` = the `intent_rule_no_model` path is kept; `delete` = the `intent_rule_no_model` path is removed; `allow` = non-allowlist intents are recalled as candidates; `filter` = non-allowlist intents are dropped after threshold recall and before capability aggregation. Columns read *threshold · rule path · recall policy*.
 
 | Intent candidate list size | 0.88 · use · filter | 0.88 · use · allow | 0.82 · use · filter | 0.82 · use · allow | 0.88 · delete · allow | 0.82 · delete · allow |
 |---|---|---|---|---|---|---|
@@ -277,7 +277,7 @@ Both states ran under the same conditions:
 
 ## 2. Key metrics comparison
 
-> **Column legend:** `use` = `intent_rule_no_model` kept; `delete` = removed; `allow` = recall of non-allowlist intents allowed; `filter` = non-allowlist intents filtered out before recall. Columns read *threshold · rule path · recall policy*.
+> **Column legend:** `use` = the `intent_rule_no_model` path is kept; `delete` = the `intent_rule_no_model` path is removed; `allow` = non-allowlist intents are recalled as candidates; `filter` = non-allowlist intents are dropped after threshold recall and before capability aggregation. Columns read *threshold · rule path · recall policy*.
 
 | Metric | 0.88 · use | 0.88 · delete | Change | 0.82 · use | 0.82 · delete | Change |
 |---|---|---|---|---|---|---|
@@ -438,7 +438,7 @@ The net gain in correctly handled tool requests (+27 / +28) matches the key metr
 - **错误放行率（False Pass Rate）**：本该交给 Agent 处理、不该直接当工具执行的 86 条请求里,
   有多少被错误地放行去执行工具。它衡量的是：有多少 non-allowlist 请求被错误放行了。
 
-> **列头说明：** `use` = 保留 `intent_rule_no_model`；`delete` = 删除；`allow` = 允许召回 non-allowlist intents；`filter` = 召回前过滤掉 non-allowlist intents。列头按 *阈值 · 规则路径 · 召回策略* 排列。
+> **列头说明：** `use` = 保留 `intent_rule_no_model` 路径；`delete` = 删除 `intent_rule_no_model` 路径；`allow` = 允许召回 non-allowlist intents；`filter` = 按阈值召回之后、Capability 聚合之前过滤掉 non-allowlist intents。列头按 *阈值 · 规则路径 · 召回策略* 排列。
 
 | 指标 | 0.88 · delete · allow | 0.82 · delete · allow | 0.88 · use · filter | 0.88 · use · allow | 0.82 · use · filter | 0.82 · use · allow |
 |---|---|---|---|---|---|---|
@@ -486,7 +486,7 @@ The net gain in correctly handled tool requests (+27 / +28) matches the key metr
 
 **0.88 方案的对应口径。** 同一套口径下，0.88 为 **500 = 457 + 40 + 3**：457 条进入 LayaChoice-v2，决策准确率 **428/457 = 93.65%**（`LAYA_SELECT` 344 + `LAYA_REJECT` 5 + `FUNNEL_ALLOWLIST_REJECT` 79）；40 条 `NO_CANDIDATE` 中 38 条是工具请求、全部按失败计分，另 2 条是 non-allowlist 请求（`cap-artifact`，`f5-ar-05` / `w3-ar-04`），正确交给 Agent、按正确计分；3 条 `MATCHER_HIT` 全部正确。端到端因此为 **433/500 = 86.60%**（428 + 3 + 2）。两个阈值都没有 `LAYA_NO_DECISION` 或 `OTHER` 行。
 
-> 前两列是删除 `intent_rule_no_model` 并允许召回 non-allowlist intents 后的实测结果（commit `833651f`）；后四列是使用 `intent_rule_no_model` 的历史基线，按 non-allowlist intents 是否在召回前被过滤分为两组，沿用全报告同一份逐条审计口径。四个基线列的决策准确率没有把传统意图规则直接处理的请求（`intent_rule_no_model`，未进入 LayaChoice-v2）算进去；分母 336 / 411 / 410 / 447 本身就不含这 2 条 REJECT 判定和其他处理结果。
+> 前两列是删除 `intent_rule_no_model` 并允许召回 non-allowlist intents 后的实测结果（commit `833651f`）；后四列是使用 `intent_rule_no_model` 的历史基线，按 non-allowlist intents 是否在阈值召回之后、Capability 聚合之前被过滤分为两组，沿用全报告同一份逐条审计口径。四个基线列的决策准确率没有把传统意图规则直接处理的请求（`intent_rule_no_model`，未进入 LayaChoice-v2）算进去；分母 336 / 411 / 410 / 447 本身就不含这 2 条 REJECT 判定和其他处理结果。
 
 > **没有经过 LayaChoice-v2 的轮次：** 部分 non-allowlist capability 请求在进入决策模型之前就已 REJECT——由召回模型阈值本身筛选掉非意图 query，召回没有候选（`NO_CANDIDATE`），直接 REJECT。
 >
@@ -534,7 +534,7 @@ The net gain in correctly handled tool requests (+27 / +28) matches the key metr
 新: 召回 → 意图候选集召回(全部工具，允许召回 non-allowlist intents) → 模型选 → 如果预测 tool 属于 non-allowlist → 拒绝
 ```
 
-- **allowlist 在哪一步过滤**：改前是在召回之后立刻过滤，non-allowlist intents 在意图候选集召回前就被丢掉,
+- **allowlist 在哪一步过滤**：改前是在阈值召回之后立刻过滤，non-allowlist intents 在 Capability 聚合之前就被丢掉,
   模型根本看不到。改后允许召回 non-allowlist intents，全部送进模型，allowlist 校验挪到模型选完之后。
 - **意图候选集召回阶段**：只要工具是启用且非 research，就进入意图候选集召回，不再看它是否在 chat allowlist 内。
 - **模型选完之后**：如果选中的是不允许在聊天里直接执行的工具(改文件、生成产物、跑命令)，
@@ -562,7 +562,7 @@ The net gain in correctly handled tool requests (+27 / +28) matches the key metr
 
 > **统计说明：** 每条请求首先经过召回阶段（Embedding + 召回阈值），生成候选工具集；随后由决策模型 LayaChoice-v2 从候选集中选择目标 Tool 或作出 REJECT 决策。下表统计整个流程最终正确选中目标 Tool 或正确判定 REJECT 的结果，并按提供给决策模型的候选卡片数量（K）分组。K=0 表示没有召回候选卡片，模型无法进行工具选择，只能交由 Agent 处理。
 
-> **列头说明：** `use` = 保留 `intent_rule_no_model`；`delete` = 删除；`allow` = 允许召回 non-allowlist intents；`filter` = 召回前过滤掉 non-allowlist intents。列头按 *阈值 · 规则路径 · 召回策略* 排列。
+> **列头说明：** `use` = 保留 `intent_rule_no_model` 路径；`delete` = 删除 `intent_rule_no_model` 路径；`allow` = 允许召回 non-allowlist intents；`filter` = 按阈值召回之后、Capability 聚合之前过滤掉 non-allowlist intents。列头按 *阈值 · 规则路径 · 召回策略* 排列。
 
 | 意图候选列表数量 | 0.88 · use · filter | 0.88 · use · allow | 0.82 · use · filter | 0.82 · use · allow | 0.88 · delete · allow | 0.82 · delete · allow |
 |---|---|---|---|---|---|---|
@@ -663,7 +663,7 @@ The net gain in correctly handled tool requests (+27 / +28) matches the key metr
 
 ## 2. 核心指标对比
 
-> **列头说明：** `use` = 保留 `intent_rule_no_model`；`delete` = 删除；`allow` = 允许召回 non-allowlist intents；`filter` = 召回前过滤掉 non-allowlist intents。列头按 *阈值 · 规则路径 · 召回策略* 排列。
+> **列头说明：** `use` = 保留 `intent_rule_no_model` 路径；`delete` = 删除 `intent_rule_no_model` 路径；`allow` = 允许召回 non-allowlist intents；`filter` = 按阈值召回之后、Capability 聚合之前过滤掉 non-allowlist intents。列头按 *阈值 · 规则路径 · 召回策略* 排列。
 
 | 指标 | 0.88 · use | 0.88 · delete | 变化量 | 0.82 · use | 0.82 · delete | 变化量 |
 |---|---|---|---|---|---|---|
