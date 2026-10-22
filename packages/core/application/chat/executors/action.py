@@ -1,4 +1,4 @@
-"""ActionExecutor: the certified ACTION lane — direct dispatch of an allowlisted tool.
+"""ActionExecutor: the certified ACTION lane — direct dispatch of the tool bound to an admitted capability.
 
 Serves turns the policy resolved to ``PlanKind.ACTION``: the Intent Funnel
 certified that the turn demands EXACTLY one registered tool with fully-determined
@@ -11,11 +11,11 @@ Stage order encodes the side-effect boundary isolation:
   0. FINAL EXECUTION AUTHORIZATION — before anything can run, resolve the
      authoritative live Registry view and re-confirm that this capability is
      allowed to execute from the Chat plane RIGHT NOW: registered, enabled and
-     active, in the chat-plane execution allowlist (a hidden capability may be
-     recalled/offered but never executed), bound to the tool being dispatched.
-     The verdict is fail-closed: an unavailable/unreadable registry refuses.
-     This is deliberately independent of the model's selection, any routing-time
-     stamp, or caller-supplied action fields.
+     active, admitted by the Intent Funnel's capability rule (a hidden
+     capability may be recalled/offered but never executed), bound to the tool
+     being dispatched. The verdict is fail-closed: an unavailable/unreadable
+     registry refuses. This is deliberately independent of the model's
+     selection, any routing-time stamp, or caller-supplied action fields.
   0.1 preserved route/execute TOCTOU checks — Registry fingerprint drift, entry
      lifecycle, tool binding, the live ``ToolRuntime.schemas()`` roster, and the
      kind gate. A drift is C3 TERMINAL.
@@ -174,7 +174,7 @@ class ActionExecutor:
         #    effect and the ONLY one that answers "may this Chat process run this
         #    capability". It reads the authoritative live Registry, not the action
         #    payload: a model pick, a routing stamp, or a hand-built plan is not
-        #    authority. Failure to establish the allowlist is a refusal, never an
+        #    authority. Failure to establish capability admission is a refusal, never an
         #    allow (fail-closed).
         try:
             from core.application.chat.intent_funnel.registry import active_view

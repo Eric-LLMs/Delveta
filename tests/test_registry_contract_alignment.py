@@ -4,12 +4,13 @@ Capability Contract Audit (P0 + P1 only), with the 0927 lane correction.
 Plane 1 (P0, lane-corrected): ``cap-research`` is an ACTIVE research-lane
 capability — it stays visible in the table with its curated corpus (the
 research lane executes via Plugin mount + handoff, never via this row), while
-``intent_kind="research"`` removes it from every chat/files funnel plane:
-Matcher exact index, Recall corpus, funnel entries_by_id (all via the single
-``chat_plane_candidate`` predicate) and the executor/funnel kind gate as the
-certification backstop. Its binding names the research Plugin, a legal mount
-unit the write gate cross-checks against the plugin roster, not the chat
-ToolRuntime roster.
+``intent_kind="research"`` removes it from the Chat/files Intent Funnel: the
+Matcher exact index and Intent Funnel ``entries_by_id`` use the single
+``is_intent_funnel_capability_allowed`` predicate, the recall card-surface
+closure drops it via ``funnel_cardable``, and the executor/Intent Funnel kind
+gate is the certification backstop. Its binding names the research Plugin, a
+legal mount unit the write gate cross-checks against the plugin roster, not the
+chat ToolRuntime roster.
 
 Plane 2 (P1): for the seven backfilled capabilities the LIVE Registry
 ``parameters`` agree with the real tool schema — identical required set,
@@ -245,15 +246,15 @@ def test_research_is_a_plugin_name_not_a_roster_tool():
 async def test_cap_research_lane_scoped_active_and_invisible_in_chat_planes():
     """Lane ruling ( correction): cap-research is NOT globally
     disabled — it stays active for the RESEARCH lane (catalog + curated
-    corpus), while ``intent_kind="research"`` removes it from every chat/files
-    funnel consumption point."""
+    corpus), while ``intent_kind="research"`` removes it from the Chat/files
+    Intent Funnel routing and card surfaces."""
     entries = await _entries_by_id()
     e = entries["cap-research"]
     assert e.enabled and e.status == "active", \
         "cap-research must stay active: the research lane owns this row"
     assert e.intent_kind == "research"
-    # not a chat-plane candidate at all (the single shared predicate)
-    assert not entry_mod.chat_plane_candidate(e)
+    # not admitted by the Intent Funnel at all (the single shared predicate)
+    assert not entry_mod.is_intent_funnel_capability_allowed(e)
 
     view = await active_view(session_factory=SessionLocal)
     assert view is not None
@@ -265,8 +266,8 @@ async def test_cap_research_lane_scoped_active_and_invisible_in_chat_planes():
     index = await recall.load_index(SessionLocal)
     if index is not None:
         assert "cap-research" not in {c.capability_id for c in index.corpus}
-    # funnel entries_by_id uses the same predicate; and the certification/
-    # TOCTOU backstop: the funnel kind gate never opens for research
+    # Intent Funnel entries_by_id uses the same predicate; and the certification/
+    # TOCTOU backstop: the Intent Funnel kind gate never opens for research
     from core.application.chat.intent_funnel.funnel import kind_enabled
     assert kind_enabled("research") is False
 

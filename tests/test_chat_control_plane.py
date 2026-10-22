@@ -4,10 +4,10 @@ The router-level SSE compatibility is covered end-to-end elsewhere. What is pinn
 here is the pure policy surface:
 
 * ``TurnRequirements`` defaults to an abstain;
-* only a funnel-certified ``requested_action`` maps to ACTION; every other
+* only an Intent-Funnel-certified ``requested_action`` maps to ACTION; every other
   requirement set — including HIGH-confidence non-action demands — maps to AGENT;
-* the orchestrator registry contains exactly ACTION + AGENT; an unmapped kind
-  degrades to AGENT, never a hard fail.
+* the orchestrator registry contains exactly ACTION + AGENT; an
+  unmapped kind degrades to AGENT, never a hard fail.
 """
 from __future__ import annotations
 
@@ -133,7 +133,7 @@ def test_orchestrator_resolves_agent_plan_and_executor():
     from core.application.chat.turn_orchestrator import TurnOrchestrator
 
     ctx = _ctx(message="hi")
-    orch = TurnOrchestrator(deps=None)  # no deps: funnel fails open, resolution touches no deps
+    orch = TurnOrchestrator(deps=None)  # no deps: Intent Funnel fails open, resolution touches no deps
     import asyncio
     plan = asyncio.run(orch.resolve_plan(ctx))  # uncertified -> AGENT
     assert plan.kind is PlanKind.AGENT

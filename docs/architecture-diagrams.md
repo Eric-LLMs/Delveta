@@ -414,7 +414,7 @@ flowchart TB
             ACQ["Node 4 · Argument Acquisition (Argument Path Router)<br/>CONTEXT_DIRECT · QUERY_TO_EXTRACTOR ·<br/>QUERY_PLUS_5TURNS_TO_EXTRACTOR · MIXED · MISSING<br/>the extractor fills ONLY MODEL-owned slots ·<br/>then the kind gate"]
             B["Binder.validate — pure schema gate<br/>Registry canonical parameters · extracts nothing<br/>COMPLETE / MISSING / AMBIGUOUS / INVALID<br/>(non-COMPLETE exits straight to the Agent, BIND_*)"]
             REG --> M
-            M -- "any non-HIT: MISS / AMBIGUOUS" --> R --> CAND --> SEL --> ACQ
+            M -- "any non-HIT: MISS / AMBIGUOUS" --> R --> CAND --> SEL
             M -- "HIT — never re-selected" --> ACQ
         end
         GATE --> REG
@@ -424,13 +424,13 @@ flowchart TB
     subgraph exits["Fail-open exits — reason codes carry the stage prefix"]
         direction LR
         AG["Agent fallback — ReactLoopAgent, full autonomy<br/>original query BYTE-IDENTICAL · never a<br/>side effect precedes the fallback"]
-        REASONS["REGISTRY_UNAVAILABLE · RECALL_TIMEOUT /<br/>UNAVAILABLE · NO_CANDIDATE (empty set, zero hops) ·<br/>CAP_ROUTER_NONE / REJECT / UNAVAILABLE / TIMEOUT ·<br/>FUNNEL_ALLOWLIST_REJECT · ACQUISITION_UNDECLARED /<br/>MISSING / MODEL_PENDING · REGISTRY_VERSION_MISMATCH ·<br/>FUNNEL_KIND_DISABLED · BIND_MISSING / AMBIGUOUS / INVALID ·<br/>CASCADE_TIMEOUT / CASCADE_ERROR"]
+        REASONS["REGISTRY_UNAVAILABLE · RECALL_TIMEOUT /<br/>UNAVAILABLE · NO_CANDIDATE (empty set, zero hops) ·<br/>CAP_ROUTER_NONE / REJECT / UNAVAILABLE / TIMEOUT ·<br/>INTENT_FUNNEL_ALLOWLIST_REJECT ·<br/>ACQUISITION_UNDECLARED /<br/>MISSING / MODEL_PENDING · REGISTRY_VERSION_MISMATCH ·<br/>FUNNEL_KIND_DISABLED · BIND_MISSING / AMBIGUOUS / INVALID ·<br/>CASCADE_TIMEOUT / CASCADE_ERROR"]
         REASONS -.- AG
     end
     SEL -- "NONE / REJECT" --> AG
-    POST["post-decision gates (orchestrator.py, before acquisition):<br/>entry still in the active table? · chat-plane allowlist?<br/>— deny ⇒ fail-open to Agent"]
+    POST["post-decision gates (orchestrator.py, before acquisition):<br/>entry still in the active table? · capability admitted by the Intent Funnel?<br/>— missing entry ⇒ registry mismatch · not admitted ⇒ Intent Funnel allowlist<br/>reject, the turn falls open to the Agent"]
     SEL -- "SELECTED" --> POST
-    POST -. "REGISTRY_VERSION_MISMATCH /<br/>FUNNEL_ALLOWLIST_REJECT" .-> AG
+    POST -. "REGISTRY_VERSION_MISMATCH / INTENT_FUNNEL_ALLOWLIST_REJECT" .-> AG
     POST --> ACQ
     ACQ -- "not COMPLETE" --> AG
     ACQ --> B

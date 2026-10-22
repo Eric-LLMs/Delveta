@@ -150,11 +150,14 @@ class Settings(BaseSettings):
     # the Sandbox, or the approval funnel. Worker / Research composition omits it.
     # EMPTY = unchanged behavior everywhere.
     agent_hidden_tools: str = ""
-    # Chat-plane capability hiding: comma-separated capability_ids dropped from the
-    # Funnel routing VIEW only (never the Registry row's enabled/status — the live
-    # table is left intact for page/PC/worker/admin). A hidden capability can no
-    # longer be matched/recalled-as-routable/certified, so its turns fail open to
-    # the Agent. DEFAULT hides cap-edit-file (persistent file edits are
+    # Chat-plane admission configuration: comma-separated capability_ids EXCLUDED
+    # from the Intent Funnel's capability allowlist (never the Registry row's
+    # enabled/status — the live table is left intact for page/PC/worker/admin).
+    # This is an exclusion list, NOT the allowlist itself: the allowlist is the
+    # derived set admitted by ``is_intent_funnel_capability_allowed``. A hidden
+    # capability is not matched or certified, and if the selector still picks it,
+    # the pick becomes an admission REJECT and the turn falls open to the Agent —
+    # never an Intent Funnel execution. DEFAULT hides cap-edit-file (persistent file edits are
     # user-initiated from page/PC), cap-artifact (research publish/compile), and
     # cap-bash (raw shell) from Chat: none is a chat-plane user action, and all
     # three stay fully registered and callable on the Agent/Worker/Research planes

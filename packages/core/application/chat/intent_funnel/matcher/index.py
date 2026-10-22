@@ -1,7 +1,9 @@
 """The Matcher's exact-lookup index: build from the Registry view, cached by fingerprint."""
 from __future__ import annotations
 
-from core.application.chat.intent_funnel.registry.entry import chat_plane_candidate
+from core.application.chat.intent_funnel.registry.entry import (
+    is_intent_funnel_capability_allowed,
+)
 
 from .normalize import normalize
 
@@ -14,16 +16,16 @@ _CACHE_MAX = 16
 def build_index(view) -> dict:
     """normalized sentence -> {capability_id}, built from ``intent_corpus`` ONLY.
 
-    Only chat-plane candidates are indexed (enabled AND active AND not owned
-    by another lane's kind) — ruling 4: a disabled capability is not a
-    candidate for ANY node, deterministic included."""
+    Only capabilities admitted by the Intent Funnel are indexed (enabled AND
+    active AND not owned by another lane's kind) — ruling 4: a disabled
+    capability is not a candidate for ANY node, deterministic included."""
     key = view.fingerprint
     cached = _INDEX_CACHE.get(key)
     if cached is not None:
         return cached
     exact: dict[str, set[str]] = {}
     for e in view.entries:
-        if not chat_plane_candidate(e):
+        if not is_intent_funnel_capability_allowed(e):
             continue
         for lit in e.intent_corpus:
             exact.setdefault(normalize(lit), set()).add(e.capability_id)

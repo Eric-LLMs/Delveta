@@ -4792,11 +4792,17 @@ closes every model surface AND the execution path — the action executor's stag
 and the TOCTOU re-validation already treat "not in roster" as the C2 terminal, so nothing wired to
 the hidden tool can run; but registration hiding alone does NOT stop the funnel from *routing* a
 turn to the capability, because routing reads only the Registry DB rows and would dead-end in that
-C2 terminal. ② the routing-view gate therefore hides the capability id
-(`CHAT_FUNNEL_HIDDEN_CAPABILITIES`) from the Chat funnel via `chat_plane_candidate` (§25.7), so
-Matcher / entries_by_id / shadow / preview all drop it, no Candidate Card is built, certification
-fails, and the turn **fails open to the Agent** — an honest ordinary Agent turn, never a broken
-promise. Both settings are per-process env (same kernel factory serves chat API and worker; only
+C2 terminal. ② the routing-view gate therefore excludes the capability id
+(`CHAT_FUNNEL_HIDDEN_CAPABILITIES`) from Chat capability admission via
+`is_intent_funnel_capability_allowed` (§25.7), so the Matcher exact index and the Intent
+Funnel's certified `entries_by_id` drop it and certification fails. The CARD surface is deliberately
+wider (`funnel_cardable`): the selector still sees the hidden capability as an ordinary
+option, and a pick for it is rejected **before argument extraction** by the Intent Funnel's
+admission gate (`INTENT_FUNNEL_ALLOWLIST_REJECT`) — never Intent-Funnel-executed, never
+re-routed to another card, and the turn falls open to the Agent with its byte-identical
+text. Intent Funnel admission is scoped to the Intent Funnel, not a system-wide execution
+ban: what the Agent may do is decided by the Agent's own roster, permissions and approvals.
+Both settings are per-process env (same kernel factory serves chat API and worker; only
 the Chat API lanes set them, defaults empty = inert). Page/PC editing (HTTP `DriveService`) and
 Worker/Research behavior are structurally untouched; the Registry row stays
 `enabled=true, status=active`. Boundary: the hidden channel was the Chat agent's only way to
@@ -4820,7 +4826,9 @@ ToolRuntime registration, Binder or Runtime authorization is touched — the row
 predicate. **Chat-hidden ≠ Agent-hidden**: `artifact` and `bash` remain in `agent_hidden_tools`'s
 complement, so the Agent still registers them, the roster/prompt catalog still lists them, and
 `bash`'s `destructive=True` marker plus its destructive deny/guard and approval chain are
-byte-identical. A hidden capability simply fails open to an ordinary Agent turn.
+byte-identical. A hidden capability that the selector picks is rejected before argument
+extraction (`INTENT_FUNNEL_ALLOWLIST_REJECT`) and the turn falls open to the Agent; the
+Intent Funnel never executes it.
 
 **Commit Point.** The first user-visible content delta locks the channel. `EscalateToAgent` is
 legal only before it; after it an error can only terminate the stream with a standardized event —
@@ -5754,10 +5762,12 @@ Cascade body (`_run_nodes`, one wall-clock budget `chat_funnel_timeout_seconds`)
    evidence and recall scores are provenance, not proof). It never extracts
    arguments and never executes anything (§8.8). Decisions: `SELECTED` →
    argument acquisition; `NONE` → `CAP_ROUTER_NONE`; `REJECT` →
-   `CAP_ROUTER_REJECT`; a selectable card the chat plane must not execute →
-   `FUNNEL_ALLOWLIST_REJECT`; service down/timeout → `CAP_ROUTER_UNAVAILABLE` /
-   `CAP_ROUTER_TIMEOUT`. Every non-SELECTED exit sends the byte-identical turn to
-   the Agent, and selection never falls back to a second model (§25.3).
+   `CAP_ROUTER_REJECT`; service down/timeout → `CAP_ROUTER_UNAVAILABLE` /
+   `CAP_ROUTER_TIMEOUT`. After `SELECTED`, the Intent Funnel's
+   capability-admission gate runs before argument extraction: a selected card the
+   chat plane must not certify → `INTENT_FUNNEL_ALLOWLIST_REJECT`. Every
+   non-certified exit sends the byte-identical turn to the Agent — the admission
+   reject included — and selection never falls back to a second model (§25.3).
 7. **Binder** (Node 4, `binder/`): `validate(entry, arguments)` against the
    Registry's **canonical parameter schema** — pure validation, the Binder
    extracts nothing on the active path. Non-COMPLETE states exit straight to the
@@ -5862,10 +5872,10 @@ a negative that deterministically collides with the corpus. A kind flip (`enable
 `status`, per-kind switch) is the only emergency stop — routing abstains, an ordinary
 Agent turn, no deploy.
 
-**Chat-plane candidate predicate (`registry/entry.py::chat_plane_candidate`, ruling).** Chat/files routing membership is ONE predicate with these consumers — the Matcher exact-index build, the funnel's `entries_by_id` (which owns Candidate-Card construction and certification), the shadow/preview lanes that share them, and the funnel's single-point **Recall-results closure** in `orchestrator.py`:
+**Chat-plane capability admission (`registry/entry.py::is_intent_funnel_capability_allowed`, ruling).** Chat/files routing membership is ONE capability-level predicate with four consumers — the Matcher exact-index build, the Intent Funnel's certified `entries_by_id`, the post-selection admission gate in `orchestrator.py` (a capability picked from a CARD is rejected before argument extraction), and final execution authorization in `executors/execution_authorization.py` (which then checks `tool_binding` separately; tool existence/schema truth remains the live `ToolRuntime.schemas()` roster):
 
 ```
-chat_plane_candidate(e) = e.enabled
+is_intent_funnel_capability_allowed(e) = e.enabled
                         ∧ e.status == "active"
                         ∧ e.intent_kind != "research"     # research-lane ownership (pre-existing)
                         ∧ e.capability_id ∉ CHAT_FUNNEL_HIDDEN_CAPABILITIES
@@ -5873,25 +5883,28 @@ chat_plane_candidate(e) = e.enabled
 
 The hidden set is parsed per process from `settings.chat_funnel_hidden_capabilities`
 (comma list; the shipped default is `cap-edit-file,cap-artifact,cap-bash`; EMPTY = the
-historical predicate, zero behavior change). **Hidden ≠ disabled**: the live row stays
-`enabled=true, status=active` — page/PC, admin, worker and research lanes never consult this
-predicate (worker/research never read the capabilities table; page editing is the HTTP
-`DriveService`) — while every chat funnel consumer drops the capability: no Matcher exact hit,
-no Candidate Card, no certification, so the turn fails open to an ordinary Agent turn (§24).
+historical predicate, zero behavior change). This setting is an EXCLUSION list, not the
+allowlist body: the allowlist is the derived set this predicate admits. **Hidden ≠ disabled**:
+the live row stays `enabled=true, status=active` — page/PC, admin, worker and research lanes
+never consult this predicate (worker/research never read the capabilities table; page editing
+is the HTTP `DriveService`) — while the Matcher exact index and certification view drop the
+capability: no Matcher exact hit, no certification. The CARD surface is wider
+(`funnel_cardable`: enabled + active + non-research), so a hidden capability is still offered
+to the selector; a pick for it is rejected before argument extraction and the turn falls
+open to the Agent (§24). Admission is scoped to the Intent Funnel: it never removes the
+capability from the Agent's own roster or permissions.
 
 **The Recall-results closure (single point; no Recall SQL change).** The Matcher exact index
-and `entries_by_id` are built THROUGH the predicate, but the Recall corpus is loaded straight
-from the LIVE query tables, whose SQL carries NO chat-plane predicate — so without a guard a
-hidden capability could still surface from `recall` and pollute the candidate pool, Top-K and
-the `cap_router` list. The orchestrator therefore filters the Recall result at one point. To
-keep the index/table-divergence signal alive, the drop is scoped to a row the live table STILL
-carries:
+and `entries_by_id` are built THROUGH the admission predicate, but the Recall corpus is loaded
+straight from the LIVE query tables, whose SQL carries no admission filter. The orchestrator
+therefore closes the Recall result at one point with the wider CARD-surface predicate
+`funnel_cardable` (enabled + active + non-research):
 
 | Recall hit's capability | action | rationale |
 |---|---|---|
-| row present, predicate **refuses** | drop | the hidden-capability closure |
-| row present, predicate **allows** | keep | ordinary visible candidate |
-| row **absent** (index ahead of the table) | **keep** | must reach the verdict so the pre-existing `entries_by_id.get() is None` guard raises `VERSION_MISMATCH` — the anomaly is never silently demoted to `NO_CANDIDATE` |
+| row present, `funnel_cardable` **allows** | keep | ordinary card, including chat-hidden capabilities (their pick is rejected later by admission) |
+| row present, `funnel_cardable` **refuses** (e.g. the research lane) | drop | not part of the card surface |
+| row **absent** (index ahead of the table) | drop + fault | recorded as `recall_dropped_unregistered` and returned as `VERSION_MISMATCH`; the anomaly is never silently demoted to `NO_CANDIDATE` |
 
 Hiding `edit_file` also requires the roster gate (§5/§16.6): routing-view absence alone would
 still let a stale/other-layer route reach a tool missing from the runtime — C2 terminal.
@@ -6118,7 +6131,7 @@ collides with `Confidence.AMBIGUOUS`):
 ```
 REGISTRY_UNAVAILABLE · RECALL_TIMEOUT · RECALL_UNAVAILABLE · NO_CANDIDATE
 CAP_ROUTER_NONE · CAP_ROUTER_REJECT · CAP_ROUTER_UNAVAILABLE · CAP_ROUTER_TIMEOUT
-FUNNEL_ALLOWLIST_REJECT · ACQUISITION_UNDECLARED · ACQUISITION_MISSING · ACQUISITION_MODEL_PENDING
+INTENT_FUNNEL_ALLOWLIST_REJECT · ACQUISITION_UNDECLARED · ACQUISITION_MISSING · ACQUISITION_MODEL_PENDING
 REGISTRY_VERSION_MISMATCH · FUNNEL_KIND_DISABLED
 BIND_MISSING · BIND_AMBIGUOUS · BIND_INVALID · CASCADE_TIMEOUT · CASCADE_ERROR
 ```

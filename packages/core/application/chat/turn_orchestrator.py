@@ -76,8 +76,11 @@ class TurnOrchestrator:
         # Single path (ruling): the funnel cascade owns every turn's
         # routing attempt — gate + QIR cascade + argument binding live in
         # intent_funnel; the orchestrator keeps only the lifecycle and this
-        # single call. The funnel returns the SAME requirements object when it
-        # abstains, so the Agent keeps the turn byte-identical (fail-open).
+        # single call. The Intent Funnel returns the SAME requirements object when
+        # it abstains, so the Agent keeps the turn byte-identical (fail-open).
+        # An Intent Funnel admission reject is one of those abstains: it is an
+        # Intent Funnel certification refusal, not a system-wide execution ban, so
+        # the Agent keeps the turn and its own tool surface decides what may run.
         requirements = await intent_funnel.route(
             ctx, deps=deps, requirements=requirements,
         )

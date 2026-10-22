@@ -6,10 +6,13 @@ Two independent gates, one per surface:
    :func:`register_fs_tools`; the unregistered tool then disappears from EVERY
    model-visible surface at once: prompt catalog (render_index), tool_search,
    gateway.mount, the tools array. No kernel/sandbox/permission/destructive change.
-2. FUNNEL gate — ``settings.chat_funnel_hidden_capabilities`` drops the capability
-   from :func:`chat_plane_candidate` (one predicate, four consumers): no Matcher
-   exact hit, no Candidate Card, no certification. The Registry ROW stays
-   enabled+active — page/PC, worker/research, admin are unaffected.
+2. INTENT FUNNEL gate — ``settings.chat_funnel_hidden_capabilities`` drops the
+   capability from :func:`is_intent_funnel_capability_allowed`: no Matcher exact
+   hit, no certification, and a selector pick is rejected before argument
+   extraction.
+   The capability is still CARDABLE so the selector sees the training
+   distribution. The Registry ROW stays enabled+active — page/PC,
+   worker/research, admin are unaffected.
 
 Default (empty settings) must reproduce the historical behavior exactly.
 """
@@ -24,7 +27,7 @@ from core.application.chat.intent_funnel.matcher.index import build_index
 from core.application.chat.intent_funnel.registry.entry import (
     CapabilityEntry,
     QueryRecord,
-    chat_plane_candidate,
+    is_intent_funnel_capability_allowed,
 )
 from core.application.chat.intent_funnel.cap_router.card_renderer import (
     render_choice_question,
@@ -89,7 +92,7 @@ def test_worker_posture_keeps_edit_file_on_every_surface(worker_runtime):
     # Worker/research behavior is byte-identical to the historical registration.
 
 
-# ── 2. funnel view: cap-edit-file 不可被路由(Registry 行保持 enabled+active) ──
+# ── 2. Intent Funnel view: cap-edit-file 不可被路由(Registry 行保持 enabled+active) ──
 
 def _edit_entry(**over):
     base = dict(
@@ -120,16 +123,16 @@ class _View:
 
 def test_default_empty_settings_keep_everything_routable(monkeypatch):
     monkeypatch.setattr(settings, "chat_funnel_hidden_capabilities", "", raising=False)
-    assert chat_plane_candidate(_edit_entry())   # global row NOT disabled by this change
-    assert chat_plane_candidate(_other_entry())
+    assert is_intent_funnel_capability_allowed(_edit_entry())   # global row NOT disabled
+    assert is_intent_funnel_capability_allowed(_other_entry())
 
 
 def test_hidden_capability_excluded_from_chat_plane_view(monkeypatch):
     monkeypatch.setattr(settings, "chat_funnel_hidden_capabilities", " cap-edit-file ", raising=False)
     e = _edit_entry()
     assert e.enabled and e.status == "active"      # Registry row untouched…
-    assert not chat_plane_candidate(e)             # …but invisible to the funnel
-    assert chat_plane_candidate(_other_entry())    # neighbors unaffected
+    assert not is_intent_funnel_capability_allowed(e)   # …but not admitted
+    assert is_intent_funnel_capability_allowed(_other_entry())  # neighbors unaffected
 
 
 def test_hidden_capability_absent_from_matcher_exact_index(monkeypatch):
@@ -142,17 +145,22 @@ def test_hidden_capability_absent_from_matcher_exact_index(monkeypatch):
 
 
 def test_hidden_capability_cannot_be_certified(monkeypatch):
-    """entries_by_id is built through the same predicate: a hidden capability
-    yields no Candidate Card, and the orchestrator's
-    ``entries_by_id.get(jv.capability_id) is None`` guard refuses certification."""
+    """entries_by_id is built through the admission predicate: a hidden capability
+    is absent from the CERTIFIED view, so the orchestrator's
+    ``entries_by_id.get(jv.capability_id) is None`` guard refuses certification.
+    The production CARD surface is wider (``funnel_cardable``); this test only
+    shows that an entry missing from the given map cannot be rendered."""
     from core.application.chat.intent_funnel.contract import Candidate
     monkeypatch.setattr(settings, "chat_funnel_hidden_capabilities", "cap-edit-file", raising=False)
     view = _View([_edit_entry(), _other_entry()], "fp-cert")
-    entries_by_id = {e.capability_id: e for e in view.entries if chat_plane_candidate(e)}
+    entries_by_id = {
+        e.capability_id: e for e in view.entries
+        if is_intent_funnel_capability_allowed(e)
+    }
     assert "cap-edit-file" not in entries_by_id
-    # Even when Recall hands back a hit for the hidden capability, the card
-    # builder skips it (entry is None) and the orchestrator's get()->None guard
-    # refuses certification.
+    # A renderer given the NARROW certified map has no entry for the hidden
+    # capability, so it produces no card; certification is refused. The real
+    # card surface (card_entries_by_id) deliberately includes it.
     cand = Candidate(capability_id="cap-edit-file", score=0.95, matched_example="把这个文件改一下",
                      origin="recall", query_kind="standard", language="zh", query_id="s1")
     question = render_choice_question([cand], entries_by_id)
@@ -162,7 +170,7 @@ def test_hidden_capability_cannot_be_certified(monkeypatch):
 
 
 def test_settings_keys_default_posture(monkeypatch):
-    """Shipped defaults (single-path ruling): the chat-plane funnel
+    """Shipped defaults (single-path ruling): the Chat-plane Intent Funnel
     hides cap-edit-file (and, per the artifact/bash exposure ruling,
     cap-artifact + cap-bash) out of the box; agent_hidden_tools stays empty
     because the agent factory is shared with the worker — the API process

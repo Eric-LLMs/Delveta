@@ -82,6 +82,11 @@ def build_execution_plan(requirements: TurnRequirements) -> ExecutionPlan:
         -> AGENT (fallback);
       * only a fully certified ACTION is eligible for direct dispatch;
       * side-effect actions with unregistered templates -> AGENT or explicit error.
+
+    An Intent Funnel admission reject leaves ``requested_action`` unset and the
+    original requirements byte-identical, so this mapper sends the turn to AGENT
+    like every other Intent Funnel abstain. Admission is an Intent Funnel rule,
+    not a system-wide execution ban; the Agent's own roster/permissions govern it.
     """
     if requirements.confidence is not Confidence.HIGH:
         return _agent(requirements, f"confidence={requirements.confidence.value} -> agent")

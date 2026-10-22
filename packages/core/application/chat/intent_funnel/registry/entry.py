@@ -47,15 +47,33 @@ KIND_RESEARCH = "research"
 VALID_KINDS = frozenset({KIND_ACTION, KIND_PRIVATE, KIND_WEB, KIND_RESEARCH})
 
 
-def chat_plane_candidate(e: "CapabilityEntry") -> bool:
-    """One predicate, four consumers (Matcher index, Recall corpus, funnel
-    entries_by_id, and the shadow/preview lanes that share them): an entry is
-    a chat/files candidate iff it is routable AND not owned by another lane
-    AND not hidden from the chat plane by ``chat_funnel_hidden_capabilities``
-    (exposure ruling: a HIDDEN capability stays fully active in the
-    live table — enabled/status untouched, page/PC/worker/admin unaffected —
-    but is invisible to every chat funnel consumer: no Matcher exact hit, no
-    card, no certification; turns fail open to the Agent).
+def is_intent_funnel_capability_allowed(e: "CapabilityEntry") -> bool:
+    """The Intent Funnel's capability-admission rule (one predicate, four consumers).
+
+    This is a CAPABILITY-level admission check: it answers "may the Intent
+    Funnel route to this ``capability_id`` at all". It is NOT the Agent/LLM tool
+    roster (``ToolRuntime`` registration / ``agent_hidden_tools``), which is a
+    separate, tool-name-level surface. It is also NOT the complete tool
+    execution authorization: that additionally cross-checks ``tool_binding``
+    against the dispatched tool and the live tool roster.
+
+    Consumers, all inside the Intent Funnel's capability path:
+
+    * the Matcher exact index (``matcher/index.py``);
+    * the Intent Funnel's certified ``entries_by_id`` view;
+    * the post-selection admission gate (a capability picked from a CARD but not
+      admitted here is rejected BEFORE argument extraction);
+    * final execution authorization (``executors/execution_authorization.py``),
+      which still performs its own ``tool_binding`` check afterwards.
+
+    An entry is admitted iff it is routable AND not owned by another lane AND
+    not named by ``chat_funnel_hidden_capabilities``. That setting is an
+    EXCLUSION list, not the allowlist itself: the allowlist is the derived set
+    of entries this predicate admits. A hidden capability stays fully active in
+    the live table (enabled/status untouched, page/PC/worker/admin unaffected)
+    but is invisible to the Matcher and certification views; it may still be
+    shown as a CARD (see :func:`funnel_cardable`) so the selector can identify
+    the intent, and a pick for it is rejected before argument extraction.
     Ruling 4 still applies: disabled is not a candidate for ANY node."""
     return (e.enabled and e.status == STATUS_ACTIVE
             and e.intent_kind != KIND_RESEARCH
@@ -63,7 +81,7 @@ def chat_plane_candidate(e: "CapabilityEntry") -> bool:
 
 
 def funnel_cardable(e: "CapabilityEntry") -> bool:
-    """The CARD-surface predicate, one step wider than the intent allowlist.
+    """The CARD-surface predicate, one step wider than capability admission.
 
     A capability may be offered as a card whenever it is routable and not owned
     by another lane (enabled + active + non-research) — the hidden-capability
@@ -71,10 +89,11 @@ def funnel_cardable(e: "CapabilityEntry") -> bool:
     every action capability as an ordinary option, so hiding cards before the
     model would put production out of the model's input distribution.
 
-    The intent allowlist (:func:`chat_plane_candidate`) is enforced AFTER the
-    selector decides: a pick that is not allowlisted is converted into a REJECT and the
-    turn falls open to the Agent. Offering the card is what lets the model
-    identify the intent; it never grants execution.
+    Capability admission (:func:`is_intent_funnel_capability_allowed`) is
+    enforced AFTER the selector decides: a pick outside the admitted set becomes
+    a REJECT before argument extraction and the turn falls open to the Agent.
+    Offering the card is what lets the model identify the intent; it never grants
+    funnel execution.
     """
     return (e.enabled and e.status == STATUS_ACTIVE
             and e.intent_kind != KIND_RESEARCH)

@@ -19,11 +19,11 @@ that contract as executable code:
    ``slot_plan``) OR deliberately fail-open (no handler -> undeclared -> the
    Agent owns the turn).
 
-The exposed set is the Registry's ``chat_plane_candidate`` predicate under the
-shipped config: everything enabled+active+non-research minus the chat-hidden
-``cap-edit-file`` / ``cap-artifact`` / ``cap-bash`` (the research lane owns
-``cap-research``). A new exposed capability that is neither wired nor declared
-fail-open fails this test.
+The exposed set is the Registry's ``is_intent_funnel_capability_allowed``
+predicate under the shipped config: everything enabled+active+non-research minus
+the chat-hidden ``cap-edit-file`` / ``cap-artifact`` / ``cap-bash`` (the research
+lane owns ``cap-research``). A new exposed capability that is neither wired nor
+declared fail-open fails this test.
 """
 from __future__ import annotations
 
@@ -88,8 +88,8 @@ def test_each_exposed_capability_has_its_declared_disposition(cid, kind):
 
 
 def test_no_handler_owned_capability_is_hidden_from_chat():
-    # A hidden cap is invisible to every funnel consumer; a handler owned by one
-    # would be dead code. The shipped hidden set must not intersect the roster.
+    # A hidden cap is invisible to every Intent Funnel consumer; a handler owned
+    # by one would be dead code. The shipped hidden set must not intersect the roster.
     assert set(HANDLERS).isdisjoint(_hidden_ids())
 
 

@@ -56,7 +56,7 @@ from .contract import (
     REASON_CAP_ROUTER_REJECT,
     REASON_CAP_ROUTER_UNAVAILABLE,
     REASON_CASCADE_ERROR,
-    REASON_FUNNEL_ALLOWLIST_REJECT,
+    REASON_INTENT_FUNNEL_ALLOWLIST_REJECT,
     REASON_KIND_DISABLED,
     REASON_NO_CANDIDATE,
     REASON_RECALL_UNAVAILABLE,
@@ -149,7 +149,10 @@ async def run_nodes(ctx, deps, requirements, trace, *,
 
     from . import cap_router, guardrails, matcher, recall
     from .registry import active_view as registry_active_view
-    from .registry.entry import chat_plane_candidate, funnel_cardable
+    from .registry.entry import (
+        funnel_cardable,
+        is_intent_funnel_capability_allowed,
+    )
 
     message = ctx.body.message or ""
     facts = TurnFacts.of(ctx)
@@ -161,13 +164,15 @@ async def run_nodes(ctx, deps, requirements, trace, *,
         return None
     trace["registry"] = view.fingerprint
     entries_by_id = {
-        e.capability_id: e for e in view.entries if chat_plane_candidate(e)
+        e.capability_id: e for e in view.entries
+        if is_intent_funnel_capability_allowed(e)
     }
-    # Card surface: EVERY routable action capability, allowlist or not. The
+    # Card surface: EVERY routable action capability, admitted or not. The
     # training corpus shows all of them as ordinary options, so withholding a
     # card here would put production out of the model's input distribution and
-    # force it to pick a wrong card. The allowlist is enforced AFTER the
-    # selector decides (a pick outside it is converted into a REJECT).
+    # force it to pick a wrong card. Capability admission
+    # (``is_intent_funnel_capability_allowed``) is enforced AFTER the selector
+    # decides: a pick outside it is rejected before argument extraction.
     card_entries_by_id = {
         e.capability_id: e for e in view.entries if funnel_cardable(e)
     }
@@ -250,10 +255,10 @@ async def run_nodes(ctx, deps, requirements, trace, *,
     # live table can render a card for (``funnel_cardable``). The
     # hidden-capability exclusion is deliberately NOT applied here — those
     # capabilities are cardable so the selector can identify the intent, and
-    # the allowlist is enforced on its DECISION instead (a pick outside the
-    # allowlist becomes FUNNEL_ALLOWLIST_REJECT below). This matches the
-    # LayaChoice input distribution, where every action capability appears as
-    # an ordinary option.
+    # capability admission is enforced on its DECISION instead (a pick outside
+    # the admitted set becomes INTENT_FUNNEL_ALLOWLIST_REJECT before argument
+    # extraction). This matches the LayaChoice input distribution, where every
+    # action capability appears as an ordinary option.
     #
     # A capability ABSENT from the live table (the index running ahead of the
     # table) cannot be rendered — the card renderer skips it — so keeping it
@@ -398,13 +403,27 @@ async def run_nodes(ctx, deps, requirements, trace, *,
     if entry is None:  # a route the active table no longer honors: refuse
         trace["fallback"] = REASON_VERSION_MISMATCH
         return None
-    if not chat_plane_candidate(entry):
-        # The selector identified an intent the chat plane must not execute
-        # (a hidden capability). This is a CORRECT identification, so the
-        # turn goes to the Agent through the same NORMAL REJECT exit — it is
-        # never executed, and the remaining cards are never used as a
-        # consolation pick.
-        trace["fallback"] = REASON_FUNNEL_ALLOWLIST_REJECT
+    if not is_intent_funnel_capability_allowed(entry):
+        # The selector identified a capability the Intent Funnel must not certify
+        # (a hidden capability). Capability admission is the SOLE rule here:
+        # terminate the Intent Funnel tool path NOW — no argument extraction, no
+        # Binder, no Intent Funnel execution. This is a CORRECT identification, so
+        # the turn falls open to the Agent through the NORMAL REJECT exit: the
+        # returned requirements stay byte-identical and the Agent's own tool
+        # roster / permissions decide what that independent plane may run. The
+        # remaining cards are never used as a consolation pick.
+        trace["fallback"] = REASON_INTENT_FUNNEL_ALLOWLIST_REJECT
+        # Explicit audit record: reason + selected capability + original request +
+        # routing context. Kept OFF the DB trace's no-query rule; this log line
+        # is the operational record for a correct out-of-surface pick.
+        logger.warning(
+            "Intent Funnel allowlist reject reason=%s capability=%s tool=%s query=%r "
+            "candidates=%s registry=%s",
+            REASON_INTENT_FUNNEL_ALLOWLIST_REJECT, entry.capability_id,
+            entry.tool_binding, message,
+            [(c.capability_id, round(c.score, 4)) for c in norm.candidates],
+            view.fingerprint,
+        )
         return None
     _t_acq = time.monotonic()
     out = await _acquisition_hop(requirements, deps, entry, query=message,

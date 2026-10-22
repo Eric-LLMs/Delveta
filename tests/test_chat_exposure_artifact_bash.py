@@ -2,18 +2,21 @@
 
 One goal, two independent surfaces — hidden from CHAT, kept on the AGENT plane:
 
-1. FUNNEL gate — ``settings.chat_funnel_hidden_capabilities`` ships
-   ``cap-edit-file,cap-artifact,cap-bash``. The predicate ``chat_plane_candidate``
-   drops them from the Matcher exact index AND the funnel ``entries_by_id`` (so no
-   card is built and certification is refused).
+1. INTENT FUNNEL gate — ``settings.chat_funnel_hidden_capabilities`` ships
+   ``cap-edit-file,cap-artifact,cap-bash``. The capability-admission predicate
+   ``is_intent_funnel_capability_allowed`` drops them from the Matcher exact
+   index AND the Intent Funnel's ``entries_by_id`` (so no card is built and
+   certification is refused).
 2. RECALL / CARD surface — the Recall corpus is loaded straight from the LIVE
-   query tables, which carry NO exposure predicate, so a hidden capability's
+   query tables, which carry NO admission predicate, so a hidden capability's
    sentences can still surface from ``recall.recall``. Those hits KEEP their
    cards (``funnel_cardable``), matching the option distribution the selector was
-   trained on; the intent allowlist is enforced on the DECISION instead — a pick
-   outside ``chat_plane_candidate`` becomes ``FUNNEL_ALLOWLIST_REJECT`` and the turn
+   trained on; capability admission is enforced on the DECISION instead — a pick
+   outside ``is_intent_funnel_capability_allowed`` becomes
+   ``INTENT_FUNNEL_ALLOWLIST_REJECT`` before argument extraction and the turn
    falls open to the Agent. A hidden capability therefore never certifies and
-   never executes, but it is no longer invisible to the selector.
+   never executes through the Intent Funnel, but it is no longer invisible to the
+   selector — and the Agent keeps its own independent tool surface.
 
 The AGENT plane is untouched: ``agent_hidden_tools`` does NOT name artifact/bash,
 so the chat-process kernel still registers ``bash`` with its destructive marker and
@@ -39,7 +42,7 @@ from core.application.chat.intent_funnel.contract import (
     MATCH_HIT,
     MATCH_MISS,
     REASON_ACQUISITION_MODEL_PENDING,
-    REASON_FUNNEL_ALLOWLIST_REJECT,
+    REASON_INTENT_FUNNEL_ALLOWLIST_REJECT,
     REASON_VERSION_MISMATCH,
     Candidate,
     MatchResult,
@@ -51,8 +54,8 @@ from core.application.chat.intent_funnel.registry.entry import (
     CapabilityEntry,
     QueryRecord,
     RegistryLiveView,
-    chat_plane_candidate,
     derive_language,
+    is_intent_funnel_capability_allowed,
 )
 from core.application.chat.understanding import TurnRequirements
 from core.config import Settings, settings
@@ -65,7 +68,7 @@ class _NoSandbox:  # bash_tool only stores it; no execution in this file
     pass
 
 
-# ── 1. the FUNNEL predicate + shipped default ────────────────────────────────────
+# ── 1. the Intent Funnel predicate + shipped default ────────────────────────────
 
 
 def _entry(cid: str, tool: str, *, query: str = "做一些事情") -> CapabilityEntry:
@@ -101,14 +104,14 @@ def test_recall_threshold_env_override(monkeypatch):
     assert Settings(_env_file=None).chat_funnel_min_score == 0.82
 
 
-def test_hidden_capabilities_are_not_chat_plane_candidates(monkeypatch):
+def test_hidden_capabilities_are_not_admitted_by_the_intent_funnel(monkeypatch):
     monkeypatch.setattr(settings, "chat_funnel_hidden_capabilities", _HIDDEN, raising=False)
     for cid, tool in (("cap-artifact", "artifact"), ("cap-bash", "bash"),
                       ("cap-edit-file", "edit_file")):
         e = _entry(cid, tool)
         assert e.enabled and e.status == "active"     # Registry row untouched
-        assert not chat_plane_candidate(e)            # …but invisible to the funnel
-    assert chat_plane_candidate(_entry("cap-read-file", "read_file"))
+        assert not is_intent_funnel_capability_allowed(e)  # …but invisible to the Intent Funnel
+    assert is_intent_funnel_capability_allowed(_entry("cap-read-file", "read_file"))
 
 
 def test_hidden_capabilities_absent_from_matcher_exact_index(monkeypatch):
@@ -130,6 +133,7 @@ def _ctx(message="随便说点什么"):
         body=types.SimpleNamespace(message=message, attach=None, viewer=None),
         owned_asset_id=None, path_asset_id=None, research_turn=False,
         effective_handoff=None, session_id="s1", history=[],
+        user_id="u", viewer_assembly=None, agent_context=None, log_tokens=None,
     )
 
 
@@ -195,11 +199,12 @@ async def _route(ctx, req):
     return await funnel.route(ctx, deps=_deps(), requirements=req)
 
 
-async def test_hidden_recall_hit_is_carded_and_its_pick_becomes_a_whitelist_reject(
+async def test_hidden_recall_hit_is_carded_and_its_pick_becomes_an_intent_funnel_allowlist_reject(
         monkeypatch, caplog):
     """A hidden capability recalled at the TOP score KEEPS its card (the selector
-    must see the training distribution), but the pick is converted into a REJECT
-    before certification — never executed, never re-routed to another card."""
+    must see the training distribution), but the pick is converted into an Intent
+    Funnel REJECT before certification — never Intent-Funnel-executed, never
+    re-routed to another card, and the turn falls open to the Agent."""
     caplog.set_level(logging.INFO, logger=FUNNEL_LOGGER)
     entries = [_entry("cap-bash", "bash"), _entry("cap-a", "create_folder")]
     rec = _wire(monkeypatch,
@@ -210,16 +215,105 @@ async def test_hidden_recall_hit_is_carded_and_its_pick_becomes_a_whitelist_reje
     out = await _route(_ctx(), req)
 
     assert rec.aggregated_ids == [{"cap-bash", "cap-a"}]   # both are carded
-    # The stub picks cap-bash (margin 0.25). It is on a card but not in the
-    # allowlist, so the business layer turns the pick into the REJECT exit.
-    assert out is req and _fallback(caplog) == REASON_FUNNEL_ALLOWLIST_REJECT
+    # The stub picks cap-bash (margin 0.25). It is on a card but not admitted
+    # by ``is_intent_funnel_capability_allowed``, so the business layer turns
+    # the pick into the REJECT exit. The ORIGINAL requirements come back
+    # byte-identical, so the normal plan mapping sends the turn to the Agent.
+    assert out is req and _fallback(caplog) == REASON_INTENT_FUNNEL_ALLOWLIST_REJECT
+    # Same fallback rule as a selector NONE/REJECT: the untouched requirements
+    # map to AGENT, never to a whole-request prohibition.
+    from core.application.chat.execution_plan import PlanKind, build_execution_plan
+    assert build_execution_plan(out).kind is PlanKind.AGENT
+    # No capability was certified, and nobody re-picked the lower-scored card.
+    assert out.requested_action is None
+
+
+async def test_hidden_pick_full_path_resolves_agent_plan_and_invokes_agent_executor(
+        monkeypatch, caplog):
+    """The complete fallback path through the real control plane: a hidden pick is
+    rejected (``INTENT_FUNNEL_ALLOWLIST_REJECT``), ``resolve_plan`` sees the
+    ORIGINAL requirements, maps them to AGENT, and ``run_turn`` actually invokes
+    AgentExecutor — never a refusal executor or a whole-request prohibition."""
+    from core.application.chat import turn_orchestrator as turn_mod
+    from core.application.chat.execution_plan import PlanKind
+    from core.application.chat.executors.agent import AgentExecutor
+    from core.application.chat.turn_orchestrator import TurnOrchestrator
+
+    caplog.set_level(logging.INFO, logger=FUNNEL_LOGGER)
+    _wire(monkeypatch,
+          recall_candidates=[Candidate("cap-bash", 0.95, origin="recall"),
+                             Candidate("cap-a", 0.70, origin="recall")],
+          entries=[_entry("cap-bash", "bash"), _entry("cap-a", "create_folder")],
+          hidden=_HIDDEN)
+
+    calls = []
+
+    class _Result:
+        final_answer = "agent owns the turn"
+        messages: list = []
+        usage: dict = {}
+
+    async def fake_agent_run(self, req):
+        calls.append(req)
+        return _Result()
+
+    async def fake_finalize(ctx, deps, payload, *, tool):
+        return dict(payload)
+
+    async def fake_post_turn(ctx, deps):
+        return False
+
+    monkeypatch.setattr(AgentExecutor, "run", fake_agent_run)
+    monkeypatch.setattr(turn_mod, "finalize_turn", fake_finalize)
+    monkeypatch.setattr(turn_mod, "handle_research_post_turn", fake_post_turn)
+
+    orch = TurnOrchestrator(_deps())
+    resp = await orch.run_turn(_ctx())
+
+    assert resp["answer"] == "agent owns the turn"
+    assert len(calls) == 1                       # AgentExecutor.run was dispatched
+    assert calls[0].plan.kind is PlanKind.AGENT
+    assert isinstance(orch.executor_for(calls[0].plan), AgentExecutor)
+    assert _fallback(caplog) == REASON_INTENT_FUNNEL_ALLOWLIST_REJECT
+
+
+async def test_intent_funnel_allowlist_reject_never_enters_argument_acquisition_or_binder(
+        monkeypatch, caplog):
+    """Capability admission (``is_intent_funnel_capability_allowed``) is the SOLE
+    rule: the extractor, the Argument Path Router and the Binder are never
+    reached for a rejected pick."""
+    from core.application.chat.intent_funnel import binder as binder_mod
+    from core.application.chat.intent_funnel import orchestrator as orch_mod
+
+    caplog.set_level(logging.INFO, logger=FUNNEL_LOGGER)
+    calls: list[str] = []
+
+    async def boom_acquisition(*a, **kw):
+        calls.append("acquisition")
+        raise AssertionError("argument acquisition must not run")
+
+    def boom_binder(*a, **kw):
+        calls.append("binder")
+        raise AssertionError("the Binder must not run")
+
+    monkeypatch.setattr(orch_mod, "_acquisition_hop", boom_acquisition)
+    monkeypatch.setattr(binder_mod, "validate", boom_binder)
+    _wire(monkeypatch,
+          recall_candidates=[Candidate("cap-bash", 0.95, origin="recall"),
+                             Candidate("cap-a", 0.70, origin="recall")],
+          entries=[_entry("cap-bash", "bash"), _entry("cap-a", "create_folder")],
+          hidden=_HIDDEN)
+    out = await _route(_ctx(), TurnRequirements())
+    assert calls == []
+    assert out.requested_action is None
+    assert _fallback(caplog) == REASON_INTENT_FUNNEL_ALLOWLIST_REJECT
 
 
 async def test_hidden_recall_hits_reach_the_cap_router_and_can_be_rejected(
         monkeypatch, caplog):
     """Hidden hits are ordinary candidates now: they enter aggregation and the
     cap_router list, and a winning hidden pick is rejected — not silently
-    replaced by a lower-scored allowlisted card."""
+    replaced by a lower-scored card that IS admitted."""
     caplog.set_level(logging.INFO, logger=FUNNEL_LOGGER)
     entries = [_entry("cap-bash", "bash"), _entry("cap-artifact", "artifact"),
                _entry("cap-a", "create_folder"), _entry("cap-b", "create_folder"),
@@ -236,12 +330,13 @@ async def test_hidden_recall_hits_reach_the_cap_router_and_can_be_rejected(
 
     assert rec.aggregated_ids == [
         {"cap-bash", "cap-artifact", "cap-a", "cap-b", "cap-c"}]
-    assert out is req and _fallback(caplog) == REASON_FUNNEL_ALLOWLIST_REJECT
+    assert out is req and _fallback(caplog) == REASON_INTENT_FUNNEL_ALLOWLIST_REJECT
 
 
-async def test_non_allowlisted_candidate_reaches_the_selector(monkeypatch, caplog):
-    """The selector's INPUT is the card surface, not the allowlist: a hidden
-    capability is offered to the model, and only its pick is rejected."""
+async def test_candidate_outside_the_intent_funnel_allowlist_reaches_the_selector(
+        monkeypatch, caplog):
+    """The selector's INPUT is the card surface, not capability admission: a
+    hidden capability is offered to the model, and only its pick is rejected."""
     from core.application.chat.intent_funnel.cap_router.backends.stub import (
         StubSelector,
     )
@@ -267,7 +362,7 @@ async def test_non_allowlisted_candidate_reaches_the_selector(monkeypatch, caplo
 
     assert seen == [{"cap-bash", "cap-a"}]   # the hidden capability is carded
     assert out is req                        # the Agent keeps the turn
-    assert _fallback(caplog) == REASON_FUNNEL_ALLOWLIST_REJECT
+    assert _fallback(caplog) == REASON_INTENT_FUNNEL_ALLOWLIST_REJECT
 
 
 async def test_control_without_hiding_the_same_hit_is_aggregated(monkeypatch, caplog):
@@ -339,8 +434,8 @@ def test_bash_destructive_and_permission_are_unchanged(tmp_path):
 
 def test_edit_file_still_hidden_and_neighbors_routable(monkeypatch):
     monkeypatch.setattr(settings, "chat_funnel_hidden_capabilities", _HIDDEN, raising=False)
-    assert not chat_plane_candidate(_entry("cap-edit-file", "edit_file"))
-    assert chat_plane_candidate(_entry("cap-read-file", "read_file"))
+    assert not is_intent_funnel_capability_allowed(_entry("cap-edit-file", "edit_file"))
+    assert is_intent_funnel_capability_allowed(_entry("cap-read-file", "read_file"))
 
 
 @pytest.mark.parametrize("cid", ["cap-artifact", "cap-bash"])
@@ -350,4 +445,4 @@ def test_registry_row_is_left_enabled_and_active(cid, monkeypatch):
     monkeypatch.setattr(settings, "chat_funnel_hidden_capabilities", _HIDDEN, raising=False)
     e = _entry(cid, "artifact" if cid == "cap-artifact" else "bash")
     assert e.enabled is True and e.status == "active"
-    assert not chat_plane_candidate(e)
+    assert not is_intent_funnel_capability_allowed(e)
