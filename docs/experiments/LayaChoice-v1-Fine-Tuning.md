@@ -1,6 +1,10 @@
+> **Deprecated.** LayaChoice-v1 is no longer the capability-selection model. It is superseded
+> by [LayaChoice-v2](./LayaChoice-v2-Fine-Tuning.md), which now serves that role in production.
+> This document is kept only as the frozen record of the v1 experiment.
+
 # LayaChoice-v1 — Fine-Tuning Laya as Delveta's Capability-Selection Model
 
-> **Status: frozen.** The formal run finished 2026-09-30 and the artifacts are closed. This
+> **Status: frozen.** The formal run finished and the artifacts are closed. This
 > document is the complete record of that experiment and is not edited after the fact; the
 > stable architectural facts distilled from it live in
 > [architecture.md §26](../architecture.md#26-layachoice-capability-selection).
