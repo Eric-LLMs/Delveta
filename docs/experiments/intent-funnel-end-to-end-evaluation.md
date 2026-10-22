@@ -1,15 +1,3 @@
-<style>
-/* Wide comparison tables: keep each cell on one line and scroll horizontally
-   instead of wrapping the long column headers. */
-table {
-  display: block;
-  width: max-content;
-  max-width: 100%;
-  overflow-x: auto;
-  white-space: nowrap;
-}
-</style>
-
 **[English](#chat-candidate-set-change--recall-threshold-experiment)** | **[中文](#聊天候选卡片改造--召回阈值实验报告)**
 
 # Chat Candidate-Set Change + Recall Threshold Experiment
@@ -30,7 +18,9 @@ table {
   This measures how often non-allowlist requests were
   incorrectly allowed through.
 
-| Metric | 0.88 · deleting `intent_rule_no_model`<br>· allows recall of non-allowlist intents | 0.82 · deleting `intent_rule_no_model`<br>· allows recall of non-allowlist intents | 0.88 · using `intent_rule_no_model`<br>· filters out non-allowlist intents | 0.88 · using `intent_rule_no_model`<br>· allows recall of non-allowlist intents | 0.82 · using `intent_rule_no_model`<br>· filters out non-allowlist intents | 0.82 · using `intent_rule_no_model`<br>· allows recall of non-allowlist intents |
+> **Column legend:** `use` = `intent_rule_no_model` kept; `delete` = removed; `allow` = recall of non-allowlist intents allowed; `filter` = non-allowlist intents filtered out before recall. Columns read *threshold · rule path · recall policy*.
+
+| Metric | 0.88 · delete · allow | 0.82 · delete · allow | 0.88 · use · filter | 0.88 · use · allow | 0.82 · use · filter | 0.82 · use · allow |
 |---|---|---|---|---|---|---|
 | End-to-End Accuracy | **433/500 = 86.60%** | **462/500 = 92.40%** | 402/500 = 80.40% | 406/500 = 81.20% | 416/500 = 83.20% | 434/500 = 86.80% |
 | End-to-End Tool Routing Accuracy (affected by both candidate-set recall and tool selection) | **347/414 = 83.82%** | **377/414 = 91.06%** | 318/414 = 76.81% | 320/414 = 77.29% | 348/414 = 84.06% | 349/414 = 84.30% |
@@ -178,7 +168,9 @@ In one sentence: it used to be "you cannot see it, so pick something else"; now 
 > candidate cards were retrieved, so the model cannot select a tool and the request must be
 > handed off to the Agent.
 
-| Intent candidate list size | 0.88 · using `intent_rule_no_model`<br>· filters out non-allowlist intents | 0.88 · using `intent_rule_no_model`<br>· allows recall of non-allowlist intents | 0.82 · using `intent_rule_no_model`<br>· filters out non-allowlist intents | 0.82 · using `intent_rule_no_model`<br>· allows recall of non-allowlist intents | 0.88 · deleting `intent_rule_no_model`<br>· allows recall of non-allowlist intents | 0.82 · deleting `intent_rule_no_model`<br>· allows recall of non-allowlist intents |
+> **Column legend:** `use` = `intent_rule_no_model` kept; `delete` = removed; `allow` = recall of non-allowlist intents allowed; `filter` = non-allowlist intents filtered out before recall. Columns read *threshold · rule path · recall policy*.
+
+| Intent candidate list size | 0.88 · use · filter | 0.88 · use · allow | 0.82 · use · filter | 0.82 · use · allow | 0.88 · delete · allow | 0.82 · delete · allow |
 |---|---|---|---|---|---|---|
 | K=0 (no intent recalled) | 76/115 = 66.09% | 2/40 = 5.00% | 37/41 = 90.24% | 0/4 = 0% | 2/40 = 5.00% | 0/4 = 0% |
 | K=1 | 274/295 = 92.88% | 338/355 = 95.21% | 202/222 = 90.99% | 201/206 = 97.57% | 380/398 = 95.48% | 227/232 = 97.84% |
@@ -203,7 +195,7 @@ correctly rejected.
 
 #### Reject decisions
 
-| Item | 0.88 · using `intent_rule_no_model`<br>· filters out non-allowlist intents | 0.88 · using `intent_rule_no_model`<br>· allows recall of non-allowlist intents | 0.82 · using `intent_rule_no_model`<br>· filters out non-allowlist intents | 0.82 · using `intent_rule_no_model`<br>· allows recall of non-allowlist intents | 0.88 · deleting `intent_rule_no_model`<br>· allows recall of non-allowlist intents | 0.82 · deleting `intent_rule_no_model`<br>· allows recall of non-allowlist intents |
+| Item | 0.88 · use · filter | 0.88 · use · allow | 0.82 · use · filter | 0.82 · use · allow | 0.88 · delete · allow | 0.82 · delete · allow |
 |---|---|---|---|---|---|---|
 | Requests that should be rejected | 86 | 86 | 86 | 86 | 86 | 86 |
 | Correctly rejected | 6/86 = 6.98% | 82/86 = 95.35% | 29/86 = 33.72% | 83/86 = 96.51% | 84/86 = 97.67% | 85/86 = 98.84% |
@@ -223,7 +215,7 @@ then refuses to execute it.
 
 This looks only at rows that reached the model where the true target is a tool.
 
-| Item | 0.88 · using `intent_rule_no_model`<br>· filters out non-allowlist intents | 0.88 · using `intent_rule_no_model`<br>· allows recall of non-allowlist intents | 0.82 · using `intent_rule_no_model`<br>· filters out non-allowlist intents | 0.82 · using `intent_rule_no_model`<br>· allows recall of non-allowlist intents | 0.88 · deleting `intent_rule_no_model`<br>· allows recall of non-allowlist intents | 0.82 · deleting `intent_rule_no_model`<br>· allows recall of non-allowlist intents |
+| Item | 0.88 · use · filter | 0.88 · use · allow | 0.82 · use · filter | 0.82 · use · allow | 0.88 · delete · allow | 0.82 · delete · allow |
 |---|---|---|---|---|---|---|
 | Tool requests that reached the model | 328 | 329 | 363 | 363 | 373 | 407 |
 | **Strict selection accuracy** | 300/328 = 91.46% | 302/329 = 91.79% | 330/363 = 90.91% | 331/363 = 91.18% | 344/373 = 92.23% | 374/407 = 91.89% |
@@ -239,10 +231,10 @@ conditional accuracy stayed between 97.6% and 99.0%.
 
 | Content | Path |
 |---|---|
-| 0.88 · using `intent_rule_no_model`<br>· allows recall of non-allowlist intents | `logs/_cardable088_20261021/` |
-| 0.82 · using `intent_rule_no_model`<br>· allows recall of non-allowlist intents | `logs/_cardable082_20261021/` |
-| 0.88 · using `intent_rule_no_model`<br>· filters out non-allowlist intents, re-audited with the same definitions | `logs/_cardable_4way_pre088/` |
-| 0.82 · using `intent_rule_no_model`<br>· filters out non-allowlist intents, re-audited with the same definitions | `logs/_cardable_4way_pre082/` |
+| 0.88 · use · allow | `logs/_cardable088_20261021/` |
+| 0.82 · use · allow | `logs/_cardable082_20261021/` |
+| 0.88 · use · filter (re-audited) | `logs/_cardable_4way_pre088/` |
+| 0.82 · use · filter (re-audited) | `logs/_cardable_4way_pre082/` |
 | Four-arm comparison | `logs/_cardable_compare_4way/comparison.md` |
 
 Each arm has a per-case audit, a conservation check (`all_ok=true`) and a run manifest.
@@ -285,7 +277,9 @@ Both states ran under the same conditions:
 
 ## 2. Key metrics comparison
 
-| Metric | 0.88 · using `intent_rule_no_model` | 0.88 · deleting `intent_rule_no_model` | Change | 0.82 · using `intent_rule_no_model` | 0.82 · deleting `intent_rule_no_model` | Change |
+> **Column legend:** `use` = `intent_rule_no_model` kept; `delete` = removed; `allow` = recall of non-allowlist intents allowed; `filter` = non-allowlist intents filtered out before recall. Columns read *threshold · rule path · recall policy*.
+
+| Metric | 0.88 · use | 0.88 · delete | Change | 0.82 · use | 0.82 · delete | Change |
 |---|---|---|---|---|---|---|
 | **End-to-End Tool Routing Accuracy (tool rows)** | 320/414 = 77.29% | 347/414 = 83.82% | **+27 rows / +6.53pp** | 349/414 = 84.30% | 377/414 = 91.06% | **+28 rows / +6.76pp** |
 | **End-to-End Accuracy** | 406/500 = 81.20% | 433/500 = 86.60% | +27 rows / +5.40pp | 434/500 = 86.80% | 462/500 = 92.40% | +28 rows / +5.60pp |
@@ -311,7 +305,7 @@ Both states ran under the same conditions:
 
 ## 3. Full path distribution (500 rows, mutually exclusive)
 
-| Outcome | Meaning | 0.88 · using `intent_rule_no_model` | 0.88 · deleting `intent_rule_no_model` | Change | 0.82 · using `intent_rule_no_model` | 0.82 · deleting `intent_rule_no_model` | Change |
+| Outcome | Meaning | 0.88 · use | 0.88 · delete | Change | 0.82 · use | 0.82 · delete | Change |
 |---|---|---|---|---|---|---|---|
 | MATCHER_HIT (R_HIT) | Lookup hit; capability already fixed; does not go through Laya | 3 | 3 | 0 | 3 | 3 | 0 |
 | `intent_rule_no_model` · rule executed the tool directly | Legacy rule matched and executed a tool directly; never entered the funnel | 15 | 0 | −15 | 15 | 0 | −15 |
@@ -330,7 +324,7 @@ Both states ran under the same conditions:
 
 ## 4. K-group comparison
 
-| Number of intent candidates | 0.88 · using `intent_rule_no_model` | 0.88 · deleting `intent_rule_no_model` | Change | 0.82 · using `intent_rule_no_model` | 0.82 · deleting `intent_rule_no_model` | Change |
+| Number of intent candidates | 0.88 · use | 0.88 · delete | Change | 0.82 · use | 0.82 · delete | Change |
 |---|---|---|---|---|---|---|
 | K=0 (no recalled intents) | 2/40 = 5.00% | 2/40 = 5.00% | 0 / 0.00pp | 0/4 = 0% | 0/4 = 0% | 0 / 0.00pp |
 | K=1 | 338/355 = 95.21% | 380/398 = 95.48% | +42 rows / +0.27pp | 201/206 = 97.57% | 227/232 = 97.84% | +26 rows / +0.27pp |
@@ -361,7 +355,7 @@ The net gain in correctly handled tool requests (+27 / +28) matches the key metr
 
 ## 6. Composition of correct rejects
 
-| Item | 0.88 · using `intent_rule_no_model` | 0.88 · deleting `intent_rule_no_model` | Change | 0.82 · using `intent_rule_no_model` | 0.82 · deleting `intent_rule_no_model` | Change |
+| Item | 0.88 · use | 0.88 · delete | Change | 0.82 · use | 0.82 · delete | Change |
 |---|---|---|---|---|---|---|
 | **Correctly rejected (of 86)** | **82/86 = 95.35%** | **84/86 = 97.67%** | **+2 rows / +2.32pp** | **83/86 = 96.51%** | **85/86 = 98.84%** | **+2 rows / +2.33pp** |
 | Listed separately: handed to the Agent directly by `intent_rule_no_model` (not in the correct-reject numerator above) | 2 | 0 | −2 | 2 | 0 | −2 |
@@ -413,10 +407,10 @@ The net gain in correctly handled tool requests (+27 / +28) matches the key metr
 
 | Content | Path |
 |---|---|
-| 0.88 · using `intent_rule_no_model` (pre-cleanup baseline) | `logs/_cardable088_20261021/` |
-| 0.82 · using `intent_rule_no_model` (pre-cleanup baseline) | `logs/_cardable082_20261021/` |
-| 0.88 · deleting `intent_rule_no_model` (this run) | `logs/_formal500_v2_ui_threshold088_post_rule_cleanup/` |
-| 0.82 · deleting `intent_rule_no_model` (this run) | `logs/_formal500_v2_ui_threshold082_post_rule_cleanup/` |
+| 0.88 · use (pre-cleanup) | `logs/_cardable088_20261021/` |
+| 0.82 · use (pre-cleanup) | `logs/_cardable082_20261021/` |
+| 0.88 · delete (this run) | `logs/_formal500_v2_ui_threshold088_post_rule_cleanup/` |
+| 0.82 · delete (this run) | `logs/_formal500_v2_ui_threshold082_post_rule_cleanup/` |
 | Metrics reports | `metrics_report.md` in the two run directories above |
 | Per-case audit (reconciliation basis) | `case_level_audit.jsonl`, `reconciliation.json` in the two run directories above |
 | Run identity manifests | `_run_manifest.json`, `_server_state_final.json` in the two run directories above |
@@ -444,7 +438,9 @@ The net gain in correctly handled tool requests (+27 / +28) matches the key metr
 - **错误放行率（False Pass Rate）**：本该交给 Agent 处理、不该直接当工具执行的 86 条请求里,
   有多少被错误地放行去执行工具。它衡量的是：有多少 non-allowlist 请求被错误放行了。
 
-| 指标 | 0.88 · 删除 `intent_rule_no_model`<br>· 允许召回 non-allowlist intents | 0.82 · 删除 `intent_rule_no_model`<br>· 允许召回 non-allowlist intents | 0.88 · 使用 `intent_rule_no_model`<br>· 过滤掉 non-allowlist intents | 0.88 · 使用 `intent_rule_no_model`<br>· 允许召回 non-allowlist intents | 0.82 · 使用 `intent_rule_no_model`<br>· 过滤掉 non-allowlist intents | 0.82 · 使用 `intent_rule_no_model`<br>· 允许召回 non-allowlist intents |
+> **列头说明：** `use` = 保留 `intent_rule_no_model`；`delete` = 删除；`allow` = 允许召回 non-allowlist intents；`filter` = 召回前过滤掉 non-allowlist intents。列头按 *阈值 · 规则路径 · 召回策略* 排列。
+
+| 指标 | 0.88 · delete · allow | 0.82 · delete · allow | 0.88 · use · filter | 0.88 · use · allow | 0.82 · use · filter | 0.82 · use · allow |
 |---|---|---|---|---|---|---|
 | 端到端准确率 | **433/500 = 86.60%** | **462/500 = 92.40%** | 402/500 = 80.40% | 406/500 = 81.20% | 416/500 = 83.20% | 434/500 = 86.80% |
 | 端到端工具路由准确率（受候选集召回与工具选择共同影响） | **347/414 = 83.82%** | **377/414 = 91.06%** | 318/414 = 76.81% | 320/414 = 77.29% | 348/414 = 84.06% | 349/414 = 84.30% |
@@ -494,10 +490,10 @@ The net gain in correctly handled tool requests (+27 / +28) matches the key metr
 
 > **没有经过 LayaChoice-v2 的轮次：** 部分 non-allowlist capability 请求在进入决策模型之前就已 REJECT——由召回模型阈值本身筛选掉非意图 query，召回没有候选（`NO_CANDIDATE`），直接 REJECT。
 >
-> - 0.88 · 使用 `intent_rule_no_model`<br>· 过滤掉 non-allowlist intents：召回阈值 REJECT 76
-> - 0.88 · 使用 `intent_rule_no_model`<br>· 允许召回 non-allowlist intents：召回阈值 REJECT 2
-> - 0.82 · 使用 `intent_rule_no_model`<br>· 过滤掉 non-allowlist intents：召回阈值 REJECT 37
-> - 0.82 · 使用 `intent_rule_no_model`<br>· 允许召回 non-allowlist intents：召回阈值 REJECT 0
+> - 0.88 · 使用 `intent_rule_no_model` 且过滤掉 non-allowlist intents：召回阈值 REJECT 76
+> - 0.88 · 使用 `intent_rule_no_model` 且允许召回 non-allowlist intents：召回阈值 REJECT 2
+> - 0.82 · 使用 `intent_rule_no_model` 且过滤掉 non-allowlist intents：召回阈值 REJECT 37
+> - 0.82 · 使用 `intent_rule_no_model` 且允许召回 non-allowlist intents：召回阈值 REJECT 0
 
 ### 结论
 
@@ -566,7 +562,9 @@ The net gain in correctly handled tool requests (+27 / +28) matches the key metr
 
 > **统计说明：** 每条请求首先经过召回阶段（Embedding + 召回阈值），生成候选工具集；随后由决策模型 LayaChoice-v2 从候选集中选择目标 Tool 或作出 REJECT 决策。下表统计整个流程最终正确选中目标 Tool 或正确判定 REJECT 的结果，并按提供给决策模型的候选卡片数量（K）分组。K=0 表示没有召回候选卡片，模型无法进行工具选择，只能交由 Agent 处理。
 
-| 意图候选列表数量 | 0.88 · 使用 `intent_rule_no_model`<br>· 过滤掉 non-allowlist intents | 0.88 · 使用 `intent_rule_no_model`<br>· 允许召回 non-allowlist intents | 0.82 · 使用 `intent_rule_no_model`<br>· 过滤掉 non-allowlist intents | 0.82 · 使用 `intent_rule_no_model`<br>· 允许召回 non-allowlist intents | 0.88 · 删除 `intent_rule_no_model`<br>· 允许召回 non-allowlist intents | 0.82 · 删除 `intent_rule_no_model`<br>· 允许召回 non-allowlist intents |
+> **列头说明：** `use` = 保留 `intent_rule_no_model`；`delete` = 删除；`allow` = 允许召回 non-allowlist intents；`filter` = 召回前过滤掉 non-allowlist intents。列头按 *阈值 · 规则路径 · 召回策略* 排列。
+
+| 意图候选列表数量 | 0.88 · use · filter | 0.88 · use · allow | 0.82 · use · filter | 0.82 · use · allow | 0.88 · delete · allow | 0.82 · delete · allow |
 |---|---|---|---|---|---|---|
 | K=0(没有召回意图) | 76/115 = 66.09% | 2/40 = 5.00% | 37/41 = 90.24% | 0/4 = 0% | 2/40 = 5.00% | 0/4 = 0% |
 | K=1 | 274/295 = 92.88% | 338/355 = 95.21% | 202/222 = 90.99% | 201/206 = 97.57% | 380/398 = 95.48% | 227/232 = 97.84% |
@@ -588,7 +586,7 @@ The net gain in correctly handled tool requests (+27 / +28) matches the key metr
 
 #### 拒绝判定
 
-| 项目 | 0.88 · 使用 `intent_rule_no_model`<br>· 过滤掉 non-allowlist intents | 0.88 · 使用 `intent_rule_no_model`<br>· 允许召回 non-allowlist intents | 0.82 · 使用 `intent_rule_no_model`<br>· 过滤掉 non-allowlist intents | 0.82 · 使用 `intent_rule_no_model`<br>· 允许召回 non-allowlist intents | 0.88 · 删除 `intent_rule_no_model`<br>· 允许召回 non-allowlist intents | 0.82 · 删除 `intent_rule_no_model`<br>· 允许召回 non-allowlist intents |
+| 项目 | 0.88 · use · filter | 0.88 · use · allow | 0.82 · use · filter | 0.82 · use · allow | 0.88 · delete · allow | 0.82 · delete · allow |
 |---|---|---|---|---|---|---|
 | 本该拒绝的请求 | 86 | 86 | 86 | 86 | 86 | 86 |
 | 正确拒绝 | 6/86 = 6.98% | 82/86 = 95.35% | 29/86 = 33.72% | 83/86 = 96.51% | 84/86 = 97.67% | 85/86 = 98.84% |
@@ -607,7 +605,7 @@ The net gain in correctly handled tool requests (+27 / +28) matches the key metr
 
 这里只看"进了模型、且真实目标是工具"的请求。
 
-| 项目 | 0.88 · 使用 `intent_rule_no_model`<br>· 过滤掉 non-allowlist intents | 0.88 · 使用 `intent_rule_no_model`<br>· 允许召回 non-allowlist intents | 0.82 · 使用 `intent_rule_no_model`<br>· 过滤掉 non-allowlist intents | 0.82 · 使用 `intent_rule_no_model`<br>· 允许召回 non-allowlist intents | 0.88 · 删除 `intent_rule_no_model`<br>· 允许召回 non-allowlist intents | 0.82 · 删除 `intent_rule_no_model`<br>· 允许召回 non-allowlist intents |
+| 项目 | 0.88 · use · filter | 0.88 · use · allow | 0.82 · use · filter | 0.82 · use · allow | 0.88 · delete · allow | 0.82 · delete · allow |
 |---|---|---|---|---|---|---|
 | 进入模型的工具请求 | 328 | 329 | 363 | 363 | 373 | 407 |
 | **严格选对率** | 300/328 = 91.46% | 302/329 = 91.79% | 330/363 = 90.91% | 331/363 = 91.18% | 344/373 = 92.23% | 374/407 = 91.89% |
@@ -622,10 +620,10 @@ The net gain in correctly handled tool requests (+27 / +28) matches the key metr
 
 | 内容 | 路径 |
 |---|---|
-| 0.88 · 使用 `intent_rule_no_model`<br>· 允许召回 non-allowlist intents | `logs/_cardable088_20261021/` |
-| 0.82 · 使用 `intent_rule_no_model`<br>· 允许召回 non-allowlist intents | `logs/_cardable082_20261021/` |
-| 0.88 · 使用 `intent_rule_no_model`<br>· 过滤掉 non-allowlist intents,按新口径重算 | `logs/_cardable_4way_pre088/` |
-| 0.82 · 使用 `intent_rule_no_model`<br>· 过滤掉 non-allowlist intents,按新口径重算 | `logs/_cardable_4way_pre082/` |
+| 0.88 · use · allow | `logs/_cardable088_20261021/` |
+| 0.82 · use · allow | `logs/_cardable082_20261021/` |
+| 0.88 · use · filter（重算） | `logs/_cardable_4way_pre088/` |
+| 0.82 · use · filter（重算） | `logs/_cardable_4way_pre082/` |
 | 四组对比表 | `logs/_cardable_compare_4way/comparison.md` |
 
 每组都有逐条审计、总数守恒检查(`all_ok=true`)、运行清单。
@@ -665,7 +663,9 @@ The net gain in correctly handled tool requests (+27 / +28) matches the key metr
 
 ## 2. 核心指标对比
 
-| 指标 | 0.88 · 使用 `intent_rule_no_model` | 0.88 · 删除 `intent_rule_no_model` | 变化量 | 0.82 · 使用 `intent_rule_no_model` | 0.82 · 删除 `intent_rule_no_model` | 变化量 |
+> **列头说明：** `use` = 保留 `intent_rule_no_model`；`delete` = 删除；`allow` = 允许召回 non-allowlist intents；`filter` = 召回前过滤掉 non-allowlist intents。列头按 *阈值 · 规则路径 · 召回策略* 排列。
+
+| 指标 | 0.88 · use | 0.88 · delete | 变化量 | 0.82 · use | 0.82 · delete | 变化量 |
 |---|---|---|---|---|---|---|
 | **端到端工具路由准确率（End-to-End Tool Routing Accuracy）** | 320/414 = 77.29% | 347/414 = 83.82% | **+27 条 / +6.53pp** | 349/414 = 84.30% | 377/414 = 91.06% | **+28 条 / +6.76pp** |
 | **端到端准确率** | 406/500 = 81.20% | 433/500 = 86.60% | +27 条 / +5.40pp | 434/500 = 86.80% | 462/500 = 92.40% | +28 条 / +5.60pp |
@@ -691,7 +691,7 @@ The net gain in correctly handled tool requests (+27 / +28) matches the key metr
 
 ## 3. 完整路径分布（500 条互斥）
 
-| 路径结果（outcome） | 含义 | 0.88 · 使用 `intent_rule_no_model` | 0.88 · 删除 `intent_rule_no_model` | 变化量 | 0.82 · 使用 `intent_rule_no_model` | 0.82 · 删除 `intent_rule_no_model` | 变化量 |
+| 路径结果（outcome） | 含义 | 0.88 · use | 0.88 · delete | 变化量 | 0.82 · use | 0.82 · delete | 变化量 |
 |---|---|---|---|---|---|---|---|
 | MATCHER_HIT（R_HIT） | 查表命中，能力已确定，不经 Laya | 3 | 3 | 0 | 3 | 3 | 0 |
 | `intent_rule_no_model` · 规则直接执行工具 | 传统意图规则命中并直接执行工具，未进漏斗 | 15 | 0 | −15 | 15 | 0 | −15 |
@@ -710,7 +710,7 @@ The net gain in correctly handled tool requests (+27 / +28) matches the key metr
 
 ## 4. K 分组对比
 
-| 意图候选列表数量 | 0.88 · 使用 `intent_rule_no_model` | 0.88 · 删除 `intent_rule_no_model` | 变化量 | 0.82 · 使用 `intent_rule_no_model` | 0.82 · 删除 `intent_rule_no_model` | 变化量 |
+| 意图候选列表数量 | 0.88 · use | 0.88 · delete | 变化量 | 0.82 · use | 0.82 · delete | 变化量 |
 |---|---|---|---|---|---|---|
 | K=0（没有召回意图） | 2/40 = 5.00% | 2/40 = 5.00% | 0 / 0.00pp | 0/4 = 0% | 0/4 = 0% | 0 / 0.00pp |
 | K=1 | 338/355 = 95.21% | 380/398 = 95.48% | +42 条 / +0.27pp | 201/206 = 97.57% | 227/232 = 97.84% | +26 条 / +0.27pp |
@@ -741,7 +741,7 @@ The net gain in correctly handled tool requests (+27 / +28) matches the key metr
 
 ## 6. 正确拒绝路径构成
 
-| 项目 | 0.88 · 使用 `intent_rule_no_model` | 0.88 · 删除 `intent_rule_no_model` | 变化量 | 0.82 · 使用 `intent_rule_no_model` | 0.82 · 删除 `intent_rule_no_model` | 变化量 |
+| 项目 | 0.88 · use | 0.88 · delete | 变化量 | 0.82 · use | 0.82 · delete | 变化量 |
 |---|---|---|---|---|---|---|
 | **正确拒绝总数（/86）** | **82/86 = 95.35%** | **84/86 = 97.67%** | **+2 条 / +2.32pp** | **83/86 = 96.51%** | **85/86 = 98.84%** | **+2 条 / +2.33pp** |
 | 另列：由 `intent_rule_no_model` 直接交给 Agent（不计入上面的正确拒绝分子） | 2 | 0 | −2 | 2 | 0 | −2 |
@@ -793,10 +793,10 @@ The net gain in correctly handled tool requests (+27 / +28) matches the key metr
 
 | 内容 | 路径 |
 |---|---|
-| 0.88 · 使用 `intent_rule_no_model`（清理前基线） | `logs/_cardable088_20261021/` |
-| 0.82 · 使用 `intent_rule_no_model`（清理前基线） | `logs/_cardable082_20261021/` |
-| 0.88 · 删除 `intent_rule_no_model`（本次实测） | `logs/_formal500_v2_ui_threshold088_post_rule_cleanup/` |
-| 0.82 · 删除 `intent_rule_no_model`（本次实测） | `logs/_formal500_v2_ui_threshold082_post_rule_cleanup/` |
+| 0.88 · use（清理前） | `logs/_cardable088_20261021/` |
+| 0.82 · use（清理前） | `logs/_cardable082_20261021/` |
+| 0.88 · delete（本次实测） | `logs/_formal500_v2_ui_threshold088_post_rule_cleanup/` |
+| 0.82 · delete（本次实测） | `logs/_formal500_v2_ui_threshold082_post_rule_cleanup/` |
 | 指标报告 | 上述两个实测目录下 `metrics_report.md` |
 | 逐条审计（对账依据） | 上述两个实测目录下 `case_level_audit.jsonl`、`reconciliation.json` |
 | 运行身份清单 | 上述两个实测目录下 `_run_manifest.json`、`_server_state_final.json` |
