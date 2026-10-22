@@ -72,7 +72,7 @@ from core.config import settings
 from core.infrastructure.db import ChatFunnelEventModel
 
 from tests._memory_v2_fakes import Db
-from tests.p5_validation._p5_harness import (
+from tests.e2e.real_chain import (
     USER,
     FakeSeam,
     ScriptedPort,
@@ -82,7 +82,6 @@ from tests.p5_validation._p5_harness import (
     build_kernel,
     sse,
 )
-from tests.p5_validation.test_p5_smoke import _gate
 
 FUNNEL_LOGGER = "core.application.chat.intent_funnel.funnel"
 SHADOW_LOGGER = "core.application.chat.intent_funnel.shadow"
@@ -261,7 +260,6 @@ def _setup(monkeypatch, *, timeout=5.0, steps=None, delay=0.0,
     spy = Spy()
     kernel, _, _, broker = build_kernel(monkeypatch, port, spy,
                                         broker_mode="allow")
-    _gate(monkeypatch, action=True)
     app = build_app(monkeypatch, port, FakeSeam([]), kernel, broker)
 
     shared = Db(rows=[])

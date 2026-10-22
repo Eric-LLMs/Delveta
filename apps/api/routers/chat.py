@@ -21,7 +21,6 @@ from api.deps import (
     _embedder,
     get_agent,
     get_drive_service,
-    get_retriever,
     get_task_queue,
     llm,
 )
@@ -367,10 +366,7 @@ def _build_chat_deps(queue: TaskQueue, drive: DriveService) -> ChatDeps:
         persist_turn_meta=_persist_turn_meta,
         log_usage=_log_usage,
         resolve_research=_resolve_research_context,
-        # The staged RAG branch (Phase 4) answers through the SAME cache-wrapped seam
-        # the agent's rag_search tool calls — one ACL / tenant / cache surface.
-        retriever=get_retriever(),
-        # Phase 5A ACTION branch dispatches registered tools through the SAME runtime.
+        # The ACTION branch dispatches registered tools through the SAME runtime.
         run_tool=_run_tool,
         # Phase 4 MODEL acquisition: the argument extractor for a decided capability
         # (current implementation: Qwen over the local tool-intent endpoint). The

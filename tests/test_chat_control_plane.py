@@ -1,17 +1,13 @@
 """Control-plane contracts under the single-path ruling.
 
-The router-level SSE compatibility is already covered end-to-end by
-test_viewer_chat (TestClient + fake kernel asserts frame shapes). What is pinned
+The router-level SSE compatibility is covered end-to-end elsewhere. What is pinned
 here is the pure policy surface:
 
 * ``TurnRequirements`` defaults to an abstain;
-* the default policy (all experimental lanes off) keeps routing on AGENT — the
-  formal path certifies ACTION only, everything else rides its own lane gate;
-* the pure mapper still maps a HIGH-confidence requirement set to its lane under
-  that lane's gate; only the funnel's Matcher/Recall cascade can produce such a
-  set now that L0's signal engine is gone;
-* the orchestrator's registry resolves the right branch and degrades unmapped kinds
-  to the agent branch, never hard-failing.
+* only a funnel-certified ``requested_action`` maps to ACTION; every other
+  requirement set — including HIGH-confidence non-action demands — maps to AGENT;
+* the orchestrator registry contains exactly ACTION + AGENT; an unmapped kind
+  degrades to AGENT, never a hard fail.
 """
 from __future__ import annotations
 
@@ -20,7 +16,6 @@ from types import SimpleNamespace
 from core.application.chat.execution_plan import (
     ExecutionPlan,
     PlanKind,
-    PolicyContext,
     build_execution_plan,
 )
 from core.application.chat.understanding import (
@@ -28,6 +23,13 @@ from core.application.chat.understanding import (
     Signal,
     TurnRequirements,
 )
+
+ACTION = {
+    "tool": "create_folder",
+    "args": {"name": "x"},
+    "capability_id": "cap-folder",
+    "funnel_registry_version": "live1-deadbeef",
+}
 
 
 def test_default_requirements_abstain():
@@ -37,11 +39,8 @@ def test_default_requirements_abstain():
     assert req.needs_memory is False
 
 
-def test_default_policy_keeps_undemanded_turns_on_agent():
-    # Neutral (abstain) input maps to AGENT; a HIGH-confidence input with no
-    # certified action and no lane gate open ALSO lands on AGENT — the experimental
-    # lanes stay dark by default (Option A, single-path ruling).
-    neutral = build_execution_plan(TurnRequirements(), PolicyContext())
+def test_uncertified_turns_stay_on_agent():
+    neutral = build_execution_plan(TurnRequirements())
     assert neutral.kind is PlanKind.AGENT
 
     strong = TurnRequirements(
@@ -49,95 +48,58 @@ def test_default_policy_keeps_undemanded_turns_on_agent():
         needs_viewer=Signal.LOW, needs_action=Signal.LOW,
         confidence=Confidence.HIGH,
     )
-    # Default policy (DIRECT gate closed) → still AGENT (per-kind gating).
-    assert build_execution_plan(strong, PolicyContext()).kind is PlanKind.AGENT
+    assert build_execution_plan(strong).kind is PlanKind.AGENT
 
 
-def test_direct_kind_maps_only_under_direct_gate():
-    clean = TurnRequirements(confidence=Confidence.HIGH)  # all needs default LOW
-    both_on = PolicyContext(direct_fast_path_enabled=True)
-    assert build_execution_plan(clean, both_on).kind is PlanKind.DIRECT
-    # A demand present disqualifies DIRECT even with the gate on.
-    demanding = TurnRequirements(
-        confidence=Confidence.HIGH, needs_web=Signal.HIGH,
+def test_certified_action_maps_to_action():
+    req = TurnRequirements(
+        confidence=Confidence.HIGH, needs_action=Signal.HIGH,
+        requested_action=ACTION,
     )
-    assert build_execution_plan(demanding, both_on).kind is PlanKind.AGENT
+    plan = build_execution_plan(req)
+    assert plan.kind is PlanKind.ACTION
+    assert plan.action == ACTION
+    assert plan.action is not ACTION          # a copy, never the live requirements dict
 
 
-# ── Phase 3 VIEWER policy mapping ────────────────────────────────────────────────
-
-def _viewer_req(**over):
-    kw = {"needs_viewer": Signal.HIGH, "confidence": Confidence.HIGH}
-    kw.update(over)
-    return TurnRequirements(**kw)
-
-
-def test_viewer_kind_maps_under_viewer_gate_only():
-    all_on = PolicyContext(
-        direct_fast_path_enabled=True, viewer_fast_path_enabled=True,
+def test_web_demand_admits_only_web_family_actions():
+    news = {**ACTION, "tool": "web_search"}
+    req = TurnRequirements(
+        confidence=Confidence.HIGH, needs_action=Signal.HIGH,
+        needs_web=Signal.HIGH, requested_action=ACTION,
     )
-    plan = build_execution_plan(_viewer_req(), all_on)
-    assert plan.kind is PlanKind.VIEWER and plan.requires_viewer is True
-    # Viewer gate OFF → a viewer-demand turn (needs_viewer HIGH) is not DIRECT either,
-    # so it falls through to AGENT.
-    only_direct = PolicyContext(direct_fast_path_enabled=True)
-    assert build_execution_plan(_viewer_req(), only_direct).kind is PlanKind.AGENT
+    assert build_execution_plan(req).kind is PlanKind.AGENT
+    assert build_execution_plan(
+        TurnRequirements(
+            confidence=Confidence.HIGH, needs_action=Signal.HIGH,
+            needs_web=Signal.HIGH, requested_action=news,
+        )
+    ).kind is PlanKind.ACTION
 
 
-def test_viewer_demand_with_other_capability_stays_agent():
-    all_on = PolicyContext(
-        direct_fast_path_enabled=True, viewer_fast_path_enabled=True,
+def test_memory_eligible_action_stays_on_agent():
+    req = TurnRequirements(
+        confidence=Confidence.HIGH, needs_action=Signal.HIGH,
+        needs_memory=True, requested_action=ACTION,
     )
-    # The viewer must be the SOLE demand — a co-occurring private/web/memory need keeps
-    # the turn on the Agent (which owns read_document / rag / web / recall).
-    for over in (
-        {"needs_private": Signal.HIGH},
-        {"needs_web": Signal.HIGH},
-        {"needs_action": Signal.HIGH},
-        {"needs_memory": True},
-    ):
-        assert build_execution_plan(_viewer_req(**over), all_on).kind is PlanKind.AGENT, over
+    assert build_execution_plan(req).kind is PlanKind.AGENT
 
 
-# ── Phase 4 LOCAL_RAG policy mapping ───────────────────────────────────────────────
-
-def _rag_req(**over):
-    kw = {"needs_private": Signal.HIGH, "confidence": Confidence.HIGH}
-    kw.update(over)
-    return TurnRequirements(**kw)
-
-
-def _all_on():
-    return PolicyContext(
-        direct_fast_path_enabled=True,
-        viewer_fast_path_enabled=True, retrieval_fast_path_enabled=True,
+def test_private_only_source_policy_rides_the_plan():
+    req = TurnRequirements(
+        confidence=Confidence.HIGH, needs_action=Signal.HIGH,
+        private_only=True, requested_action=ACTION,
     )
-
-
-def test_retrieval_kind_maps_under_retrieval_gate_only():
-    plan = build_execution_plan(_rag_req(), _all_on())
-    assert plan.kind is PlanKind.LOCAL_RAG and plan.requires_retrieval is True
-    # Everything else ON but the retrieval gate closed → still AGENT (per-kind gating).
-    no_rag = PolicyContext(
-        direct_fast_path_enabled=True, viewer_fast_path_enabled=True,
-    )
-    assert build_execution_plan(_rag_req(), no_rag).kind is PlanKind.AGENT
-
-
-def test_private_plus_other_demand_stays_agent_fail_closed():
-    # A co-occurring web demand never mixes public with private on the fast path —
-    # the Agent arbitrates. Same for viewer/action/memory co-demands.
-    for over in (
-        {"needs_web": Signal.HIGH},
-        {"needs_viewer": Signal.HIGH},
-        {"needs_action": Signal.HIGH},
-        {"needs_memory": True},
-    ):
-        assert build_execution_plan(_rag_req(**over), _all_on()).kind is PlanKind.AGENT, over
+    assert build_execution_plan(req).source_policy == "private_only"
 
 
 def test_reason_is_traceable():
-    assert "agent" in build_execution_plan(TurnRequirements(), PolicyContext()).reason
+    assert "agent" in build_execution_plan(TurnRequirements()).reason
+    req = TurnRequirements(
+        confidence=Confidence.HIGH, needs_action=Signal.HIGH,
+        requested_action=ACTION,
+    )
+    assert "action" in build_execution_plan(req).reason
 
 
 def test_l0_signal_engine_is_gone():
@@ -166,28 +128,18 @@ def _ctx(*, message="hi"):
 
 
 def test_orchestrator_resolves_agent_plan_and_executor():
+    from core.application.chat.executors.action import ActionExecutor
     from core.application.chat.executors.agent import AgentExecutor
-    from core.application.chat.executors.direct import DirectExecutor
-    from core.application.chat.executors.retrieval import RetrievalExecutor
     from core.application.chat.turn_orchestrator import TurnOrchestrator
 
     ctx = _ctx(message="hi")
     orch = TurnOrchestrator(deps=None)  # no deps: funnel fails open, resolution touches no deps
     import asyncio
-    plan = asyncio.run(orch.resolve_plan(ctx))  # default lanes dark → AGENT (async since QIR stage 1)
+    plan = asyncio.run(orch.resolve_plan(ctx))  # uncertified -> AGENT
     assert plan.kind is PlanKind.AGENT
     assert isinstance(orch.executor_for(plan), AgentExecutor)
-    # DIRECT / VIEWER / LOCAL_RAG are now registered branches...
-    assert isinstance(orch.executor_for(ExecutionPlan(kind=PlanKind.DIRECT)), DirectExecutor)
-    assert isinstance(orch.executor_for(ExecutionPlan(kind=PlanKind.LOCAL_RAG)), RetrievalExecutor)
-    # ...and Phase 5 registered ACTION + COMPOSITE alongside them.
-    from core.application.chat.executors.action import ActionExecutor
-    from core.application.chat.executors.composite import CompositeExecutor
     assert isinstance(orch.executor_for(ExecutionPlan(kind=PlanKind.ACTION)), ActionExecutor)
-    assert isinstance(orch.executor_for(ExecutionPlan(kind=PlanKind.COMPOSITE)), CompositeExecutor)
-    # Fail-Closed is STRUCTURAL: no WEB executor is registered anywhere, so a private
-    # turn's EscalateToAgent hand-back can only land on the Agent — the control plane
-    # physically cannot route LOCAL_RAG -> WEB, and the Agent's own web use stays a
-    # visible agent-level decision exactly as before Phase 4. WEB is also the example
-    # of an unmapped kind: executor_for must degrade it to AGENT, never raise.
-    assert isinstance(orch.executor_for(ExecutionPlan(kind=PlanKind.WEB)), AgentExecutor)
+    # Only the two formal branches exist; an unmapped kind degrades to AGENT.
+    assert set(orch._executors) == {PlanKind.ACTION, PlanKind.AGENT}
+    unmapped = SimpleNamespace(kind="legacy_lane")
+    assert isinstance(orch.executor_for(unmapped), AgentExecutor)

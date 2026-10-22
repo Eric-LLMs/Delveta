@@ -26,7 +26,6 @@ from core.application.chat.context import ChatTurnContext
 from core.application.chat.execution_plan import (
     ExecutionPlan,
     PlanKind,
-    PolicyContext,
     build_execution_plan,
 )
 from core.application.chat.executors.action import ActionExecutor
@@ -37,10 +36,6 @@ from core.application.chat.executors.base import (
     EscalateToAgent,
     TurnRequest,
 )
-from core.application.chat.executors.composite import CompositeExecutor
-from core.application.chat.executors.direct import DirectExecutor
-from core.application.chat.executors.retrieval import RetrievalExecutor
-from core.application.chat.executors.viewer import ViewerExecutor
 from core.application.chat.lifecycle import finalize_turn, handle_research_post_turn
 from core.application.chat.understanding import resolve_source_facts
 from core.config import settings
@@ -48,49 +43,15 @@ from core.logger import reset_log_context, set_log_context
 
 logger = logging.getLogger(__name__)
 
-# Honest-disclosure instruction prepended to the Agent replay after a pre-commit
-# fast-path escalation (same channel as the attach/handoff notes). The private corpus
-# WAS searched and came up short — the Agent must say so instead of papering over the
-# gap, and must never present general/web knowledge as private-KB evidence. Under a
-# private source policy the web ban is additionally enforced in the sandbox, so the
-# note tells the model what the guard already hard-denies.
-_HONEST_NOTE = (
-    "[Private retrieval note: the user's knowledge base WAS searched for this question "
-    "and returned no sufficient evidence. Be honest with the user: say their knowledge "
-    "base does not contain enough information about it. NEVER present general knowledge "
-    "or web content as if it came from the user's private knowledge base — if you answer "
-    "from anything else, label it explicitly as external/general.]"
-)
-_PRIVATE_ONLY_NOTE = (
-    " This turn is restricted to private sources: do not call web_search or any other "
-    "external/network tool."
-)
-
-
-def _escalation_note(plan: ExecutionPlan) -> str | None:
-    """Honest-disclosure note for escalations from branches that ACTUALLY searched the
-    private corpus (LOCAL_RAG / COMPOSITE). Any other branch (DIRECT / VIEWER / ACTION)
-    escalates with the user's text BYTE-FOR-BYTE untouched — a fast path that abstained
-    must leave zero trace in what the Agent receives. ``None`` = prepend nothing."""
-    if not plan.requires_retrieval:
-        return None
-    if plan.source_policy in ("private_only", "private_first"):
-        return _HONEST_NOTE + _PRIVATE_ONLY_NOTE
-    return _HONEST_NOTE
-
 
 class TurnOrchestrator:
     def __init__(self, deps: ChatDeps) -> None:
         self.deps = deps
-        # Each phase registers its branch here; the PolicyContext gates below decide
-        # which kind a turn resolves to, so registration is inert until enabled.
+        # The single path has only two terminal branches: a certified ACTION or the
+        # Agent. There is no per-lane gate to open — an uncertified turn is AGENT.
         self._executors = {
             AgentExecutor.kind: AgentExecutor(),
-            DirectExecutor.kind: DirectExecutor(),
-            ViewerExecutor.kind: ViewerExecutor(),
-            RetrievalExecutor.kind: RetrievalExecutor(),
             ActionExecutor.kind: ActionExecutor(),
-            CompositeExecutor.kind: CompositeExecutor(),
         }
 
     # ── plan resolution ──────────────────────────────────────────────────────────
@@ -107,15 +68,10 @@ class TurnOrchestrator:
                      so ``build_execution_plan`` maps it to AGENT (fail-open) with
                      the user text byte-identical.
 
-        ``build_execution_plan`` stays the SOLE policy mapper: feature gates,
-        eligibility and ``source_policy`` all live there.
+        ``build_execution_plan`` stays the SOLE policy mapper: ACTION eligibility
+        and ``source_policy`` live there; execution authorization lives at the
+        executor boundary.
         """
-        policy = PolicyContext(
-            direct_fast_path_enabled=settings.chat_direct_fast_path_enabled,
-            viewer_fast_path_enabled=settings.chat_viewer_fast_path_enabled,
-            retrieval_fast_path_enabled=settings.chat_retrieval_fast_path_enabled,
-            composite_enabled=settings.chat_composite_fast_path_enabled,
-        )
         requirements = resolve_source_facts(ctx.body.message)
         # Single path (ruling): the funnel cascade owns every turn's
         # routing attempt — gate + QIR cascade + argument binding live in
@@ -125,7 +81,7 @@ class TurnOrchestrator:
         requirements = await intent_funnel.route(
             ctx, deps=deps, requirements=requirements,
         )
-        plan = build_execution_plan(requirements, policy)
+        plan = build_execution_plan(requirements)
         # Sink the SOURCE POLICY for the Agent's sandbox (see Sandbox._turn_denied):
         # fencing comes from the ORIGINAL request, exactly as the control plane
         # resolved it for this turn.
@@ -179,18 +135,14 @@ class TurnOrchestrator:
             try:
                 result = await executor.run(req)
             except EscalateToAgent as esc:
-                # Pre-commit fast-path fallback (Phase 4 Fail-Closed): the staged
-                # retrieval refused to answer without sufficient private evidence. The
-                # Agent — with its tools — owns the turn now, governed by the turn's
-                # SOURCE POLICY from the original request (web stays banned under a
-                # private policy; the replay is told to disclose the corpus gap honestly).
+                # Pre-commit user-input fallback (schema/preflight): the Agent — with
+                # its tools — owns the turn now, governed by the turn's SOURCE POLICY
+                # from the original request. The user text is replayed byte-identical;
+                # an ACTION that abstained leaves no trace in what the Agent receives.
                 logger.info(
                     "chat.plan-escalated from=%s to=agent reason=%s",
                     plan.kind.value, esc.reason,
                 )
-                note = _escalation_note(plan)
-                if note:
-                    ctx.user_text = note + "\n\n" + ctx.user_text
                 executor = self._executors[AgentExecutor.kind]
                 result = await executor.run(req)
         finally:
@@ -469,12 +421,8 @@ class TurnOrchestrator:
                         continue
                     switched = True
                     stale_sentinels += 1  # the escalated pump still enqueues its sentinel
-                    # Pre-first-event only: prepend the honest-disclosure instruction to
-                    # the Agent replay ONLY when the abandoned branch had actually
-                    # searched the corpus; every other escalation is zero-pollution.
-                    note = _escalation_note(plan)
-                    if note:
-                        ctx.user_text = note + "\n\n" + ctx.user_text
+                    # Pre-first-event only: the ACTION abstained before any effect, so
+                    # the Agent replay is zero-pollution (original user text intact).
                     pump_task = asyncio.create_task(pump(self._executors[AgentExecutor.kind]))
                     continue
                 if data["type"] == "done":

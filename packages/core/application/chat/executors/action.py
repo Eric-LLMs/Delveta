@@ -1,36 +1,47 @@
-"""ActionExecutor: the Phase 5A fast path — direct dispatch of an allowlisted tool.
+"""ActionExecutor: the certified ACTION lane — direct dispatch of an allowlisted tool.
 
-Serves turns the policy resolved to ``PlanKind.ACTION``: L0 certified that the turn
-demands EXACTLY one registered tool with fully-determined args, so the ReAct loop is
-unnecessary flow — the seam calls the SAME ``ToolRuntime.execute`` the Agent would
-(approval waterfall, guards, sandbox, ACL pipeline all inherited).
+Serves turns the policy resolved to ``PlanKind.ACTION``: the Intent Funnel
+certified that the turn demands EXACTLY one registered tool with fully-determined
+args, so the ReAct loop is unnecessary flow — the seam calls the SAME
+``ToolRuntime.execute`` the Agent would (approval waterfall, guards, sandbox, ACL
+pipeline all inherited).
 
-Stage order encodes the side-effect boundary isolation (Phase 5 hard constraint 1):
+Stage order encodes the side-effect boundary isolation:
 
-  1. existence + schema gate (live ``ToolRuntime.schemas()`` roster, then
-     :func:`validate_action`) — pre-execution, side-effect-free; a tool the roster
-     does not register is a C2 TERMINAL (the Agent never re-plans around a system
-     fault); a malformed REQUEST (argument shape) escalates and the Agent owns the
-     clarification; a routing-stamped ``binding_integrity`` marker (stage-2 C2)
-     terminates first;
-  2. seam presence — not wired ⇒ escalate (LLM fallback intact, capability unchanged);
-  3. the seam call is the SIDE-EFFECT BOUNDARY. Before it: anything the seam can PROVE
-     did not execute raises :class:`ActionPreflightFailure` ⇒ escalate. After the tool
-     body was entered, any other exception means the state is UNKNOWN — this executor
-     emits one honest terminal message and finishes normally; it must NEVER re-run the
-     action through the Agent (that is how duplicate folders get made);
-  4. ``{"ok": False, "reason"}`` = a DECIDED denial (approval refused, policy guard) —
-     no side effect happened and re-asking the Agent would only re-trigger it; the
-     denial is surfaced honestly as a terminal answer.
+  0. FINAL EXECUTION AUTHORIZATION — before anything can run, resolve the
+     authoritative live Registry view and re-confirm that this capability is
+     allowed to execute from the Chat plane RIGHT NOW: registered, enabled and
+     active, in the chat-plane execution allowlist (a hidden capability may be
+     recalled/offered but never executed), bound to the tool being dispatched.
+     The verdict is fail-closed: an unavailable/unreadable registry refuses.
+     This is deliberately independent of the model's selection, any routing-time
+     stamp, or caller-supplied action fields.
+  0.1 preserved route/execute TOCTOU checks — Registry fingerprint drift, entry
+     lifecycle, tool binding, the live ``ToolRuntime.schemas()`` roster, and the
+     kind gate. A drift is C3 TERMINAL.
+  0.5 routing-stamped ``binding_integrity`` (C2) terminates before the schema gate.
+  1. existence + schema gate (live roster, then :func:`validate_action`) —
+     pre-execution, side-effect-free; a malformed REQUEST (argument shape)
+     escalates and the Agent owns the clarification.
+  2. seam presence — not wired ⇒ C2 terminal (never re-plan around a wiring fault).
+  3. the seam call is the SIDE-EFFECT BOUNDARY. Before it: anything the seam can
+     PROVE did not execute raises :class:`ActionPreflightFailure` ⇒ escalate.
+     After the tool body was entered, any other exception means the state is
+     UNKNOWN — one honest terminal message, never a blind Agent replay (that is
+     how duplicate folders get made).
+  4. ``{"ok": False, "reason"}`` = a DECIDED denial (approval refused, policy
+     guard) — no side effect happened; surfaced honestly as a terminal answer.
 
-Everything before the first yielded event is pre-commit; the events after (content →
-internal done, user+assistant rows persisted) mirror DIRECT exactly. No LLM call: the
-confirmation text is the tool's own deterministic output.
+Everything before the first yielded event is pre-commit; the events after
+(content → internal done, user+assistant rows persisted) mirror the former
+DIRECT lane. No LLM call: the confirmation text is the tool's own deterministic
+output.
 """
 from __future__ import annotations
 
 import logging
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 
 from core.application.chat.actions import (
     ActionIntegrityFailure,
@@ -42,10 +53,16 @@ from core.application.chat.execution_plan import PlanKind
 from core.application.chat.executors.base import (
     ChatEvent,
     EscalateToAgent,
+    ExecutorResult,
     ProgressSink,
     TurnRequest,
 )
-from core.application.chat.executors.direct import DirectExecutor, DirectResult
+from core.application.chat.executors.execution_authorization import (
+    REASON_CAPABILITY_INACTIVE,
+    REASON_CAPABILITY_NOT_ALLOWLISTED,
+    REASON_TOOL_BINDING_MISMATCH,
+    authorize_execution,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +85,50 @@ _TERMINAL_STALE_ROUTE = (
     "The capability resolved for this request is no longer active, so nothing was "
     "done. Please phrase the request again."
 )
+_TERMINAL_NOT_PERMITTED = (
+    "That action is not permitted on this channel, so nothing was done. Please "
+    "phrase the request again."
+)
+
+# Structured refusal reasons emitted alongside the terminal message.
+REASON_REGISTRY_UNAVAILABLE = "REGISTRY_UNAVAILABLE"
+REASON_REGISTRY_VERSION_MISMATCH = "REGISTRY_VERSION_MISMATCH"
+REASON_KIND_DISABLED = "KIND_DISABLED"
+REASON_TOOL_NOT_ON_ROSTER = "TOOL_NOT_ON_ROSTER"
+REASON_TOOL_ROSTER_UNAVAILABLE = "TOOL_ROSTER_UNAVAILABLE"
+REASON_BINDING_INTEGRITY = "BINDING_INTEGRITY"
+
+
+@dataclass(frozen=True)
+class DispatchOutcome:
+    """The terminal text plus an optional structured refusal reason.
+
+    ``refusal_reason`` is set only when the dispatch was refused before the seam;
+    a normal tool result (success, denial, state-unknown) has ``None`` here.
+    """
+
+    message: str
+    refusal_reason: str | None = None
+
+
+def _refusal(reason: str, *, stamped: bool = False) -> DispatchOutcome:
+    """Map a machine-readable refusal code to the honest terminal text.
+
+    ``stamped`` preserves the historical route/execute split: a funnel-certified
+    turn (registry fingerprint present) that names a tool missing from the live
+    roster is a STALE ROUTE ("phrase the request again"); a hand-built action with
+    no routing stamp is a system INTEGRITY fault. The structured reason is the same.
+    """
+    if reason == REASON_TOOL_NOT_ON_ROSTER and not stamped:
+        return DispatchOutcome(_TERMINAL_INTEGRITY, reason)
+    if reason in (REASON_CAPABILITY_INACTIVE, REASON_REGISTRY_VERSION_MISMATCH,
+                  REASON_KIND_DISABLED, REASON_TOOL_NOT_ON_ROSTER):
+        return DispatchOutcome(_TERMINAL_STALE_ROUTE, reason)
+    if reason == REASON_CAPABILITY_NOT_ALLOWLISTED:
+        return DispatchOutcome(_TERMINAL_NOT_PERMITTED, reason)
+    # Unknown capability / binding drift / registry or roster unavailable are system
+    # integrity faults: the request names something this process cannot honour.
+    return DispatchOutcome(_TERMINAL_INTEGRITY, reason)
 
 
 def _tool_roster(deps) -> dict[str, dict[str, dict]] | None:
@@ -93,54 +154,91 @@ def _tool_roster(deps) -> dict[str, dict[str, dict]] | None:
     return out
 
 
-class ActionExecutor(DirectExecutor):
+class ActionExecutor:
     kind = PlanKind.ACTION
 
-    async def _dispatch(self, req: TurnRequest) -> str:
-        """Run the staged dispatch; returns the terminal message. Raises
-        :class:`EscalateToAgent` ONLY on proven pre-execution failure."""
+    async def _dispatch(self, req: TurnRequest) -> DispatchOutcome:
+        """Run the staged dispatch; returns the terminal outcome. Raises
+        :class:`EscalateToAgent` ONLY on proven pre-execution user-input failure."""
         action = req.plan.action or {}
-        tool, args = action.get("tool"), action.get("args")
+        tool = action.get("tool")
+        args = action.get("args")
+        cap_id = str(action.get("capability_id") or "")
 
         # Tool existence/schema truth (ruling): the LIVE
         # ``ToolRuntime.schemas()`` roster — the legacy DIRECT_TOOLS table is
         # no longer consulted anywhere on the dispatch path.
         roster = _tool_roster(req.deps)
 
-        # 0. Route/execute TOCTOU re-validation (8.9). The funnel-certified turn
-        #    stamps ``funnel_registry_version`` — the Registry content fingerprint
-        #    of the live view — and re-validates against the active view: same
-        #    fingerprint, capability still active and enabled, same tool binding,
-        #    tool present on the live ToolRuntime roster, and the kind gate still
-        #    open (a mid-turn flip to
-        #    OFF must not execute a widened kind — 入表≠开闸 holds at dispatch
-        #    too). Any drift is C3 TERMINAL: a routed turn never executes on
-        #    blind trust. (QIR retirement, migration 0014: the legacy
-        #    ``registry_version``/qir_store branch is gone — the live tables are
-        #    the only routing namespace.)
-        funnel_fp = action.get("funnel_registry_version")
-        cap_id = str(action.get("capability_id") or "")
-        if funnel_fp is not None:
-            from core.application.chat.intent_funnel import funnel as funnel_mod
+        # 0. FINAL EXECUTION AUTHORIZATION. This is the last gate before the side
+        #    effect and the ONLY one that answers "may this Chat process run this
+        #    capability". It reads the authoritative live Registry, not the action
+        #    payload: a model pick, a routing stamp, or a hand-built plan is not
+        #    authority. Failure to establish the allowlist is a refusal, never an
+        #    allow (fail-closed).
+        try:
             from core.application.chat.intent_funnel.registry import active_view
             from core.application.chat.intent_funnel.registry.entry import STATUS_ACTIVE
+            from core.application.chat.intent_funnel import funnel as funnel_mod
 
             view = await active_view(session_factory=req.deps.session_factory)
-            entry = next(
-                (e for e in (view.entries if view is not None else ())
-                 if e.capability_id == cap_id), None,
+        except Exception:  # noqa: BLE001 - unreadable registry ⇒ refuse
+            logger.exception(
+                "chat.action authorization: registry unavailable (capability=%s)", cap_id)
+            return _refusal(REASON_REGISTRY_UNAVAILABLE)
+        if view is None:
+            logger.warning(
+                "chat.action authorization: empty registry view (capability=%s)", cap_id)
+            return _refusal(REASON_REGISTRY_UNAVAILABLE)
+
+        try:
+            decision = authorize_execution(view, capability_id=cap_id, tool=tool)
+        except Exception:  # noqa: BLE001 - unconfirmable permission ⇒ refuse
+            logger.exception(
+                "chat.action authorization failed (capability=%s tool=%s)", cap_id, tool)
+            return _refusal(REASON_REGISTRY_UNAVAILABLE)
+        if not decision.allowed:
+            logger.warning(
+                "chat.action refused reason=%s capability=%s tool=%s",
+                decision.reason, cap_id, tool,
             )
-            if (
-                view is None or view.fingerprint != str(funnel_fp)
-                or entry is None or not entry.enabled or entry.status != STATUS_ACTIVE
-                or entry.tool_binding != tool or tool not in (roster or {})
-                or not funnel_mod.kind_enabled(entry.intent_kind)
-            ):
-                logger.warning(
-                    "chat.action route-stale(capability=%s stamped=%s active=%s",
-                    cap_id, funnel_fp, view.fingerprint if view else None,
-                )
-                return _TERMINAL_STALE_ROUTE
+            return _refusal(str(decision.reason))
+
+        entry = decision.entry
+
+        # 0.1 Preserved route/execute TOCTOU re-validation: same Registry content
+        #     fingerprint as the one stamped at routing time, entry still enabled
+        #     and active, same tool binding, tool present on the live ToolRuntime
+        #     roster, and the kind gate still open. Any drift is C3 TERMINAL: a
+        #     routed turn never executes on blind trust. (The lifecycle/binding
+        #     checks above are also enforced by the authorization decision; they
+        #     stay here as defense in depth for the routing stamp contract.)
+        funnel_fp = action.get("funnel_registry_version")
+        if funnel_fp is not None and view.fingerprint != str(funnel_fp):
+            logger.warning(
+                "chat.action route-stale fingerprint(capability=%s stamped=%s active=%s)",
+                cap_id, funnel_fp, view.fingerprint,
+            )
+            return _refusal(REASON_REGISTRY_VERSION_MISMATCH)
+        if entry is None or not entry.enabled or entry.status != STATUS_ACTIVE:
+            return _refusal(REASON_CAPABILITY_INACTIVE)
+        if entry.tool_binding != tool:
+            return _refusal(REASON_TOOL_BINDING_MISMATCH)
+        if roster is None:
+            logger.error(
+                "chat.action integrity: live ToolRuntime roster unavailable (tool=%s)", tool)
+            return _refusal(REASON_TOOL_ROSTER_UNAVAILABLE)
+        if str(tool or "") not in roster:
+            logger.warning(
+                "chat.action route-stale roster (capability=%s tool=%s)", cap_id, tool)
+            return _refusal(REASON_TOOL_NOT_ON_ROSTER,
+                            stamped=funnel_fp is not None)
+        if not funnel_mod.kind_enabled(entry.intent_kind):
+            logger.warning(
+                "chat.action route-stale kind (capability=%s kind=%s)",
+                cap_id, entry.intent_kind,
+            )
+            return _refusal(REASON_KIND_DISABLED)
 
         # 0.5 Routing-stage binding integrity (stage-2 C2, stamped in
         #     resolve_plan): the route promised a capability whose binding the
@@ -152,27 +250,15 @@ class ActionExecutor(DirectExecutor):
                 "chat.action binding-integrity tool=%s: %s",
                 tool, action.get("binding_integrity"),
             )
-            return _TERMINAL_INTEGRITY
-
-        # 0.6 Tool existence on the LIVE roster is a C2 system-integrity fact, not
-        #     a user-input problem: a certified turn naming a tool the runtime does
-        #     not register means the route promised a capability the system lacks —
-        #     honest terminal, seam never entered, the Agent must NOT re-plan around
-        #     a system fault (same doctrine as the binding-integrity marker above).
-        #     The legacy DIRECT_TOOLS table is not consulted anywhere on this path.
-        if roster is not None and str(tool or "") not in roster:
-            logger.error("chat.action integrity: tool=%s not on the live ToolRuntime "
-                         "roster", tool)
-            return _TERMINAL_INTEGRITY
+            return _refusal(REASON_BINDING_INTEGRITY)
 
         # 1. final schema gate, BEFORE the seam — malformed ⇒ nothing executed.
         #    Argument-shape problems are the user-input class: escalate and let the
-        #    Agent clarify. The roster is the schema truth (ruling); a
-        #    missing roster fails closed through the schema error.
+        #    Agent clarify. A missing roster fails closed through the schema error.
         try:
             validated = validate_action(str(tool or ""),
                                         args if isinstance(args, dict) else {},
-                                        tool_schemas=roster or {})
+                                        tool_schemas=roster)
         except ActionSchemaError as exc:
             raise EscalateToAgent(f"action schema: {exc}") from exc
 
@@ -180,7 +266,7 @@ class ActionExecutor(DirectExecutor):
         #    user-input problem — terminate honestly; never re-plan through the Agent.
         if req.deps.run_tool is None:
             logger.error("chat.action integrity: run_tool seam not wired (tool=%s)", tool)
-            return _TERMINAL_INTEGRITY
+            return DispatchOutcome(_TERMINAL_INTEGRITY)
 
         # 3. the side-effect boundary.
         try:
@@ -190,25 +276,27 @@ class ActionExecutor(DirectExecutor):
             # Provably pre-body, but system faults must not launder through the
             # Agent as a retry mechanism.
             logger.error("chat.action integrity failure tool=%s: %s", validated["tool"], exc.reason)
-            return _TERMINAL_INTEGRITY
+            return DispatchOutcome(_TERMINAL_INTEGRITY)
         except ActionPreflightFailure as exc:
             # Proved: the body never ran. The Agent may clarify / re-plan.
             raise EscalateToAgent(f"preflight: {exc.reason}") from exc
         except Exception as exc:  # noqa: BLE001 - STATE UNKNOWN by contract
             logger.warning("chat.action state-unknown tool=%s: %r", validated["tool"], exc)
-            return _STATE_UNKNOWN
+            return DispatchOutcome(_STATE_UNKNOWN)
 
         # 4. decided denial (terminal, no side effect) or success.
         if result.get("ok") is False:
-            return _DENIED_PREFIX + str(result.get("reason") or "the operation was denied.")
-        return str(result.get("output") or "Done.")
+            return DispatchOutcome(
+                _DENIED_PREFIX + str(result.get("reason") or "the operation was denied."))
+        return DispatchOutcome(str(result.get("output") or "Done."))
 
     # ── stream / run: identical terminal shape, no LLM call ──────────────────────
     async def stream(
         self, req: TurnRequest, *, progress_sink: ProgressSink
     ) -> AsyncIterator[ChatEvent]:
         # Everything up to the first yield is pre-commit: an escalation here is legal.
-        message = await self._dispatch(req)
+        outcome = await self._dispatch(req)
+        message = outcome.message
         ctx = req.ctx
         history = [
             {"role": m["role"], "content": m["content"]}
@@ -218,20 +306,21 @@ class ActionExecutor(DirectExecutor):
         await ctx.session_memory.append_message("user", ctx.user_text)
         await ctx.session_memory.append_message("assistant", message)
         yield {"type": "content", "data": message}
-        yield {
-            "type": "done",
-            "data": {
-                "answer": message,
-                "messages": [*history, {"role": "user", "content": ctx.user_text},
-                             {"role": "assistant", "content": message}],
-                "usage": {},
-                "error": None,
-                "cost_usd": None,
-            },
+        done = {
+            "answer": message,
+            "messages": [*history, {"role": "user", "content": ctx.user_text},
+                         {"role": "assistant", "content": message}],
+            "usage": {},
+            "error": None,
+            "cost_usd": None,
         }
+        if outcome.refusal_reason:
+            done["refusal_reason"] = outcome.refusal_reason
+        yield {"type": "done", "data": done}
 
-    async def run(self, req: TurnRequest) -> DirectResult:
-        message = await self._dispatch(req)
+    async def run(self, req: TurnRequest) -> ExecutorResult:
+        outcome = await self._dispatch(req)
+        message = outcome.message
         ctx = req.ctx
         history = [
             {"role": m["role"], "content": m["content"]}
@@ -245,4 +334,7 @@ class ActionExecutor(DirectExecutor):
             {"role": "user", "content": ctx.user_text},
             {"role": "assistant", "content": message},
         ]
-        return DirectResult(messages=messages, final_answer=message, usage={})
+        return ExecutorResult(
+            messages=messages, final_answer=message, usage={},
+            refusal_reason=outcome.refusal_reason,
+        )

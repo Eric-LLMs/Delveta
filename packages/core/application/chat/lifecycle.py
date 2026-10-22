@@ -234,6 +234,11 @@ async def finalize_turn(
         "user_message_id": user_message_id,
         "assistant_message_id": assistant_message_id,
     }
+    # A terminal execution-boundary refusal carries its machine-readable reason to
+    # the client. Present only on refusal, so the normal done shape is unchanged.
+    refusal_reason = (final_payload or {}).get("refusal_reason")
+    if refusal_reason:
+        done["refusal_reason"] = str(refusal_reason)
     # Retrieval-feedback snapshot: persist onto the assistant row + hand the client the
     # hits to rate (POST /rag/feedback records the rating).
     retrieval = extract_retrieval((final_payload or {}).get("messages"))

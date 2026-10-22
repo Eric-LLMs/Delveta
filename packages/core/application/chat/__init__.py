@@ -8,7 +8,7 @@ between "request resolved" and "SSE frames emitted" lives here:
     context.py         -> base context + lazy hydration (history/viewer/research)
     lifecycle.py       -> persistence / usage metering / finalize bookkeeping
     turn_orchestrator.py -> the control state machine + stream commit guard
-    executors/         -> DIRECT / VIEWER / LOCAL_RAG / WEB / ACTION / COMPOSITE / AGENT
+    executors/         -> ACTION / AGENT (the single formal path)
 
 Capability systems (AgentKernel, RAG, Viewer, Memory, Research) are reused unchanged;
 this package only changes the top-level scheduling.

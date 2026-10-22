@@ -1,20 +1,12 @@
-"""Source-policy semantics (Phase 4 clarification): fencing comes from the ORIGINAL
-request, never from the fact that a fast path failed.
-
-    RAG failure => escalate to Agent
-    NOT
-    RAG failure => globally forbid Web
+"""Source-policy semantics: fencing comes from the ORIGINAL request, never from a
+routing abstention or an ACTION failure.
 
 The escalated Agent's tools are fenced by a turn-level SOURCE POLICY mapped from the
 user's own words:
 
 * explicit private-only ("only use my knowledge base" / 别联网) -> ``private_only``;
-* a private-first turn the LOCAL_RAG path declined without an explicit external
-  permission -> ``private_first`` (default: disclose the corpus gap honestly, stay
-  on private sources — web is NOT silently widened in);
 * explicit permission ("if nothing, you can search the web") or a mixed private+web
-  request -> no fence: the normal permission/approval funnel governs, attribution
-  instructions still ride the escalation note.
+  request -> no fence: the normal permission/approval funnel governs.
 
 The fence is enforced where the Agent ALREADY enforces permissions (Sandbox, the
 turn-context funnel the research handoff also uses) — no second RAG, no kernel rewrite.
@@ -30,19 +22,10 @@ from agent.security.sandbox import Sandbox, SandboxDecision
 from agent.tools.definition import ToolDefinition
 from agent.tools.tool_permissions import ToolPermission
 from core.application.chat.context import ChatTurnContext
-from core.application.chat.execution_plan import (
-    PlanKind,
-    PolicyContext,
-    build_execution_plan,
-)
+from core.application.chat.execution_plan import PlanKind, build_execution_plan
 from core.application.chat.understanding import resolve_source_facts
 
 PRIVATE_Q = "what does my knowledge base say about gd"
-
-ALL_ON = PolicyContext(
-    direct_fast_path_enabled=True,
-    viewer_fast_path_enabled=True, retrieval_fast_path_enabled=True,
-)
 
 EXT_OK_Q = PRIVATE_Q + ", if nothing you can search the web"
 ONLY_Q = "only use my knowledge base to answer what gradient descent is"
@@ -102,23 +85,21 @@ def test_external_permission_not_overfired():
 # ── policy mapping: source policy rides the plan, independent of execution ───────────
 
 def test_source_policy_states():
-    # Source facts never select a route: an uncertified turn maps to AGENT even
-    # with every experimental lane switched on. What survives is the fence the
-    # ORIGINAL request imposes on that Agent turn.
-    assert build_execution_plan(_facts(PRIVATE_Q), ALL_ON).kind is PlanKind.AGENT
-    assert build_execution_plan(_facts(ONLY_Q), ALL_ON).source_policy == "private_only"
+    # Source facts never select a route: an uncertified turn maps to AGENT. What
+    # survives is the fence the ORIGINAL request imposes on that Agent turn.
+    assert build_execution_plan(_facts(PRIVATE_Q)).kind is PlanKind.AGENT
+    assert build_execution_plan(_facts(ONLY_Q)).source_policy == "private_only"
     # Explicit permission -> no fence on the eventual escalation (funnel governs).
-    assert build_execution_plan(_facts(EXT_OK_Q), ALL_ON).source_policy is None
+    assert build_execution_plan(_facts(EXT_OK_Q)).source_policy is None
     # Mixed private+web is a contradiction: no fence, normal funnel.
-    plan = build_execution_plan(_facts(MIXED_Q), ALL_ON)
+    plan = build_execution_plan(_facts(MIXED_Q))
     assert plan.kind is PlanKind.AGENT and plan.source_policy is None
 
 
 def test_neutral_requirements_carry_no_source_policy():
     req = _facts(ONLY_Q)
-    plain = PolicyContext()
-    assert build_execution_plan(req, plain).source_policy == "private_only"
-    assert build_execution_plan(type(req)(), plain).source_policy is None
+    assert build_execution_plan(req).source_policy == "private_only"
+    assert build_execution_plan(type(req)()).source_policy is None
 
 
 # ── orchestrator sink ────────────────────────────────────────────────────────────────
@@ -135,19 +116,15 @@ def _resolve(ctx):
     return asyncio.run(_orchestrator().resolve_plan(ctx))
 
 
-def test_sink_always_on_single_path(monkeypatch):
-    # Single-path ruling: with no master gate the orchestrator sinks
-    # the SOURCE POLICY on every turn whose original request carries the fact.
-    import core.config as cfg
-    monkeypatch.setattr(cfg.settings, "chat_retrieval_fast_path_enabled", True, raising=False)
+def test_sink_always_on_single_path():
+    # Single-path ruling: with no lane gate the orchestrator sinks the SOURCE
+    # POLICY on every turn whose original request carries the fact.
     ctx = _ctx(ONLY_Q)
     _resolve(ctx)
     assert (ctx.agent_context or {}).get("source_policy") == "private_only"
 
 
-def test_explicit_permission_sink_nothing(monkeypatch):
-    import core.config as cfg
-    monkeypatch.setattr(cfg.settings, "chat_retrieval_fast_path_enabled", True, raising=False)
+def test_explicit_permission_sink_nothing():
     ctx = _ctx(EXT_OK_Q)
     _resolve(ctx)
     assert not (ctx.agent_context or {}).get("source_policy")

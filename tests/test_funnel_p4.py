@@ -408,7 +408,8 @@ async def test_funnel_stamped_dispatch_ok_when_view_unchanged(monkeypatch):
         return {"ok": True, "output": "done"}
 
     ex, req = _exec_req(_action(view), run_tool, session_factory=None)
-    assert await ex._dispatch(req) == "done"
+    outcome = await ex._dispatch(req)
+    assert outcome.message == "done" and outcome.refusal_reason is None
     assert calls == ["create_folder"]
 
 
@@ -426,7 +427,7 @@ async def test_fingerprint_drift_is_terminal_stale(monkeypatch):
 
     ex, req = _exec_req(_action(routed), run_tool, session_factory=None)
     from core.application.chat.executors.action import _TERMINAL_STALE_ROUTE
-    assert await ex._dispatch(req) == _TERMINAL_STALE_ROUTE
+    assert (await ex._dispatch(req)).message == _TERMINAL_STALE_ROUTE
     assert calls == []          # never executed: the stale verdict is provably pre-commit
 
 
@@ -442,7 +443,7 @@ async def test_capability_disabled_mid_air_is_terminal_stale(monkeypatch):
         raise AssertionError("must not execute")
 
     ex, req = _exec_req(_action(after), run_tool, session_factory=None)
-    assert await ex._dispatch(req) == _TERMINAL_STALE_ROUTE
+    assert (await ex._dispatch(req)).message == _TERMINAL_STALE_ROUTE
 
 
 async def test_tool_missing_from_runtime_roster_is_terminal_stale(monkeypatch):
@@ -460,7 +461,7 @@ async def test_tool_missing_from_runtime_roster_is_terminal_stale(monkeypatch):
 
     ex, req = _exec_req(_action(view), run_tool, session_factory=None, roster=[])
     from core.application.chat.executors.action import _TERMINAL_STALE_ROUTE
-    assert await ex._dispatch(req) == _TERMINAL_STALE_ROUTE
+    assert (await ex._dispatch(req)).message == _TERMINAL_STALE_ROUTE
     assert calls == []
 
 
@@ -484,7 +485,8 @@ async def test_roster_tool_absent_from_direct_tools_still_dispatches(monkeypatch
                "parameters": {"type": "object", "properties": {},
                               "required": []}}]
     ex, req = _exec_req(action, run_tool, session_factory=None, roster=roster)
-    assert await ex._dispatch(req) == "done"
+    outcome = await ex._dispatch(req)
+    assert outcome.message == "done" and outcome.refusal_reason is None
     assert calls == ["list_documents"]
 
 
@@ -504,24 +506,40 @@ async def test_non_action_kind_never_dispatches(monkeypatch):
 
     ex, req = _exec_req(_action(view, kind=KIND_PRIVATE), run_tool, session_factory=None)
     from core.application.chat.executors.action import _TERMINAL_STALE_ROUTE
-    assert await ex._dispatch(req) == _TERMINAL_STALE_ROUTE
+    assert (await ex._dispatch(req)).message == _TERMINAL_STALE_ROUTE
     assert calls == []
 
 
-async def test_action_without_funnel_stamp_skips_the_registry_check(monkeypatch):
-    # QIR retirement (migration 0014): the legacy ``registry_version``/qir_store
-    # re-validation branch is GONE — the live view is consulted ONLY for turns
-    # the funnel certified (funnel_registry_version present). An L0-native
-    # action rides the schema gate alone, never the Registry namespace.
-    monkeypatch.setattr(
-        "core.application.chat.intent_funnel.registry.active_view",
-        lambda **kw: pytest.fail("only funnel-stamped turns consult the view"),
-    )
+async def test_action_without_funnel_stamp_is_still_authorized(monkeypatch):
+    # The final execution authorization is UNCONDITIONAL: a hand-built action that
+    # lacks the routing stamp is still checked against the live Registry. If its
+    # capability is registered, allowlisted and bound to the tool, it may execute.
+    view = _view([_entry("cap-a", corpus=(MSG,))])
+    await _patch_view(monkeypatch, view)
 
     async def run_tool(tool, args, ctx):
         return {"ok": True, "output": "done"}
 
     action = {"tool": "create_folder", "args": {"name": "x"},
-              "capability_id": "cap-a", "registry_version": "idx-9"}
+              "capability_id": "cap-a"}
     ex, req = _exec_req(action, run_tool, session_factory=None)
-    assert await ex._dispatch(req) == "done"
+    outcome = await ex._dispatch(req)
+    assert outcome.message == "done" and outcome.refusal_reason is None
+
+
+async def test_action_without_capability_id_fails_closed(monkeypatch):
+    # A caller-supplied tool name is not authority: without a capability id the
+    # authoritative view cannot confirm permission, so dispatch refuses.
+    view = _view([_entry("cap-a", corpus=(MSG,))])
+    await _patch_view(monkeypatch, view)
+    calls = []
+
+    async def run_tool(tool, args, ctx):
+        calls.append(tool)
+        return {"ok": True}
+
+    action = {"tool": "create_folder", "args": {"name": "x"}}
+    ex, req = _exec_req(action, run_tool, session_factory=None)
+    outcome = await ex._dispatch(req)
+    assert outcome.refusal_reason == "CAPABILITY_NOT_REGISTERED"
+    assert calls == []

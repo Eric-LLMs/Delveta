@@ -46,7 +46,7 @@ from core.application.chat.intent_funnel.registry import (
 )
 from core.config import settings
 
-from tests.p5_validation._p5_harness import (
+from tests.e2e.real_chain import (
     USER,
     FakeSeam,
     ScriptedPort,
@@ -347,11 +347,7 @@ def turn_fields(cap: Cap, *, asset_id: Any = None,
 
 # ── gate configuration ─────────────────────────────────────────────────────────────
 def _set_gates(monkeypatch) -> None:
-    """Pin the routing gates: MATCH_HIT direct lane on, every fast path off."""
-    monkeypatch.setattr(settings, "chat_direct_fast_path_enabled", False, raising=False)
-    monkeypatch.setattr(settings, "chat_viewer_fast_path_enabled", False, raising=False)
-    monkeypatch.setattr(settings, "chat_retrieval_fast_path_enabled", False, raising=False)
-    monkeypatch.setattr(settings, "chat_composite_fast_path_enabled", False, raising=False)
+    """Pin the observability switches; routing has no lane gate to open."""
     # Every fixture cap is forced through MATCH_HIT, so the ONE selector is never
     # consulted and no backend switch exists to pin.
     monkeypatch.setattr(settings, "chat_funnel_trace_capture", False, raising=False)
@@ -401,14 +397,16 @@ def build_stack(
     web_status: str = "ok",
     grant=(),
     rules=(),
+    domains: tuple[str, ...] = ("physics terms",),
     query_overrides: dict[str, str] | None = None,
     slot_values: dict[str, dict[str, str]] | None = None,
 ) -> Stack:
     """Compose the in-process real-chain stack (see module docstring).
 
-    ``slot_values`` overrides the ``SlotSeam`` canned extraction per capability —
-    a test pins the MODEL's contribution (e.g. an omitted required slot) without
-    touching production code.
+    ``domains`` is the visible-domain list the vocabulary double exposes (0/1/N
+    matches drive add_term's preflight); ``slot_values`` overrides the ``SlotSeam``
+    canned extraction per capability — a test pins the MODEL's contribution (e.g. an
+    omitted required slot) without touching production code.
     """
     port = ScriptedPort(steps=[dict(STEP)])
     spy = Spy()
@@ -419,7 +417,7 @@ def build_stack(
 
     kernel, runtime, ctx, broker = build_kernel(
         monkeypatch, port, spy, broker_mode=broker_mode, drive_mode=drive_mode,
-        domains=domains_named("physics terms"), web_status=web_status,
+        domains=domains_named(*domains), web_status=web_status,
         grant=grant, rules=rules, audit_dir=".output/e2e",
     )
     # The real tool bodies resolve their seams from the kernel Context.

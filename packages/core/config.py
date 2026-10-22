@@ -118,18 +118,10 @@ class Settings(BaseSettings):
     # a switchable mode; it is decided per turn by certification + guardrails.
     # Safety knobs stay below (timeouts, thresholds, exposure, veto guardrails).
     #
-    # Unshipped experimental L0 lanes (kept dark by design — Option A of the
-    # single-path ruling; never opened in production):
-    chat_direct_fast_path_enabled: bool = False  # Phase 2: tool-less direct answers
-    chat_viewer_fast_path_enabled: bool = False  # Phase 3: grounded over injected blocks
-    chat_retrieval_fast_path_enabled: bool = False  # Phase 4: staged RAG (shared pipeline, fail-closed)
-    chat_composite_fast_path_enabled: bool = False  # Phase 5B: static independent composite (viewer+private)
-    # Confidence gate: the L0 signal engine only routes DIRECT when every capability
-    # demand is LOW, needs_memory is False, and the message is short/plain. Longer
-    # turns (or ambiguous intent) stay on the Agent path.
-    chat_direct_max_chars: int = 400            # a pure user message must be <= this
-    # LOCAL_RAG recall depth — same default as the agent's rag_search tool (top_k=5).
-    chat_retrieval_top_k: int = 5
+    # The unshipped DIRECT / VIEWER / LOCAL_RAG / COMPOSITE lanes and their
+    # sizing knobs were removed with L0: no requirement producer can set the
+    # HIGH-confidence non-ACTION demands those lanes consumed, so the gates could
+    # never open a route. ACTION + AGENT are the only PlanKinds.
     # ── Intent Funnel (docs/temp.md §3/§8): the single-hop, always-live chain ──
     # Matcher HIT → Argument Path Router; MISS/AMBIGUOUS → Recall → Aggregation
     # → cap_router(select) → Argument Acquisition → Binder(verify-only), with

@@ -244,9 +244,9 @@ async def test_ordinary_turn_gets_no_capture_request(monkeypatch):
 
 
 def test_plain_chat_plan_carries_no_capture():
-    from core.application.chat.execution_plan import PolicyContext, build_execution_plan
+    from core.application.chat.execution_plan import build_execution_plan
 
-    plan = build_execution_plan(TurnRequirements(), PolicyContext())
+    plan = build_execution_plan(TurnRequirements())
     assert plan.kind is PlanKind.AGENT and plan.capture_request is None
 
 
