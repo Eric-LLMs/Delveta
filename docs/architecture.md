@@ -5129,14 +5129,13 @@ is measured against.
 | 0.89 | 16.7% | 4.2% |
 | 0.90 | 15.3% | 1.4% |
 
-**Current production threshold**
+**Production threshold**
 
-The production setting remains `chat_funnel_min_score =` **`0.78`**; it was
-not changed as part of the evaluation. **0.78** is described here only as the
-current production threshold and the current evaluation reference point —
-not as a mathematically optimal value.
+The production setting is `chat_funnel_min_score =` **`0.82`**, the code
+default. The bold **`0.78`** row above is the reference point of this earlier
+144-query sweep; it is historical and no longer the production value.
 
-At threshold = **0.78**:
+At the sweep reference point, **0.78**:
 
 - Action Recall Coverage: 58 / 72 = 80.6%
 - Non-Action False Admission: 10 / 72 = 13.9%
@@ -6401,7 +6400,7 @@ the model itself. What ships is the quality/safety surface plus one exposure
 default:
 
 ```
-chat_funnel_timeout_seconds=5.0    chat_funnel_min_score=0.88   chat_funnel_margin=0.06
+chat_funnel_timeout_seconds=5.0    chat_funnel_min_score=0.82   chat_funnel_margin=0.06
 chat_funnel_trace_capture=False    (Phase-6 observability: per-event trace_json on demand)
 chat_funnel_hidden_capabilities="cap-edit-file,cap-artifact,cap-bash"
                                     (chat-plane routing-view hiding, §24/§25.7; pairs with
@@ -7173,9 +7172,9 @@ similarity score >= threshold
 
 The adopted production threshold is:
 
-> **Recall threshold = 0.88**
+> **Recall threshold = 0.82**
 
-> **Calibration basis.** `0.88` is calibrated on the **real-query distribution** (the recall-only regression run: 3,625 action / 6,000 non-action queries). On that distribution `0.88` retains `Action Recall@3 = 82.98%` while reducing `Non-Action FA@3` to `8.58%`.
+> **Calibration basis.** The **real-query distribution** (the recall-only regression run: 3,625 action / 6,000 non-action queries) was swept from 0.60 to 1.00. At `0.82`, `Action Recall@3 = 94.54%` and `Non-Action FA@3 = 43.65%`; the earlier reference point `0.88` (`Action Recall@3 = 82.98%`, `Non-Action FA@3 = 8.58%`) is no longer the production value.
 
 The threshold is a **quality gate**, not a capability selector. A higher threshold removes more low-similarity candidates but can also remove the correct capability before it reaches the downstream discriminator. A lower threshold preserves more potentially correct capabilities but admits more non-action candidates.
 
@@ -7202,7 +7201,7 @@ For a curated non-action query, Recall performs **capability deduplication/aggre
 
 `NonActionFA=0`, `NonActionFA=1`, `NonActionFA=2` and `NonActionFA=3` form a **partition**: for every threshold the four values sum to 100%.
 
-The threshold therefore controls the trade-off between **Action Recall Coverage** and **Non-Action False Admission**. The selected value is **0.88** — the architecture's adopted design decision, not a mathematically optimal or globally optimal threshold.
+The threshold therefore controls the trade-off between **Action Recall Coverage** and **Non-Action False Admission**. The production value is **0.82** — the architecture's adopted design decision, not a mathematically optimal or globally optimal threshold.
 
 ---
 
