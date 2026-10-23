@@ -1,16 +1,17 @@
-"""Page-scope wiring — the resolver seam through the acquisition hop.
+"""Page-scope wiring — the combined rule + online-LLM lane through the hop.
 
-Pins the integration boundary rather than the resolver's own rules:
+Pins the integration boundary rather than the producers' own rules:
 
 * only the handlers that declare ``accepts_page_scope`` receive the resolver;
 * the resolver is called ONLY when the turn already carries a document fact —
   a document-less turn keeps its existing missing/clarify exit untouched;
-* an unsettled verdict exits through the EXISTING acquisition-failure mechanism
-  (``ACQUISITION_MISSING``) and records its own status in the telemetry, so
-  "LLM unavailable", "ambiguous", "invalid" and "permission/missing" are never
-  reported as the same event;
-* without the seam (tests, undecorated deps) both handlers keep the legacy
-  viewer-window draft byte-for-byte;
+* the deterministic RULE runs first and its value survives an unavailable /
+  ambiguous LLM verdict (rule-only -> keep the rule);
+* when neither producer settles the scope the turn is TERMINAL
+  (``ACQUISITION_TERMINAL``) — never an Agent hand-off, never a guess, never a
+  silent widening to the whole document;
+* without the seam (tests, undecorated deps) the rule runs ALONE and the legacy
+  viewer-window draft is gone: a whole-document sentence stays whole-document;
 * the draft still passes the SAME Binder -> certified ACTION handoff, and the
   document identity is always the turn fact's ``asset_id`` — never model output.
 """
@@ -24,6 +25,7 @@ from core.application.chat.intent_funnel.argument_acquisition import (
 )
 from core.application.chat.intent_funnel.contract import (
     REASON_ACQUISITION_MISSING,
+    REASON_ACQUISITION_TERMINAL,
     TurnFacts,
 )
 from core.application.chat.intent_funnel.registry import content_fingerprint
@@ -148,7 +150,7 @@ async def test_hop_all_scope_certifies_without_a_pages_slot():
     assert out.requested_action["args"] == {"asset_id": "asset-123"}
 
 
-async def test_hop_unavailable_resolver_keeps_its_own_status_and_exits_missing():
+async def test_hop_unavailable_resolver_keeps_the_rule_value():
     entry = _entry("cap-read-document", "read_document", _READ_DOC_PARAMS)
 
     out, trace, capture = await _hop(
@@ -156,35 +158,45 @@ async def test_hop_unavailable_resolver_keeps_its_own_status_and_exits_missing()
         resolver=_resolver(_scope(status=psr.STATUS_UNAVAILABLE,
                                   reason="timeout")))
 
-    assert out is None
-    assert trace["fallback"] == REASON_ACQUISITION_MISSING
+    # Rule-only: the explicit range is already settled, so the LLM's transport
+    # failure never discards it (merge priority a).
+    assert out.requested_action["args"] == {"asset_id": "asset-123",
+                                            "pages": "3-5"}
+    assert trace["acquisition"] == "CAP_HANDLER"
     assert capture["page_scope"]["status"] == psr.STATUS_UNAVAILABLE
-    assert capture["page_scope"]["pages"] is None
+    assert capture["page_scope_evidence"]["source"] == "rule"
+    assert capture["page_scope_evidence"]["merged"]["pages"] == "3-5"
 
 
-async def test_hop_ambiguous_resolver_does_not_widen_to_the_whole_document():
+async def test_hop_ambiguous_resolver_and_ambiguous_rule_is_terminal():
     entry = _entry("cap-pdf-extract-text", "pdf_extract_text", _EXTRACT_PARAMS)
 
     out, trace, capture = await _hop(
         entry, query="extract some pages", facts=_facts(),
         resolver=_resolver(_scope(status=psr.STATUS_AMBIGUOUS)))
 
-    assert out is None
-    assert trace["fallback"] == REASON_ACQUISITION_MISSING
+    # Neither producer settled the scope: TERMINAL, never a whole-document widening
+    # and never an Agent hand-off that would guess the pages.
+    assert out is not None and out.terminal_error is not None
+    assert trace["fallback"] == REASON_ACQUISITION_TERMINAL
     assert capture["page_scope"]["status"] == psr.STATUS_AMBIGUOUS
+    assert capture["terminal"]["capability_id"] == "cap-pdf-extract-text"
 
 
-async def test_hop_without_the_seam_keeps_the_legacy_viewer_window():
+async def test_hop_without_the_seam_uses_the_rule_not_the_viewer_window():
     entry = _entry("cap-read-document", "read_document", _READ_DOC_PARAMS)
 
     out, trace, capture = await _hop(
-        entry, query="summarise 3-5", facts=_facts(viewer_page_from=3,
-                                                   viewer_page_to=5))
+        entry, query="summarise it", facts=_facts(viewer_page_from=3,
+                                                  viewer_page_to=5))
 
-    assert out.requested_action["args"] == {"asset_id": "asset-123",
-                                            "pages": "3-5"}
+    # A whole-document sentence stays whole-document: the viewer's open range is
+    # NEVER substituted merely because a viewer page exists.
+    assert out.requested_action["args"] == {"asset_id": "asset-123"}
     assert trace["acquisition"] == "CAP_HANDLER"
     assert "page_scope" not in capture
+    assert capture["page_scope_evidence"]["source"] == "rule"
+    assert capture["page_scope_evidence"]["llm"]["status"] == "not_wired"
 
 
 async def test_hop_never_calls_the_resolver_without_a_document_fact():

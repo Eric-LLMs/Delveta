@@ -26,6 +26,9 @@ _WEB_FAMILY_TOOLS = frozenset({"web_search", "search_social"})
 class PlanKind(str, Enum):
     ACTION = "action"
     AGENT = "agent"
+    # A terminal route: the funnel decided the capability, but its parameters
+    # could not be settled reliably. The turn ends honestly — no Agent hand-off.
+    ERROR = "error"
 
 
 @dataclass(frozen=True)
@@ -51,6 +54,9 @@ class ExecutionPlan:
     # but its picture must be captured by the PC client. The orchestrator pauses the
     # stream, then resumes the SAME plan with the uploaded asset — never a re-route.
     capture_request: dict | None = None
+    # Terminal acquisition failure (ERROR kind only): the capability, the reason and
+    # the acquisition evidence the executor renders as an honest message.
+    error: dict | None = None
 
 
 def _source_policy(requirements) -> str | None:
@@ -87,7 +93,17 @@ def build_execution_plan(requirements: TurnRequirements) -> ExecutionPlan:
     original requirements byte-identical, so this mapper sends the turn to AGENT
     like every other Intent Funnel abstain. Admission is an Intent Funnel rule,
     not a system-wide execution ban; the Agent's own roster/permissions govern it.
+
+    A TERMINAL acquisition failure is checked FIRST: the funnel decided the
+    capability but could not settle a parameter, so the Agent must not be asked to
+    guess it. The turn maps to ERROR and ends with the executor's honest message.
     """
+    if requirements.terminal_error:
+        return _plan(
+            requirements, PlanKind.ERROR, requires_memory=False,
+            error=dict(requirements.terminal_error),
+            reason="terminal acquisition failure -> honest message, no agent",
+        )
     if requirements.confidence is not Confidence.HIGH:
         return _agent(requirements, f"confidence={requirements.confidence.value} -> agent")
 

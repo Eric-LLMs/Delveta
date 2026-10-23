@@ -80,15 +80,20 @@ async def test_action_matrix(monkeypatch, cap_id):
         assert res.approvals == []
 
 
-# ── Independent Viewer Page-Range contract (positive + negative) ────────────────────
-async def test_viewer_page_range_forward(monkeypatch):
-    """A complete forward range reaches the tool as ``"from-to"``."""
+# ── Page-scope contract: the SENTENCE states it; the viewer never substitutes ──────
+_PAGE_RANGE_MESSAGE = "extract pages 4 to 5 from this pdf"
+_PAGE_SINGLE_MESSAGE = "extract page 4 from this pdf"
+
+
+async def test_sentence_page_range_reaches_the_tool(monkeypatch):
+    """A range stated in the sentence reaches the tool as ``"from-to"``."""
     cap = CAP_BY_ID["cap-pdf-extract-text"]
-    stack = build_stack(monkeypatch)
+    stack = build_stack(monkeypatch,
+                        query_overrides={cap.cap_id: _PAGE_RANGE_MESSAGE})
     asset_id = uuid4()
 
-    await sse_for(stack, cap.message,
-                  **turn_fields(cap, asset_id=asset_id, page_from=4, page_to=5))
+    await sse_for(stack, _PAGE_RANGE_MESSAGE,
+                  **turn_fields(cap, asset_id=asset_id))
 
     assert stack.recorder.call_count == 1, stack.recorder.calls
     assert stack.recorder.recorded_tool == "pdf_extract_text"
@@ -99,14 +104,15 @@ async def test_viewer_page_range_forward(monkeypatch):
     assert stack.port.steps == 0
 
 
-async def test_viewer_page_range_single_page(monkeypatch):
-    """A degenerate range (from == to) reaches the tool as ``"n"``."""
+async def test_sentence_single_page_reaches_the_tool(monkeypatch):
+    """A single page stated in the sentence reaches the tool as ``"n"``."""
     cap = CAP_BY_ID["cap-pdf-extract-text"]
-    stack = build_stack(monkeypatch)
+    stack = build_stack(monkeypatch,
+                        query_overrides={cap.cap_id: _PAGE_SINGLE_MESSAGE})
     asset_id = uuid4()
 
-    await sse_for(stack, cap.message,
-                  **turn_fields(cap, asset_id=asset_id, page_from=4, page_to=4))
+    await sse_for(stack, _PAGE_SINGLE_MESSAGE,
+                  **turn_fields(cap, asset_id=asset_id))
 
     assert stack.recorder.call_count == 1, stack.recorder.calls
     assert stack.recorder.recorded_args == {"asset_id": str(asset_id), "pages": "4"}
@@ -114,20 +120,31 @@ async def test_viewer_page_range_single_page(monkeypatch):
     assert stack.port.steps == 0
 
 
-async def test_viewer_page_range_half_open_fails_closed(monkeypatch):
-    """A HALF-OPEN range must FAIL CLOSED — never silently widen to the whole doc.
-
-    The handler returns no draft ⇒ the funnel exits to the Agent; the tool body is
-    NEVER entered and no whole-document read is smuggled in.
-    """
+async def test_the_viewer_range_does_not_narrow_a_whole_document_request(monkeypatch):
+    """A viewer range is NOT a page statement: the whole document stays whole."""
     cap = CAP_BY_ID["cap-pdf-extract-text"]
     stack = build_stack(monkeypatch)
     asset_id = uuid4()
 
-    res = await sse_for(stack, cap.message,
-                        **turn_fields(cap, asset_id=asset_id, page_from=4))
+    await sse_for(stack, cap.message,
+                  **turn_fields(cap, asset_id=asset_id, page_from=4, page_to=5))
 
-    assert stack.recorder.call_count == 0, stack.recorder.calls
-    assert stack.pdf_seam.extract_calls == []            # never a whole-doc fallback
-    assert stack.port.steps >= 1                         # the Agent took the turn
-    assert res.approvals == []
+    assert stack.recorder.call_count == 1, stack.recorder.calls
+    assert stack.recorder.recorded_args == {"asset_id": str(asset_id)}
+    assert stack.pdf_seam.extract_calls == [None]        # no pages -> whole document
+    assert stack.port.steps == 0
+
+
+async def test_a_half_open_viewer_range_is_not_a_page_scope(monkeypatch):
+    """A half-open viewer range carries no page decision: whole document."""
+    cap = CAP_BY_ID["cap-pdf-extract-text"]
+    stack = build_stack(monkeypatch)
+    asset_id = uuid4()
+
+    await sse_for(stack, cap.message,
+                  **turn_fields(cap, asset_id=asset_id, page_from=4))
+
+    assert stack.recorder.call_count == 1, stack.recorder.calls
+    assert stack.recorder.recorded_args == {"asset_id": str(asset_id)}
+    assert stack.pdf_seam.extract_calls == [None]
+    assert stack.port.steps == 0

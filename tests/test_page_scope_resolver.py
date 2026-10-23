@@ -11,9 +11,10 @@ Pins the contract that makes the resolver safe:
   are never collapsed into "read the whole document";
 * the resolver never renders ``asset_id`` or file content into the prompt and
   never lets a model value replace the turn fact's document identity;
-* ``read_document`` / ``pdf_extract_text`` map the verdict to their own ``pages``
-  slot, keep the legacy viewer-window rule when the seam is unwired, and fail
-  closed on every non-``ok`` verdict.
+* ``read_document`` / ``pdf_extract_text`` merge the verdict with the
+  deterministic rule: a non-document/invalid/unavailable verdict contributes
+  NOTHING (the rule's value stands), an LLM verdict that differs CORRECTS the
+  rule, and a scope neither producer settles is a TERMINAL failure.
 
 The transport tests pin the actual request shape (``stream=False``,
 ``enable_thinking=False``, JSON mode, bounded tokens) against a fake client — no
@@ -28,6 +29,8 @@ from core.application.chat.intent_funnel.argument_acquisition import (
     page_scope_resolver as psr,
 )
 from core.application.chat.intent_funnel.cap_handler import (
+    CATEGORY_SCOPE_UNSETTLED,
+    AcquisitionFailure,
     PdfExtractTextHandler,
     ReadDocumentHandler,
 )
@@ -376,12 +379,25 @@ async def test_read_document_maps_single_and_range_to_pages(scope, pages):
     _scope(target=psr.TARGET_CONVERSATION),
     _scope(target=psr.TARGET_UNKNOWN),
 ])
-async def test_read_document_fails_closed_on_any_non_document_verdict(result):
+async def test_read_document_ignores_a_non_document_verdict_when_the_rule_decided(result):
+    # A conversation/invalid/unavailable verdict supplies NO page value, so the
+    # rule's whole-document decision survives (merge priority a).
     draft = await ReadDocumentHandler().acquire(
         query="what did we discuss", facts=_facts(),
         page_scope_resolver=_resolver_returning(result))
 
-    assert draft is None
+    assert draft == {"asset_id": "asset-123"}
+
+
+async def test_read_document_is_terminal_when_neither_producer_settles():
+    out = await ReadDocumentHandler().acquire(
+        query="extract some pages", facts=_facts(),
+        page_scope_resolver=_resolver_returning(
+            _scope(status=psr.STATUS_AMBIGUOUS)))
+
+    assert isinstance(out, AcquisitionFailure)
+    assert out.terminal is True
+    assert out.category == CATEGORY_SCOPE_UNSETTLED
 
 
 async def test_read_document_resolver_sees_the_capability_and_asset_but_not_identity_control():
@@ -408,13 +424,15 @@ async def test_read_document_without_an_asset_never_calls_the_resolver():
     assert draft is None
 
 
-async def test_read_document_keeps_the_legacy_viewer_window_without_a_resolver():
-    draft = await ReadDocumentHandler().acquire(query="summarise 3-5",
+async def test_read_document_never_substitutes_the_viewer_window_without_a_resolver():
+    # A whole-document sentence stays whole-document: the viewer's range is not
+    # a page statement, so it never becomes the `pages` slot.
+    draft = await ReadDocumentHandler().acquire(query="summarise it",
                                                 facts=_facts(
                                                     viewer_page_from=3,
                                                     viewer_page_to=5))
 
-    assert draft == {"asset_id": "asset-123", "pages": "3-5"}
+    assert draft == {"asset_id": "asset-123"}
 
 
 # ── pdf_extract_text: the same mapping, its own capability id ─────────────────
@@ -432,20 +450,22 @@ async def test_pdf_extract_text_maps_a_range_and_reports_its_capability():
     assert seen["capability"] == "cap-pdf-extract-text"
 
 
-async def test_pdf_extract_text_fails_closed_when_the_scope_is_unsettled():
-    draft = await PdfExtractTextHandler().acquire(
-        query="extract it", facts=_facts(),
+async def test_pdf_extract_text_is_terminal_when_the_scope_is_unsettled():
+    out = await PdfExtractTextHandler().acquire(
+        query="extract some pages", facts=_facts(),
         page_scope_resolver=_resolver_returning(
             _scope(status=psr.STATUS_UNAVAILABLE)))
 
-    assert draft is None
+    assert isinstance(out, AcquisitionFailure)
+    assert out.terminal is True
+    assert out.category == CATEGORY_SCOPE_UNSETTLED
 
 
-async def test_pdf_extract_text_keeps_the_legacy_viewer_window_without_a_resolver():
+async def test_pdf_extract_text_never_substitutes_the_viewer_window_without_a_resolver():
     draft = await PdfExtractTextHandler().acquire(query="extract this",
                                                   facts=_facts())
 
-    assert draft == {"asset_id": "asset-123", "pages": "4"}
+    assert draft == {"asset_id": "asset-123"}
 
 
 # ── the online-LLM adapter never leaks a client/key to the handlers ───────────

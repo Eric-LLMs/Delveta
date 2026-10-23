@@ -5,10 +5,13 @@ Two layers are pinned here:
 * the HANDLER contract itself (unit): ``cap-read-document`` resolves ``asset_id``
   ONLY from :class:`TurnFacts` (precedence ``attachment_asset_id`` ->
   ``path_asset_id`` -> ``viewer_asset_id``) and FAILS CLOSED (``None``) when none
-  is present; ``pages`` comes ONLY from the viewer's declared range
-  (``viewer_page_from``/``viewer_page_to``) — a page number in the SENTENCE is
-  ignored — and a half-open/reversed range fails closed too (never a silent
-  whole-document widening); it never emits a ``query`` slot (the capability has
+  is present; ``pages`` comes from the COMBINED lane — the deterministic rule
+  reads the sentence first (a stated page/range/list), the online LLM may
+  supplement or correct it, and a page scope neither settles is TERMINAL. The
+  viewer's open page/range is NEVER substituted for an unstated page: a
+  whole-document request stays whole-document even when a viewer page exists.
+  A deictic "this page" is the ONE form the rule resolves from the viewer's
+  current page. The handler never emits a ``query`` slot (the capability has
   none);
 * the WIRING: the registered handler short-circuits the generic acquisition chain
   (provider / path_router / Qwen) and its draft goes through the SAME ``_certify``
@@ -29,7 +32,9 @@ from core.application.chat.intent_funnel import matcher as matcher_mod
 from core.application.chat.intent_funnel import cap_router as cap_router_mod
 from core.application.chat.intent_funnel.argument_acquisition import AcquisitionInputs
 from core.application.chat.intent_funnel.cap_handler import (
+    CATEGORY_SCOPE_UNSETTLED,
     HANDLERS,
+    AcquisitionFailure,
     ReadDocumentHandler,
     handler_for,
 )
@@ -82,29 +87,40 @@ async def test_read_doc_never_emits_a_query_slot():
     assert set(draft) == {"asset_id"}            # no query/question on this capability
 
 
-# ── Layer 1b: page scope comes from the VIEWER FACTS (never the sentence) ────────
+# ── Layer 1b: page scope — the sentence is the source, the viewer is not ────────
 
 
-@pytest.mark.parametrize("page_from,page_to,expected", [
-    (3, 5, "3-5"),
-    (3, 3, "3"),
-    (12, 12, "12"),
-    (7, 9, "7-9"),
+@pytest.mark.parametrize("message,expected", [
+    ("总结第3页的内容", "3"),
+    ("读一下 3-5页", "3-5"),
+    ("read pages 3-5", "3-5"),
+    ("打开第 2,4,6 页", "2,4,6"),
+    ("看下 p.3 的表格", "3"),
 ])
-async def test_read_doc_pages_come_from_the_viewer_range(page_from, page_to, expected):
+async def test_read_doc_pages_come_from_the_sentence(message, expected):
     handler = ReadDocumentHandler()
-    facts = TurnFacts(viewer_asset_id=ASSET, viewer_page_from=page_from, viewer_page_to=page_to)
-    draft = await handler.acquire(query="随便问一句", facts=facts)
+    facts = TurnFacts(viewer_asset_id=ASSET, viewer_current_page=12)
+    draft = await handler.acquire(query=message, facts=facts)
     assert draft["pages"] == expected
     # the derived spec MUST be parseable by the shared strict parser
     assert parse_pages_spec(draft["pages"]) == parse_pages_spec(expected)
 
 
+async def test_read_doc_deictic_page_uses_the_viewer_current_page():
+    # "this page" is the ONE form whose value is the viewer's settled page.
+    handler = ReadDocumentHandler()
+    facts = TurnFacts(viewer_asset_id=ASSET, viewer_current_page=12)
+    draft = await handler.acquire(query="把当前这一页读一下", facts=facts)
+    assert draft["pages"] == "12"
+
+
 async def test_read_doc_omits_pages_for_the_whole_document():
     handler = ReadDocumentHandler()
-    facts = TurnFacts(viewer_asset_id=ASSET)  # no page, no range -> whole document
+    # A viewer page/range exists, yet the sentence states no restriction.
+    facts = TurnFacts(viewer_asset_id=ASSET, viewer_current_page=12,
+                      viewer_page_from=3, viewer_page_to=5)
     draft = await handler.acquire(query="总结全文", facts=facts)
-    assert "pages" not in draft
+    assert draft == {"asset_id": ASSET}
 
 
 @pytest.mark.parametrize("facts", [
@@ -112,30 +128,35 @@ async def test_read_doc_omits_pages_for_the_whole_document():
     TurnFacts(viewer_asset_id=ASSET, viewer_page_to=5),            # half-open high
     TurnFacts(viewer_asset_id=ASSET, viewer_page_from=5, viewer_page_to=3),  # reversed
 ])
-async def test_read_doc_half_open_or_reversed_range_fails_closed(facts):
-    # A page-scoped request is NEVER silently widened to the whole document.
+async def test_read_doc_ignores_a_viewer_range_the_sentence_does_not_state(facts):
+    # The viewer's range is not a page statement: the request stays whole-document.
     handler = ReadDocumentHandler()
-    assert await handler.acquire(query="总结", facts=facts) is None
+    assert await handler.acquire(query="总结", facts=facts) == {"asset_id": ASSET}
 
 
-# ── Layer 1c: a page number in the SENTENCE is never the source of `pages` ───────
+# ── Layer 1c: a page scope neither producer settles is TERMINAL ──────────────────
 
 
 @pytest.mark.parametrize("message", [
-    "总结第3页的内容",
-    "读一下 3-5页",
-    "read pages 3-5",
-    "看下 p.3 的表格",
-    "解读一下 2024 年财报",      # a year is not a page
-    "ISO 9001 规范是什么",
+    "读一下部分页",
+    "extract some pages",
 ])
-async def test_read_doc_ignores_a_page_number_in_the_sentence(message):
-    # Even when the sentence names pages, no fact carries a range → the slot is omitted;
-    # page scope is settled upstream, not parsed from the user's text.
+async def test_read_doc_undecided_scope_is_a_terminal_failure(message):
+    # The rule cannot resolve which pages; no LLM is wired; never a guess and
+    # never a silent whole-document widening.
     handler = ReadDocumentHandler()
-    facts = TurnFacts(viewer_asset_id=ASSET)  # no viewer range
-    draft = await handler.acquire(query=message, facts=facts)
-    assert "pages" not in draft
+    facts = TurnFacts(viewer_asset_id=ASSET, viewer_current_page=12)
+    out = await handler.acquire(query=message, facts=facts)
+    assert isinstance(out, AcquisitionFailure)
+    assert out.terminal is True
+    assert out.category == CATEGORY_SCOPE_UNSETTLED
+
+
+async def test_read_doc_deictic_without_a_viewer_page_is_terminal():
+    handler = ReadDocumentHandler()
+    out = await handler.acquire(query="读一下这一页", facts=TurnFacts(viewer_asset_id=ASSET))
+    assert isinstance(out, AcquisitionFailure)
+    assert out.terminal is True
 
 
 # ── Layer 2: the roster wiring ───────────────────────────────────────────────────
@@ -228,14 +249,14 @@ async def _route(ctx, deps, req):
     return await funnel.route(ctx, deps=deps, requirements=req)
 
 
-async def test_read_doc_turn_window_comes_from_the_viewer_facts(monkeypatch, caplog):
+async def test_read_doc_turn_reads_the_pages_named_in_the_sentence(monkeypatch, caplog):
     caplog.set_level(logging.INFO, logger=FUNNEL_LOGGER)
     entry = _doc_entry()
     rec, view = _wire(monkeypatch, entry)
     req = TurnRequirements()
-    # the viewer declares pages 3-5; the sentence says nothing about pages
-    out = await _route(_ctx("帮我总结这一屏的内容", open_asset_id=ASSET,
-                            page_from=3, page_to=5), _deps(None), req)
+    # the sentence names 3-5; the viewer's own range is a different one
+    out = await _route(_ctx("帮我读第3到5页", open_asset_id=ASSET,
+                            page_from=7, page_to=9), _deps(None), req)
 
     assert out is not req                              # a CERTIFIED turn
     act = out.requested_action
@@ -247,16 +268,17 @@ async def test_read_doc_turn_window_comes_from_the_viewer_facts(monkeypatch, cap
     assert not rec.legacy                              # no legacy hop
 
 
-async def test_read_doc_turn_ignores_a_page_number_in_the_sentence(monkeypatch, caplog):
-    """A page named in the sentence is NOT an argument: the viewer fact owns scope."""
+async def test_read_doc_turn_keeps_a_whole_document_request_whole(monkeypatch, caplog):
+    """A viewer range is NOT a page statement: the whole document stays whole."""
     caplog.set_level(logging.INFO, logger=FUNNEL_LOGGER)
     entry = _doc_entry()
     rec, _view = _wire(monkeypatch, entry)
     req = TurnRequirements()
-    out = await _route(_ctx("帮我总结第3页的内容", open_asset_id=ASSET), _deps(None), req)
+    out = await _route(_ctx("帮我总结这一屏的内容", open_asset_id=ASSET,
+                            page_from=3, page_to=5), _deps(None), req)
 
     assert out is not req
-    assert out.requested_action["args"] == {"asset_id": ASSET}    # no pages from the text
+    assert out.requested_action["args"] == {"asset_id": ASSET}
     assert not rec.legacy
 
 

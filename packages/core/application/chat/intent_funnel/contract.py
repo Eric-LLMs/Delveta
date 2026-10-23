@@ -162,6 +162,11 @@ REASON_ACQUISITION_HANDLER_MISSING = "ACQUISITION_HANDLER_MISSING"
 # / MIXED) with NO extractor injected — or an extractor that cannot serve — exits
 # to the Agent. Production wires the extractor; tests may leave it out.
 REASON_ACQUISITION_MODEL_PENDING = "ACQUISITION_MODEL_PENDING"
+# A handler TERMINALLY settled that its request cannot be executed: the file
+# page scope was undecided after BOTH the deterministic rule and the online
+# model ran. The turn ends with the handler's honest message — it is NEVER
+# handed to the Agent to guess or complete the parameter.
+REASON_ACQUISITION_TERMINAL = "ACQUISITION_TERMINAL"
 REASON_REGISTRY_UNAVAILABLE = "REGISTRY_UNAVAILABLE"
 REASON_VERSION_MISMATCH = "REGISTRY_VERSION_MISMATCH"
 # P3: the capability's intent kind exists but its rollout gate is closed —

@@ -82,6 +82,12 @@ class TurnRequirements:
     # the client supplies the asset. It carries no execution authority: the certified
     # capability/tool/kind already live in ``requested_action``.
     capture_request: dict | None = None
+    # TERMINAL acquisition failure: the funnel decided the capability but its
+    # parameters could not be settled reliably (rule undecided AND the online model
+    # supplied nothing). The turn must end with an honest message — NEVER with an
+    # Agent hand-off that would guess the parameter. Carries the capability, the
+    # reason and the acquisition evidence; it grants no execution authority.
+    terminal_error: dict | None = None
 
 
 # ── source facts (no routing authority) ────────────────────────────────────────────

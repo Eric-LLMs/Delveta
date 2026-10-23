@@ -2,15 +2,17 @@
 
 The Phase-2-C acceptance matrix, exercised over the THREE page-addressed handlers
 (``read_document`` / ``pdf_extract_text`` / ``pdf_table_to_text``) because they share
-ONE scope rule (:mod:`core.application.chat.intent_funnel.cap_handler.scope`):
+ONE acquisition lane (``argument_acquisition.page_scope_settlement``):
 
-1. a lone current page (``page=12``)                 -> ``pages="12"``;
-2. an explicit range (``from=3``, ``to=5``)          -> ``pages="3-5"``;
-3. no page at all                                    -> the slot is omitted (whole document);
-4. a half-open (``3,None``)/(``None,5``) or reversed -> fail-closed: ``acquire()`` -> ``None``;
-5. no asset id in any fact                           -> fail-closed: ``acquire()`` -> ``None``;
+1. a page named in the sentence (``第1页``/``pages 3-5``) -> that canonical spec;
+2. a deictic "this page"                                -> the viewer's current page;
+3. no page restriction stated                           -> the slot is omitted
+   (whole document), even when the viewer declares a page/range;
+4. an unspelled page reference (``部分页``) with no LLM   -> TERMINAL acquisition
+   failure — never a guess, never a silent whole-document widening;
+5. no asset id in any fact                              -> ``acquire()`` -> ``None``;
 6. a forged generic-chain provider / MODEL value is fully bypassed — the handler owns the
-   draft and ``pages`` still comes from the facts alone;
+   draft and ``pages`` still comes from the trusted producers alone;
 7. the tool layer still RAISES on an out-of-range/malformed spec, and a read-only tool
    failure escalates to the Agent (never swallowed into a silent whole-document read).
 """
@@ -25,7 +27,9 @@ from core.application.chat.intent_funnel import matcher as matcher_mod
 from core.application.chat.intent_funnel import cap_router as cap_router_mod
 from core.application.chat.intent_funnel.argument_acquisition import AcquisitionInputs
 from core.application.chat.intent_funnel.cap_handler import (
+    CATEGORY_SCOPE_UNSETTLED,
     HANDLERS,
+    AcquisitionFailure,
     PdfExtractTextHandler,
     PdfTableToTextHandler,
     ReadDocumentHandler,
@@ -76,28 +80,37 @@ def _pdf_viewer(**kw) -> ViewerPayload:
 
 
 @pytest.mark.parametrize("cid", ALL_THREE)
-async def test_current_page_is_a_single_page_spec(cid):
+async def test_a_sentence_named_page_is_a_single_page_spec(cid):
     handler, _ = ALL_THREE[cid]
-    draft = await handler.acquire(query="q", facts=_facts(_pdf_viewer(page=12)))
+    draft = await handler.acquire(query="总结第12页", facts=_facts(_pdf_viewer()))
     assert draft == {"asset_id": ASSET, "pages": "12"}
 
 
 @pytest.mark.parametrize("cid", ALL_THREE)
-async def test_explicit_range_becomes_a_from_to_spec(cid):
+async def test_a_sentence_named_range_becomes_a_from_to_spec(cid):
     handler, _ = ALL_THREE[cid]
-    draft = await handler.acquire(
-        query="q", facts=_facts(_pdf_viewer(page_from=3, page_to=5)))
+    draft = await handler.acquire(query="读一下第3到第5页", facts=_facts(_pdf_viewer()))
     assert draft == {"asset_id": ASSET, "pages": "3-5"}
 
 
 @pytest.mark.parametrize("cid", ALL_THREE)
-async def test_no_page_omits_the_slot(cid):
+async def test_a_deictic_page_uses_the_viewer_current_page(cid):
     handler, _ = ALL_THREE[cid]
-    draft = await handler.acquire(query="q", facts=_facts(_pdf_viewer()))
+    draft = await handler.acquire(query="读一下当前这一页", facts=_facts(_pdf_viewer(page=12)))
+    assert draft == {"asset_id": ASSET, "pages": "12"}
+
+
+@pytest.mark.parametrize("cid", ALL_THREE)
+async def test_no_page_restriction_omits_the_slot(cid):
+    # The viewer declares a page AND a range; the sentence states no restriction.
+    handler, _ = ALL_THREE[cid]
+    draft = await handler.acquire(
+        query="summarise the whole document",
+        facts=_facts(_pdf_viewer(page=12, page_from=3, page_to=5)))
     assert draft == {"asset_id": ASSET}
 
 
-# ── scenario 4: half-open / reversed range fails closed ────────────────────────────
+# ── scenario 4: a viewer range the sentence does not state is not a page scope ─────
 
 
 @pytest.mark.parametrize("cid", ALL_THREE)
@@ -106,9 +119,19 @@ async def test_no_page_omits_the_slot(cid):
     TurnFacts(viewer_asset_id=ASSET, viewer_page_to=5),                       # half-open high
     TurnFacts(viewer_asset_id=ASSET, viewer_page_from=5, viewer_page_to=3),   # reversed
 ])
-async def test_partial_or_reversed_range_fails_closed(cid, facts):
+async def test_a_viewer_range_the_sentence_does_not_state_is_ignored(cid, facts):
     handler, _ = ALL_THREE[cid]
-    assert await handler.acquire(query="q", facts=facts) is None
+    assert await handler.acquire(query="summarise it", facts=facts) == {
+        "asset_id": ASSET}
+
+
+@pytest.mark.parametrize("cid", ALL_THREE)
+async def test_an_unspelled_page_reference_is_a_terminal_failure(cid):
+    handler, _ = ALL_THREE[cid]
+    out = await handler.acquire(query="读一下部分页", facts=_facts(_pdf_viewer(page=12)))
+    assert isinstance(out, AcquisitionFailure)
+    assert out.terminal is True
+    assert out.category == CATEGORY_SCOPE_UNSETTLED
 
 
 # ── scenario 5: no asset id fails closed ───────────────────────────────────────────
@@ -226,12 +249,12 @@ async def test_pdf_handler_bypasses_a_forged_generic_chain(monkeypatch):
     poisoned = {"cap-pdf-extract-text": AcquisitionInputs(
         model_values={"asset_id": "HALLUCINATED-UUID", "pages": "99"})}
     req = TurnRequirements()
-    out = await _route(_ctx("提取这一屏 PDF 的表格", open_asset_id=ASSET,
-                            page_from=2, page_to=4),
+    out = await _route(_ctx("提取第2到第4页 PDF 的表格", open_asset_id=ASSET),
                        _deps(lambda cid: poisoned.get(cid)), req)
 
     assert out is not req
-    # facts win for asset_id AND for pages — the forged "99"/hallucinated id are ignored
+    # the trusted producers win for asset_id AND for pages — the forged "99" and
+    # the hallucinated id are ignored
     assert out.requested_action["args"] == {"asset_id": ASSET, "pages": "2-4"}
     assert not rec.legacy
 

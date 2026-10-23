@@ -102,13 +102,21 @@ def turn_context(facts, history=()) -> dict[str, object]:
 
 @dataclass(frozen=True)
 class AcquisitionFailure:
-    """A handler-level acquisition exit, carried as data (never raised)."""
+    """A handler-level acquisition exit, carried as data (never raised).
+
+    ``terminal`` marks a failure the Agent must NOT be used to paper over: the
+    request's parameters could not be settled from any trusted producer (the
+    rule was undecided AND the online model supplied nothing), so the turn ends
+    with the handler's honest terminal answer. Every other failure keeps its
+    existing Agent-facing routing-context behavior.
+    """
 
     category: str
     stage: str
     detail: str
     scope: dict[str, Any] = field(default_factory=dict)
     context: dict[str, Any] = field(default_factory=dict)
+    terminal: bool = False
 
     def to_record(self) -> dict[str, Any]:
         """JSON-safe projection for :func:`..failure.build_failure`."""
@@ -121,4 +129,6 @@ class AcquisitionFailure:
             record["scope"] = dict(self.scope)
         if self.context:
             record["context"] = dict(self.context)
+        if self.terminal:
+            record["terminal"] = True
         return record

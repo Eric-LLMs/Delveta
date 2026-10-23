@@ -391,35 +391,35 @@ def _make_fake_active_view(view: RegistryLiveView):
 
 
 def _page_scope_seam(llm):
-    """Deterministic stand-in for the ONLINE page-scope resolver.
+    """Deterministic, NON-CORRECTING stand-in for the ONLINE page-scope resolver.
 
-    The e2e stack is hermetic (no live model), so the seam reports the scope the
-    viewer facts already declare — the exact decision the production resolver
-    makes for an explicit, complete viewer range. An incomplete range stays
-    AMBIGUOUS so the half-open test still fails closed.
+    The e2e stack is hermetic (no live model). The stand-in mirrors the sentence's
+    stated scope through the deterministic rule vocabulary and never corrects it,
+    so the turn exercises the real lane end to end (rule -> settlement -> Binder
+    -> tool) without a network call. It deliberately does NOT read the viewer's
+    page/range: those are not a page statement, and a whole-document request must
+    stay whole-document even when a viewer page exists.
     """
     from core.application.chat.intent_funnel.argument_acquisition.page_scope_resolver import (
         SCOPE_ALL,
         SCOPE_RANGE,
         SCOPE_SINGLE,
-        SCOPE_UNKNOWN,
-        STATUS_AMBIGUOUS,
         TARGET_DOCUMENT,
         PageScope,
     )
+    from core.application.chat.intent_funnel.argument_acquisition.page_scope_rule import (
+        DECISION_PAGE,
+        rule_scope,
+    )
 
     async def _resolve(*, query, facts, history=(), capability="", asset_id=""):
-        start = getattr(facts, "viewer_page_from", None)
-        end = getattr(facts, "viewer_page_to", None)
-        if start is None and end is None:
+        decided = rule_scope(query, None)
+        if decided.decision != DECISION_PAGE or not decided.pages:
             return PageScope(target=TARGET_DOCUMENT, page_scope=SCOPE_ALL)
-        if start is not None and end is not None and start <= end:
-            return PageScope(
-                target=TARGET_DOCUMENT,
-                page_scope=SCOPE_SINGLE if start == end else SCOPE_RANGE,
-                pages=str(start) if start == end else f"{start}-{end}")
-        return PageScope(target=TARGET_DOCUMENT, page_scope=SCOPE_UNKNOWN,
-                         status=STATUS_AMBIGUOUS, reason="incomplete viewer range")
+        scope = SCOPE_SINGLE if "-" not in decided.pages and "," not in decided.pages \
+            else SCOPE_RANGE
+        return PageScope(target=TARGET_DOCUMENT, page_scope=scope,
+                         pages=decided.pages)
 
     return _resolve
 

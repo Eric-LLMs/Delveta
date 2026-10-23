@@ -127,6 +127,10 @@ def _acquisition(raw: object) -> dict[str, Any]:
             item["reason"] = reason
         if item:
             out["scope"] = item
+    if raw.get("terminal") is True:
+        # Terminal acquisition failures never reach the Agent; the flag keeps the
+        # record honest wherever it is stored (trace / benchmark capture).
+        out["terminal"] = True
     context = raw.get("context")
     if isinstance(context, dict):
         item = {str(k): _value(v) for k, v in context.items() if v is not None}

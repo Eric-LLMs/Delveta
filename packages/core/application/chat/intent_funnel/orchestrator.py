@@ -51,6 +51,7 @@ from .contract import (
     REASON_ACQUISITION_MISSING,
     REASON_ACQUISITION_MODEL_PENDING,
     REASON_ACQUISITION_POLICY_CONFLICT,
+    REASON_ACQUISITION_TERMINAL,
     REASON_ACQUISITION_UNDECLARED,
     REASON_BIND_AMBIGUOUS,
     REASON_BIND_INVALID,
@@ -153,16 +154,18 @@ async def _acquire_with_scope(handler, *, query, facts, history, deps, entry,
     into the telemetry capture (status / target / scope / pages / reason /
     usage) — observability only; the handler's draft remains the only input to
     the Binder.
+
+    Handlers that declare ``accepts_scope_evidence`` also receive an out-param
+    dict; the combined rule+LLM settlement records its rule / LLM / merged
+    evidence there, and this function copies it into the capture. It is
+    telemetry only — the settlement's merged value already rode the draft.
     """
     resolver = (getattr(deps, "page_scope_resolver", None)
                 if deps is not None else None)
     if not getattr(handler, "accepts_page_scope", False):
         return await handler.acquire(query=query, facts=facts)
-    if resolver is None:
-        # The chat history is NOT part of the resolver seam: a handler may need
-        # it even when no scope model is wired (e.g. cap-summary's last-reply
-        # fallback), so it is passed whenever the handler accepts it.
-        return await handler.acquire(query=query, facts=facts, history=history)
+    evidence: dict | None = (
+        {} if getattr(handler, "accepts_scope_evidence", False) else None)
 
     async def _recording_resolver(**kwargs):
         scope = await resolver(**kwargs)
@@ -178,9 +181,15 @@ async def _acquire_with_scope(handler, *, query, facts, history, deps, entry,
             }
         return scope
 
-    return await handler.acquire(query=query, facts=facts,
-                                 page_scope_resolver=_recording_resolver,
-                                 history=history)
+    kwargs: dict = {"query": query, "facts": facts, "history": history}
+    if resolver is not None:
+        kwargs["page_scope_resolver"] = _recording_resolver
+    if evidence is not None:
+        kwargs["scope_evidence"] = evidence
+    args = await handler.acquire(**kwargs)
+    if capture is not None and evidence:
+        capture["page_scope_evidence"] = dict(evidence)
+    return args
 
 
 async def run_cascade(ctx, deps, requirements: TurnRequirements,
@@ -215,7 +224,7 @@ async def run_cascade(ctx, deps, requirements: TurnRequirements,
         trace["fallback"] = policy.stage_reason(trace["stage"], timed_out=False)
         logger.info("funnel fail-open at %s: %r", trace["stage"], exc)
     if out is not None:
-        trace["final_route"] = "action"
+        trace["final_route"] = "terminal" if out.terminal_error else "action"
         trace["capability"] = (out.requested_action or {}).get("capability_id")
     elif trace["fallback"] == "-":
         trace["fallback"] = REASON_CASCADE_ERROR  # belt: abstain without a reason is a fault
@@ -671,6 +680,48 @@ def _certify_capture(requirements, entry, deferred, *, facts, view, trace, captu
     )
 
 
+def _terminal(requirements, entry, *, trace, capture, record, detail):
+    """Certify a TERMINAL acquisition exit: an honest end, never an Agent hand-off.
+
+    The capability is already decided, so re-routing the turn to the Agent would
+    ask it to guess the very parameter acquisition could not settle. The turn
+    carries ``terminal_error`` instead; :func:`build_execution_plan` maps it to
+    ``PlanKind.ERROR`` and the terminal executor answers with deterministic text.
+    No tool runs and no execution authority is granted.
+    """
+    from core.application.chat.understanding import (
+        Complexity,
+        Confidence,
+        Signal,
+        TurnRequirements,
+    )
+
+    trace["stage"] = "acquisition"
+    trace["fallback"] = REASON_ACQUISITION_TERMINAL
+    error = {
+        "reason": REASON_ACQUISITION_TERMINAL,
+        "capability_id": entry.capability_id,
+        "tool_binding": entry.tool_binding,
+        "category": str(record.get("category") or ""),
+        "detail": str(detail or ""),
+        "acquisition": record,
+    }
+    if capture is not None:
+        capture["terminal"] = dict(error)
+    logger.info(
+        "intent_funnel terminal acquisition capability=%s category=%s detail=%s",
+        entry.capability_id, error["category"], error["detail"])
+    return TurnRequirements(
+        terminal_error=error,
+        needs_action=Signal.LOW,
+        complexity=Complexity.LOW,
+        confidence=Confidence.ABSTAIN,
+        needs_web=requirements.needs_web,
+        private_only=requirements.private_only,
+        external_ok=requirements.external_ok,
+    )
+
+
 async def _acquisition_hop(requirements, deps, entry, *, query, facts, view, trace,
                            capture, provider=None, history=(), failure=None):
     """Argument Path Router hop for a DECIDED capability (Phase 4 Step 2/3).
@@ -844,6 +895,12 @@ async def _acquisition_hop(requirements, deps, entry, *, query, facts, view, tra
                     "handler": type(handler).__name__,
                     "failure": record,
                 }
+            if args.terminal:
+                # The parameter cannot be settled by ANY trusted producer. The
+                # Agent must not be used to guess it: the turn ends here with the
+                # handler's honest message (PlanKind.ERROR).
+                return _terminal(requirements, entry, trace=trace, capture=capture,
+                                 record=record, detail=args.detail)
             return _acq_fail(
                 REASON_ACQUISITION_MISSING, strategy=acq_policy.strategy,
                 missing=missing_required_parameters(entry.parameters, {}),

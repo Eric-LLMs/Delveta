@@ -130,6 +130,7 @@ def _ctx(*, message="hi"):
 def test_orchestrator_resolves_agent_plan_and_executor():
     from core.application.chat.executors.action import ActionExecutor
     from core.application.chat.executors.agent import AgentExecutor
+    from core.application.chat.executors.terminal import TerminalExecutor
     from core.application.chat.turn_orchestrator import TurnOrchestrator
 
     ctx = _ctx(message="hi")
@@ -139,7 +140,9 @@ def test_orchestrator_resolves_agent_plan_and_executor():
     assert plan.kind is PlanKind.AGENT
     assert isinstance(orch.executor_for(plan), AgentExecutor)
     assert isinstance(orch.executor_for(ExecutionPlan(kind=PlanKind.ACTION)), ActionExecutor)
-    # Only the two formal branches exist; an unmapped kind degrades to AGENT.
-    assert set(orch._executors) == {PlanKind.ACTION, PlanKind.AGENT}
+    assert isinstance(orch.executor_for(ExecutionPlan(kind=PlanKind.ERROR)),
+                      TerminalExecutor)
+    # The three formal branches exist; an unmapped kind degrades to AGENT.
+    assert set(orch._executors) == {PlanKind.ACTION, PlanKind.AGENT, PlanKind.ERROR}
     unmapped = SimpleNamespace(kind="legacy_lane")
     assert isinstance(orch.executor_for(unmapped), AgentExecutor)

@@ -36,6 +36,7 @@ from core.application.chat.executors.base import (
     EscalateToAgent,
     TurnRequest,
 )
+from core.application.chat.executors.terminal import TerminalExecutor
 from core.application.chat.lifecycle import finalize_turn, handle_research_post_turn
 from core.application.chat.understanding import resolve_source_facts
 from core.config import settings
@@ -47,11 +48,13 @@ logger = logging.getLogger(__name__)
 class TurnOrchestrator:
     def __init__(self, deps: ChatDeps) -> None:
         self.deps = deps
-        # The single path has only two terminal branches: a certified ACTION or the
-        # Agent. There is no per-lane gate to open — an uncertified turn is AGENT.
+        # The single path has only three terminal branches: a certified ACTION, a
+        # decided-but-unsettled ERROR (honest message, never an Agent guess) and
+        # the Agent. There is no per-lane gate to open.
         self._executors = {
             AgentExecutor.kind: AgentExecutor(),
             ActionExecutor.kind: ActionExecutor(),
+            TerminalExecutor.kind: TerminalExecutor(),
         }
 
     # ── plan resolution ──────────────────────────────────────────────────────────

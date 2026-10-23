@@ -10,7 +10,9 @@ from __future__ import annotations
 
 from .acquisition_failure import (
     CATEGORY_EXTRACTION_FAILED,
+    CATEGORY_SCOPE_UNSETTLED,
     STAGE_ARGUMENT_EXTRACTION,
+    STAGE_SCOPE_RESOLUTION,
     AcquisitionFailure,
     turn_context,
 )
@@ -42,9 +44,11 @@ from .web_search_handler import WebSearchHandler
 
 __all__ = [
     "CATEGORY_EXTRACTION_FAILED",
+    "CATEGORY_SCOPE_UNSETTLED",
     "HANDLERS",
     "POLICIES",
     "STAGE_ARGUMENT_EXTRACTION",
+    "STAGE_SCOPE_RESOLUTION",
     "STRATEGIES",
     "STRATEGY_DEFERRED_AGENT",
     "STRATEGY_MIXED",
