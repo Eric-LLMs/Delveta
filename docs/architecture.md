@@ -7070,47 +7070,47 @@ structured context block" node publishes the turn-scoped record described in
 
 ```mermaid
 flowchart TD
-    A["User submits a query"] --> B["Determine capability_id"]
-    B --> C{"Admitted by the Intent Funnel allowlist?"}
+    A["User submits query"] --> B["Determine capability_id"]
+    B --> C{"Admitted by Intent Funnel allowlist?"}
 
-    C -- "No" --> AG0["Route to the Agent using the existing semantics"]
-    C -- "Yes" --> D["Dispatch parameter acquisition by capability_id"]
+    C -- No --> AG0["Route to Agent using existing semantics"]
+    C -- Yes --> D["Dispatch parameter acquisition by capability_id"]
 
     D --> E{"Parameter acquisition strategy"}
 
-    E -- "No arguments required" --> F["Construct a valid empty parameter object"]
-    E -- "Rules / UI / existing context" --> G["Acquire parameters using the corresponding rules"]
+    E -- "No arguments required" --> F["Construct valid empty parameter object"]
+    E -- "Rules / UI / existing context" --> G["Acquire parameters using corresponding rules"]
     E -- "Attachment required" --> H{"Attachment or context available?"}
-    H -- "Yes" --> G
-    H -- "No" --> X1
+    H -- Yes --> G
+    H -- No --> X1
 
-    E -- "Model-based extraction" --> I["Local Qwen extracts only the permitted MODEL slots"]
-    E -- "Hybrid strategy" --> J["Preserve existing parameters and extract the remaining slots"]
+    E -- "Model-based extraction" --> I["Use local Qwen to extract permitted MODEL slots"]
+    E -- "Hybrid strategy" --> J["Preserve existing parameters and extract remaining slots"]
 
     G --> K{"Parameter acquisition successful?"}
     I --> K
     J --> K
-    F --> L["Assemble the final parameters"]
+    F --> L["Assemble final parameters"]
 
-    K -- "Yes" --> L
-    K -- "No" --> X1
+    K -- Yes --> L
+    K -- No --> X1
 
-    X1["Record acquisition-failure status, error code and reason"]
-    X1 --> X2["Generate a structured context block"]
-    X2 --> AG1["Send to the Agent fallback"]
+    X1["Record acquisition failure status, error code, and reason"]
+    X1 --> X2["Generate structured context block"]
+    X2 --> AG1["Send to Agent fallback"]
 
-    L --> M["Binder validates the parameters"]
-    M --> N{"Do the parameters satisfy the capability contract?"}
+    L --> M["Binder validates parameters"]
+    M --> N{"Do parameters satisfy the capability contract?"}
 
-    N -- "No" --> Y1["Record the parameter-mismatch reason"]
-    N -- "Yes" --> O["VirtualExecutor / production execution"]
+    N -- No --> Y1["Record parameter mismatch reason"]
+    N -- Yes --> O["VirtualExecutor / production execution"]
 
-    Y1 --> Y2["Generate a structured context block"]
-    Y2 --> AG2["Send to the Agent fallback"]
+    Y1 --> Y2["Generate structured context block"]
+    Y2 --> AG2["Send to Agent fallback"]
 
     O --> P{"Execution result"}
-    P -- "Success" --> Q["Return the result"]
-    P -- "Explicit parameter-mismatch error" --> Y1
+    P -- Success --> Q["Return result"]
+    P -- "Explicit parameter mismatch error" --> Y1
     P -- "Other execution errors" --> R["Apply the corresponding error-handling policy and return an error message to the user"]
 
     classDef start fill:#DCEAFE,stroke:#3974C6,color:#17365D
