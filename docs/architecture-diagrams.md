@@ -462,6 +462,178 @@ flowchart TB
 > certified and agent turns traverse the same waterfall.
 > Design: [architecture.md §25 — Chat Intent Funnel](architecture.md#25-chat-intent-funnel--nodeized-routing-selector--shared-tool-runtime).
 
+## Parameter-processing flow
+
+**English.** The diagram is the complete path from the user's query to an executed
+tool or an Agent fallback. It shows the decision points the implementation owns:
+capability admission, the per-capability acquisition strategy, acquisition
+failure, the Binder contract gate, and the execution boundary. Every "generate a
+structured context block" node publishes the turn-scoped record described in
+§25.8; the record is routing context only and never grants a capability.
+
+![Parameter-processing flow — English](./images/parameter-processing-flow-en.png)
+
+<details>
+<summary>Mermaid source (for editing — regenerate via mermaid.ink)</summary>
+
+```mermaid
+flowchart TD
+    A["User submits query"] --> B["Determine capability_id"]
+    B --> C{"Admitted by Intent Funnel allowlist?"}
+
+    C -- No --> AG0["Route to Agent using existing semantics"]
+    C -- Yes --> D["Dispatch parameter acquisition by capability_id"]
+
+    D --> E{"Parameter acquisition strategy"}
+
+    E -- "No arguments required" --> F["Construct valid empty parameter object"]
+
+    E -- "Model-based extraction" --> I["Use local Qwen to extract permitted MODEL slots"]
+    E -- "Hybrid strategy" --> J["Preserve existing parameters and extract remaining slots"]
+
+    E -- "Rules / UI / existing context" --> G["Acquire parameters using corresponding rules"]
+    E -- "Attachment required" --> H{"Attachment or context available?"}
+    H -- Yes --> G
+    H -- No --> X1
+
+    G --> K{"Parameter acquisition successful?"}
+    I --> K
+    J --> K
+    F --> L["Assemble final parameters"]
+
+    K -- Yes --> L
+    K -- No --> X1
+
+    X1["Record acquisition failure status, error code, and reason"]
+    X1 --> X2["Generate structured context block"]
+    X2 --> AG1["Send to Agent fallback"]
+
+    L --> M["Binder validates parameters"]
+    M --> N{"Do parameters satisfy the capability contract?"}
+
+    N -- No --> Y1["Record parameter mismatch reason"]
+    N -- Yes --> O["VirtualExecutor / production execution"]
+
+    Y1 --> Y2["Generate structured context block"]
+    Y2 --> AG2["Send to Agent fallback"]
+
+    O --> P{"Execution result"}
+    P -- "Explicit parameter mismatch error" --> Y1
+    P -- Success --> Q["Return result"]
+    P -- "Other execution errors" --> R["Apply the corresponding error-handling policy and return an error message to the user"]
+
+    classDef start fill:#DCEAFE,stroke:#3974C6,color:#17365D
+    classDef decision fill:#FFF0CC,stroke:#C58A19,color:#654500
+    classDef failure fill:#FCE2E2,stroke:#C64D4D,color:#7A2020
+    classDef agent fill:#E9DDFB,stroke:#8355B5,color:#43276B
+    classDef success fill:#DDF3E4,stroke:#39845A,color:#174D30
+
+    class A,B,D start
+    class C,E,H,K,M,N,P decision
+    class X1,X2,Y1,Y2,R failure
+    class AG0,AG1,AG2 agent
+    class Q success
+```
+
+</details>
+
+Reading the diagram against the code:
+
+| Diagram node | Implementation |
+|---|---|
+| Determine `capability_id` | `intent_funnel/orchestrator.py::run_nodes` — Matcher HIT, or Recall → aggregation → cap_router |
+| Admitted by the allowlist? | `registry/entry.py::is_intent_funnel_capability_allowed`; a reject publishes `ADMISSION_REJECT` |
+| Dispatch by `capability_id` | `orchestrator.py::_acquisition_hop` reads `POLICIES` / `HANDLERS` by id — never infers from `parameters == {}` |
+| Strategy branches | `NO_ARGS` / `RULE_CONTEXT` / `MIXED` / `MODEL` / `DEFERRED_AGENT` in `cap_handler/acquisition_policy.py` |
+| Acquisition failed | `ACQUISITION_*` reason, kind `ACQUISITION_FAILURE`, stage `acquisition` |
+| Binder gate | `binder.validate`; a miss publishes `CONTRACT_MISMATCH` at stage `binder` |
+| Execution | `executors/action.py` — schema rejection publishes `CONTRACT_MISMATCH` at stage `executor`; a proven pre-body refusal publishes `EXECUTION_PREFLIGHT`; state-unknown is terminal and never replayed |
+| Agent fallback | `publish_failure` → `turn_orchestrator.resolve_plan` → `AgentExecutor.run(context=…)` → `intent_funnel_reference` prompt section |
+
+**中文。** 下图是从用户 query 到工具执行或 Agent 兜底的完整参数处理流程。图中保留了实现
+真正拥有的决策点：能力准入、按 `capability_id` 分发的取参策略、取参失败、Binder 契约校验
+以及执行边界。每个“生成结构化上下文信息块”节点都会发布 §25.8 描述的 turn 级记录；该记录
+只是路由上下文，不授予任何能力。
+
+![参数处理流程](./images/parameter-processing-flow-zh.png)
+
+<details>
+<summary>Mermaid source (for editing — regenerate via mermaid.ink)</summary>
+
+```mermaid
+flowchart TD
+    A["用户提交 query"] --> B["确定 capability_id"]
+    B --> C{"Intent Funnel 白名单准入？"}
+
+    C -- 否 --> AG0["按现有语义转 Agent"]
+    C -- 是 --> D["按 capability_id 分发取参规则"]
+
+    D --> E{"取参策略"}
+
+    E -- "无需参数" --> F["构造合法空参数对象"]
+
+    E -- "需要模型抽取" --> I["本地 Qwen 抽取允许的 MODEL 槽位"]
+    E -- "混合策略" --> J["保留已有参数并抽取剩余槽位"]
+
+    E -- "规则 / UI / 已有上下文" --> G["按对应规则获取参数"]
+    E -- "需要附件" --> H{"附件或上下文可用？"}
+    H -- 是 --> G
+    H -- 否 --> X1
+
+    G --> K{"参数获取成功？"}
+    I --> K
+    J --> K
+    F --> L["汇总最终参数"]
+
+    K -- 是 --> L
+    K -- 否 --> X1
+
+    X1["记录取参失败状态、错误码与原因"]
+    X1 --> X2["生成结构化上下文信息块"]
+    X2 --> AG1["发送给 Agent 兜底"]
+
+    L --> M["Binder 校验参数"]
+    M --> N{"参数符合 capability 契约？"}
+
+    N -- 否 --> Y1["记录参数不匹配原因"]
+    N -- 是 --> O["VirtualExecutor / 正式执行"]
+
+    Y1 --> Y2["生成结构化上下文信息块"]
+    Y2 --> AG2["发送给 Agent 兜底"]
+
+    O --> P{"执行结果"}
+    P -- "明确的参数不匹配错误" --> Y1
+    P -- 成功 --> Q["返回结果"]
+    P -- "其他执行错误" --> R["按对应错误策略处理，并向用户返回错误信息"]
+
+    classDef start fill:#DCEAFE,stroke:#3974C6,color:#17365D
+    classDef decision fill:#FFF0CC,stroke:#C58A19,color:#654500
+    classDef failure fill:#FCE2E2,stroke:#C64D4D,color:#7A2020
+    classDef agent fill:#E9DDFB,stroke:#8355B5,color:#43276B
+    classDef success fill:#DDF3E4,stroke:#39845A,color:#174D30
+
+    class A,B,D start
+    class C,E,H,K,M,N,P decision
+    class X1,X2,Y1,Y2,R failure
+    class AG0,AG1,AG2 agent
+    class Q success
+```
+
+</details>
+
+图中的节点与代码的对应关系：能力判定在 `run_nodes`（Matcher HIT，或 Recall → 聚合 →
+cap_router）；准入判定是 `is_intent_funnel_capability_allowed`，拒绝时发布
+`ADMISSION_REJECT`；取参分发在 `_acquisition_hop`，按 `capability_id` 读取 `POLICIES` /
+`HANDLERS`，不从空参数推断策略；策略取值为 `NO_ARGS` / `RULE_CONTEXT` / `MIXED` /
+`MODEL` / `DEFERRED_AGENT`；取参失败发布 `ACQUISITION_*`（kind `ACQUISITION_FAILURE`，
+stage `acquisition`）；Binder 失败发布 `CONTRACT_MISMATCH`（stage `binder`）；执行器参数
+门失败发布 `CONTRACT_MISMATCH`（stage `executor`），已证明未进入工具体的前置拒绝发布
+`EXECUTION_PREFLIGHT`，执行状态未知则终止且绝不重放；结构化记录经
+`turn_orchestrator.resolve_plan` 进入 `AgentExecutor.run(context=…)`，由
+`intent_funnel_reference` 提示段落渲染。
+
+> Design: [architecture.md §25.16 — Capability-Specific Acquisition Handlers](architecture.md#2516-capability-specific-acquisition-handlers).
+
 > [architecture.md](architecture.md) is the single source of truth for the full design —
 > tech stack, repository layout, agent-kernel internals, tool runtime, data model, and deployment
 > topology (including what is implemented today vs. designed-only).
