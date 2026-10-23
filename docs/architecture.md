@@ -7070,42 +7070,60 @@ structured context block" node publishes the turn-scoped record described in
 
 ```mermaid
 flowchart TD
-    Q["User submits a query"] --> CAP["Determine capability_id"]
-    CAP --> ADM{"Admitted by the Intent Funnel allowlist?"}
-    ADM -- "No" --> AGENT0["Route to the Agent using the existing semantics"]
-    ADM -- "Yes" --> DISPATCH["Dispatch parameter acquisition by capability_id"]
-    DISPATCH --> STRATEGY{"Parameter acquisition strategy"}
+    A["User submits a query"] --> B["Determine capability_id"]
+    B --> C{"Admitted by the Intent Funnel allowlist?"}
 
-    STRATEGY -- "No arguments required" --> EMPTY["Construct a valid empty parameter object"]
-    STRATEGY -- "Rules / UI / existing context" --> RULES["Acquire parameters using the corresponding rules"]
-    STRATEGY -- "Attachment required" --> ATTACH{"Attachment or context available?"}
-    STRATEGY -- "Model-based extraction" --> MODEL["Local Qwen extracts only the permitted MODEL slots"]
-    STRATEGY -- "Hybrid strategy" --> MIXED["Preserve existing parameters and extract the remaining slots"]
+    C -- "No" --> AG0["Route to the Agent using the existing semantics"]
+    C -- "Yes" --> D["Dispatch parameter acquisition by capability_id"]
 
-    ATTACH -- "No" --> AFAIL["Record acquisition-failure status, error code and reason"]
-    ATTACH -- "Yes — use the attachment or context value" --> RULES
+    D --> E{"Parameter acquisition strategy"}
 
-    AFAIL --> ACTX["Generate a structured context block"]
-    ACTX --> AGENT1["Send to the Agent fallback"]
+    E -- "No arguments required" --> F["Construct a valid empty parameter object"]
+    E -- "Rules / UI / existing context" --> G["Acquire parameters using the corresponding rules"]
+    E -- "Attachment required" --> H{"Attachment or context available?"}
+    H -- "Yes" --> G
+    H -- "No" --> X1
 
-    EMPTY --> AOK{"Parameter acquisition successful?"}
-    RULES --> AOK
-    MODEL --> AOK
-    MIXED --> AOK
-    AOK -- "No" --> AFAIL
-    AOK -- "Yes" --> ASSEMBLE["Assemble the final parameters"]
+    E -- "Model-based extraction" --> I["Local Qwen extracts only the permitted MODEL slots"]
+    E -- "Hybrid strategy" --> J["Preserve existing parameters and extract the remaining slots"]
 
-    ASSEMBLE --> BINDER["Binder validates the parameters"]
-    BINDER --> CONTRACT{"Do the parameters satisfy the capability contract?"}
-    CONTRACT -- "No" --> MFAIL["Record the parameter-mismatch reason"]
-    MFAIL --> MCTX["Generate a structured context block"]
-    MCTX --> AGENT2["Send to the Agent fallback"]
+    G --> K{"Parameter acquisition successful?"}
+    I --> K
+    J --> K
+    F --> L["Assemble the final parameters"]
 
-    CONTRACT -- "Yes" --> EXEC["VirtualExecutor / production execution"]
-    EXEC --> RESULT{"Execution result"}
-    RESULT -- "Success" --> DONE["Return the result"]
-    RESULT -- "Explicit parameter-mismatch error" --> MFAIL
-    RESULT -- "Other execution errors" --> ERR["Apply the corresponding error-handling policy and return an error message to the user"]
+    K -- "Yes" --> L
+    K -- "No" --> X1
+
+    X1["Record acquisition-failure status, error code and reason"]
+    X1 --> X2["Generate a structured context block"]
+    X2 --> AG1["Send to the Agent fallback"]
+
+    L --> M["Binder validates the parameters"]
+    M --> N{"Do the parameters satisfy the capability contract?"}
+
+    N -- "No" --> Y1["Record the parameter-mismatch reason"]
+    N -- "Yes" --> O["VirtualExecutor / production execution"]
+
+    Y1 --> Y2["Generate a structured context block"]
+    Y2 --> AG2["Send to the Agent fallback"]
+
+    O --> P{"Execution result"}
+    P -- "Success" --> Q["Return the result"]
+    P -- "Explicit parameter-mismatch error" --> Y1
+    P -- "Other execution errors" --> R["Apply the corresponding error-handling policy and return an error message to the user"]
+
+    classDef start fill:#DCEAFE,stroke:#3974C6,color:#17365D
+    classDef decision fill:#FFF0CC,stroke:#C58A19,color:#654500
+    classDef failure fill:#FCE2E2,stroke:#C64D4D,color:#7A2020
+    classDef agent fill:#E9DDFB,stroke:#8355B5,color:#43276B
+    classDef success fill:#DDF3E4,stroke:#39845A,color:#174D30
+
+    class A,B,D start
+    class C,E,H,K,M,N,P decision
+    class X1,X2,Y1,Y2,R failure
+    class AG0,AG1,AG2 agent
+    class Q success
 ```
 
 Reading the diagram against the code:
@@ -7128,42 +7146,60 @@ Reading the diagram against the code:
 
 ```mermaid
 flowchart TD
-    Q["用户提交 query"] --> CAP["确定 capability_id"]
-    CAP --> ADM{"Intent Funnel 白名单准入？"}
-    ADM -- "否" --> AGENT0["按现有语义转 Agent"]
-    ADM -- "是" --> DISPATCH["按 capability_id 分发取参规则"]
-    DISPATCH --> STRATEGY{"取参策略"}
+    A["用户提交 query"] --> B["确定 capability_id"]
+    B --> C{"Intent Funnel 白名单准入？"}
 
-    STRATEGY -- "无需参数" --> EMPTY["构造合法空参数对象"]
-    STRATEGY -- "规则 / UI / 已有上下文" --> RULES["按对应规则获取参数"]
-    STRATEGY -- "需要附件" --> ATTACH{"附件或上下文可用？"}
-    STRATEGY -- "需要模型抽取" --> MODEL["本地 Qwen 只抽取允许的 MODEL 槽位"]
-    STRATEGY -- "混合策略" --> MIXED["保留已有参数并抽取剩余槽位"]
+    C -- 否 --> AG0["按现有语义转 Agent"]
+    C -- 是 --> D["按 capability_id 分发取参规则"]
 
-    ATTACH -- "否" --> AFAIL["记录取参失败状态、错误码与原因"]
-    ATTACH -- "是 — 使用附件或上下文值" --> RULES
+    D --> E{"取参策略"}
 
-    AFAIL --> ACTX["生成结构化上下文信息块"]
-    ACTX --> AGENT1["发送给 Agent 兜底"]
+    E -- "无需参数" --> F["构造合法空参数对象"]
+    E -- "规则 / UI / 已有上下文" --> G["按对应规则获取参数"]
+    E -- "需要附件" --> H{"附件或上下文可用？"}
+    H -- 是 --> G
+    H -- 否 --> X1
 
-    EMPTY --> AOK{"参数获取成功？"}
-    RULES --> AOK
-    MODEL --> AOK
-    MIXED --> AOK
-    AOK -- "否" --> AFAIL
-    AOK -- "是" --> ASSEMBLE["汇总最终参数"]
+    E -- "需要模型抽取" --> I["本地 Qwen 抽取允许的 MODEL 槽位"]
+    E -- "混合策略" --> J["保留已有参数并抽取剩余槽位"]
 
-    ASSEMBLE --> BINDER["Binder 校验参数"]
-    BINDER --> CONTRACT{"参数符合 capability 契约？"}
-    CONTRACT -- "否" --> MFAIL["记录参数不匹配原因"]
-    MFAIL --> MCTX["生成结构化上下文信息块"]
-    MCTX --> AGENT2["发送给 Agent 兜底"]
+    G --> K{"参数获取成功？"}
+    I --> K
+    J --> K
+    F --> L["汇总最终参数"]
 
-    CONTRACT -- "是" --> EXEC["VirtualExecutor / 正式执行"]
-    EXEC --> RESULT{"执行结果"}
-    RESULT -- "成功" --> DONE["返回结果"]
-    RESULT -- "明确的参数不匹配错误" --> MFAIL
-    RESULT -- "其他执行错误" --> ERR["按对应错误策略处理，并向用户返回错误信息"]
+    K -- 是 --> L
+    K -- 否 --> X1
+
+    X1["记录取参失败状态、错误码与原因"]
+    X1 --> X2["生成结构化上下文信息块"]
+    X2 --> AG1["发送给 Agent 兜底"]
+
+    L --> M["Binder 校验参数"]
+    M --> N{"参数符合 capability 契约？"}
+
+    N -- 否 --> Y1["记录参数不匹配原因"]
+    N -- 是 --> O["VirtualExecutor / 正式执行"]
+
+    Y1 --> Y2["生成结构化上下文信息块"]
+    Y2 --> AG2["发送给 Agent 兜底"]
+
+    O --> P{"执行结果"}
+    P -- 成功 --> Q["返回结果"]
+    P -- "明确的参数不匹配错误" --> Y1
+    P -- "其他执行错误" --> R["按对应错误策略处理，并向用户返回错误信息"]
+
+    classDef start fill:#DCEAFE,stroke:#3974C6,color:#17365D
+    classDef decision fill:#FFF0CC,stroke:#C58A19,color:#654500
+    classDef failure fill:#FCE2E2,stroke:#C64D4D,color:#7A2020
+    classDef agent fill:#E9DDFB,stroke:#8355B5,color:#43276B
+    classDef success fill:#DDF3E4,stroke:#39845A,color:#174D30
+
+    class A,B,D start
+    class C,E,H,K,M,N,P decision
+    class X1,X2,Y1,Y2,R failure
+    class AG0,AG1,AG2 agent
+    class Q success
 ```
 
 图中的节点与代码的对应关系：能力判定在 `run_nodes`（Matcher HIT，或 Recall → 聚合 →
