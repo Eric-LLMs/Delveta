@@ -413,6 +413,16 @@ async def run_nodes(ctx, deps, requirements, trace, *,
         # roster / permissions decide what that independent plane may run. The
         # remaining cards are never used as a consolation pick.
         trace["fallback"] = REASON_INTENT_FUNNEL_ALLOWLIST_REJECT
+        # Turn-scoped routing fact handed to the Agent lane: WHY the Intent Funnel
+        # declined to certify the picked capability. The control plane sinks it into
+        # ``agent_context`` and the chat prompt renders it as a routing note, so the
+        # Agent understands the funnel abstained — it is not a system-wide ban and it
+        # neither grants nor restricts the Agent's own tool surface.
+        ctx.intent_funnel_reject = {
+            "reason": REASON_INTENT_FUNNEL_ALLOWLIST_REJECT,
+            "capability_id": entry.capability_id,
+            "tool_binding": entry.tool_binding,
+        }
         # Explicit audit record: reason + selected capability + original request +
         # routing context. Kept OFF the DB trace's no-query rule; this log line
         # is the operational record for a correct out-of-surface pick.

@@ -28,6 +28,7 @@ from agent.security.sandbox import Sandbox
 from agent.tools.checkpoints import CheckpointStore
 from agent.tools.fs_tools import register_fs_tools
 from agent.tools.project_context import read_project_context
+from api.intent_funnel_context import intent_funnel_reference_section
 from api.tools import register_builtin_tools
 from api.tools.toolkit import register_toolkit_plugins
 from api.viewer_context import viewer_reference_section
@@ -269,6 +270,14 @@ def get_agent_kernel() -> AgentKernel:
     # no viewer assembly, so non-chat runs (worker, research) are byte-identical.
     kernel.assembler.section(
         "viewer_reference", 300, viewer_reference_section, zone=PromptZone.DYNAMIC_SUFFIX
+    )
+    # Intent Funnel routing note: when the funnel declined to certify the capability
+    # the selector picked, the control plane sinks the reason into
+    # ``run(context={"intent_funnel": …})`` and this section explains it to the
+    # Agent. Renders "" (zero prompt delta) on every turn without a reject record.
+    kernel.assembler.section(
+        "intent_funnel_reference", 310, intent_funnel_reference_section,
+        zone=PromptZone.DYNAMIC_SUFFIX,
     )
 
     manager = PluginManager(runtime, skills, ctx)

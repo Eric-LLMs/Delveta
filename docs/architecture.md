@@ -4800,8 +4800,12 @@ wider (`funnel_cardable`): the selector still sees the hidden capability as an o
 option, and a pick for it is rejected **before argument extraction** by the Intent Funnel's
 admission gate (`INTENT_FUNNEL_ALLOWLIST_REJECT`) — never Intent-Funnel-executed, never
 re-routed to another card, and the turn falls open to the Agent with its byte-identical
-text. Intent Funnel admission is scoped to the Intent Funnel, not a system-wide execution
-ban: what the Agent may do is decided by the Agent's own roster, permissions and approvals.
+text. The reject is Agent-visible context, not only telemetry: `ChatTurnContext.intent_funnel_reject`
+is sunk into `agent_context` and forwarded as `run(context={"intent_funnel": …})`, where the
+`intent_funnel_reference` prompt section renders an `## Intent Funnel routing note` (DYNAMIC_SUFFIX)
+explaining the reason. Intent Funnel admission is scoped to the Intent Funnel, not a
+system-wide execution ban: what the Agent may do is decided by the Agent's own roster,
+permissions and approvals.
 Both settings are per-process env (same kernel factory serves chat API and worker; only
 the Chat API lanes set them, defaults empty = inert). Page/PC editing (HTTP `DriveService`) and
 Worker/Research behavior are structurally untouched; the Registry row stays
@@ -5891,8 +5895,11 @@ is the HTTP `DriveService`) — while the Matcher exact index and certification 
 capability: no Matcher exact hit, no certification. The CARD surface is wider
 (`funnel_cardable`: enabled + active + non-research), so a hidden capability is still offered
 to the selector; a pick for it is rejected before argument extraction and the turn falls
-open to the Agent (§24). Admission is scoped to the Intent Funnel: it never removes the
-capability from the Agent's own roster or permissions.
+open to the Agent (§24). The reject reason is not log-only: the orchestrator sinks
+`intent_funnel_reject` into `agent_context`, so `run(context=…)` carries it to the Agent and
+the `## Intent Funnel routing note` section states why the funnel abstained. Admission is
+scoped to the Intent Funnel: it never removes the capability from the Agent's own roster or
+permissions.
 
 **The Recall-results closure (single point; no Recall SQL change).** The Matcher exact index
 and `entries_by_id` are built THROUGH the admission predicate, but the Recall corpus is loaded

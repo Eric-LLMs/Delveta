@@ -85,11 +85,20 @@ class TurnOrchestrator:
             ctx, deps=deps, requirements=requirements,
         )
         plan = build_execution_plan(requirements)
-        # Sink the SOURCE POLICY for the Agent's sandbox (see Sandbox._turn_denied):
-        # fencing comes from the ORIGINAL request, exactly as the control plane
-        # resolved it for this turn.
-        if plan.source_policy:
-            ctx.agent_context = {**(ctx.agent_context or {}), "source_policy": plan.source_policy}
+        # Sink the turn's execution facts for the Agent:
+        # * SOURCE POLICY — sandbox fencing comes from the ORIGINAL request, exactly
+        #   as the control plane resolved it for this turn (Sandbox._turn_denied);
+        # * Intent Funnel reject — WHY the funnel declined to certify the capability
+        #   the selector picked. It is a routing fact, never a permission: the Agent
+        #   keeps its own tool registry, permissions, approvals and sandbox.
+        reject = getattr(ctx, "intent_funnel_reject", None)
+        if plan.source_policy or reject:
+            agent_context = dict(ctx.agent_context or {})
+            if plan.source_policy:
+                agent_context["source_policy"] = plan.source_policy
+            if reject:
+                agent_context["intent_funnel"] = dict(reject)
+            ctx.agent_context = agent_context
         return plan
 
     def executor_for(self, plan: ExecutionPlan) -> ChatExecutor:

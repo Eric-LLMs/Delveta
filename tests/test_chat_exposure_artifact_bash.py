@@ -134,6 +134,9 @@ def _ctx(message="随便说点什么"):
         owned_asset_id=None, path_asset_id=None, research_turn=False,
         effective_handoff=None, session_id="s1", history=[],
         user_id="u", viewer_assembly=None, agent_context=None, log_tokens=None,
+        # Fields the real AgentExecutor reads when it forwards the turn.
+        user_text=message, session_memory=None, model=None, base_url=None, api_key=None,
+        disable_thinking=False,
     )
 
 
@@ -228,12 +231,17 @@ async def test_hidden_recall_hit_is_carded_and_its_pick_becomes_an_intent_funnel
     assert out.requested_action is None
 
 
-async def test_hidden_pick_full_path_resolves_agent_plan_and_invokes_agent_executor(
+async def test_hidden_pick_full_path_resolves_agent_plan_and_hands_over_the_reason(
         monkeypatch, caplog):
     """The complete fallback path through the real control plane: a hidden pick is
     rejected (``INTENT_FUNNEL_ALLOWLIST_REJECT``), ``resolve_plan`` sees the
     ORIGINAL requirements, maps them to AGENT, and ``run_turn`` actually invokes
-    AgentExecutor — never a refusal executor or a whole-request prohibition."""
+    AgentExecutor — never a refusal executor or a whole-request prohibition.
+
+    The refusal is also CONTEXT, not only telemetry: the control plane sinks the
+    reject into ``agent_context`` and the real AgentExecutor forwards that dict as
+    ``deps.agent.run(context=…)`` — the exact channel the chat prompt section reads.
+    """
     from core.application.chat import turn_orchestrator as turn_mod
     from core.application.chat.execution_plan import PlanKind
     from core.application.chat.executors.agent import AgentExecutor
@@ -253,9 +261,13 @@ async def test_hidden_pick_full_path_resolves_agent_plan_and_invokes_agent_execu
         messages: list = []
         usage: dict = {}
 
-    async def fake_agent_run(self, req):
-        calls.append(req)
-        return _Result()
+    class _Agent:
+        """The kernel seam: records the context the executor forwards."""
+
+        async def run(self, message, history, *, session_memory=None, model=None,
+                      base_url=None, api_key=None, context=None):
+            calls.append({"message": message, "context": context})
+            return _Result()
 
     async def fake_finalize(ctx, deps, payload, *, tool):
         return dict(payload)
@@ -263,18 +275,52 @@ async def test_hidden_pick_full_path_resolves_agent_plan_and_invokes_agent_execu
     async def fake_post_turn(ctx, deps):
         return False
 
-    monkeypatch.setattr(AgentExecutor, "run", fake_agent_run)
     monkeypatch.setattr(turn_mod, "finalize_turn", fake_finalize)
     monkeypatch.setattr(turn_mod, "handle_research_post_turn", fake_post_turn)
 
-    orch = TurnOrchestrator(_deps())
+    deps = types.SimpleNamespace(
+        session_factory=None, embedder=lambda: object(), llm=object(), agent=_Agent())
+    orch = TurnOrchestrator(deps)
     resp = await orch.run_turn(_ctx())
 
     assert resp["answer"] == "agent owns the turn"
     assert len(calls) == 1                       # AgentExecutor.run was dispatched
-    assert calls[0].plan.kind is PlanKind.AGENT
-    assert isinstance(orch.executor_for(calls[0].plan), AgentExecutor)
+    # The Agent receives the ORIGINAL user text plus the funnel's routing fact.
+    assert calls[0]["message"] == "随便说点什么"
+    assert calls[0]["context"]["intent_funnel"] == {
+        "reason": REASON_INTENT_FUNNEL_ALLOWLIST_REJECT,
+        "capability_id": "cap-bash",
+        "tool_binding": "bash",
+    }
+    # …and the plan really went through the AGENT branch.
     assert _fallback(caplog) == REASON_INTENT_FUNNEL_ALLOWLIST_REJECT
+    plan = await orch.resolve_plan(_ctx())
+    assert plan.kind is PlanKind.AGENT
+    assert isinstance(orch.executor_for(plan), AgentExecutor)
+
+
+async def test_admitted_pick_enters_acquisition_and_records_no_reject(
+        monkeypatch, caplog):
+    """Case B (control): a pick INSIDE the Intent Funnel allowlist passes the
+    admission gate and enters argument acquisition normally; no reject record is
+    written, so no routing note is armed for the Agent."""
+    caplog.set_level(logging.INFO, logger=FUNNEL_LOGGER)
+    _wire(monkeypatch,
+          recall_candidates=[Candidate("cap-a", 0.95, origin="recall"),
+                             Candidate("cap-bash", 0.60, origin="recall")],
+          entries=[_entry("cap-bash", "bash"), _entry("cap-a", "create_folder")],
+          hidden=_HIDDEN)
+    ctx = _ctx()
+    req = TurnRequirements()
+
+    out = await _route(ctx, req)
+
+    # cap-a is admitted, so the turn proceeds PAST admission into acquisition
+    # (which then abstains: this fixture declares no acquisition inputs). The
+    # absence of the reject reason proves the gate did not fire.
+    assert out is req
+    assert _fallback(caplog) != REASON_INTENT_FUNNEL_ALLOWLIST_REJECT
+    assert getattr(ctx, "intent_funnel_reject", None) is None
 
 
 async def test_intent_funnel_allowlist_reject_never_enters_argument_acquisition_or_binder(
