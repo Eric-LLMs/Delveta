@@ -15,9 +15,9 @@ that contract as executable code:
    optional ``target_language``) — NOT the result count (``top_k`` / ``limit``) or
    ``subreddit``;
 3. an optional slot with no value falls to the tool's own legal default downstream;
-4. every exposed capability is accounted for: EITHER handler-owned (an explicit
-   ``slot_plan``) OR deliberately fail-open (no handler -> undeclared -> the
-   Agent owns the turn).
+4. every exposed capability is accounted for by an EXPLICIT acquisition policy:
+   handler-owned (RULE_CONTEXT / MODEL) or DEFERRED_AGENT. A capability with no
+   policy and no handler is a policy gap, never an implicit no-args capability.
 
 The exposed set is the Registry's ``is_intent_funnel_capability_allowed``
 predicate under the shipped config: everything enabled+active+non-research minus
@@ -31,12 +31,17 @@ import pytest
 
 from core.application.chat.intent_funnel.cap_handler import (
     HANDLERS,
+    POLICIES,
+    STRATEGY_DEFERRED_AGENT,
+    STRATEGY_MODEL,
+    STRATEGY_RULE_CONTEXT,
     SlotPlanningHandler,
     handler_for,
 )
 
-# The chat-exposed set: "handler" = owned by a CapabilityHandler; "fail-open" =
-# registered but acquisition-undeclared, so the turn falls through to the Agent.
+# The chat-exposed set: "handler" = owned by a CapabilityHandler; "deferred" =
+# admitted but its real tool contract cannot be satisfied on this path, so the
+# turn exits to the Agent with an explicit DEFERRED policy.
 EXPOSED: dict[str, str] = {
     "cap-add-term": "handler",
     "cap-create-folder": "handler",
@@ -49,9 +54,9 @@ EXPOSED: dict[str, str] = {
     "cap-pdf-extract-text": "handler",
     "cap-pdf-table-to-text": "handler",
     "cap-translate": "handler",
-    "cap-mindmap": "fail-open",
-    "cap-slides": "fail-open",
-    "cap-summary": "fail-open",
+    "cap-mindmap": "deferred",
+    "cap-slides": "deferred",
+    "cap-summary": "deferred",
 }
 
 EXPOSED_HANDLER_IDS = frozenset(cid for cid, k in EXPOSED.items() if k == "handler")
@@ -84,7 +89,26 @@ def test_each_exposed_capability_has_its_declared_disposition(cid, kind):
     if kind == "handler":
         assert handler_for(cid) is not None
     else:
-        assert handler_for(cid) is None  # deliberately fail-open -> the Agent
+        assert handler_for(cid) is None  # deliberately deferred -> the Agent
+
+
+def test_every_exposed_capability_has_an_explicit_policy():
+    assert set(POLICIES) == set(EXPOSED)
+
+
+@pytest.mark.parametrize("cid,kind", sorted(EXPOSED.items()))
+def test_policy_matches_the_declared_disposition(cid, kind):
+    policy = POLICIES[cid]
+    if kind == "handler":
+        assert policy.strategy in (STRATEGY_MODEL, STRATEGY_RULE_CONTEXT)
+        assert (policy.strategy == STRATEGY_MODEL) == (cid in MODEL_OPT_IN)
+    else:
+        assert policy.strategy == STRATEGY_DEFERRED_AGENT
+        assert policy.detail        # the contract gap is documented
+
+
+def test_every_handler_capability_declares_a_policy():
+    assert set(HANDLERS) <= set(POLICIES)
 
 
 def test_no_handler_owned_capability_is_hidden_from_chat():

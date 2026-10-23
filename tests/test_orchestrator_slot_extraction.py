@@ -38,6 +38,7 @@ from core.application.chat.intent_funnel.argument_acquisition.extractor import (
 )
 from core.application.chat.intent_funnel.cap_handler import roster
 from core.application.chat.intent_funnel.contract import (
+    REASON_ACQUISITION_POLICY_CONFLICT,
     REASON_BIND_INVALID,
     REASON_BIND_MISSING,
 )
@@ -156,7 +157,8 @@ async def test_web_query_is_replaced_by_the_cleaned_topic():
     assert seen["prompt"] == SYSTEM_EXTRACT          # the shared interface prompt
     assert capture["acquisition"]["extractor"] == "Qwen"
     assert capture["acquisition"]["slot_plan"] == {
-        "model_slots": ["query"], "default_slots": []}
+        "model_slots": ["query"], "fallback_slots": ["query"],
+        "default_slots": []}
 
 
 async def test_web_stated_count_is_not_a_model_slot_and_is_dropped():
@@ -249,7 +251,8 @@ async def test_social_explicit_subreddit_is_scoped_and_never_widened():
         "query": "transformer 的讨论", "platform": "reddit",
         "subreddit": "MachineLearning"}
     assert capture["acquisition"]["slot_plan"] == {
-        "model_slots": ["query"], "default_slots": []}
+        "model_slots": ["query"], "fallback_slots": ["query"],
+        "default_slots": []}
 
 
 async def test_social_unnamed_platform_is_omitted_by_the_model():
@@ -270,10 +273,13 @@ async def test_binder_missing_required_slot_exits_to_agent():
     assert trace["fallback"] == REASON_BIND_MISSING
 
 
-# ── a handler without slot_plan calls no model (pure-deterministic flow) ──────────
+# ── a MODEL policy whose handler does not plan: a wiring conflict, no model ──────
 
 
-async def test_handler_without_slot_plan_calls_no_model(monkeypatch):
+async def test_model_policy_without_a_slot_plan_fails_closed(monkeypatch):
+    # ``cap-web-search`` DECLARES the MODEL strategy. A replacement handler that
+    # does not implement ``slot_plan`` cannot satisfy it, so the turn fails closed
+    # instead of silently certifying a draft the policy said needs extraction.
     class _PlainHandler:
         capability_id = "cap-web-search"
 
@@ -281,12 +287,12 @@ async def test_handler_without_slot_plan_calls_no_model(monkeypatch):
             return {"query": str(query).strip()}
 
     async def _must_not_run(**kw):
-        raise AssertionError("a handler without slot_plan must not call the extractor")
+        raise AssertionError("a conflicting handler must not call the extractor")
 
     monkeypatch.setitem(roster.HANDLERS, "cap-web-search", _PlainHandler())
     out, trace, capture = await _hop(_web_entry(), query="帮我搜一下", extractor=_must_not_run)
-    assert out.requested_action["args"] == {"query": "帮我搜一下"}
-    assert "slot_plan" not in capture["acquisition"]     # nothing was planned
+    assert out is None
+    assert trace["fallback"] == REASON_ACQUISITION_POLICY_CONFLICT
     assert "extractor" not in capture["acquisition"]     # no model was called
 
 

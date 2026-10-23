@@ -190,7 +190,8 @@ def test_native_unauthorized_slot_never_reaches_the_draft():
     values = _parse_tool_call(msg, _entry("cap-web-search"), ["query"])
     # the parser preserves shape; the AUTHORIZATION gate drops the stray slot.
     draft = accept_model_values({"query": "raw"}, values, model_slots=("query",),
-                                parameters=C.SCHEMA["cap-web-search"]["params"])
+                                parameters=C.SCHEMA["cap-web-search"]["params"],
+                                fallback_slots=("query",))
     assert draft == {"query": "clean"}
     assert "platform" not in draft
 

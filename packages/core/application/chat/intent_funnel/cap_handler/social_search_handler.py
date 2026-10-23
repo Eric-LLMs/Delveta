@@ -78,4 +78,5 @@ class SocialSearchHandler:
         tool's own default (5), never a model slot. The narrowing is delegated to
         :mod:`.search_scope` — the one rule shared with the builder and scorers."""
         slots = effective_model_slots(self.capability_id, query, _STATIC_MODEL_SLOTS)
-        return SlotPlan(model_slots=slots, default_slots=())
+        return SlotPlan(model_slots=slots,
+                        fallback_slots=("query",), default_slots=())

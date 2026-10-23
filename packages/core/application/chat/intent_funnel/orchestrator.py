@@ -46,8 +46,11 @@ from .contract import (
     MATCH_AMBIGUOUS,
     MATCH_HIT,
     MATCH_MISS,
+    REASON_ACQUISITION_DEFERRED,
+    REASON_ACQUISITION_HANDLER_MISSING,
     REASON_ACQUISITION_MISSING,
     REASON_ACQUISITION_MODEL_PENDING,
+    REASON_ACQUISITION_POLICY_CONFLICT,
     REASON_ACQUISITION_UNDECLARED,
     REASON_BIND_AMBIGUOUS,
     REASON_BIND_INVALID,
@@ -545,6 +548,8 @@ async def _acquisition_hop(requirements, deps, entry, *, query, facts, view, tra
     merges them with the system side (§B/§F) before the SAME Binder/certified
     handoff. MISSING (no legal value) and an unavailable extractor exit to the
     Agent."""
+    import time
+
     from .argument_acquisition import context_bundle, path_router
     from .argument_acquisition.contract import (
         STRATEGY_CONTEXT_DIRECT,
@@ -554,10 +559,61 @@ async def _acquisition_hop(requirements, deps, entry, *, query, facts, view, tra
         STRATEGY_QUERY_TO_EXTRACTOR,
     )
     from .argument_acquisition.extractor import EXTRACTOR_NAME, ExtractionUnavailable
+    from .cap_handler import (
+        STRATEGY_DEFERRED_AGENT,
+        STRATEGY_MODEL,
+        STRATEGY_NO_ARGS,
+        STRATEGY_RULE_CONTEXT,
+        SlotPlanningHandler,
+        handler_for,
+        policy_for,
+    )
 
-    import time
-
-    from .cap_handler import SlotPlanningHandler, handler_for
+    # ── Per-capability acquisition policy (cap_handler) ──────────────────────────
+    # The strategy is DECLARED per capability_id and dispatched explicitly. It is
+    # never inferred from ``parameters == {}``: an empty schema may mean NO_ARGS,
+    # a hidden required input (DEFERRED_AGENT), or a policy that was never
+    # declared (ACQUISITION_UNDECLARED) — three different business outcomes.
+    acq_policy = policy_for(entry.capability_id)
+    handler = handler_for(entry.capability_id)
+    if acq_policy is not None:
+        trace["acquisition_policy"] = acq_policy.strategy
+        if capture is not None:
+            capture["acquisition_policy"] = {
+                "strategy": acq_policy.strategy,
+                "detail": acq_policy.detail,
+            }
+        if acq_policy.strategy == STRATEGY_DEFERRED_AGENT:
+            # Admitted, but the real tool contract cannot be satisfied from any
+            # legal producer on this path. Never fabricate the missing input.
+            trace["fallback"] = REASON_ACQUISITION_DEFERRED
+            return None
+        if acq_policy.strategy == STRATEGY_NO_ARGS:
+            if dict(entry.parameters or {}) or handler is not None:
+                # A NO_ARGS declaration on a capability that DOES publish a
+                # parameter schema (or mounts a handler) is a configuration
+                # conflict: fail closed instead of bypassing acquisition.
+                trace["fallback"] = REASON_ACQUISITION_POLICY_CONFLICT
+                return None
+            trace["acquisition"] = "NO_ARGS"
+            if capture is not None:
+                capture["acquisition"] = {
+                    "declared": True, "strategy": STRATEGY_NO_ARGS,
+                    "args": {},
+                }
+            return _certify(requirements, entry, {}, facts=facts,
+                            view=view, trace=trace, capture=capture)
+        if acq_policy.strategy not in (STRATEGY_MODEL, STRATEGY_RULE_CONTEXT):
+            trace["fallback"] = REASON_ACQUISITION_POLICY_CONFLICT
+            return None
+        if handler is None:
+            trace["fallback"] = REASON_ACQUISITION_HANDLER_MISSING
+            return None
+    elif handler is not None:
+        # A handler without a declared policy is a wiring fault: the handler would
+        # otherwise choose its own acquisition strategy implicitly.
+        trace["fallback"] = REASON_ACQUISITION_POLICY_CONFLICT
+        return None
 
     # ── Per-capability parameter handler (cap_handler) ───────────────────────────
     # A capability wired to a CapabilityHandler owns its own argument acquisition:
@@ -573,8 +629,8 @@ async def _acquisition_hop(requirements, deps, entry, *, query, facts, view, tra
     # without the model's contribution — still passes through the SAME
     # _certify -> Binder -> ActionExecutor -> ToolRuntime handoff below. A handler
     # WITHOUT slot_plan (the asset-anchored vision / read / pdf handlers) plans
-    # nothing and calls no model — byte-identical to before.
-    handler = handler_for(entry.capability_id)
+    # nothing and calls no model — byte-identical to before. Only a MODEL policy
+    # ever reaches the extractor; RULE_CONTEXT stops at the handler draft.
     if handler is not None:
         capture_for = getattr(handler, "capture_for", None)
         deferred = None
@@ -610,15 +666,24 @@ async def _acquisition_hop(requirements, deps, entry, *, query, facts, view, tra
         if capture is not None:
             capture["acquisition"] = {
                 "declared": True, "strategy": "CAP_HANDLER",
+                "policy": acq_policy.strategy,
                 "handler": type(handler).__name__, "args": dict(args),
             }
-        plan = (handler.slot_plan(query=query, facts=facts, draft=args)
-                if isinstance(handler, SlotPlanningHandler) else None)
+        # ONLY a MODEL policy may run the shared extractor. RULE_CONTEXT keeps the
+        # deterministic handler draft and calls no model.
+        plan = None
+        if acq_policy.strategy == STRATEGY_MODEL:
+            if not isinstance(handler, SlotPlanningHandler):
+                trace["fallback"] = REASON_ACQUISITION_POLICY_CONFLICT
+                return None
+            plan = handler.slot_plan(query=query, facts=facts, draft=args)
         model_slots = tuple(getattr(plan, "model_slots", ()) or ())
+        fallback_slots = tuple(getattr(plan, "fallback_slots", ()) or ())
         if model_slots:
             if capture is not None:
                 capture["acquisition"]["slot_plan"] = {
                     "model_slots": list(model_slots),
+                    "fallback_slots": list(fallback_slots),
                     "default_slots": list(getattr(plan, "default_slots", ()) or ()),
                 }
             extractor = getattr(deps, "argument_extractor", None)
@@ -643,7 +708,8 @@ async def _acquisition_hop(requirements, deps, entry, *, query, facts, view, tra
                     model_values, model_source = {}, ""
                 args = accept_model_values(args, dict(model_values or {}),
                                            model_slots=model_slots,
-                                           parameters=entry.parameters)
+                                           parameters=entry.parameters,
+                                           fallback_slots=fallback_slots)
                 if capture is not None:
                     capture["acquisition"]["extractor"] = EXTRACTOR_NAME
                     capture["acquisition"]["model_values"] = dict(model_values or {})

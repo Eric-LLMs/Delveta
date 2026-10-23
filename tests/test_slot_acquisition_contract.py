@@ -172,20 +172,23 @@ def test_accept_folds_authorized_values_unchanged():
     # The model's value is folded in EXACTLY as produced — no int coercion, no
     # strip. ("3" stays the string the model emitted.)
     out = accept_model_values({"query": "raw sentence"}, {"query": "clean topic", "top_k": "3"},
-                              model_slots=("query", "top_k"), parameters=_PARAMS)
+                              model_slots=("query", "top_k"), parameters=_PARAMS,
+                              fallback_slots=("query",))
     assert out == {"query": "clean topic", "top_k": "3"}
 
 
 def test_accept_never_writes_an_unauthorized_slot():
     out = accept_model_values({"query": "raw", "platform": "reddit"},
                               {"query": "clean", "platform": "zhihu"},
-                              model_slots=("query",), parameters=_PARAMS)
+                              model_slots=("query",), parameters=_PARAMS,
+                              fallback_slots=("query",))
     assert out == {"query": "clean", "platform": "reddit"}  # existing value kept
 
 
 def test_accept_drops_unknown_slot():
     out = accept_model_values({"query": "raw"}, {"query": "clean", "bogus": "x"},
-                              model_slots=("query", "bogus"), parameters=_PARAMS)
+                              model_slots=("query", "bogus"), parameters=_PARAMS,
+                              fallback_slots=("query",))
     assert out == {"query": "clean"}                     # never invent a slot
 
 
@@ -201,7 +204,8 @@ def test_accept_blank_value_keeps_the_draft(raw):
 def test_accept_writes_a_non_blank_value_verbatim():
     # A value the model DID produce is carried EXACTLY as emitted (no strip).
     out = accept_model_values({"query": "raw sentence"}, {"query": " padded "},
-                              model_slots=("query",), parameters=_PARAMS)
+                              model_slots=("query",), parameters=_PARAMS,
+                              fallback_slots=("query",))
     assert out == {"query": " padded "}
 
 
@@ -214,7 +218,8 @@ def test_accept_does_not_coerce_a_type_invalid_integer():
 def test_accept_does_not_filter_over_length_or_enum():
     out = accept_model_values({"query": "raw", "platform": "auto"},
                               {"query": "x" * 201, "platform": "facebook"},
-                              model_slots=("query", "platform"), parameters=_PARAMS)
+                              model_slots=("query", "platform"), parameters=_PARAMS,
+                              fallback_slots=("query", "platform"))
     assert out == {"query": "x" * 201, "platform": "facebook"}
 
 

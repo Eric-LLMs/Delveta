@@ -7,6 +7,16 @@ concrete handler. Wiring lives in ``roster.py``; handlers live in their own
 """
 from __future__ import annotations
 
+from .acquisition_policy import (
+    POLICIES,
+    STRATEGIES,
+    STRATEGY_DEFERRED_AGENT,
+    STRATEGY_MODEL,
+    STRATEGY_NO_ARGS,
+    STRATEGY_RULE_CONTEXT,
+    AcquisitionPolicy,
+    policy_for,
+)
 from .add_term_handler import AddTermHandler
 from .create_folder_handler import CreateFolderHandler
 from .pdf_extract_text_handler import PdfExtractTextHandler
@@ -23,6 +33,13 @@ from .web_search_handler import WebSearchHandler
 
 __all__ = [
     "HANDLERS",
+    "POLICIES",
+    "STRATEGIES",
+    "STRATEGY_DEFERRED_AGENT",
+    "STRATEGY_MODEL",
+    "STRATEGY_NO_ARGS",
+    "STRATEGY_RULE_CONTEXT",
+    "AcquisitionPolicy",
     "AddTermHandler",
     "CapabilityHandler",
     "CreateFolderHandler",
@@ -38,4 +55,5 @@ __all__ = [
     "VisionHandler",
     "WebSearchHandler",
     "handler_for",
+    "policy_for",
 ]

@@ -48,4 +48,5 @@ class RagSearchHandler:
         ``query`` topic (execution frame stripped) and the scoping ``domain``
         name. An unnamed domain stays absent (the tool applies no scope);
         ``top_k`` is the tool's own default (5), never a model slot."""
-        return SlotPlan(model_slots=("query", "domain"), default_slots=())
+        return SlotPlan(model_slots=("query", "domain"),
+                        fallback_slots=("query",), default_slots=())

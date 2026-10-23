@@ -142,8 +142,22 @@ REASON_CAP_ROUTER_INELIGIBLE = "CAP_ROUTER_INELIGIBLE"     # retired: no K<3 gat
 # Phase 4 argument-acquisition lane — the Argument Path Router's
 # downward exits. Kept DISTINCT from the Binder's BIND_* codes: the node that
 # produced these is the ARP, not the Binder.
-REASON_ACQUISITION_UNDECLARED = "ACQUISITION_UNDECLARED"   # §G: no declaration opt-in -> Agent
+REASON_ACQUISITION_UNDECLARED = "ACQUISITION_UNDECLARED"   # no strategy / declaration -> Agent
 REASON_ACQUISITION_MISSING = "ACQUISITION_MISSING"         # §D: no legal value for a required slot
+# The capability is ADMITTED and has an explicit DEFERRED_AGENT policy: its real
+# tool contract needs an input the funnel has no legal producer for (today the
+# toolkit trio's ``paths``). Distinct from UNDECLARED (policy absent) and from
+# MISSING (a declared acquisition found no value): this is a KNOWN contract gap,
+# not a per-turn failure and not a permission to fabricate an argument.
+REASON_ACQUISITION_DEFERRED = "ACQUISITION_DEFERRED"
+# The declared policy and the executable reality disagree (NO_ARGS on a
+# capability with Registry parameters, a handler-backed strategy with no handler
+# wired, or a handler with no policy). A configuration fault: fail closed.
+REASON_ACQUISITION_POLICY_CONFLICT = "ACQUISITION_POLICY_CONFLICT"
+# A MODEL/RULE_CONTEXT policy is declared but the handler that owns its slots is
+# absent from the roster. Kept distinct from POLICY_CONFLICT for one missing
+# wiring unit: the capability is configured, the implementation is not mounted.
+REASON_ACQUISITION_HANDLER_MISSING = "ACQUISITION_HANDLER_MISSING"
 # A MODEL acquisition need (QUERY_TO_EXTRACTOR / QUERY_PLUS_5TURNS_TO_EXTRACTOR
 # / MIXED) with NO extractor injected — or an extractor that cannot serve — exits
 # to the Agent. Production wires the extractor; tests may leave it out.

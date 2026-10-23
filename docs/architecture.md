@@ -6139,6 +6139,7 @@ collides with `Confidence.AMBIGUOUS`):
 REGISTRY_UNAVAILABLE · RECALL_TIMEOUT · RECALL_UNAVAILABLE · NO_CANDIDATE
 CAP_ROUTER_NONE · CAP_ROUTER_REJECT · CAP_ROUTER_UNAVAILABLE · CAP_ROUTER_TIMEOUT
 INTENT_FUNNEL_ALLOWLIST_REJECT · ACQUISITION_UNDECLARED · ACQUISITION_MISSING · ACQUISITION_MODEL_PENDING
+ACQUISITION_DEFERRED · ACQUISITION_POLICY_CONFLICT · ACQUISITION_HANDLER_MISSING
 REGISTRY_VERSION_MISMATCH · FUNNEL_KIND_DISABLED
 BIND_MISSING · BIND_AMBIGUOUS · BIND_INVALID · CASCADE_TIMEOUT · CASCADE_ERROR
 ```
@@ -6477,16 +6478,35 @@ chain over a real uvicorn API + real PostgreSQL (`@pytest.mark.live`, skip-gated
 **Architecture ruling.** Capability selection and argument acquisition are
 separate concerns (§28). For a cohort of eleven chat-plane capabilities the
 generic acquisition chain (declaration → evidence → context values → provider →
-path router → Qwen extractor → merge) is replaced by a **per-capability
-parameter handler**: a small object that owns its capability's argument
-acquisition end to end. A handler returns a plain argument draft and, when it is
-a `SlotPlanningHandler`, an explicit `slot_plan` naming which slots the SHARED
-extractor (§28.4) may fill and which fall to the tool default. The two
-acquisition paths **coexist**, and both feed the SAME tail — `_certify` → Binder
-→ certified `requested_action` → ActionExecutor → ToolRuntime — so execution,
-auth, schema validation and tool dispatch are untouched. §28 remains the
-acquisition path for **every capability without a registered handler**; it is NOT
+path router → Qwen extractor → merge) is replaced by an **explicit per-capability
+acquisition policy** plus, for the handler cohort, a **per-capability parameter
+handler**: a small object that owns its capability's argument acquisition end to
+end. Every capability's strategy is declared by `capability_id` in
+`cap_handler/acquisition_policy.py`; the orchestrator dispatches on it and NEVER
+infers a strategy from `parameters == {}`, from a missing handler, or from a slot
+being absent from the draft. A handler returns a plain argument draft and, when
+it is a `SlotPlanningHandler`, an explicit `slot_plan` naming which slots the
+SHARED extractor (§28.4) may fill, which draft values are replaceable fallbacks,
+and which fall to the tool default. The two acquisition paths **coexist**, and
+both feed the SAME tail — `_certify` → Binder → certified `requested_action` →
+ActionExecutor → ToolRuntime — so execution, auth, schema validation and tool
+dispatch are untouched. §28 remains the acquisition path for **every capability
+without a registered handler and with an explicit declaration**; it is NOT
 deprecated.
+
+The declared strategies keep four business states apart:
+
+| Strategy | Meaning | Exit |
+|---|---|---|
+| `NO_ARGS` | The real tool requires no arguments. | `{}` certified; a non-empty Registry schema makes this a `POLICY_CONFLICT`. |
+| `RULE_CONTEXT` | A handler resolves every slot from trusted turn facts, the viewer, an attachment or a literal rule. | draft certified; the model is never called. |
+| `MODEL` | A handler authorizes the shared extractor for its MODEL-owned slots only. | extracted values + protected draft → Binder. |
+| `DEFERRED_AGENT` | Admitted, but the real tool needs an input with no legal producer on this path. | `ACQUISITION_DEFERRED` → Agent. |
+
+A capability with no policy and no explicit declaration exits
+`ACQUISITION_UNDECLARED`; a declared strategy whose handler is not mounted exits
+`ACQUISITION_HANDLER_MISSING`; a policy that contradicts the executable reality
+exits `ACQUISITION_POLICY_CONFLICT`.
 
 **No natural-language extraction rule lives in a handler.** An earlier iteration
 resolved a capability's natural-language slots with regex / quote / fixed-phrase
@@ -6507,20 +6527,26 @@ control flow — and gains exactly ONE capability-agnostic dispatch branch insid
 `_acquisition_hop`, at the point where the generic provider would otherwise be
 built. The branch:
 
-1. resolves `handler_for(entry.capability_id)`;
-2. if a handler owns the capability, calls `await handler.acquire(query, facts)`
+1. resolves `policy_for(entry.capability_id)` and
+   `handler_for(entry.capability_id)`;
+2. dispatches the declared strategy FIRST: `DEFERRED_AGENT` exits
+   `ACQUISITION_DEFERRED`; `NO_ARGS` certifies `{}` only when the Registry
+   schema is empty; `MODEL`/`RULE_CONTEXT` require their handler, else
+   `ACQUISITION_HANDLER_MISSING`;
+3. if a handler owns the capability, calls `await handler.acquire(query, facts)`
    and records `acquisition="CAP_HANDLER"` in the capture; a `None` draft exits
    the turn to the Agent with `REASON_ACQUISITION_MISSING` (fail-closed,
    identical to a generic MISSING);
-3. if the handler is a `SlotPlanningHandler`, calls `slot_plan(...)`; when the
-   plan names `model_slots`, calls the shared extractor ONCE
-   (`deps.argument_extractor`, §28.4) with the per-capability prompt
-   (`prompt_for(capability_id)`), then `accept_model_values` folds ONLY the
-   authorized, schema-valid values over the draft — the Binder stays the final
-   gate (§28.5);
-4. hands the (possibly model-enriched) draft to the SAME `_certify(...)` the
+4. ONLY a `MODEL` policy calls `slot_plan(...)`; when the plan names
+   `model_slots`, it calls the shared extractor ONCE (`deps.argument_extractor`,
+   §28.4) with the per-capability prompt (`prompt_for(capability_id)`) and
+   `accept_model_values` folds ONLY the authorized, schema-valid values — a
+   draft value is protected unless its slot is named in `fallback_slots`; the
+   Binder stays the final gate (§28.5);
+5. hands the (possibly model-enriched) draft to the SAME `_certify(...)` the
    generic chain uses;
-5. if NO handler is registered, falls through to the generic chain byte-for-byte.
+6. if NO policy and NO handler exist, falls through to the generic chain, which
+   still requires an explicit declaration; otherwise `ACQUISITION_UNDECLARED`.
 
 The branch is written once and is capability-agnostic: it names no capability,
 no tool and no slot. Adding a capability handler is a roster edit (below), never
@@ -6531,8 +6557,9 @@ an edit to `orchestrator.py`.
 ```
 intent_funnel/cap_handler/
 ├── __init__.py                       # package facade — public re-exports only
+├── acquisition_policy.py             # the ONE capability_id → acquisition strategy declaration
 ├── roster.py                         # the ONE capability_id → handler wiring point
-├── slot_plan.py                      # SlotPlan / SlotPlanningHandler (the model-slot authorization)
+├── slot_plan.py                      # SlotPlan / SlotPlanningHandler (model slots + replaceable fallbacks)
 ├── scope.py                          # shared TurnFacts → asset_id + page-window (stateless)
 ├── rag_search_handler.py             # RagSearchHandler        (cap-rag-search)
 ├── web_search_handler.py             # WebSearchHandler        (cap-web-search)
@@ -6575,23 +6602,36 @@ Every capability handler obeys the same boundary:
   which the branch maps to `REASON_ACQUISITION_MISSING` → Agent;
 - it **never calls a model itself** — a natural-language slot is declared in the
   handler's `slot_plan` and filled by the shared extractor in the branch above,
-  never by handler-local code.
+  never by handler-local code;
+- a draft value is **authoritative** and cannot be overwritten by the model,
+  unless the handler explicitly lists the slot in `SlotPlan.fallback_slots`
+  (today only the search trio's verbatim `query` is a replaceable fallback).
 
 #### 25.16.4 The eleven handlers
 
-| Capability | Handler | `slot_plan` — MODEL slots | TOOL_DEFAULT | deterministic skeleton |
-|---|---|---|---|---|
-| `cap-rag-search` | `RagSearchHandler` | `query`, `domain`, `top_k` | `top_k` | `query` (verbatim fallback) |
-| `cap-web-search` | `WebSearchHandler` | `query`, `top_k` | `top_k` | `query` (verbatim fallback) |
-| `cap-social-search` | `SocialSearchHandler` | `query`, `platform`, `subreddit`, `limit` | `limit` | `query` (verbatim fallback) |
-| `cap-translate` | `TranslateHandler` | `text`, `target_language` | (executor default) | — |
-| `cap-create-folder` | `CreateFolderHandler` | `name` | — | — |
-| `cap-add-term` | `AddTermHandler` | `term`, `domain` | — | — |
-| `cap-vision` | `VisionHandler` | — (no plan) | — | `asset_id` (TurnFacts), `question` (verbatim) |
-| `cap-read-document` | `ReadDocumentHandler` | — (no plan) | — | `asset_id`, `pages` |
-| `cap-pdf-extract-text` | `PdfExtractTextHandler` | — (no plan) | — | `asset_id`, `pages` |
-| `cap-pdf-table-to-text` | `PdfTableToTextHandler` | — (no plan) | — | `asset_id`, `pages` |
-| `cap-read-file` | `ReadFileHandler` | — (no plan) | — | `path` (verbatim literal) |
+| Capability | Policy | Handler | `slot_plan` — MODEL slots | replaceable fallback | TOOL_DEFAULT / rule |
+|---|---|---|---|---|---|
+| `cap-rag-search` | `MODEL` | `RagSearchHandler` | `query`, `domain` | `query` | `top_k` (tool default) |
+| `cap-web-search` | `MODEL` | `WebSearchHandler` | `query` | `query` | `top_k` (tool default) |
+| `cap-social-search` | `MODEL` | `SocialSearchHandler` | `query`, `platform` (dynamic) | `query` | `limit` (tool default); `subreddit` + pinned `platform` (deterministic scope) |
+| `cap-translate` | `MODEL` | `TranslateHandler` | `text`, `target_language` | — | executor default |
+| `cap-create-folder` | `MODEL` | `CreateFolderHandler` | `name` | — | — |
+| `cap-add-term` | `MODEL` | `AddTermHandler` | `term`, `domain` | — | — |
+| `cap-vision` | `RULE_CONTEXT` | `VisionHandler` | — (no plan) | — | `asset_id` (TurnFacts), `question` (verbatim) |
+| `cap-read-document` | `RULE_CONTEXT` | `ReadDocumentHandler` | — (no plan) | — | `asset_id`, `pages` |
+| `cap-pdf-extract-text` | `RULE_CONTEXT` | `PdfExtractTextHandler` | — (no plan) | — | `asset_id`, `pages` |
+| `cap-pdf-table-to-text` | `RULE_CONTEXT` | `PdfTableToTextHandler` | — (no plan) | — | `asset_id`, `pages` |
+| `cap-read-file` | `RULE_CONTEXT` | `ReadFileHandler` | — (no plan) | — | `path` (verbatim literal) |
+
+**Deferred toolkit capabilities.** `cap-summary` / `cap-mindmap` / `cap-slides`
+are admitted by the funnel but declare `DEFERRED_AGENT`. Their real tools
+(`summary_gen` / `mindmap_gen` / `slides_gen`) require `paths: string[]`
+(`minItems: 1`) plus an optional `output_dir` (`slides_gen` also accepts
+`count` 3–20), while the live Registry declares no parameters, the chat request
+carries no selected-workspace-file producer, and `validate_action` accepts string
+slots only. The turn therefore exits with `ACQUISITION_DEFERRED` rather than
+certifying `{}` or inventing `paths`; a toolkit-suite resolver is the
+prerequisite for lifting this policy.
 
 #### 25.16.5 `cap-rag-search` and `cap-web-search`
 
@@ -6916,9 +6956,10 @@ handler**. The reason is structural, not extractor quality:
 - **Contract rupture.** The Registry declares an EMPTY parameter set for all
   three, while the live runtime schema requires a workspace file list
   `paths: list[str]` (`required: ["paths"]`; `slides_gen` additionally declares an
-  optional integer `count`, 3–20). `declaration_for()` therefore returns `{}`, the
-  acquisition hop reports `declared=False`, and every turn exits
-  `ACQUISITION_UNDECLARED → Agent`.
+  optional integer `count`, 3–20). `declaration_for()` therefore returns `{}`,
+  and the trio explicitly declares the `DEFERRED_AGENT` policy in
+  `acquisition_policy.py`; every turn exits `ACQUISITION_DEFERRED → Agent`
+  (never certified as `{}` and never given a fabricated `paths`).
 - **No legal `paths` producer.** `paths` is `OWNERSHIP_UNAVAILABLE` — the runtime
   schema demands it, but the funnel has no selected-files resolver that writes
   it. `count` is a genuine model-ownable slot, yet exposing it alone yields an
@@ -6957,8 +6998,11 @@ The six model-lane handlers share **one** contract with the §28 extractor:
 - **`slot_plan` is the authorization surface.** `model_slots` names exactly which
   slots the model may fill for that capability; a value outside the plan is never
   folded (a wrong-named slot — e.g. `top_k` where `limit` was authorized — lands
-  `BIND_INVALID`). `default_slots` records the slots the *tool* owns when the
-  model omits them (the search trio's `top_k` / `limit`).
+  `BIND_INVALID`). `fallback_slots` names the draft values that are only
+  deterministic fallbacks and MAY be replaced (the search trio's `query`); every
+  other draft value is protected from the model. `default_slots` records the
+  slots the *tool* owns when the model omits them (the search trio's
+  `top_k` / `limit`).
 - **`accept_model_values` is the fold gate.** Only authorized + schema-valid
   values replace the `acquire()` draft; an empty / invalid / model-unavailable
   reply leaves the deterministic fallback (verbatim sentence for the search trio;
@@ -7490,9 +7534,12 @@ invokes the extractor ONCE for that turn's capability.
 A `CONTEXT_DIRECT` decision reuses the existing Binder / certified handoff
 unchanged. The two `*_TO_EXTRACTOR` strategies certify the extracted values
 directly; `MIXED` merges the system and MODEL sides and certifies the merge.
-Every other outcome — no declaration (`ACQUISITION_UNDECLARED`), no legal value
-(`ACQUISITION_MISSING`), an unavailable extractor (`ACQUISITION_MODEL_PENDING`),
-or a non-COMPLETE Binder (`BIND_*`) — exits to the Agent byte-identically.
+Every other outcome — no policy/declaration (`ACQUISITION_UNDECLARED`), no legal
+value (`ACQUISITION_MISSING`), an unavailable extractor
+(`ACQUISITION_MODEL_PENDING`), an explicitly deferred contract
+(`ACQUISITION_DEFERRED`), a policy/executable mismatch
+(`ACQUISITION_POLICY_CONFLICT` / `ACQUISITION_HANDLER_MISSING`), or a
+non-COMPLETE Binder (`BIND_*`) — exits to the Agent byte-identically.
 Acquisition never invents a value and never re-selects a capability.
 
 ### 28.6 The extractor model — Qwen3-0.6B parameter-extraction fine-tune

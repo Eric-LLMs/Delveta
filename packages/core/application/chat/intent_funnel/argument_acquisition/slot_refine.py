@@ -3,11 +3,15 @@
 The handler path's half of the contract: a handler's ``acquire()`` draft is the
 authoritative rule/context side, and ``slot_plan().model_slots`` names the ONLY
 slots a model extraction is authorized to touch. When folding the model's reply
-into that draft this module enforces exactly ONE thing:
+into that draft this module enforces:
 
 * **authorization** — a slot outside ``model_slots`` is NEVER written (a model
   value can never leak onto a rule/context slot), and a slot absent from the
-  Registry schema is never invented.
+  Registry schema is never invented;
+* **protection** — an existing draft value is authoritative and is never
+  overwritten, UNLESS its slot is explicitly listed in ``fallback_slots``
+  (today: the search trio's verbatim ``query``). An empty ``fallback_slots``
+  therefore protects every draft key by default.
 
 The model's value is written EXACTLY as produced: NO strip, NO type coercion, NO
 length / enum filtering, NO silent drop. Validation is REPORTED separately
@@ -38,21 +42,28 @@ def _has_value(raw: object) -> bool:
 
 
 def accept_model_values(draft: Mapping, model_values: Mapping, *,
-                        model_slots, parameters) -> dict[str, object]:
+                        model_slots, parameters,
+                        fallback_slots=()) -> dict[str, object]:
     """Return ``draft`` with the AUTHORIZED model values folded in UNCHANGED.
 
     ``model_slots`` is the handler's explicit authorization; ``parameters`` is
-    the Registry schema truth for the capability. A slot the model was not asked
-    for, or that does not exist in the schema, is never written. A value the
-    model DID produce is carried verbatim (no strip / coerce / drop); a blank or
-    absent value leaves the draft's own fallback in place. Validation is a
-    SEPARATE report (:func:`validation_report`), never applied by rewriting."""
+    the Registry schema truth for the capability; ``fallback_slots`` names the
+    draft keys whose value is only a deterministic fallback and may be replaced.
+    A slot the model was not asked for, or that does not exist in the schema, is
+    never written. An existing draft value is protected unless its slot is named
+    in ``fallback_slots``. A value the model DID produce is carried verbatim (no
+    strip / coerce / drop); a blank or absent value leaves the draft's own
+    fallback in place. Validation is a SEPARATE report
+    (:func:`validation_report`), never applied by rewriting."""
     out: dict[str, object] = dict(draft or {})
     params = dict(parameters or {})
     values = dict(model_values or {})
+    replaceable = frozenset(fallback_slots or ())
     for slot in model_slots or ():
         if slot not in params:
             continue  # never invent an unknown slot
+        if slot in out and slot not in replaceable and _has_value(out[slot]):
+            continue  # a rule/context value is authoritative
         if slot in values and _has_value(values[slot]):
             out[slot] = values[slot]
     return out

@@ -45,4 +45,5 @@ class WebSearchHandler:
         """Authorize the model for the one natural-language slot it owns: the
         ``query`` topic (execution frame stripped). ``top_k`` is the tool's own
         default (5) and is never a model slot."""
-        return SlotPlan(model_slots=("query",), default_slots=())
+        return SlotPlan(model_slots=("query",),
+                        fallback_slots=("query",), default_slots=())
