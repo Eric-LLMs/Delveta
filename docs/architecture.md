@@ -7079,13 +7079,14 @@ flowchart TD
     D --> E{"Parameter acquisition strategy"}
 
     E -- "No arguments required" --> F["Construct valid empty parameter object"]
+
+    E -- "Model-based extraction" --> I["Use local Qwen to extract permitted MODEL slots"]
+    E -- "Hybrid strategy" --> J["Preserve existing parameters and extract remaining slots"]
+
     E -- "Rules / UI / existing context" --> G["Acquire parameters using corresponding rules"]
     E -- "Attachment required" --> H{"Attachment or context available?"}
     H -- Yes --> G
     H -- No --> X1
-
-    E -- "Model-based extraction" --> I["Use local Qwen to extract permitted MODEL slots"]
-    E -- "Hybrid strategy" --> J["Preserve existing parameters and extract remaining slots"]
 
     G --> K{"Parameter acquisition successful?"}
     I --> K
@@ -7109,8 +7110,8 @@ flowchart TD
     Y2 --> AG2["Send to Agent fallback"]
 
     O --> P{"Execution result"}
-    P -- Success --> Q["Return result"]
     P -- "Explicit parameter mismatch error" --> Y1
+    P -- Success --> Q["Return result"]
     P -- "Other execution errors" --> R["Apply the corresponding error-handling policy and return an error message to the user"]
 
     classDef start fill:#DCEAFE,stroke:#3974C6,color:#17365D
@@ -7155,13 +7156,14 @@ flowchart TD
     D --> E{"取参策略"}
 
     E -- "无需参数" --> F["构造合法空参数对象"]
+
+    E -- "需要模型抽取" --> I["本地 Qwen 抽取允许的 MODEL 槽位"]
+    E -- "混合策略" --> J["保留已有参数并抽取剩余槽位"]
+
     E -- "规则 / UI / 已有上下文" --> G["按对应规则获取参数"]
     E -- "需要附件" --> H{"附件或上下文可用？"}
     H -- 是 --> G
     H -- 否 --> X1
-
-    E -- "需要模型抽取" --> I["本地 Qwen 抽取允许的 MODEL 槽位"]
-    E -- "混合策略" --> J["保留已有参数并抽取剩余槽位"]
 
     G --> K{"参数获取成功？"}
     I --> K
@@ -7185,8 +7187,8 @@ flowchart TD
     Y2 --> AG2["发送给 Agent 兜底"]
 
     O --> P{"执行结果"}
-    P -- 成功 --> Q["返回结果"]
     P -- "明确的参数不匹配错误" --> Y1
+    P -- 成功 --> Q["返回结果"]
     P -- "其他执行错误" --> R["按对应错误策略处理，并向用户返回错误信息"]
 
     classDef start fill:#DCEAFE,stroke:#3974C6,color:#17365D
