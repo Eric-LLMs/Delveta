@@ -88,16 +88,17 @@ class TurnOrchestrator:
         # Sink the turn's execution facts for the Agent:
         # * SOURCE POLICY — sandbox fencing comes from the ORIGINAL request, exactly
         #   as the control plane resolved it for this turn (Sandbox._turn_denied);
-        # * Intent Funnel reject — WHY the funnel declined to certify the capability
-        #   the selector picked. It is a routing fact, never a permission: the Agent
-        #   keeps its own tool registry, permissions, approvals and sandbox.
-        reject = getattr(ctx, "intent_funnel_reject", None)
-        if plan.source_policy or reject:
+        # * Intent Funnel fallback context — why the funnel did not certify the
+        #   turn (admission reject / acquisition failure / Binder or executor
+        #   contract mismatch). It is routing context, never a permission: the
+        #   Agent keeps its own tool registry, permissions, approvals and sandbox.
+        fallback = getattr(ctx, "intent_funnel_failure", None)
+        if plan.source_policy or fallback:
             agent_context = dict(ctx.agent_context or {})
             if plan.source_policy:
                 agent_context["source_policy"] = plan.source_policy
-            if reject:
-                agent_context["intent_funnel"] = dict(reject)
+            if fallback:
+                agent_context["intent_funnel"] = dict(fallback)
             ctx.agent_context = agent_context
         return plan
 

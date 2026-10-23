@@ -15,7 +15,7 @@ the legacy extract-then-validate lanes are physically separated into
 """
 from __future__ import annotations
 
-from .validator import validate_against_schema
+from .validator import diagnose_against_schema, validate_against_schema
 
 # Context-sourced slots: slot name -> the TurnFacts fields that may answer it,
 # in precedence order. A Registry schema carrying one of these slot names is
@@ -55,6 +55,14 @@ def _resolve_context_slots(args, facts, schema: dict) -> dict:
     return out
 
 
+def _prepare(entry, args, facts):
+    """The schema plus the draft AFTER context-slot resolution. Shared by the
+    gate (:func:`validate`) and its diagnostic twin (:func:`diagnose`) so the
+    two can never disagree about which facts won."""
+    schema = dict(entry.parameters or {})
+    return schema, _resolve_context_slots(args, facts, schema)
+
+
 def validate(entry, args, facts=None):
     """Normalize/validate the argument DRAFT against the
     Registry's CANONICAL parameter schema (``entry.parameters``, 0007
@@ -64,5 +72,16 @@ def validate(entry, args, facts=None):
     lookup; the executor's own ``validate_action`` stays the final
     runtime-side gate (legacy lane), and the publish gate guarantees the two
     schemas agree."""
-    schema = dict(entry.parameters or {})
-    return validate_against_schema(schema, _resolve_context_slots(args, facts, schema))
+    schema, draft = _prepare(entry, args, facts)
+    return validate_against_schema(schema, draft)
+
+
+def diagnose(entry, args, facts=None):
+    """The Binder's structured verdict: ``(SchemaDiagnosis, prepared_draft)``.
+
+    Runs the SAME context resolution and the SAME schema gate as
+    :func:`validate`; it only keeps the evidence (missing / invalid / unknown
+    slots) so a fallback can explain the failure. It never extracts, repairs or
+    executes anything."""
+    schema, draft = _prepare(entry, args, facts)
+    return diagnose_against_schema(schema, draft), draft

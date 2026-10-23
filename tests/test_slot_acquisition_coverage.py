@@ -33,6 +33,7 @@ from core.application.chat.intent_funnel.cap_handler import (
     HANDLERS,
     POLICIES,
     STRATEGY_DEFERRED_AGENT,
+    STRATEGY_MIXED,
     STRATEGY_MODEL,
     STRATEGY_RULE_CONTEXT,
     SlotPlanningHandler,
@@ -100,11 +101,23 @@ def test_every_exposed_capability_has_an_explicit_policy():
 def test_policy_matches_the_declared_disposition(cid, kind):
     policy = POLICIES[cid]
     if kind == "handler":
-        assert policy.strategy in (STRATEGY_MODEL, STRATEGY_RULE_CONTEXT)
-        assert (policy.strategy == STRATEGY_MODEL) == (cid in MODEL_OPT_IN)
+        assert policy.strategy in (
+            STRATEGY_MODEL, STRATEGY_MIXED, STRATEGY_RULE_CONTEXT)
+        assert (policy.strategy in (STRATEGY_MODEL, STRATEGY_MIXED)) == (
+            cid in MODEL_OPT_IN)
     else:
         assert policy.strategy == STRATEGY_DEFERRED_AGENT
         assert policy.detail        # the contract gap is documented
+
+
+def test_social_search_is_the_explicit_mixed_capability():
+    # MIXED is not a synonym for MODEL: it declares that the handler owns a
+    # deterministic slot (an explicit r/<name> scope) alongside MODEL slots.
+    assert POLICIES["cap-social-search"].strategy == STRATEGY_MIXED
+    assert all(
+        pol.strategy != STRATEGY_MIXED
+        for cid, pol in POLICIES.items() if cid != "cap-social-search"
+    )
 
 
 def test_every_handler_capability_declares_a_policy():

@@ -68,6 +68,18 @@ from .contract import (
     Candidate,
     TurnFacts,
 )
+from .failure import (
+    KIND_ACQUISITION_FAILURE,
+    KIND_ADMISSION_REJECT,
+    KIND_CONTRACT_MISMATCH,
+    KIND_FUNNEL_ABSTAIN,
+    STAGE_ACQUISITION,
+    STAGE_ADMISSION,
+    STAGE_BINDER,
+    build_failure,
+    missing_required_parameters,
+    publish_failure,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +93,54 @@ def _mark(capture: dict | None, key: str, t0: float) -> None:
     import time
 
     capture.setdefault("timings", {})[key] = int((time.monotonic() - t0) * 1000)
+
+
+def _present(raw: object) -> bool:
+    """A value the acquisition layer would actually carry (presence only)."""
+    if raw is None:
+        return False
+    if isinstance(raw, str):
+        return bool(raw.strip())
+    return raw != ""
+
+
+def _handler_arg_sources(draft, final, *, model_slots, fallback_slots,
+                         model_values, strategy) -> dict[str, str]:
+    """Per-slot provenance for the handler lane (reporting only).
+
+    ``model`` when the final value came from the authorized extractor, including
+    a declared fallback slot it replaced; ``query_fallback`` when the verbatim
+    sentence survived; ``context`` for a RULE_CONTEXT handler; ``handler`` for a
+    deterministic handler value (e.g. the social ``r/<name>`` scope)."""
+    from .cap_handler import STRATEGY_RULE_CONTEXT
+
+    draft_values = dict(draft or {})
+    final_values = dict(final or {})
+    model_values = dict(model_values or {})
+    out: dict[str, str] = {}
+    for slot in final_values:
+        if (
+            slot in model_slots
+            and slot in model_values
+            and _present(model_values[slot])
+            and (
+                slot not in draft_values
+                or not _present(draft_values[slot])
+                or slot in fallback_slots
+            )
+        ):
+            out[slot] = "model"
+        elif (
+            slot in fallback_slots
+            and slot in draft_values
+            and final_values[slot] == draft_values[slot]
+        ):
+            out[slot] = "query_fallback"
+        elif strategy == STRATEGY_RULE_CONTEXT:
+            out[slot] = "context"
+        else:
+            out[slot] = "handler"
+    return out
 
 
 async def run_cascade(ctx, deps, requirements: TurnRequirements,
@@ -159,6 +219,9 @@ async def run_nodes(ctx, deps, requirements, trace, *,
 
     message = ctx.body.message or ""
     facts = TurnFacts.of(ctx)
+    # Structured fallback evidence for THIS turn. Written only by the
+    # acquisition / Binder nodes; published below when the turn is not certified.
+    failure: dict = {}
 
     # ── Registry (reads the LIVE table, fingerprint-cached) ──────────────────────
     view = await registry_active_view(session_factory=deps.session_factory)
@@ -225,8 +288,12 @@ async def run_nodes(ctx, deps, requirements, trace, *,
         out = await _acquisition_hop(requirements, deps, entry, query=message,
                                      facts=facts, view=view, trace=trace,
                                      capture=capture, provider=acq_provider,
-                                     history=history)
+                                     history=history, failure=failure)
         _mark(capture, "acquisition_ms", _t_acq)
+        if out is None and failure:
+            publish_failure(ctx, failure)
+            if capture is not None:
+                capture["failure"] = dict(failure)
         return out
 
     # ── MISS/AMBIGUOUS lane: Recall -> Aggregation -> cap_router (the one
@@ -416,16 +483,20 @@ async def run_nodes(ctx, deps, requirements, trace, *,
         # roster / permissions decide what that independent plane may run. The
         # remaining cards are never used as a consolation pick.
         trace["fallback"] = REASON_INTENT_FUNNEL_ALLOWLIST_REJECT
-        # Turn-scoped routing fact handed to the Agent lane: WHY the Intent Funnel
-        # declined to certify the picked capability. The control plane sinks it into
-        # ``agent_context`` and the chat prompt renders it as a routing note, so the
-        # Agent understands the funnel abstained — it is not a system-wide ban and it
-        # neither grants nor restricts the Agent's own tool surface.
-        ctx.intent_funnel_reject = {
-            "reason": REASON_INTENT_FUNNEL_ALLOWLIST_REJECT,
-            "capability_id": entry.capability_id,
-            "tool_binding": entry.tool_binding,
-        }
+        # Turn-scoped structured context handed to the Agent lane: WHY the Intent
+        # Funnel declined to certify the picked capability. The control plane
+        # sinks it into ``agent_context`` and the chat prompt renders it, so the
+        # Agent understands the funnel abstained — it is not a system-wide ban
+        # and it neither grants nor restricts the Agent's own tool surface.
+        publish_failure(ctx, build_failure(
+            kind=KIND_ADMISSION_REJECT,
+            stage=STAGE_ADMISSION,
+            reason=REASON_INTENT_FUNNEL_ALLOWLIST_REJECT,
+            capability_id=entry.capability_id,
+            tool_binding=entry.tool_binding,
+            query=message,
+            facts=facts,
+        ))
         # Explicit audit record: reason + selected capability + original request +
         # routing context. Kept OFF the DB trace's no-query rule; this log line
         # is the operational record for a correct out-of-surface pick.
@@ -442,26 +513,42 @@ async def run_nodes(ctx, deps, requirements, trace, *,
     out = await _acquisition_hop(requirements, deps, entry, query=message,
                                  facts=facts, view=view, trace=trace,
                                  capture=capture, provider=acq_provider,
-                                 history=history)
+                                 history=history, failure=failure)
     _mark(capture, "acquisition_ms", _t_acq)
+    if out is None and failure:
+        publish_failure(ctx, failure)
+        if capture is not None:
+            capture["failure"] = dict(failure)
     return out
 
 
 
-def _certify(requirements, entry, args, *, facts, view, trace, capture):
+def _certify(requirements, entry, args, *, facts, view, trace, capture,
+             failure=None, strategy="", arg_sources=None):
     """Capability -> kind gate -> Binder validate -> certified ACTION metadata.
 
     The ONE certification gate every acquisition strategy exits through.
     ``args`` is the argument DRAFT (whatever the capability handler, the
     Argument Path Router or the extractor produced) — the Binder still resolves
     context slots from the turn facts and is the final gate (never modified
-    here)."""
+    here). A non-certified exit also writes the structured fallback record the
+    Agent receives (``failure`` is the turn-scoped accumulator)."""
     from . import binder
 
     import time
 
     if not policy.kind_enabled(entry.intent_kind):  # P3: in the table, but not ON
         trace["fallback"] = REASON_KIND_DISABLED
+        if failure is not None:
+            failure.update(build_failure(
+                kind=KIND_FUNNEL_ABSTAIN, stage=STAGE_BINDER,
+                reason=REASON_KIND_DISABLED,
+                capability_id=entry.capability_id,
+                tool_binding=entry.tool_binding, strategy=strategy,
+                args=args, arg_sources=arg_sources,
+                required=entry.parameters, facts=facts,
+                detail=f"intent kind {entry.intent_kind!r} is not enabled",
+            ))
         return None
     if capture is not None:
         capture["entry"] = {"intent_kind": entry.intent_kind,
@@ -473,11 +560,25 @@ def _certify(requirements, entry, args, *, facts, view, trace, capture):
     if capture is not None:
         capture["binder"] = bound.state
     if not bound.is_complete:
-        trace["fallback"] = {
+        reason = {
             "MISSING": REASON_BIND_MISSING,
             "AMBIGUOUS": REASON_BIND_AMBIGUOUS,
             "INVALID": REASON_BIND_INVALID,
         }.get(bound.state, REASON_BIND_MISSING)
+        trace["fallback"] = reason
+        if failure is not None:
+            diagnosis, prepared = binder.diagnose(entry, args, facts)
+            failure.update(build_failure(
+                kind=KIND_CONTRACT_MISMATCH, stage=STAGE_BINDER, reason=reason,
+                capability_id=entry.capability_id,
+                tool_binding=entry.tool_binding, strategy=strategy,
+                args=prepared, arg_sources=arg_sources,
+                missing=diagnosis.missing,
+                invalid=diagnosis.invalid,
+                extra=diagnosis.unknown,
+                required=entry.parameters, facts=facts,
+                detail=f"binder state: {bound.state}",
+            ))
         return None
     trace["stage"] = "certified"
     # ``funnel_stage`` is part of the observable ACTION handoff (preview, shadow
@@ -531,7 +632,7 @@ def _certify_capture(requirements, entry, deferred, *, facts, view, trace, captu
 
 
 async def _acquisition_hop(requirements, deps, entry, *, query, facts, view, trace,
-                           capture, provider=None, history=()):
+                           capture, provider=None, history=(), failure=None):
     """Argument Path Router hop for a DECIDED capability (Phase 4 Step 2/3).
 
     The capability is already pinned (Matcher HIT or cap_router SELECTED); this
@@ -569,6 +670,23 @@ async def _acquisition_hop(requirements, deps, entry, *, query, facts, view, tra
         policy_for,
     )
 
+    def _acq_fail(reason, *, strategy="", args=None, arg_sources=None,
+                  missing=(), invalid=None, detail=""):
+        """Record an acquisition exit ONCE: the trace keeps its node code and the
+        turn gains the structured record the Agent receives. The record never
+        authorizes anything; it is routing context only."""
+        trace["fallback"] = reason
+        if failure is not None:
+            failure.update(build_failure(
+                kind=KIND_ACQUISITION_FAILURE, stage=STAGE_ACQUISITION,
+                reason=reason, capability_id=entry.capability_id,
+                tool_binding=entry.tool_binding, strategy=strategy, query=query,
+                args=args, arg_sources=arg_sources, missing=missing,
+                invalid=invalid, required=entry.parameters,
+                detail=detail, facts=facts,
+            ))
+        return None
+
     # ── Per-capability acquisition policy (cap_handler) ──────────────────────────
     # The strategy is DECLARED per capability_id and dispatched explicitly. It is
     # never inferred from ``parameters == {}``: an empty schema may mean NO_ARGS,
@@ -586,15 +704,22 @@ async def _acquisition_hop(requirements, deps, entry, *, query, facts, view, tra
         if acq_policy.strategy == STRATEGY_DEFERRED_AGENT:
             # Admitted, but the real tool contract cannot be satisfied from any
             # legal producer on this path. Never fabricate the missing input.
-            trace["fallback"] = REASON_ACQUISITION_DEFERRED
-            return None
+            return _acq_fail(
+                REASON_ACQUISITION_DEFERRED, strategy=acq_policy.strategy,
+                missing=missing_required_parameters(entry.parameters, {}),
+                detail=acq_policy.detail,
+            )
         if acq_policy.strategy == STRATEGY_NO_ARGS:
             if dict(entry.parameters or {}) or handler is not None:
                 # A NO_ARGS declaration on a capability that DOES publish a
                 # parameter schema (or mounts a handler) is a configuration
                 # conflict: fail closed instead of bypassing acquisition.
-                trace["fallback"] = REASON_ACQUISITION_POLICY_CONFLICT
-                return None
+                return _acq_fail(
+                    REASON_ACQUISITION_POLICY_CONFLICT,
+                    strategy=acq_policy.strategy,
+                    detail=("NO_ARGS declared, but the capability publishes "
+                            "parameters or mounts a handler"),
+                )
             trace["acquisition"] = "NO_ARGS"
             if capture is not None:
                 capture["acquisition"] = {
@@ -602,18 +727,30 @@ async def _acquisition_hop(requirements, deps, entry, *, query, facts, view, tra
                     "args": {},
                 }
             return _certify(requirements, entry, {}, facts=facts,
-                            view=view, trace=trace, capture=capture)
-        if acq_policy.strategy not in (STRATEGY_MODEL, STRATEGY_RULE_CONTEXT):
-            trace["fallback"] = REASON_ACQUISITION_POLICY_CONFLICT
-            return None
+                            view=view, trace=trace, capture=capture,
+                            failure=failure, strategy=STRATEGY_NO_ARGS,
+                            arg_sources={})
+        if acq_policy.strategy not in (STRATEGY_MODEL, STRATEGY_MIXED,
+                                       STRATEGY_RULE_CONTEXT):
+            return _acq_fail(
+                REASON_ACQUISITION_POLICY_CONFLICT, strategy=acq_policy.strategy,
+                detail="the declared strategy has no dispatcher",
+            )
         if handler is None:
-            trace["fallback"] = REASON_ACQUISITION_HANDLER_MISSING
-            return None
+            return _acq_fail(
+                REASON_ACQUISITION_HANDLER_MISSING, strategy=acq_policy.strategy,
+                missing=missing_required_parameters(entry.parameters, {}),
+                detail="the capability declares a handler-backed strategy but no "
+                       "handler is mounted",
+            )
     elif handler is not None:
         # A handler without a declared policy is a wiring fault: the handler would
         # otherwise choose its own acquisition strategy implicitly.
-        trace["fallback"] = REASON_ACQUISITION_POLICY_CONFLICT
-        return None
+        return _acq_fail(
+            REASON_ACQUISITION_POLICY_CONFLICT,
+            missing=missing_required_parameters(entry.parameters, {}),
+            detail="a handler is mounted without a declared acquisition policy",
+        )
 
     # ── Per-capability parameter handler (cap_handler) ───────────────────────────
     # A capability wired to a CapabilityHandler owns its own argument acquisition:
@@ -660,8 +797,13 @@ async def _acquisition_hop(requirements, deps, entry, *, query, facts, view, tra
                     }
                 return _certify_capture(requirements, entry, deferred, facts=facts,
                                         view=view, trace=trace, capture=capture)
-            trace["fallback"] = REASON_ACQUISITION_MISSING
-            return None
+            return _acq_fail(
+                REASON_ACQUISITION_MISSING, strategy=acq_policy.strategy,
+                missing=missing_required_parameters(entry.parameters, {}),
+                detail="the capability handler produced no draft and no deferred "
+                       "capture is available",
+            )
+        initial_args = dict(args)
         trace["acquisition"] = "CAP_HANDLER"
         if capture is not None:
             capture["acquisition"] = {
@@ -669,13 +811,20 @@ async def _acquisition_hop(requirements, deps, entry, *, query, facts, view, tra
                 "policy": acq_policy.strategy,
                 "handler": type(handler).__name__, "args": dict(args),
             }
-        # ONLY a MODEL policy may run the shared extractor. RULE_CONTEXT keeps the
-        # deterministic handler draft and calls no model.
+        # ONLY a MODEL / MIXED policy may run the shared extractor. RULE_CONTEXT
+        # keeps the deterministic handler draft and calls no model.
         plan = None
-        if acq_policy.strategy == STRATEGY_MODEL:
+        model_values: dict = {}
+        if acq_policy.strategy in (STRATEGY_MODEL, STRATEGY_MIXED):
             if not isinstance(handler, SlotPlanningHandler):
-                trace["fallback"] = REASON_ACQUISITION_POLICY_CONFLICT
-                return None
+                return _acq_fail(
+                    REASON_ACQUISITION_POLICY_CONFLICT,
+                    strategy=acq_policy.strategy, args=args,
+                    arg_sources={slot: "handler" for slot in args},
+                    missing=missing_required_parameters(entry.parameters, args),
+                    detail=f"{acq_policy.strategy} requires a slot plan, but the "
+                           "handler does not implement SlotPlanningHandler",
+                )
             plan = handler.slot_plan(query=query, facts=facts, draft=args)
         model_slots = tuple(getattr(plan, "model_slots", ()) or ())
         fallback_slots = tuple(getattr(plan, "fallback_slots", ()) or ())
@@ -706,21 +855,29 @@ async def _acquisition_hop(requirements, deps, entry, *, query, facts, view, tra
                     # No fabricated value: the handler draft (verbatim query + DET
                     # slots) stands, and the Binder remains the final gate.
                     model_values, model_source = {}, ""
-                args = accept_model_values(args, dict(model_values or {}),
+                model_values = dict(model_values or {})
+                args = accept_model_values(args, model_values,
                                            model_slots=model_slots,
                                            parameters=entry.parameters,
                                            fallback_slots=fallback_slots)
                 if capture is not None:
                     capture["acquisition"]["extractor"] = EXTRACTOR_NAME
-                    capture["acquisition"]["model_values"] = dict(model_values or {})
+                    capture["acquisition"]["model_values"] = dict(model_values)
                     capture["acquisition"]["model_source"] = str(model_source or "")
                     # Report (never repair) the schema check on the RAW model
                     # values: the executed value is exactly what the model said.
                     capture["acquisition"]["validation"] = validation_report(
-                        dict(model_values or {}), model_slots=model_slots,
+                        model_values, model_slots=model_slots,
                         parameters=entry.parameters)
+        arg_sources = _handler_arg_sources(
+            initial_args, args, model_slots=model_slots,
+            fallback_slots=fallback_slots, model_values=model_values,
+            strategy=acq_policy.strategy,
+        )
         return _certify(requirements, entry, args, facts=facts,
-                        view=view, trace=trace, capture=capture)
+                        view=view, trace=trace, capture=capture,
+                        failure=failure, strategy=acq_policy.strategy,
+                        arg_sources=arg_sources)
 
     inputs = provider(entry.capability_id) if callable(provider) else None
     declaration = dict(inputs.declaration) if inputs else {}
@@ -749,28 +906,52 @@ async def _acquisition_hop(requirements, deps, entry, *, query, facts, view, tra
         }
     trace["acquisition"] = decision.strategy or "UNDECLARED"
     if not decision.declared:
-        trace["fallback"] = REASON_ACQUISITION_UNDECLARED
-        return None
+        return _acq_fail(
+            REASON_ACQUISITION_UNDECLARED, strategy=decision.strategy,
+            args=system_values, arg_sources=system_sources,
+            missing=missing_required_parameters(entry.parameters, system_values),
+            detail="no acquisition declaration exists for this capability",
+        )
     if decision.strategy == STRATEGY_MISSING:
-        trace["fallback"] = REASON_ACQUISITION_MISSING
-        return None
+        return _acq_fail(
+            REASON_ACQUISITION_MISSING, strategy=decision.strategy,
+            args=system_values, arg_sources=system_sources,
+            missing=(tuple(decision.readiness.unsatisfiable)
+                     or tuple(missing_required_parameters(entry.parameters,
+                                                          system_values))),
+            detail="no legal value exists for a required slot",
+        )
     if decision.strategy == STRATEGY_CONTEXT_DIRECT:
         # All required slots are deterministically ready and no MODEL acquisition
         # is needed. Consume ONLY the legal system values supplied via the seam;
         # the existing Binder resolves context slots and validates.
         return _certify(requirements, entry, system_values, facts=facts,
-                        view=view, trace=trace, capture=capture)
+                        view=view, trace=trace, capture=capture,
+                        failure=failure, strategy=decision.strategy,
+                        arg_sources=system_sources)
 
     _MODEL_STRATEGIES = (STRATEGY_QUERY_TO_EXTRACTOR,
                          STRATEGY_QUERY_PLUS_5TURNS_TO_EXTRACTOR, STRATEGY_MIXED)
     if decision.strategy in _MODEL_STRATEGIES:
+        existing_args = {**dict(model_values), **dict(system_values)}
+        model_missing = tuple(
+            slot for slot in (decision.model_slots or ())
+            if not _present(existing_args.get(slot))
+        )
         if not model_values:
             # No MODEL values injected (test seam) -> run the REAL extractor over
             # the sanctioned bundle (query alone, or query + last-5 user turns).
             extractor = getattr(deps, "argument_extractor", None)
             if extractor is None:
-                trace["fallback"] = REASON_ACQUISITION_MODEL_PENDING
-                return None
+                return _acq_fail(
+                    REASON_ACQUISITION_MODEL_PENDING,
+                    strategy=decision.strategy, args=existing_args,
+                    arg_sources={**system_sources,
+                                 **{slot: model_source for slot in model_values}},
+                    missing=model_missing,
+                    detail="the selected acquisition strategy needs a MODEL "
+                           "extraction, but no extractor is configured",
+                )
             bundle = context_bundle.build(query, history=history,
                                           source=decision.bundle_source)
             try:
@@ -779,11 +960,15 @@ async def _acquisition_hop(requirements, deps, entry, *, query, facts, view, tra
                     query=query, entry=entry,
                     model_slots=decision.model_slots, bundle=bundle)
                 _mark(capture, "extraction_ms", _t_extract)
-            except ExtractionUnavailable:
+            except ExtractionUnavailable as exc:
                 # Honest fail-closed: no fabricated value; the Agent owns the
                 # clarification.
-                trace["fallback"] = REASON_ACQUISITION_MODEL_PENDING
-                return None
+                return _acq_fail(
+                    REASON_ACQUISITION_MODEL_PENDING,
+                    strategy=decision.strategy, args=existing_args,
+                    arg_sources=system_sources, missing=model_missing,
+                    detail=f"the argument extractor could not serve: {exc}",
+                )
             if capture is not None:
                 capture["acquisition"]["extractor"] = EXTRACTOR_NAME
         model_values = dict(model_values or {})
@@ -809,14 +994,24 @@ async def _acquisition_hop(requirements, deps, entry, *, query, facts, view, tra
                     for p in merged.provenance
                 ]
             return _certify(requirements, entry, merged.args, facts=facts,
-                            view=view, trace=trace, capture=capture)
+                            view=view, trace=trace, capture=capture,
+                            failure=failure, strategy=decision.strategy,
+                            arg_sources={p.slot: p.source
+                                         for p in merged.provenance})
         # QUERY_TO_EXTRACTOR / QUERY_PLUS_5TURNS_TO_EXTRACTOR: the extracted MODEL
         # values ARE the draft; the Binder validates them.
         return _certify(requirements, entry, model_values, facts=facts,
-                        view=view, trace=trace, capture=capture)
+                        view=view, trace=trace, capture=capture,
+                        failure=failure, strategy=decision.strategy,
+                        arg_sources={slot: (model_source or "model")
+                                     for slot in model_values})
     # MISSING handled above; any other label is not a MODEL acquisition need.
-    trace["fallback"] = REASON_ACQUISITION_MODEL_PENDING
-    return None
+    return _acq_fail(
+        REASON_ACQUISITION_MODEL_PENDING, strategy=decision.strategy,
+        args=system_values, arg_sources=system_sources,
+        missing=missing_required_parameters(entry.parameters, system_values),
+        detail=f"strategy {decision.strategy!r} has no acquisition dispatcher",
+    )
 
 
 def certified(requirements, entry, args, registry_fp, *,

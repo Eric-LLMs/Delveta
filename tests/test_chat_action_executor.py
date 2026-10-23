@@ -275,6 +275,17 @@ async def test_malformed_action_escalates_and_never_touches_the_seam():
     with pytest.raises(EscalateToAgent, match="schema"):
         await _drain(req)
     assert calls == []  # pre-execution failure: the seam was NEVER entered
+    # The Agent receives structured contract evidence, not only an error string.
+    record = req.ctx.agent_context["intent_funnel"]
+    assert record["kind"] == "CONTRACT_MISMATCH"
+    assert record["reason"] == "EXECUTOR_PARAMETER_MISMATCH"
+    assert record["capability_id"] == "cap-create-folder"
+    assert record["tool_binding"] == "create_folder"
+    assert record["missing"] == ["name"]
+    assert record["args"] == {}
+    assert record["required"]["name"]["required"] is True
+    assert record["execution_state"] == "not_started"
+    assert "missing slot: name" in record["original_error"]
 
 
 # Shadow-A/B #17 pin: cap-summary carries an EMPTY registry
@@ -360,6 +371,26 @@ async def test_preflight_failure_escalates_once_side_effect_free():
     with pytest.raises(EscalateToAgent, match="preflight"):
         await _drain(req)
     assert len(hits) == 1  # entered once, proven non-executing — escalation is legal
+    record = req.ctx.agent_context["intent_funnel"]
+    assert record["kind"] == "EXECUTION_PREFLIGHT"
+    assert record["reason"] == "EXECUTOR_PREFLIGHT"
+    assert record["execution_state"] == "not_started"
+    assert "domain not found" in record["original_error"]
+
+
+async def test_state_unknown_terminates_honestly_without_agent_context():
+    hits = []
+
+    async def run_tool(tool, args, ctx):
+        hits.append(1)
+        raise RuntimeError("connection reset mid-write")
+
+    req = _req(GOOD, run_tool)
+    events = await _drain(req)  # NO EscalateToAgent — the Agent must not replay a write
+    assert len(hits) == 1       # called exactly once — no duplicate side effect
+    assert events[1]["data"]["error"] is None
+    # There is no fallback, so no "safe to retry" context may be published.
+    assert "intent_funnel" not in (getattr(req.ctx, "agent_context", None) or {})
 
 
 async def test_state_unknown_terminates_honestly_never_escalates():

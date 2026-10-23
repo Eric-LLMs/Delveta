@@ -63,6 +63,16 @@ from core.application.chat.executors.execution_authorization import (
     REASON_TOOL_BINDING_MISMATCH,
     authorize_execution,
 )
+from core.application.chat.intent_funnel.failure import (
+    EXECUTION_NOT_STARTED,
+    KIND_CONTRACT_MISMATCH,
+    KIND_EXECUTION_PREFLIGHT,
+    REASON_EXECUTOR_PARAMETER_MISMATCH,
+    REASON_EXECUTOR_PREFLIGHT,
+    STAGE_EXECUTOR,
+    build_failure,
+    publish_failure,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -131,6 +141,49 @@ def _refusal(reason: str, *, stamped: bool = False) -> DispatchOutcome:
     return DispatchOutcome(_TERMINAL_INTEGRITY, reason)
 
 
+def _turn_facts(ctx):
+    """The turn's structured facts for the Agent-facing record, or ``None``.
+
+    The executor may see a duck-typed test double without a request body; the
+    record stays honest in that case (an empty context summary) rather than
+    fabricating one.
+    """
+    if getattr(ctx, "body", None) is None:
+        return None
+    from core.application.chat.intent_funnel.contract import TurnFacts
+
+    return TurnFacts.of(ctx)
+
+
+def _schema_mismatch(args, schema) -> dict:
+    """Evidence for a rejected ``validate_action`` call (reporting only).
+
+    Mirrors the gate's own checks so the Agent is told exactly what failed:
+    missing required slots, non-string values, over-length values, and args the
+    tool schema does not declare. It never rewrites or drops a value.
+    """
+    if not isinstance(args, dict):
+        return {"missing": [], "invalid": {"args": "not_a_mapping"}, "extra": []}
+    missing: list[str] = []
+    invalid: dict[str, str] = {}
+    for slot, raw_spec in (schema or {}).items():
+        spec = raw_spec if isinstance(raw_spec, dict) else {}
+        required = bool(spec.get("required", True))
+        max_len = int(spec.get("max_len") or 0)
+        value = args.get(slot)
+        if value is None or (isinstance(value, str) and not value.strip()):
+            if required:
+                missing.append(str(slot))
+            continue
+        if not isinstance(value, str):
+            invalid[str(slot)] = "not_a_string"
+            continue
+        if max_len and len(value.strip()) > max_len:
+            invalid[str(slot)] = "max_len"
+    extra = sorted(set(args) - set((schema or {}).keys()))
+    return {"missing": missing, "invalid": invalid, "extra": extra}
+
+
 def _tool_roster(deps) -> dict[str, dict[str, dict]] | None:
     """tool -> {slot: {"max_len": int, "required": bool}} projected from the
     live ``ToolRuntime.schemas()`` — the one tool existence/schema truth since
@@ -147,8 +200,15 @@ def _tool_roster(deps) -> dict[str, dict[str, dict]] | None:
         req = params.get("required")
         required_all = req is None
         out[str(s["name"])] = {
-            str(k): {"max_len": int((v or {}).get("maxLength") or 0),
-                     "required": bool(required_all or (k in (req or [])))}
+            str(k): {
+                "max_len": int((v or {}).get("maxLength") or 0),
+                "required": bool(required_all or (k in (req or []))),
+                # Reporting-only fields: ``validate_action`` reads max_len and
+                # required, while the Agent-facing contract record needs the real
+                # type (notably array ``paths``) to explain a mismatch.
+                "type": str((v or {}).get("type") or "string"),
+                "items": (v or {}).get("items") or {},
+            }
             for k, v in props.items()
         }
     return out
@@ -260,6 +320,28 @@ class ActionExecutor:
                                         args if isinstance(args, dict) else {},
                                         tool_schemas=roster)
         except ActionSchemaError as exc:
+            # A proven pre-body user-input failure. Hand the Agent the structured
+            # contract evidence, not just an error string: nothing was executed,
+            # so acting on the request now cannot duplicate a side effect.
+            mismatch = _schema_mismatch(
+                args, roster.get(str(tool or ""), {}))
+            publish_failure(req.ctx, build_failure(
+                kind=KIND_CONTRACT_MISMATCH,
+                stage=STAGE_EXECUTOR,
+                reason=REASON_EXECUTOR_PARAMETER_MISMATCH,
+                capability_id=cap_id,
+                tool_binding=str(tool or ""),
+                query=str(getattr(req.ctx, "user_text", "") or ""),
+                args=args if isinstance(args, dict) else {},
+                missing=mismatch["missing"],
+                invalid=mismatch["invalid"],
+                extra=mismatch["extra"],
+                required=roster.get(str(tool or ""), {}),
+                facts=_turn_facts(req.ctx),
+                detail=f"the runtime schema gate rejected the arguments: {exc}",
+                original_error=str(exc),
+                execution_state=EXECUTION_NOT_STARTED,
+            ))
             raise EscalateToAgent(f"action schema: {exc}") from exc
 
         # 2. seam presence. A missing seam is an internal wiring fault (C2), NOT a
@@ -278,9 +360,29 @@ class ActionExecutor:
             logger.error("chat.action integrity failure tool=%s: %s", validated["tool"], exc.reason)
             return DispatchOutcome(_TERMINAL_INTEGRITY)
         except ActionPreflightFailure as exc:
-            # Proved: the body never ran. The Agent may clarify / re-plan.
+            # Proved: the body never ran. The Agent may clarify / re-plan. This is
+            # NOT a parameter-contract mismatch (authorization / runtime preflight
+            # can fail for reasons the user's arguments cannot fix), so it carries
+            # its own kind and reason.
+            publish_failure(req.ctx, build_failure(
+                kind=KIND_EXECUTION_PREFLIGHT,
+                stage=STAGE_EXECUTOR,
+                reason=REASON_EXECUTOR_PREFLIGHT,
+                capability_id=cap_id,
+                tool_binding=str(validated["tool"]),
+                query=str(getattr(req.ctx, "user_text", "") or ""),
+                args=validated["args"],
+                required=roster.get(str(validated["tool"]), {}),
+                facts=_turn_facts(req.ctx),
+                detail=exc.reason,
+                original_error=exc.reason,
+                execution_state=EXECUTION_NOT_STARTED,
+            ))
             raise EscalateToAgent(f"preflight: {exc.reason}") from exc
         except Exception as exc:  # noqa: BLE001 - STATE UNKNOWN by contract
+            # STATE UNKNOWN is terminal and NEVER falls back to the Agent, so no
+            # "safe to retry" context is published. A blind Agent replay here is
+            # exactly how duplicate folders/terms are created.
             logger.warning("chat.action state-unknown tool=%s: %r", validated["tool"], exc)
             return DispatchOutcome(_STATE_UNKNOWN)
 

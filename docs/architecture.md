@@ -4800,12 +4800,12 @@ wider (`funnel_cardable`): the selector still sees the hidden capability as an o
 option, and a pick for it is rejected **before argument extraction** by the Intent Funnel's
 admission gate (`INTENT_FUNNEL_ALLOWLIST_REJECT`) — never Intent-Funnel-executed, never
 re-routed to another card, and the turn falls open to the Agent with its byte-identical
-text. The reject is Agent-visible context, not only telemetry: `ChatTurnContext.intent_funnel_reject`
-is sunk into `agent_context` and forwarded as `run(context={"intent_funnel": …})`, where the
-`intent_funnel_reference` prompt section renders an `## Intent Funnel routing note` (DYNAMIC_SUFFIX)
-explaining the reason. Intent Funnel admission is scoped to the Intent Funnel, not a
-system-wide execution ban: what the Agent may do is decided by the Agent's own roster,
-permissions and approvals.
+text. The reject is Agent-visible context, not only telemetry: `ChatTurnContext.intent_funnel_failure`
+carries the structured record, which is sunk into `agent_context` and forwarded as
+`run(context={"intent_funnel": …})`, where the `intent_funnel_reference` prompt section renders an
+`## Intent Funnel routing note` (DYNAMIC_SUFFIX) explaining the reason. Intent Funnel admission is
+scoped to the Intent Funnel, not a system-wide execution ban: what the Agent may do is decided by the
+Agent's own roster, permissions and approvals.
 Both settings are per-process env (same kernel factory serves chat API and worker; only
 the Chat API lanes set them, defaults empty = inert). Page/PC editing (HTTP `DriveService`) and
 Worker/Research behavior are structurally untouched; the Registry row stays
@@ -5895,11 +5895,11 @@ is the HTTP `DriveService`) — while the Matcher exact index and certification 
 capability: no Matcher exact hit, no certification. The CARD surface is wider
 (`funnel_cardable`: enabled + active + non-research), so a hidden capability is still offered
 to the selector; a pick for it is rejected before argument extraction and the turn falls
-open to the Agent (§24). The reject reason is not log-only: the orchestrator sinks
-`intent_funnel_reject` into `agent_context`, so `run(context=…)` carries it to the Agent and
-the `## Intent Funnel routing note` section states why the funnel abstained. Admission is
-scoped to the Intent Funnel: it never removes the capability from the Agent's own roster or
-permissions.
+open to the Agent (§24). The reject reason is not log-only: the orchestrator sinks the
+turn's structured `intent_funnel_failure` record into `agent_context`, so `run(context=…)`
+carries it to the Agent and the `## Intent Funnel routing note` section states why the funnel
+abstained. Admission is scoped to the Intent Funnel: it never removes the capability from the
+Agent's own roster or permissions.
 
 **The Recall-results closure (single point; no Recall SQL change).** The Matcher exact index
 and `entries_by_id` are built THROUGH the admission predicate, but the Recall corpus is loaded
@@ -6151,6 +6151,28 @@ Recall executed normally → `NO_CANDIDATE`; ANY recall system fault — no
 embedded corpus, embedder error, embedder/corpus dim mismatch (profile config
 error), un-survivable pgvector failure → `RECALL_UNAVAILABLE` fail-open.
 `CAP_ROUTER_REJECT` / `CAP_ROUTER_NONE` always mean the selector WAS called and answered REJECT / NONE.)
+
+**Structured fallback context.** The trace keeps these node codes unchanged, while the turn
+carries a separate, Agent-facing record (`ChatTurnContext.intent_funnel_failure`, built by
+`intent_funnel/failure.py`) whenever the funnel abstains for a reason it can explain:
+
+```
+kind    ADMISSION_REJECT · ACQUISITION_FAILURE · CONTRACT_MISMATCH ·
+        EXECUTION_PREFLIGHT · FUNNEL_ABSTAIN
+stage   admission · acquisition · binder · executor
+state   execution_state = not_started (the only state ever published)
+```
+
+The record carries the original query, `capability_id`, `tool_binding`, acquisition strategy,
+resolved arguments with per-slot sources, missing/invalid/unexpected slots, the required
+contract, a summary of the legal turn context (booleans/identifiers only, never asset ids or
+transcripts), a detail string, and — for executor records — the original error. It is routing
+context only: it never executes, authorizes or removes a tool, and the Agent's own registry,
+permissions, approvals and sandbox remain the only authority. The executor adds two reasons of
+its own: `EXECUTOR_PARAMETER_MISMATCH` (every `validate_action` rejection, original message
+retained) and `EXECUTOR_PREFLIGHT` (a proven pre-body authorization/preflight refusal, explicitly
+not a parameter-contract mismatch). A side-effect-uncertain failure is **never** published and
+never replayed through the Agent.
 
 Any funnel-internal fault ends: original query **byte-identical** → Agent —
 never after a side effect, never polluting conversation state, never dressing
@@ -6494,13 +6516,14 @@ dispatch are untouched. §28 remains the acquisition path for **every capability
 without a registered handler and with an explicit declaration**; it is NOT
 deprecated.
 
-The declared strategies keep four business states apart:
+The declared strategies keep five business states apart:
 
 | Strategy | Meaning | Exit |
 |---|---|---|
 | `NO_ARGS` | The real tool requires no arguments. | `{}` certified; a non-empty Registry schema makes this a `POLICY_CONFLICT`. |
 | `RULE_CONTEXT` | A handler resolves every slot from trusted turn facts, the viewer, an attachment or a literal rule. | draft certified; the model is never called. |
 | `MODEL` | A handler authorizes the shared extractor for its MODEL-owned slots only. | extracted values + protected draft → Binder. |
+| `MIXED` | The handler owns at least one deterministic slot AND authorizes the shared extractor for the remaining MODEL-owned slots (today: `cap-social-search`'s explicit `r/<name>` scope). | deterministic values are protected; the model fills only the slots the plan authorizes; both sides → Binder. |
 | `DEFERRED_AGENT` | Admitted, but the real tool needs an input with no legal producer on this path. | `ACQUISITION_DEFERRED` → Agent. |
 
 A capability with no policy and no explicit declaration exits
@@ -6531,13 +6554,13 @@ built. The branch:
    `handler_for(entry.capability_id)`;
 2. dispatches the declared strategy FIRST: `DEFERRED_AGENT` exits
    `ACQUISITION_DEFERRED`; `NO_ARGS` certifies `{}` only when the Registry
-   schema is empty; `MODEL`/`RULE_CONTEXT` require their handler, else
+   schema is empty; `MODEL`/`MIXED`/`RULE_CONTEXT` require their handler, else
    `ACQUISITION_HANDLER_MISSING`;
 3. if a handler owns the capability, calls `await handler.acquire(query, facts)`
    and records `acquisition="CAP_HANDLER"` in the capture; a `None` draft exits
    the turn to the Agent with `REASON_ACQUISITION_MISSING` (fail-closed,
    identical to a generic MISSING);
-4. ONLY a `MODEL` policy calls `slot_plan(...)`; when the plan names
+4. ONLY a `MODEL` / `MIXED` policy calls `slot_plan(...)`; when the plan names
    `model_slots`, it calls the shared extractor ONCE (`deps.argument_extractor`,
    §28.4) with the per-capability prompt (`prompt_for(capability_id)`) and
    `accept_model_values` folds ONLY the authorized, schema-valid values — a
@@ -6613,7 +6636,7 @@ Every capability handler obeys the same boundary:
 |---|---|---|---|---|---|
 | `cap-rag-search` | `MODEL` | `RagSearchHandler` | `query`, `domain` | `query` | `top_k` (tool default) |
 | `cap-web-search` | `MODEL` | `WebSearchHandler` | `query` | `query` | `top_k` (tool default) |
-| `cap-social-search` | `MODEL` | `SocialSearchHandler` | `query`, `platform` (dynamic) | `query` | `limit` (tool default); `subreddit` + pinned `platform` (deterministic scope) |
+| `cap-social-search` | `MIXED` | `SocialSearchHandler` | `query`, `platform` (dynamic) | `query` | `limit` (tool default); `subreddit` + pinned `platform` (deterministic scope) |
 | `cap-translate` | `MODEL` | `TranslateHandler` | `text`, `target_language` | — | executor default |
 | `cap-create-folder` | `MODEL` | `CreateFolderHandler` | `name` | — | — |
 | `cap-add-term` | `MODEL` | `AddTermHandler` | `term`, `domain` | — | — |
@@ -7540,7 +7563,11 @@ value (`ACQUISITION_MISSING`), an unavailable extractor
 (`ACQUISITION_DEFERRED`), a policy/executable mismatch
 (`ACQUISITION_POLICY_CONFLICT` / `ACQUISITION_HANDLER_MISSING`), or a
 non-COMPLETE Binder (`BIND_*`) — exits to the Agent byte-identically.
-Acquisition never invents a value and never re-selects a capability.
+Acquisition never invents a value and never re-selects a capability. Each exit also publishes the
+stage-appropriate structured record (§25.8): acquisition exits as `ACQUISITION_FAILURE`, a
+non-COMPLETE Binder as `CONTRACT_MISMATCH` at stage `binder` with the diagnosed missing/invalid/
+unexpected slots, and an executor schema rejection as `CONTRACT_MISMATCH` at stage `executor`.
+The original user text is replayed unchanged; the record is context, not a permission.
 
 ### 28.6 The extractor model — Qwen3-0.6B parameter-extraction fine-tune
 

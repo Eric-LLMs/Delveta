@@ -287,11 +287,12 @@ async def test_hidden_pick_full_path_resolves_agent_plan_and_hands_over_the_reas
     assert len(calls) == 1                       # AgentExecutor.run was dispatched
     # The Agent receives the ORIGINAL user text plus the funnel's routing fact.
     assert calls[0]["message"] == "随便说点什么"
-    assert calls[0]["context"]["intent_funnel"] == {
-        "reason": REASON_INTENT_FUNNEL_ALLOWLIST_REJECT,
-        "capability_id": "cap-bash",
-        "tool_binding": "bash",
-    }
+    record = calls[0]["context"]["intent_funnel"]
+    assert record["kind"] == "ADMISSION_REJECT"
+    assert record["stage"] == "admission"
+    assert record["reason"] == REASON_INTENT_FUNNEL_ALLOWLIST_REJECT
+    assert record["capability_id"] == "cap-bash"
+    assert record["tool_binding"] == "bash"
     # …and the plan really went through the AGENT branch.
     assert _fallback(caplog) == REASON_INTENT_FUNNEL_ALLOWLIST_REJECT
     plan = await orch.resolve_plan(_ctx())
@@ -320,7 +321,11 @@ async def test_admitted_pick_enters_acquisition_and_records_no_reject(
     # absence of the reject reason proves the gate did not fire.
     assert out is req
     assert _fallback(caplog) != REASON_INTENT_FUNNEL_ALLOWLIST_REJECT
-    assert getattr(ctx, "intent_funnel_reject", None) is None
+    # The later acquisition abstain may publish its own record; what must NOT
+    # appear is an admission-reject record for the admitted pick.
+    record = getattr(ctx, "intent_funnel_failure", None) or {}
+    assert record.get("kind") != "ADMISSION_REJECT"
+    assert record.get("reason") != REASON_INTENT_FUNNEL_ALLOWLIST_REJECT
 
 
 async def test_intent_funnel_allowlist_reject_never_enters_argument_acquisition_or_binder(

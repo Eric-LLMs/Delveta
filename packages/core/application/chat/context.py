@@ -97,11 +97,13 @@ class ChatTurnContext:
     compaction_deferred: str | None = None
     # The kernel run(context=…) payload, assembled per route (see build_turn_context)
     agent_context: dict | None = None
-    # Intent Funnel capability-admission reject for THIS turn. A turn-scoped
-    # routing fact (reason + the rejected capability), never a permission: the
-    # control plane sinks it into ``agent_context`` so the Agent can explain why
-    # the funnel abstained. It neither grants nor restricts the Agent's own tools.
-    intent_funnel_reject: dict | None = None
+    # Structured Intent Funnel fallback for THIS turn: why the funnel did not
+    # certify the turn (admission reject, acquisition failure, Binder contract
+    # mismatch, executor preflight). A turn-scoped routing fact, never a
+    # permission: the control plane sinks it into ``agent_context`` so the Agent
+    # can act with the same facts. It neither grants nor restricts the Agent's
+    # own tools.
+    intent_funnel_failure: dict | None = None
     disable_thinking: bool = False
     # Turn facts for the Funnel (E2E-matrix ruling): the asset a
     # "My Drive/…" path in the SENTENCE resolves to, settled once here at

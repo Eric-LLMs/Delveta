@@ -15,6 +15,11 @@ different business states that this module keeps apart:
                      extractor fills ONLY the MODEL-owned slots the handler
                      authorizes, and the handler draft is the protected /
                      fallback side.
+``MIXED``            the handler has BOTH authoritative deterministic slots
+                     (trusted turn context / an explicit structured token in
+                     the sentence) AND MODEL-owned slots. The draft is kept,
+                     only the remaining authorized slots are extracted, and a
+                     deterministic value is never overwritten.
 ``DEFERRED_AGENT``   the capability is ADMITTED by the funnel but its REAL tool
                      contract needs an input with no legal producer on the
                      funnel path. The turn exits to the Agent with its OWN
@@ -44,12 +49,14 @@ from dataclasses import dataclass
 STRATEGY_NO_ARGS = "NO_ARGS"
 STRATEGY_RULE_CONTEXT = "RULE_CONTEXT"
 STRATEGY_MODEL = "MODEL"
+STRATEGY_MIXED = "MIXED"
 STRATEGY_DEFERRED_AGENT = "DEFERRED_AGENT"
 
 STRATEGIES = frozenset({
     STRATEGY_NO_ARGS,
     STRATEGY_RULE_CONTEXT,
     STRATEGY_MODEL,
+    STRATEGY_MIXED,
     STRATEGY_DEFERRED_AGENT,
 })
 
@@ -85,7 +92,9 @@ POLICIES: dict[str, AcquisitionPolicy] = {
     "cap-create-folder": AcquisitionPolicy(STRATEGY_MODEL),
     "cap-rag-search": AcquisitionPolicy(STRATEGY_MODEL),
     "cap-web-search": AcquisitionPolicy(STRATEGY_MODEL),
-    "cap-social-search": AcquisitionPolicy(STRATEGY_MODEL),
+    # Deterministic scope (an explicit r/<name> token pins subreddit/platform)
+    # PLUS MODEL-owned natural-language slots (query cleaning, a named platform).
+    "cap-social-search": AcquisitionPolicy(STRATEGY_MIXED),
     "cap-translate": AcquisitionPolicy(STRATEGY_MODEL),
     # Deterministic acquisition from trusted turn facts / the user's literal text.
     "cap-vision": AcquisitionPolicy(STRATEGY_RULE_CONTEXT),

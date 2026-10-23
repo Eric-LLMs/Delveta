@@ -8,7 +8,7 @@ directly.
 """
 from __future__ import annotations
 
-from .binder import validate
+from .binder import diagnose, validate
 from .legacy import bind, bind_arguments, validate_action
 
-__all__ = ["validate", "bind", "bind_arguments", "validate_action"]
+__all__ = ["bind", "bind_arguments", "diagnose", "validate", "validate_action"]
