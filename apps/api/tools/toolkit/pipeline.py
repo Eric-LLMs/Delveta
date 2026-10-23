@@ -23,6 +23,8 @@ Stage order and responsibilities:
 4. **render**   — structured JSON → Mermaid / Marp / summary Markdown / .pptx (never raw
    model-written diagram markup).
 5. **persist**  — atomic write into the workspace output dir with collision-proof names.
+   SKIPPED (``persist=False``) when the caller wants the rendered text itself — the
+   chat-window summary lane — so nothing is written to disk on that path.
 
 Every stage raises a :class:`ToolKitError` subclass; ``run`` maps any other failure to a
 generic :class:`ToolKitError` so callers get one readable message.
@@ -76,12 +78,18 @@ def _atomic_write_bytes(path: Path, data: bytes) -> None:
 
 @dataclass
 class ToolKitResult:
-    """The persisted outcome of one pipeline run."""
+    """The outcome of one pipeline run.
+
+    ``files`` is non-empty only when the persist stage ran. ``text`` carries the
+    rendered primary artifact for a run that did NOT persist (the chat-window
+    summary lane), so the caller can return it without touching the filesystem.
+    """
 
     tool: str
     files: list[str] = field(default_factory=list)   # absolute paths of written artifacts
     summary: str = ""                                 # one-line human summary
     stats: dict = field(default_factory=dict)         # deck per-stage instrumentation
+    text: str = ""                                    # rendered Markdown when not persisted
 
 
 class ToolKitPipeline:
@@ -121,24 +129,72 @@ class ToolKitPipeline:
             await self.events.serial(f"{HOOK_PREFIX}/{name}", payload)
 
     # ── public entry ──
-    async def run(self, paths: list[str], output_dir: str | None = None, **params) -> ToolKitResult:
-        """Run the full lifecycle; raises :class:`ToolKitError` subclasses on failure."""
+    async def run(self, paths: list[str], output_dir: str | None = None, *,
+                  persist: bool = True, **params) -> ToolKitResult:
+        """Run the full lifecycle over workspace files; raises :class:`ToolKitError`.
+
+        ``persist=False`` renders and returns ``result.text`` instead of writing an
+        artifact (the explicit output directory is then unused and not resolved).
+        """
         try:
-            return await self._run(paths, output_dir, params)
+            return await self._run(paths, output_dir, params, persist=persist)
         except ToolKitError:
             raise
         except Exception as exc:
             raise ToolKitError(f"{self.tool} generation failed: {exc}") from exc
 
-    async def _run(self, paths: list[str], output_dir: str | None, params: dict) -> ToolKitResult:
+    async def run_sources(self, sources: list[WorkspaceSource],
+                          output_dir: str | None = None, *,
+                          persist: bool = True, stem: str = "artifact",
+                          **params) -> ToolKitResult:
+        """Run generation/render/(persist) over ALREADY-EXTRACTED text.
+
+        For a source that has no workspace path — an authorized drive document or
+        the conversation itself — the validate/ingest stages do not apply, because
+        the caller already read the bytes through its own authorized reader. The
+        generate/render/persist stages are the SAME code ``run`` uses.
+        """
+        try:
+            if not sources:
+                raise SourceError("no content to summarize")
+            return await self._run_sources(sources, output_dir, params,
+                                           persist=persist, stem=stem)
+        except ToolKitError:
+            raise
+        except Exception as exc:
+            raise ToolKitError(f"{self.tool} generation failed: {exc}") from exc
+
+    async def _run(self, paths: list[str], output_dir: str | None, params: dict, *,
+                   persist: bool) -> ToolKitResult:
         await self._hook("before-validate", paths)
-        self._deck_stats = {}
-        resolved, out_dir = await self.stage_validate(paths, output_dir)
-        await self._observe("after-validate", {"paths": [str(p) for p in resolved], "output_dir": str(out_dir)})
+        resolved, out_dir = await self.stage_validate(
+            paths, output_dir, resolve_output=persist)
+        await self._observe("after-validate", {
+            "paths": [str(p) for p in resolved],
+            "output_dir": str(out_dir) if out_dir is not None else ""})
 
         await self._hook("before-ingest", [str(p) for p in resolved])
         sources = await self.stage_ingest(resolved)
         await self._observe("after-ingest", sources)
+
+        return await self._finish(
+            sources, params, persist=persist,
+            stem=resolved[0].stem if resolved else "artifact",
+            out_dir=out_dir if persist else None)
+
+    async def _run_sources(self, sources: list[WorkspaceSource],
+                           output_dir: str | None, params: dict, *,
+                           persist: bool, stem: str) -> ToolKitResult:
+        # No validate/ingest hooks: there is no path to validate and no bytes to
+        # extract — the caller's reader owns both, and it already succeeded.
+        return await self._finish(
+            sources, params, persist=persist, stem=stem,
+            out_dir=self._resolve_output_dir(output_dir) if persist else None)
+
+    async def _finish(self, sources: list[WorkspaceSource], params: dict, *,
+                      persist: bool, stem: str, out_dir: Path | None) -> ToolKitResult:
+        """generate → render → persist (or return the rendered text)."""
+        self._deck_stats = {}
 
         # One-shot capacity check (never a compression trigger — see sources.py).
         batches = plan_big_document(sources)
@@ -149,6 +205,7 @@ class ToolKitPipeline:
                 "call(s), structurally merged; the document is never replaced by a summary",
                 self.tool, total_input_tokens(sources),
                 settings.toolkit_max_input_tokens, len(batches))
+        bigdoc_calls = len(batches) if batches else None
 
         await self._hook("before-generate", sources)
         data = await self.stage_generate(sources, params, batches=batches)
@@ -158,10 +215,14 @@ class ToolKitPipeline:
         rendered = await self.stage_render(data)
         await self._observe("after-render", rendered)
 
+        if not persist:
+            # Nothing is written: the persist hooks never fire, so an observer can
+            # never mistake a chat-window result for a persisted artifact.
+            return self._rendered_result(rendered, bigdoc_calls=bigdoc_calls)
+
         await self._hook("before-persist", rendered)
-        result = await self.stage_persist(
-            rendered, out_dir, stem=resolved[0].stem if resolved else "artifact",
-            bigdoc_calls=len(batches) if batches else None)
+        result = await self.stage_persist(rendered, out_dir, stem=stem,
+                                          bigdoc_calls=bigdoc_calls)
         await self._observe("after-persist", result)
         # Per-stage instrumentation (deck only): real LLM calls, provider token counts,
         # seconds and repair events per pass — carried on the result for the job record.
@@ -169,9 +230,43 @@ class ToolKitPipeline:
             result.stats = self._deck_stats
         return result
 
+    def _rendered_result(self, rendered: dict[str, object], *,
+                         bigdoc_calls: int | None = None) -> ToolKitResult:
+        note = (
+            f" Large input: {bigdoc_calls} raw grounding calls "
+            "(explicit big-document flow)."
+            if bigdoc_calls else ""
+        )
+        primary = rendered.get("summary.md") or ""
+        return ToolKitResult(
+            tool=self.tool, files=[],
+            summary=f"Rendered {self.tool} output (not saved).{note}",
+            stats=dict(getattr(self, "_deck_stats", None) or {}),
+            text=str(primary),
+        )
+
     # ── stage 1: validate ──
-    async def stage_validate(self, paths: list[str], output_dir: str | None) -> tuple[list[Path], Path]:
-        """Path safety + existence + size gates; returns ``(resolved_paths, out_dir)``."""
+    def _resolve_output_dir(self, output_dir: str | None) -> Path:
+        """The caller's explicit directory, else the per-tool default; workspace-confined.
+
+        Resolution happens only for a run that will persist — a chat-window run
+        writes nothing, so an unusable destination must not fail it.
+        """
+        target = self.output_dir if output_dir is None else Path(output_dir)
+        try:
+            return _resolve(self.workspace, str(target))
+        except ValueError as exc:
+            raise SourceError(f"output dir escapes workspace: {output_dir}") from exc
+
+    async def stage_validate(self, paths: list[str], output_dir: str | None, *,
+                             resolve_output: bool = True,
+                             ) -> tuple[list[Path], Path | None]:
+        """Path safety + existence + size gates; returns ``(resolved_paths, out_dir)``.
+
+        ``resolve_output=False`` (a run that will NOT persist) skips output-dir
+        resolution: the chat-window lane writes nothing, so an unusable
+        destination must never fail it.
+        """
         if not paths:
             raise SourceError("no files selected")
         resolved: list[Path] = []
@@ -187,12 +282,8 @@ class ToolKitPipeline:
                 raise SourceError(f"file too large (max {max_mb} MB): {raw}")
             resolved.append(path)
 
-        target = self.output_dir if output_dir is None else Path(output_dir)
-        try:
-            out_dir = _resolve(self.workspace, str(target))
-        except ValueError as exc:
-            raise SourceError(f"output dir escapes workspace: {output_dir}") from exc
-        return resolved, out_dir
+        return resolved, (self._resolve_output_dir(output_dir)
+                          if resolve_output else None)
 
     # ── stage 2: ingest ──
     async def stage_ingest(self, resolved: list[Path]) -> list[WorkspaceSource]:
@@ -428,4 +519,7 @@ class ToolKitPipeline:
             tool=self.tool,
             files=files,
             summary=f"Generated {self.tool} output ({len(files)} file{'s' if len(files) != 1 else ''}).{note}",
+            # Live-call and agent callers both get the rendered Markdown, so a
+            # persisted run can still show what it wrote without a read-back.
+            text=str(rendered.get("summary.md") or ""),
         )

@@ -37,6 +37,11 @@ from core.application.chat.intent_funnel import cap_router as cap_router_mod
 from core.application.chat.intent_funnel import funnel as funnel_mod
 from core.application.chat.intent_funnel import matcher as matcher_mod
 from core.application.chat.intent_funnel import orchestrator as orch_mod
+from core.application.chat.intent_funnel.argument_acquisition.page_scope_resolver import (
+    STATUS_INVALID,
+    TARGET_DOCUMENT,
+    PageScope,
+)
 from core.application.chat.intent_funnel.contract import MATCH_HIT, MatchResult
 from core.application.chat.intent_funnel.observability import new_trace
 from core.application.chat.intent_funnel.registry import content_fingerprint
@@ -66,12 +71,12 @@ class _Kernel:
         raise AssertionError("stream must not run in these cases")
 
 
-def _deps(kernel) -> ChatDeps:
+def _deps(kernel, *, page_scope_resolver=None) -> ChatDeps:
     return ChatDeps(
         session_factory=None, queue=None, drive=None, agent=kernel, llm=None,
         embedder=lambda: object(), viewer=None, new_approval_bridge=None,
         persist_turn_meta=None, log_usage=None, resolve_research=None,
-        run_tool=None,
+        run_tool=None, page_scope_resolver=page_scope_resolver,
     )
 
 
@@ -165,6 +170,102 @@ async def test_acquisition_failure_reaches_the_kernel_context(monkeypatch):
     sent = kernel.calls[0]["context"]
     assert sent["intent_funnel"] == record
     assert kernel.calls[0]["user_text"] == "帮我处理这个"  # byte-identical replay
+
+
+async def test_summary_contract_violation_reaches_the_agent_with_its_evidence(
+        monkeypatch):
+    """A handler-level acquisition exit rides the SAME kernel-facing record.
+
+    ``cap-summary``'s scope model returned a contract-violating reply. The
+    handler must NOT fall back to a page or the document: the Agent receives the
+    category, stage, validation reason, resolver verdict, and the viewer's asset
+    id and page — as real control flow, not logs.
+    """
+    entry = _entry("cap-summary", tool="summary_gen", parameters={})
+    _wire_hit(monkeypatch, entry)
+    kernel = _Kernel()
+
+    async def bad_scope(**kw):
+        return PageScope(target=TARGET_DOCUMENT, page_scope="range",
+                         pages="9-5", status=STATUS_INVALID,
+                         reason="pages must ascend")
+
+    deps = _deps(kernel, page_scope_resolver=bad_scope)
+    ctx = _ctx("总结第 5 页", kernel_facing=True)
+    ctx.history = [
+        {"role": "user", "content": "这是第 5 页"},
+        {"role": "assistant", "content": "好的"},
+    ]
+    ctx.body.viewer = types.SimpleNamespace(
+        asset_id="asset-123", page=7, page_from=5, page_to=9, selections=[])
+    orchestrator = TurnOrchestrator(deps)
+
+    plan = await orchestrator.resolve_plan(ctx, deps)
+    assert plan.kind is PlanKind.AGENT
+
+    record = ctx.agent_context["intent_funnel"]
+    assert record["kind"] == "ACQUISITION_FAILURE"
+    assert record["capability_id"] == "cap-summary"
+    assert record["query"] == "总结第 5 页"
+    acquisition = record["acquisition"]
+    assert acquisition["category"] == "scope_contract_violation"
+    assert acquisition["stage"] == "scope_resolution"
+    assert "pages must ascend" in acquisition["detail"]
+    assert acquisition["scope"]["status"] == STATUS_INVALID
+    assert acquisition["scope"]["pages"] == "9-5"
+    assert acquisition["context"]["viewer_asset_id"] == "asset-123"
+    assert acquisition["context"]["viewer_current_page"] == 7
+
+    await AgentExecutor().run(TurnRequest(ctx=ctx, deps=deps, plan=plan))
+    call = kernel.calls[0]
+    assert call["user_text"] == "总结第 5 页"        # the original request
+    assert call["history"] == ctx.history           # the conversation context
+    sent = call["context"]["intent_funnel"]
+    assert sent["acquisition"] == acquisition       # byte-identical at the kernel
+
+
+# ── a required model slot that the extractor cannot fill -> Agent ───────────────
+
+
+async def test_summary_missing_output_dir_extraction_reaches_the_agent(
+        monkeypatch):
+    """An explicitly requested save destination that cannot be extracted is an
+    acquisition failure, not a silent chat-only summary.
+
+    ``cap-summary`` authorized ``output_dir`` because the sentence says "保存到",
+    but no extractor is wired. The hop exits and the Agent receives the
+    category, stage, and the turn context — through the real control flow.
+    """
+    entry = _entry(
+        "cap-summary", tool="summary_gen",
+        parameters={"path": {"type": "string", "required": False,
+                             "description": "one file"},
+                    "output_dir": {"type": "string", "required": False,
+                                   "description": "directory"}})
+    _wire_hit(monkeypatch, entry)
+    kernel = _Kernel()
+    deps = _deps(kernel)                      # no argument_extractor
+    ctx = _ctx("总结 ./reports/q3.md 并保存到 outputs", kernel_facing=True)
+    ctx.body.viewer = types.SimpleNamespace(
+        asset_id="", page=3, page_from=None, page_to=None, selections=[])
+    orchestrator = TurnOrchestrator(deps)
+
+    plan = await orchestrator.resolve_plan(ctx, deps)
+    assert plan.kind is PlanKind.AGENT
+
+    record = ctx.agent_context["intent_funnel"]
+    assert record["kind"] == "ACQUISITION_FAILURE"
+    assert record["capability_id"] == "cap-summary"
+    assert record["query"] == "总结 ./reports/q3.md 并保存到 outputs"
+    acquisition = record["acquisition"]
+    assert acquisition["category"] == "argument_extraction_failed"
+    assert acquisition["stage"] == "argument_extraction"
+    assert "output_dir" in acquisition["detail"]
+    assert acquisition["context"]["viewer_current_page"] == 3
+
+    await AgentExecutor().run(TurnRequest(ctx=ctx, deps=deps, plan=plan))
+    sent = kernel.calls[0]["context"]["intent_funnel"]
+    assert sent["acquisition"] == acquisition       # byte-identical at the kernel
 
 
 # ── Binder contract mismatch -> the same Agent context ───────────────────────────

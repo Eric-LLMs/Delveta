@@ -1,12 +1,19 @@
 """cap_handler — per-capability parameter handlers (Intent Funnel).
 
 The public boundary of the cap_handler package: the ``CapabilityHandler``
-contract, the ``HANDLERS`` wiring map, the ``handler_for`` lookup, and each
-concrete handler. Wiring lives in ``roster.py``; handlers live in their own
-``*_handler.py`` modules. Nothing else is exported.
+contract, its structured ``AcquisitionFailure`` exit, the ``HANDLERS`` wiring
+map, the ``handler_for`` lookup, and each concrete handler. Wiring lives in
+``roster.py``; handlers live in their own ``*_handler.py`` modules. Nothing
+else is exported.
 """
 from __future__ import annotations
 
+from .acquisition_failure import (
+    CATEGORY_EXTRACTION_FAILED,
+    STAGE_ARGUMENT_EXTRACTION,
+    AcquisitionFailure,
+    turn_context,
+)
 from .acquisition_policy import (
     POLICIES,
     STRATEGIES,
@@ -28,19 +35,23 @@ from .read_file_handler import ReadFileHandler
 from .roster import HANDLERS, CapabilityHandler, handler_for
 from .slot_plan import SlotPlan, SlotPlanningHandler
 from .social_search_handler import SocialSearchHandler
+from .summary_handler import SummaryHandler
 from .translate_handler import TranslateHandler
 from .vision_handler import VisionHandler
 from .web_search_handler import WebSearchHandler
 
 __all__ = [
+    "CATEGORY_EXTRACTION_FAILED",
     "HANDLERS",
     "POLICIES",
+    "STAGE_ARGUMENT_EXTRACTION",
     "STRATEGIES",
     "STRATEGY_DEFERRED_AGENT",
     "STRATEGY_MIXED",
     "STRATEGY_MODEL",
     "STRATEGY_NO_ARGS",
     "STRATEGY_RULE_CONTEXT",
+    "AcquisitionFailure",
     "AcquisitionPolicy",
     "AddTermHandler",
     "CapabilityHandler",
@@ -53,9 +64,11 @@ __all__ = [
     "SlotPlan",
     "SlotPlanningHandler",
     "SocialSearchHandler",
+    "SummaryHandler",
     "TranslateHandler",
     "VisionHandler",
     "WebSearchHandler",
     "handler_for",
     "policy_for",
+    "turn_context",
 ]

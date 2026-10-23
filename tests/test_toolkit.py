@@ -527,7 +527,10 @@ async def test_plugin_tool_executes_via_runtime(tmp_path):
     res = await runtime.execute(ToolExecution("t1", "summary_gen", {"paths": ["doc.md"]}))
     assert res.is_error is False
     rendered = str(res.value)
-    assert "summary" in rendered and ".md" in rendered
+    # No ``output_dir`` ⇒ the rendered Markdown IS the tool result (the chat-window
+    # lane) and nothing is written to the workspace.
+    assert "# Deep Dive" in rendered and "The document explains retrieval." in rendered
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["doc.md"]
 
 
 async def test_plugin_manager_mounts_toolkit_plugins(tmp_path):

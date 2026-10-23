@@ -20,6 +20,9 @@ Legacy .doc additionally gets an embedded-image recovery pass: antiword can only
 them as derived drive assets (same ``RAG 图片/<doc>`` folder and dedupe the ingest worker
 uses), and lists their asset_ids in the tool output so the agent can feed them to
 ``vision``.
+
+The authorized read itself lives in :mod:`api.tools.document_content` — ``summary_gen``
+reads through the same module, so the ACL / storage / extraction rules have one owner.
 """
 from __future__ import annotations
 
@@ -28,20 +31,12 @@ import hashlib
 import logging
 import re
 from pathlib import Path
-from uuid import UUID
 
 from agent import Context, ToolExecution, ToolOutput, ToolRuntime, define_tool, text_block
-from core.application.drive_service import DriveError, DriveService
+from api.tools.document_content import UnsupportedDocument, read_asset_document
+from core.application.drive_service import DriveService
 from core.infrastructure.doc_images import scan_doc_images
-from core.infrastructure.ingest import (
-    UnsupportedFileType,
-    _ppt_as_presentation,
-    _shape_texts,
-    extract_document_text,
-)
 from core.infrastructure.pdf_pages import parse_pages_spec
-from core.infrastructure.request_context import request_user
-from core.infrastructure.storage import object_key
 
 log = logging.getLogger(__name__)
 
@@ -50,72 +45,15 @@ log = logging.getLogger(__name__)
 # FINAL MERGED output — page-scoped multi-page results truncate once, never per page.
 MAX_OUTPUT_CHARS = 20_000
 
-# Formats with a real page/slide axis. ``pages`` is rejected for everything else — the tool
-# never substitutes a full-document read for a page-scoped request.
-_PAGE_AXIS_EXTS = {".pdf", ".pptx", ".potx", ".ppsx"}
-
 # Characters that would turn a doc title into nested folders / broken names.
 _FOLDER_BAD = re.compile(r'[\\/:*?"<>|]')
 
-# Extensions handled by the dedicated vision tool, not by text extraction.
-_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg"}
 
-
-def _extract_pdf_pages(data: bytes, name: str, pages: list[int]) -> str:
-    """PyMuPDF per-page text for the REQUESTED pages only — never the whole document.
-
-    No table detection, no vision-LLM transcription, no scan pass on unrequested pages.
-    Bounds are validated before any page is extracted: an out-of-range request fails the
-    WHOLE call (no partially-extracted valid pages leak into the error path). A requested
-    page that carries no text (scanned page) is a warning inline, not a tool failure.
-    """
-    import pymupdf  # same dep the ingest extractor uses; import kept local & cheap
-
-    doc = pymupdf.open(stream=data, filetype="pdf")
-    try:
-        count = doc.page_count
-        out_of_range = [p for p in pages if p > count]
-        if out_of_range:
-            raise ValueError(
-                f"page(s) {out_of_range} out of range: '{name}' has {count} page(s)"
-            )
-        parts: list[str] = []
-        for page in pages:
-            text = (doc[page - 1].get_text("text") or "").strip()
-            if not text:
-                text = (
-                    "[No extractable text found on this page. PDF visual-page analysis "
-                    "is outside this tool's current scope.]"
-                )
-            parts.append(f"[[Page {page}]]\n{text}")
-        return "\n\n".join(parts)
-    finally:
-        doc.close()
-
-
-def _extract_pptx_slides(data: bytes, name: str, pages: list[int]) -> str:
-    """python-pptx per-slide text for the REQUESTED slides only (no notes parsing added —
-    that stays the full-document ingest path's extra). Reuses the shape-flattening helpers
-    from the core extractor so slide text is byte-identical to what the deck chunks carry.
-    """
-    import io
-
-    from pptx import Presentation
-
-    prs = Presentation(io.BytesIO(_ppt_as_presentation(data)))
-    slides = list(prs.slides)
-    out_of_range = [p for p in pages if p > len(slides)]
-    if out_of_range:
-        raise ValueError(
-            f"slide(s) {out_of_range} out of range: '{name}' has {len(slides)} slide(s)"
-        )
-    parts: list[str] = []
-    for page in pages:
-        body = "\n".join(_shape_texts(slides[page - 1].shapes)).strip()
-        if not body:
-            body = "[No extractable text found on this slide.]"
-        parts.append(f"[[Page {page}]]\n## slide {page}\n{body}")
-    return "\n\n".join(parts)
+def _truncate(text: str) -> str:
+    if len(text) > MAX_OUTPUT_CHARS:
+        total = len(text)
+        return f"{text[:MAX_OUTPUT_CHARS]}\n\n[...truncated; {total} chars total]"
+    return text
 
 
 async def _mint_doc_images(data: bytes, asset, ctx: Context) -> str:
@@ -179,69 +117,36 @@ def register(runtime: ToolRuntime, ctx: Context, llm) -> None:
             raise ValueError('pages must be a string like "3" or "1-3"')
         pages = parse_pages_spec(pages_raw) if pages_raw is not None else None
 
-        # ── permission before storage: the drive ACL decides readability; bytes are only
-        # fetched for assets the current request user may actually read.
-        uid = request_user.get()
-        if uid is None:
-            raise ValueError("read_document requires an authenticated request user context")
-        drive = DriveService(ctx.resolve("session_factory"))
         try:
-            asset = await drive.ensure_asset_readable(uid, UUID(str(asset_id)))
-        except DriveError as exc:
-            raise ValueError(f"asset {asset_id} not readable: {exc}") from None
-        if not asset.object_sha256:
-            raise ValueError(f"asset {asset_id} not found or has no stored object")
-        data = await ctx.resolve("storage").get(object_key(asset.object_sha256))
-        if data is None:
-            raise ValueError(f"object bytes missing for asset {asset_id}")
-
-        name = getattr(asset, "name", None) or "document"
-        ext = Path(name).suffix.lower()
-        mime = (getattr(asset, "mime_type", None) or "").lower()
-        if ext in _IMAGE_EXTS or mime.startswith("image/"):
+            doc = await read_asset_document(ctx, llm, asset_id, pages=pages,
+                                            caller="read_document")
+        except UnsupportedDocument as exc:
             return (
-                f"'{name}' is an image. Call the `vision` tool with asset_id {asset_id} "
+                f"Cannot extract text from '{exc.name}': {exc.reason} — you must NOT "
+                "substitute another document from the conversation for this one; tell "
+                "the user this file could not be read."
+            )
+        if doc.is_image:
+            return (
+                f"'{doc.name}' is an image. Call the `vision` tool with asset_id {asset_id} "
                 "to analyze its visual content."
             )
 
         if pages is not None:
-            if ext not in _PAGE_AXIS_EXTS:
-                raise ValueError(
-                    f"'{name}' has no page axis ({ext or 'unknown format'}): pages is only "
-                    "supported for PDF and PowerPoint slide-based formats "
-                    "(PPTX/POTX/PPSX). Omit pages to read the whole document, and never "
-                    "substitute a full-document read for a page-scoped request."
-                )
-            if ext == ".pdf":
-                text = await asyncio.to_thread(_extract_pdf_pages, data, name, pages)
-            else:
-                text = await asyncio.to_thread(_extract_pptx_slides, data, name, pages)
-            if len(text) > MAX_OUTPUT_CHARS:
-                total = len(text)
-                text = text[:MAX_OUTPUT_CHARS] + f"\n\n[...truncated; {total} chars total]"
-            return f"'{name}' — pages {','.join(str(p) for p in pages)}:\n\n" + text
+            text = _truncate(doc.text)
+            return f"'{doc.name}' — pages {','.join(str(p) for p in pages)}:\n\n" + text
 
-        try:
-            text = await extract_document_text(data, name, llm)
-        except UnsupportedFileType as exc:
-            return (
-                f"Cannot extract text from '{name}': {exc} — you must NOT substitute "
-                "another document from the conversation for this one; tell the user this "
-                "file could not be read."
-            )
+        text = doc.text
         footer = ""
-        if ext == ".doc":
-            footer = await _mint_doc_images(data, asset, ctx)
+        if doc.ext == ".doc":
+            footer = await _mint_doc_images(doc.data, doc.asset, ctx)
         if not text.strip():
             return (
-                f"'{name}' was parsed but contains no extractable text — it may be a "
+                f"'{doc.name}' was parsed but contains no extractable text — it may be a "
                 "scanned/image-only document — and you must NOT summarize a different "
                 "document in its place." + footer
             )
-        if len(text) > MAX_OUTPUT_CHARS:
-            total = len(text)
-            text = text[:MAX_OUTPUT_CHARS] + f"\n\n[...truncated; {total} chars total]"
-        return text + footer
+        return _truncate(text) + footer
 
     runtime.register(
         define_tool(

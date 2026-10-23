@@ -143,6 +143,46 @@ def _handler_arg_sources(draft, final, *, model_slots, fallback_slots,
     return out
 
 
+async def _acquire_with_scope(handler, *, query, facts, history, deps, entry,
+                              capture):
+    """Call a handler's ``acquire`` with the optional page-scope seam.
+
+    Only handlers that declare ``accepts_page_scope`` receive the resolver, and
+    only when the host wired one (``ChatDeps.page_scope_resolver``). Every other
+    handler keeps the exact two-argument call. The resolver's verdict is copied
+    into the telemetry capture (status / target / scope / pages / reason /
+    usage) — observability only; the handler's draft remains the only input to
+    the Binder.
+    """
+    resolver = (getattr(deps, "page_scope_resolver", None)
+                if deps is not None else None)
+    if not getattr(handler, "accepts_page_scope", False):
+        return await handler.acquire(query=query, facts=facts)
+    if resolver is None:
+        # The chat history is NOT part of the resolver seam: a handler may need
+        # it even when no scope model is wired (e.g. cap-summary's last-reply
+        # fallback), so it is passed whenever the handler accepts it.
+        return await handler.acquire(query=query, facts=facts, history=history)
+
+    async def _recording_resolver(**kwargs):
+        scope = await resolver(**kwargs)
+        if capture is not None:
+            capture["page_scope"] = {
+                "capability_id": entry.capability_id,
+                "status": scope.status,
+                "target": scope.target,
+                "scope": scope.page_scope,
+                "pages": scope.pages,
+                "reason": scope.reason,
+                "usage": dict(scope.usage or {}),
+            }
+        return scope
+
+    return await handler.acquire(query=query, facts=facts,
+                                 page_scope_resolver=_recording_resolver,
+                                 history=history)
+
+
 async def run_cascade(ctx, deps, requirements: TurnRequirements,
                       trace: dict, *,
                       recall_min_score: float | None = None,
@@ -661,17 +701,21 @@ async def _acquisition_hop(requirements, deps, entry, *, query, facts, view, tra
     )
     from .argument_acquisition.extractor import EXTRACTOR_NAME, ExtractionUnavailable
     from .cap_handler import (
+        CATEGORY_EXTRACTION_FAILED,
+        STAGE_ARGUMENT_EXTRACTION,
         STRATEGY_DEFERRED_AGENT,
         STRATEGY_MODEL,
         STRATEGY_NO_ARGS,
         STRATEGY_RULE_CONTEXT,
+        AcquisitionFailure,
         SlotPlanningHandler,
         handler_for,
         policy_for,
+        turn_context,
     )
 
     def _acq_fail(reason, *, strategy="", args=None, arg_sources=None,
-                  missing=(), invalid=None, detail=""):
+                  missing=(), invalid=None, detail="", acquisition=None):
         """Record an acquisition exit ONCE: the trace keeps its node code and the
         turn gains the structured record the Agent receives. The record never
         authorizes anything; it is routing context only."""
@@ -683,7 +727,7 @@ async def _acquisition_hop(requirements, deps, entry, *, query, facts, view, tra
                 tool_binding=entry.tool_binding, strategy=strategy, query=query,
                 args=args, arg_sources=arg_sources, missing=missing,
                 invalid=invalid, required=entry.parameters,
-                detail=detail, facts=facts,
+                detail=detail, facts=facts, acquisition=acquisition,
             ))
         return None
 
@@ -762,12 +806,18 @@ async def _acquisition_hop(requirements, deps, entry, *, query, facts, view, tra
     # with the capability's Prompt (the default when it registers none), and only
     # valid, authorized model values are folded into the draft; an empty / invalid
     # / unavailable reply leaves the handler draft (the verbatim query + DET
-    # values) intact, so the original request is never lost. The draft — with or
+    # values) intact, so the original request is never lost. EXCEPTION: a slot
+    # named in ``SlotPlan.required_model_slots`` must be filled by THIS turn's
+    # extraction — if the extractor is unavailable or produces no valid value for
+    # it, the turn exits to the Agent instead of certifying a draft that silently
+    # dropped an argument the user explicitly asked for. The draft — with or
     # without the model's contribution — still passes through the SAME
     # _certify -> Binder -> ActionExecutor -> ToolRuntime handoff below. A handler
     # WITHOUT slot_plan (the asset-anchored vision / read / pdf handlers) plans
-    # nothing and calls no model — byte-identical to before. Only a MODEL policy
-    # ever reaches the extractor; RULE_CONTEXT stops at the handler draft.
+    # nothing and never reaches the SHARED extractor. Only a MODEL / MIXED policy
+    # reaches the extractor; RULE_CONTEXT stops at the handler draft. The page-scope
+    # resolver is a separate, capability-local seam invoked INSIDE a handler's
+    # ``acquire`` (see ``_acquire_with_scope``) — it never supplies asset identity.
     if handler is not None:
         capture_for = getattr(handler, "capture_for", None)
         deferred = None
@@ -778,7 +828,27 @@ async def _acquisition_hop(requirements, deps, entry, *, query, facts, view, tra
                 and str(getattr(facts, "viewer_kind", "") or "").lower() == "video"):
             deferred = capture_for(query=query, facts=facts)
         args = (None if deferred is not None
-                else await handler.acquire(query=query, facts=facts))
+                else await _acquire_with_scope(
+                    handler, query=query, facts=facts, history=history,
+                    deps=deps, entry=entry, capture=capture))
+        if isinstance(args, AcquisitionFailure):
+            # The handler settled WHY it cannot produce a draft (an unresolvable
+            # content source, a broken resolver contract, an unusable save
+            # destination). That evidence rides the SAME failure record the
+            # Agent already receives — it is routing context, never authority.
+            record = args.to_record()
+            if capture is not None:
+                capture["acquisition"] = {
+                    "declared": True, "strategy": "CAP_HANDLER_ABORTED",
+                    "policy": acq_policy.strategy,
+                    "handler": type(handler).__name__,
+                    "failure": record,
+                }
+            return _acq_fail(
+                REASON_ACQUISITION_MISSING, strategy=acq_policy.strategy,
+                missing=missing_required_parameters(entry.parameters, {}),
+                detail=args.detail, acquisition=record,
+            )
         if args is None:
             # Deferred capture: the capability is ALREADY decided (vision) but its
             # picture must come from the PC client (local page / video frame). The
@@ -812,7 +882,7 @@ async def _acquisition_hop(requirements, deps, entry, *, query, facts, view, tra
                 "handler": type(handler).__name__, "args": dict(args),
             }
         # ONLY a MODEL / MIXED policy may run the shared extractor. RULE_CONTEXT
-        # keeps the deterministic handler draft and calls no model.
+        # keeps the handler draft untouched by the extractor.
         plan = None
         model_values: dict = {}
         if acq_policy.strategy in (STRATEGY_MODEL, STRATEGY_MIXED):
@@ -828,6 +898,12 @@ async def _acquisition_hop(requirements, deps, entry, *, query, facts, view, tra
             plan = handler.slot_plan(query=query, facts=facts, draft=args)
         model_slots = tuple(getattr(plan, "model_slots", ()) or ())
         fallback_slots = tuple(getattr(plan, "fallback_slots", ()) or ())
+        # Only slots the plan actually authorizes can be required; anything else
+        # would make the extractor the gate for an unauthorized slot.
+        required_slots = tuple(
+            slot for slot in (getattr(plan, "required_model_slots", ()) or ())
+            if slot in model_slots)
+        extraction_error = ""
         if model_slots:
             if capture is not None:
                 capture["acquisition"]["slot_plan"] = {
@@ -835,8 +911,15 @@ async def _acquisition_hop(requirements, deps, entry, *, query, facts, view, tra
                     "fallback_slots": list(fallback_slots),
                     "default_slots": list(getattr(plan, "default_slots", ()) or ()),
                 }
+                if required_slots:
+                    # Only present when a slot is actually required, so the
+                    # capture of every other capability stays unchanged.
+                    capture["acquisition"]["slot_plan"]["required_model_slots"] = (
+                        list(required_slots))
             extractor = getattr(deps, "argument_extractor", None)
-            if extractor is not None:
+            if extractor is None:
+                extraction_error = "no shared argument extractor is wired"
+            else:
                 from .argument_acquisition import context_bundle
                 from .argument_acquisition.prompts import prompt_for
                 from .argument_acquisition.slot_refine import (
@@ -851,10 +934,14 @@ async def _acquisition_hop(requirements, deps, entry, *, query, facts, view, tra
                         query=query, entry=entry, model_slots=model_slots,
                         bundle=bundle, prompt=prompt_for(entry.capability_id))
                     _mark(capture, "extraction_ms", _t_extract)
-                except ExtractionUnavailable:
+                except ExtractionUnavailable as exc:
                     # No fabricated value: the handler draft (verbatim query + DET
-                    # slots) stands, and the Binder remains the final gate.
+                    # slots) stands, and the Binder remains the final gate. The
+                    # failure is still recorded so a REQUIRED slot can exit.
                     model_values, model_source = {}, ""
+                    extraction_error = (str(exc)
+                                        or "the online argument extractor is "
+                                           "unavailable")
                 model_values = dict(model_values or {})
                 args = accept_model_values(args, model_values,
                                            model_slots=model_slots,
@@ -874,6 +961,35 @@ async def _acquisition_hop(requirements, deps, entry, *, query, facts, view, tra
             fallback_slots=fallback_slots, model_values=model_values,
             strategy=acq_policy.strategy,
         )
+        if required_slots:
+            missing_model = tuple(slot for slot in required_slots
+                                  if not _present(args.get(slot)))
+            if missing_model:
+                # The user explicitly asked for this slot; the extractor did not
+                # deliver it. Returning the handler draft would silently change
+                # the requested output mode, so the Agent takes the turn with the
+                # query, the turn context and the extractor's failure.
+                slots = ", ".join(missing_model)
+                detail = (
+                    f"the request explicitly requires {slots}, but the online "
+                    "argument extraction produced no usable value"
+                    + (f" ({extraction_error})" if extraction_error else "")
+                    + "; the turn was handed to the Agent instead of being "
+                      "executed with the requested argument dropped")
+                record = AcquisitionFailure(
+                    category=CATEGORY_EXTRACTION_FAILED,
+                    stage=STAGE_ARGUMENT_EXTRACTION,
+                    detail=detail,
+                    context=turn_context(facts, history),
+                ).to_record()
+                if capture is not None:
+                    capture["acquisition"]["failure"] = record
+                return _acq_fail(
+                    REASON_ACQUISITION_MODEL_PENDING,
+                    strategy=acq_policy.strategy, args=args,
+                    arg_sources=arg_sources, missing=missing_model,
+                    detail=detail, acquisition=record,
+                )
         return _certify(requirements, entry, args, facts=facts,
                         view=view, trace=trace, capture=capture,
                         failure=failure, strategy=acq_policy.strategy,

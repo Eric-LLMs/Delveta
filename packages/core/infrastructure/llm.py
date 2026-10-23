@@ -266,6 +266,65 @@ class OpenAILLM:
         except (TypeError, json.JSONDecodeError) as exc:
             raise ValueError(f"model did not return valid JSON: {exc}") from exc
 
+    async def complete_json_once(
+        self,
+        prompt: str,
+        system_prompt: str = "You are a helpful assistant.",
+        model: str | None = None,
+        base_url: str | None = None,
+        api_key: str | None = None,
+        timeout: float | None = None,
+        temperature: float = 0.0,
+        max_tokens: int | None = 256,
+        disable_thinking: bool = False,
+        usage_out: dict | None = None,
+    ) -> dict:
+        """One non-streaming structured completion (``stream=False``).
+
+        The chat path intentionally never reads a whole reply off a stream: some
+        providers cut long NON-streaming requests at the gateway, which is why
+        :meth:`complete_json` streams. A small, bounded extraction call is the
+        opposite case — one request, one response, no partial-JSON assembly.
+
+        Thinking is disabled with the provider flag this repository already uses
+        (``enable_thinking``, gated by ``settings.llm_disable_thinking`` unless
+        the caller pins it). A caller that needs the flag regardless of the
+        global knob passes ``disable_thinking=True``.
+
+        Raises the classified provider error on transport failure and
+        :class:`TypeError` when the reply is not a JSON object — neither is
+        repaired here.
+        """
+        client, mdl = self._call_channel(model, base_url, api_key, timeout=timeout)
+        kwargs: dict = {
+            "model": mdl,
+            "messages": self._messages(prompt, system_prompt),
+            "temperature": temperature,
+            "response_format": {"type": "json_object"},
+            "stream": False,
+        }
+        if max_tokens is not None:
+            kwargs["max_tokens"] = max_tokens
+        if settings.llm_disable_thinking or disable_thinking:
+            kwargs["extra_body"] = {"enable_thinking": False}
+        try:
+            resp = await client.chat.completions.create(**kwargs)
+        except Exception as exc:
+            raise raise_classified(exc) from exc
+        if usage_out is not None:
+            usage = getattr(resp, "usage", None)
+            if usage is not None:
+                usage_out["prompt_tokens"] = getattr(usage, "prompt_tokens", 0) or 0
+                usage_out["completion_tokens"] = getattr(usage, "completion_tokens", 0) or 0
+        content = (resp.choices[0].message.content or "") if resp.choices else ""
+        try:
+            parsed = json.loads(content)
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise ValueError(f"model did not return valid JSON: {exc}") from exc
+        if not isinstance(parsed, dict):
+            raise TypeError("model did not return a JSON object")
+        return parsed
+
     async def complete_stream(
         self,
         prompt: str,

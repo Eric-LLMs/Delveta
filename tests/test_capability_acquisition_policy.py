@@ -1,12 +1,16 @@
 """Per-capability acquisition policy — the explicit strategy dispatch.
 
-These tests pin the FOUR business states the orchestrator must keep apart:
+These tests pin the FIVE business states the orchestrator must keep apart:
 
 * ``NO_ARGS`` — the capability genuinely takes no arguments and certifies ``{}``;
 * ``RULE_CONTEXT`` — a handler resolves every slot from trusted context / a
-  deterministic rule and calls NO model;
+  deterministic rule; the shared extractor is never called (the file
+  capabilities may use their own page-scope resolver, never identity);
 * ``MODEL`` — a handler authorizes the extractor for its MODEL-owned slots only,
   and every other draft value stays protected;
+* ``MIXED`` — deterministic slots are protected while the model fills only the
+  authorized remainder; a ``required_model_slots`` slot that does not come back
+  exits to the Agent instead of being silently dropped;
 * ``DEFERRED_AGENT`` — admitted, but the real tool contract cannot be satisfied
   from any legal producer on this path; the turn exits with its OWN reason.
 
@@ -20,12 +24,23 @@ import types
 
 import pytest
 from core.application.chat.intent_funnel import orchestrator as orch_mod
+from core.application.chat.intent_funnel.argument_acquisition.extractor import (
+    ExtractionUnavailable,
+)
+from core.application.chat.intent_funnel.argument_acquisition.page_scope_resolver import (
+    STATUS_AMBIGUOUS,
+    TARGET_UNKNOWN,
+    PageScope,
+)
 from core.application.chat.intent_funnel.argument_acquisition.slot_refine import (
     accept_model_values,
 )
 from core.application.chat.intent_funnel.cap_handler import (
+    CATEGORY_EXTRACTION_FAILED,
     POLICIES,
+    STAGE_ARGUMENT_EXTRACTION,
     STRATEGY_DEFERRED_AGENT,
+    STRATEGY_MIXED,
     STRATEGY_MODEL,
     STRATEGY_NO_ARGS,
     STRATEGY_RULE_CONTEXT,
@@ -38,10 +53,12 @@ from core.application.chat.intent_funnel.contract import (
     REASON_ACQUISITION_DEFERRED,
     REASON_ACQUISITION_HANDLER_MISSING,
     REASON_ACQUISITION_MISSING,
+    REASON_ACQUISITION_MODEL_PENDING,
     REASON_ACQUISITION_POLICY_CONFLICT,
     REASON_ACQUISITION_UNDECLARED,
     REASON_BIND_INVALID,
     REASON_BIND_MISSING,
+    TurnFacts,
 )
 from core.application.chat.intent_funnel.registry import content_fingerprint
 from core.application.chat.intent_funnel.registry.entry import (
@@ -87,13 +104,14 @@ def _view(entry: CapabilityEntry) -> RegistryLiveView:
 
 
 async def _hop(entry: CapabilityEntry, *, query: str, extractor=None,
-               facts=None):
+               facts=None, history=(), resolver=None):
     trace: dict = {}
     capture: dict = {}
-    deps = types.SimpleNamespace(argument_extractor=extractor)
+    deps = types.SimpleNamespace(argument_extractor=extractor,
+                                 page_scope_resolver=resolver)
     out = await orch_mod._acquisition_hop(
         TurnRequirements(), deps, entry, query=query, facts=facts,
-        view=_view(entry), trace=trace, capture=capture)
+        view=_view(entry), trace=trace, capture=capture, history=history)
     return out, trace, capture
 
 
@@ -124,12 +142,14 @@ def test_hidden_capabilities_have_no_acquisition_policy():
         assert policy_for(cid) is None
 
 
-def test_toolkit_trio_is_deferred_and_documents_the_real_contract_gap():
-    for cid in ("cap-mindmap", "cap-slides", "cap-summary"):
+def test_toolkit_pair_is_deferred_and_documents_the_real_contract_gap():
+    # ``cap-summary`` is NOT here: its tool now publishes the string slots the
+    # funnel can produce, so a handler owns it (see the MIXED tests).
+    for cid in ("cap-mindmap", "cap-slides"):
         policy = POLICIES[cid]
         assert policy.strategy == STRATEGY_DEFERRED_AGENT
         assert "paths" in policy.detail
-        assert "no parameters" in policy.detail.lower() or "declares no" in policy.detail
+        assert "string slots only" in policy.detail
 
 
 # ── NO_ARGS: genuine no-args is certified, never inferred from ``{}`` ───────────
@@ -285,8 +305,154 @@ async def test_model_policy_that_produces_nothing_falls_to_the_binder_gate():
 # ── DEFERRED_AGENT: a known contract gap has its own exit ──────────────────────
 
 
+# ── MIXED (cap-summary): deterministic source + a REQUIRED model slot ──────────
+
+_SUMMARY_PARAMS = {
+    "paths": {"type": "array", "required": False, "description": "files"},
+    "path": {"type": "string", "required": False, "description": "one file"},
+    "asset_id": {"type": "string", "required": False, "description": "doc"},
+    "pages": {"type": "string", "required": False, "description": "pages"},
+    "context": {"type": "string", "required": False, "description": "chat"},
+    "output_dir": {"type": "string", "required": False, "description": "dir"},
+}
+
+
+def _summary_entry() -> CapabilityEntry:
+    return _entry("cap-summary", "summary_gen", dict(_SUMMARY_PARAMS))
+
+
+async def test_summary_mixed_acquires_a_literal_workspace_path_without_a_model():
+    # cap-summary is handler-owned: a literal path in the sentence is the source.
+    # With NO save cue the plan authorizes nothing, so the extractor is never
+    # called — and therefore no output_dir can be invented.
+    entry = _summary_entry()
+    out, trace, capture = await _hop(
+        entry, query="总结 ./reports/q3.md", extractor=_boom, facts=None)
+
+    assert trace["acquisition_policy"] == STRATEGY_MIXED
+    assert out.requested_action["args"] == {"path": "./reports/q3.md"}
+    assert "extractor" not in capture["acquisition"]
+    assert "slot_plan" not in capture["acquisition"]
+
+
+async def test_summary_save_cue_folds_the_extracted_output_dir():
+    # The user explicitly asked to save; the shared extractor supplies the
+    # directory and the deterministic content source is kept.
+    entry = _summary_entry()
+    seen: dict = {}
+    out, trace, capture = await _hop(
+        entry, query="总结 ./reports/q3.md 并保存到 outputs", facts=None,
+        extractor=_extractor({"output_dir": "outputs"}, seen=seen))
+
+    assert trace["acquisition_policy"] == STRATEGY_MIXED
+    assert out.requested_action["args"] == {"path": "./reports/q3.md",
+                                            "output_dir": "outputs"}
+    assert seen["slots"] == ("output_dir",)
+    assert capture["acquisition"]["slot_plan"]["required_model_slots"] == [
+        "output_dir"]
+
+
+async def test_summary_extractor_unavailable_hands_the_turn_to_the_agent():
+    # The ONLINE extraction failed. The requested output mode cannot be honoured,
+    # so the turn exits with the structured record instead of silently returning
+    # the summary in chat.
+    entry = _summary_entry()
+
+    async def _down(**kw):
+        raise ExtractionUnavailable("endpoint timed out")
+
+    out, trace, capture = await _hop(
+        entry, query="总结 ./reports/q3.md 并保存到 outputs", facts=None,
+        extractor=_down)
+
+    assert out is None
+    assert trace["fallback"] == REASON_ACQUISITION_MODEL_PENDING
+    record = capture["acquisition"]["failure"]
+    assert record["category"] == CATEGORY_EXTRACTION_FAILED
+    assert record["stage"] == STAGE_ARGUMENT_EXTRACTION
+    assert "endpoint timed out" in record["detail"]
+    assert "output_dir" in record["detail"]
+
+
+async def test_summary_extraction_without_the_slot_hands_the_turn_to_the_agent():
+    # The call succeeded but returned no usable directory: same rule, no
+    # chat-only downgrade.
+    entry = _summary_entry()
+    out, trace, capture = await _hop(
+        entry, query="总结 ./reports/q3.md 并保存到 outputs", facts=None,
+        extractor=_extractor({"output_dir": "   "}))
+
+    assert out is None
+    assert trace["fallback"] == REASON_ACQUISITION_MODEL_PENDING
+    assert capture["acquisition"]["failure"]["category"] == CATEGORY_EXTRACTION_FAILED
+
+
+async def test_summary_required_slot_without_an_extractor_hands_the_turn_to_the_agent():
+    entry = _summary_entry()
+    out, trace, capture = await _hop(
+        entry, query="总结 ./reports/q3.md 并保存到 outputs", facts=None,
+        extractor=None)
+
+    assert out is None
+    assert trace["fallback"] == REASON_ACQUISITION_MODEL_PENDING
+    record = capture["acquisition"]["failure"]
+    assert record["category"] == CATEGORY_EXTRACTION_FAILED
+    assert "no shared argument extractor is wired" in record["detail"]
+
+
+async def test_summary_ambiguous_intent_with_a_viewer_page_uses_that_page():
+    # Priority 2: the LLM answered normally but did not settle the intent. The
+    # viewer carries an asset id AND a current page, so exactly that page of
+    # that document is summarized — not the whole document, not a previous reply.
+    entry = _summary_entry()
+
+    async def _ambiguous(**kw):
+        return PageScope(target=TARGET_UNKNOWN, page_scope="unknown",
+                         status=STATUS_AMBIGUOUS, reason="target not determined")
+
+    out, trace, capture = await _hop(
+        entry, query="总结一下", extractor=_boom,
+        facts=TurnFacts(viewer_asset_id="asset-9", viewer_current_page=4),
+        resolver=_ambiguous,
+        history=[{"role": "assistant", "content": "之前说过 RRF"}])
+
+    assert out.requested_action["args"] == {"asset_id": "asset-9", "pages": "4"}
+    assert trace["acquisition_policy"] == STRATEGY_MIXED
+    assert capture["page_scope"]["status"] == STATUS_AMBIGUOUS
+
+
+async def test_summary_ambiguous_intent_without_a_page_uses_the_last_reply():
+    entry = _entry("cap-summary", "summary_gen", {
+        "context": {"type": "string", "required": False, "description": "chat"},
+    })
+
+    async def _ambiguous(**kw):
+        return PageScope(target=TARGET_UNKNOWN, page_scope="unknown",
+                         status=STATUS_AMBIGUOUS)
+
+    out, _trace, _capture = await _hop(
+        entry, query="总结一下", extractor=_boom,
+        facts=TurnFacts(viewer_asset_id="asset-9"),
+        resolver=_ambiguous,
+        history=[{"role": "assistant", "content": "之前说过 RRF"}])
+
+    assert out.requested_action["args"] == {"context": "之前说过 RRF"}
+
+
+async def test_summary_without_a_resolver_still_receives_the_chat_history():
+    # The history is not part of the page-scope seam: cap-summary's last-reply
+    # fallback must work even when the host wired no scope model.
+    entry = _entry("cap-summary", "summary_gen", {
+        "context": {"type": "string", "required": False, "description": "chat"},
+    })
+    out, _trace, _capture = await _hop(
+        entry, query="总结一下", extractor=_boom,
+        history=[{"role": "assistant", "content": "之前说过 RRF"}])
+
+    assert out.requested_action["args"] == {"context": "之前说过 RRF"}
+
+
 @pytest.mark.parametrize("cid,tool", [
-    ("cap-summary", "summary_gen"),
     ("cap-mindmap", "mindmap_gen"),
     ("cap-slides", "slides_gen"),
 ])

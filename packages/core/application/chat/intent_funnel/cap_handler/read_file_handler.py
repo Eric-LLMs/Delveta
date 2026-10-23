@@ -7,8 +7,9 @@ and the runtime dispatches on the path shape (``fs_tools._DRIVE_PATH_RE``). Ther
 is NO asset model on this capability: the path is a filesystem/workspace path,
 never an ``asset_id``, and it is never reachable from a viewer/attachment.
 
-The value is resolved DETERMINISTICALLY — no model call, no Qwen. ``path`` may
-come ONLY from a literal path token in the user's own sentence:
+The value is resolved DETERMINISTICALLY — no model call, no Qwen. The literal
+token grammar lives in :mod:`.path_token` (shared with ``cap-summary``), and
+``path`` may come ONLY from the user's own sentence:
 
 * a DRIVE path — the ``My Drive/`` / ``我的云盘/`` prefix (matched
   case-insensitively) plus the following path text, copied VERBATIM so the
@@ -38,41 +39,7 @@ token, or a blank query all return ``None`` — the turn exits to the Agent
 """
 from __future__ import annotations
 
-import re
-
-# The drive plane is a path PREFIX inside the sentence: "My Drive/..." /
-# "我的云盘/...". Matched case-insensitively (My Drive / my drive / MY DRIVE) with
-# a half- or full-width slash; the match NEVER rewrites the text — the returned
-# span is the caller's original literal (casing and spaces intact).
-_DRIVE_PREFIX_RE = re.compile(r"(?:My Drive|我的云盘)\s*[／/]\s*\S", re.IGNORECASE)
-
-# A workspace path token: a whitespace-delimited token that carries a directory
-# slash, or is a "<name>.<ext>" filename. Everything is copied verbatim.
-_PATH_SLASH_CHARS = ("/", "／")
-_FILE_EXT_RE = re.compile(r"^\S+\.[A-Za-z0-9]{1,8}$")
-
-
-def _drive_path(message: str) -> str | None:
-    """The drive-plane path (prefix + verbatim remainder), or ``None``.
-
-    The prefix anchors the path; everything from it to the end of the sentence is
-    the path (a Drive filename may contain spaces, so there is no whitespace cut).
-    """
-    match = _DRIVE_PREFIX_RE.search(message)
-    if match is None:
-        return None
-    return message[match.start():].strip() or None
-
-
-def _workspace_path(message: str) -> str | None:
-    """The first literal workspace path token, or ``None``.
-
-    "First" is by position, so the earliest path token in the sentence wins.
-    """
-    for token in message.split():
-        if any(ch in token for ch in _PATH_SLASH_CHARS) or _FILE_EXT_RE.match(token):
-            return token
-    return None
+from .path_token import literal_path
 
 
 class ReadFileHandler:
@@ -91,9 +58,7 @@ class ReadFileHandler:
         message = str(query or "").strip()
         if not message:
             return None
-        path = _drive_path(message)
-        if path is None:
-            path = _workspace_path(message)
+        path = literal_path(message)
         if path is None:
             return None
         return {"path": path}

@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import uuid4
 
+from api.tools import document_content as document_content_mod
 from api.tools import pdf_tools as pdf_mod
 from api.tools import rag_search_tool as rag_mod
 from api.tools import read_document_tool as read_document_mod
@@ -389,6 +390,40 @@ def _make_fake_active_view(view: RegistryLiveView):
     return _fake_active_view
 
 
+def _page_scope_seam(llm):
+    """Deterministic stand-in for the ONLINE page-scope resolver.
+
+    The e2e stack is hermetic (no live model), so the seam reports the scope the
+    viewer facts already declare — the exact decision the production resolver
+    makes for an explicit, complete viewer range. An incomplete range stays
+    AMBIGUOUS so the half-open test still fails closed.
+    """
+    from core.application.chat.intent_funnel.argument_acquisition.page_scope_resolver import (
+        SCOPE_ALL,
+        SCOPE_RANGE,
+        SCOPE_SINGLE,
+        SCOPE_UNKNOWN,
+        STATUS_AMBIGUOUS,
+        TARGET_DOCUMENT,
+        PageScope,
+    )
+
+    async def _resolve(*, query, facts, history=(), capability="", asset_id=""):
+        start = getattr(facts, "viewer_page_from", None)
+        end = getattr(facts, "viewer_page_to", None)
+        if start is None and end is None:
+            return PageScope(target=TARGET_DOCUMENT, page_scope=SCOPE_ALL)
+        if start is not None and end is not None and start <= end:
+            return PageScope(
+                target=TARGET_DOCUMENT,
+                page_scope=SCOPE_SINGLE if start == end else SCOPE_RANGE,
+                pages=str(start) if start == end else f"{start}-{end}")
+        return PageScope(target=TARGET_DOCUMENT, page_scope=SCOPE_UNKNOWN,
+                         status=STATUS_AMBIGUOUS, reason="incomplete viewer range")
+
+    return _resolve
+
+
 def build_stack(
     monkeypatch,
     *,
@@ -444,8 +479,13 @@ def build_stack(
     monkeypatch.setattr(vision_mod, "DriveService", _read_drive(image_asset))
     monkeypatch.setattr(vision_mod, "_mime_for", lambda asset: "image/png")
     monkeypatch.setattr(vision_mod, "describe_image", vision_seam.describe)
+    # The authorized read lives in ``api.tools.document_content`` (shared with
+    # summary_gen); ``read_document_tool`` only keeps its own DriveService for the
+    # legacy .doc image-recovery pass.
+    monkeypatch.setattr(document_content_mod, "DriveService", _read_drive(pdf_asset))
+    monkeypatch.setattr(document_content_mod, "extract_document_text",
+                        read_doc_seam.extract)
     monkeypatch.setattr(read_document_mod, "DriveService", _read_drive(pdf_asset))
-    monkeypatch.setattr(read_document_mod, "extract_document_text", read_doc_seam.extract)
     # pdf_extract_text / pdf_table_to_text authorize through DriveService before bytes,
     # then read the stored object — same seams as read_document.
     monkeypatch.setattr(pdf_mod, "DriveService", _read_drive(pdf_asset))
@@ -497,6 +537,10 @@ def build_stack(
     from api.routers import chat as chat_mod   # the module the app's router is built from
 
     monkeypatch.setattr(chat_mod, "_extract_arguments", slot_seam.extract)
+    # The page-scope lane is the OTHER online-LLM seam. Keep the e2e stack
+    # hermetic by answering from the viewer facts (the production resolver's
+    # verdict for an explicit range), never from a live model.
+    monkeypatch.setattr(chat_mod, "_page_scope_for_llm", _page_scope_seam)
 
     _set_gates(monkeypatch)
     app = build_app(monkeypatch, port, retrieval, kernel, broker)

@@ -79,6 +79,9 @@ from core.application.chat.executors.base import ChatDeps, ViewerDeps
 from core.application.chat.intent_funnel.argument_acquisition.extractor import (
     extract as _extract_arguments,
 )
+from core.application.chat.intent_funnel.argument_acquisition.page_scope_resolver import (
+    for_llm as _page_scope_for_llm,
+)
 from core.application.chat.lifecycle import (
     extract_retrieval as _extract_retrieval,  # noqa: F401
 )
@@ -373,6 +376,12 @@ def _build_chat_deps(queue: TaskQueue, drive: DriveService) -> ChatDeps:
         # acquisition provider is NOT wired here — the cascade builds the production
         # one per turn from the live Registry (it needs the turn's ctx/facts).
         argument_extractor=_extract_arguments,
+        # Page-scope acquisition for the file capabilities: the ONLINE LLM
+        # settles the sentence's reading scope (all / single / range), while
+        # document identity stays in TurnFacts. Only read_document /
+        # pdf_extract_text consume it; an unwired/None seam keeps the legacy
+        # viewer-window rule.
+        page_scope_resolver=_page_scope_for_llm(llm),
         # Deferred client capture: funnel-certified vision pauses the stream until the
         # PC client uploads the page/frame; the same turn then resumes (no re-funnel).
         capture_broker=_CAPTURE_BROKER,

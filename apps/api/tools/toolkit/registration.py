@@ -17,4 +17,5 @@ def register_toolkit_plugins(manager: PluginManager, ctx, llm, workspace=None) -
     """Register the three toolkit plugins, hooking their pipelines to the runtime EventBus."""
     events = manager.runtime.events
     for tool in TOOLS:
-        manager.register(build_toolkit_plugin(tool, llm, events=events, workspace=workspace))
+        manager.register(build_toolkit_plugin(tool, llm, events=events,
+                                              workspace=workspace, ctx=ctx))

@@ -91,6 +91,50 @@ def _sources(raw: object) -> dict[str, str]:
     return {str(k): _text(v, 80) for k, v in raw.items()}
 
 
+def _acquisition(raw: object) -> dict[str, Any]:
+    """Normalize a handler-level acquisition failure into the record.
+
+    Shape (all keys optional except the three identity strings)::
+
+        {"category": ..., "stage": ..., "detail": ...,
+         "scope":   {"status", "target", "page_scope", "pages", "reason"},
+         "context": {"viewer_asset_id", "viewer_current_page", ...}}
+
+    The handler decides what evidence is relevant; this layer only flattens it
+    so a malformed row can never smuggle extra prompt lines.
+    """
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, Any] = {}
+    for key in ("category", "stage"):
+        text = _text(raw.get(key), 80)
+        if text:
+            out[key] = text
+    detail = _text(raw.get("detail"), 600)
+    if detail:
+        out["detail"] = detail
+    scope = raw.get("scope")
+    if isinstance(scope, dict):
+        item: dict[str, Any] = {}
+        for key in ("status", "target", "page_scope"):
+            text = _text(scope.get(key), 80)
+            if text:
+                item[key] = text
+        if "pages" in scope:
+            item["pages"] = _value(scope["pages"])
+        reason = _text(scope.get("reason"), 300)
+        if reason:
+            item["reason"] = reason
+        if item:
+            out["scope"] = item
+    context = raw.get("context")
+    if isinstance(context, dict):
+        item = {str(k): _value(v) for k, v in context.items() if v is not None}
+        if item:
+            out["context"] = item
+    return out
+
+
 def required_parameters(schema: object) -> dict[str, dict]:
     """Project a Registry/tool schema into the Agent-facing required contract.
 
@@ -180,6 +224,7 @@ def build_failure(
     required: object = None,
     detail: str = "",
     facts: object = None,
+    acquisition: object = None,
     execution_state: str = EXECUTION_NOT_STARTED,
     original_error: str = "",
 ) -> dict:
@@ -202,6 +247,9 @@ def build_failure(
         "detail": _text(detail),
         "execution_state": _text(execution_state, 40) or EXECUTION_NOT_STARTED,
     }
+    normalized = _acquisition(acquisition)
+    if normalized:
+        record["acquisition"] = normalized
     if original_error:
         record["original_error"] = _text(original_error)
     return record

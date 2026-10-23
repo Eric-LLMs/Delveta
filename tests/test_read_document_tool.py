@@ -14,6 +14,7 @@ from uuid import uuid4
 from agent import Context
 from agent.engine.decisions import ToolExecution
 from agent.engine.runtime import ToolRuntime
+from api.tools import document_content
 from core.infrastructure.storage import LocalStorage, object_key
 
 from apps.api.tools import read_document_tool
@@ -42,8 +43,8 @@ async def _register(monkeypatch, tmp_path, name: str, data: str | bytes,
     drive = make_drive(tmp_path)
     uid = user or uuid4()
     asset = await drive.assets.create(uid, name, object_sha256=sha)
-    monkeypatch.setattr(read_document_tool, "DriveService", lambda sf: drive)
-    read_document_tool.request_user.set(uid)
+    monkeypatch.setattr(document_content, "DriveService", lambda sf: drive)
+    document_content.request_user.set(uid)
     runtime = ToolRuntime()
     read_document_tool.register(runtime, _ctx(tmp_path), llm=None)
     return runtime, str(asset.id)
@@ -210,13 +211,15 @@ async def _register_doc(monkeypatch, tmp_path, images, skipped=0):
     drive = make_drive(tmp_path)
     uid = uuid4()
     asset = await drive.assets.create(uid, "report.doc", object_sha256=sha)
+    monkeypatch.setattr(document_content, "DriveService", lambda sf: drive)
+    # the legacy .doc image-minting pass constructs its own DriveService in the tool module
     monkeypatch.setattr(read_document_tool, "DriveService", lambda sf: drive)
-    read_document_tool.request_user.set(uid)
+    document_content.request_user.set(uid)
 
     async def _text(_data, _name, _llm):
         return "quarterly numbers [pic] and more"
 
-    monkeypatch.setattr(read_document_tool, "extract_document_text", _text)
+    monkeypatch.setattr(document_content, "extract_document_text", _text)
     monkeypatch.setattr(read_document_tool, "scan_doc_images", lambda _d: (images, skipped))
 
     runtime = ToolRuntime()
@@ -423,11 +426,11 @@ async def test_pages_truncation_applies_once_to_merged_output(monkeypatch, tmp_p
 
 async def test_no_request_user_fails_before_storage(monkeypatch, tmp_path):
     runtime, asset_id = await _register(monkeypatch, tmp_path, "a.txt", b"hello")
-    token = read_document_tool.request_user.set(None)
+    token = document_content.request_user.set(None)
     try:
         res = await _call(runtime, asset_id)
     finally:
-        read_document_tool.request_user.reset(token)
+        document_content.request_user.reset(token)
     assert res.is_error is True
     assert "authenticated request user" in _err(res)
 
@@ -438,7 +441,7 @@ async def test_foreign_asset_denied_before_bytes_fetch(monkeypatch, tmp_path):
     # as "object bytes missing"; the ACL must fire first with a not-readable error.
     sha = hashlib.sha256(b"hello").hexdigest()
     await LocalStorage(tmp_path).delete(object_key(sha))
-    read_document_tool.request_user.set(uuid4())
+    document_content.request_user.set(uuid4())
     res = await _call(runtime, asset_id)
     assert res.is_error is True
     assert "not readable" in _err(res)

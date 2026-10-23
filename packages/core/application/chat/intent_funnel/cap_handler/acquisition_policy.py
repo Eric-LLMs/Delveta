@@ -8,9 +8,12 @@ different business states that this module keeps apart:
 ``NO_ARGS``          the capability genuinely takes no arguments (the Registry
                      schema is empty AND the real tool requires none). The turn
                      certifies ``{}``.
-``RULE_CONTEXT``     a capability handler resolves EVERY slot deterministically
-                     from trusted turn context, the viewer, an attachment or an
-                     explicit rule in the user's own sentence. No model call.
+``RULE_CONTEXT``     a capability handler resolves EVERY slot from trusted turn
+                     context, the viewer, an attachment or an explicit rule in
+                     the user's own sentence. It never runs the SHARED extractor;
+                     a handler may consult ONE capability-scoped resolver when
+                     the host wires it (today: the file capabilities' page-scope
+                     lane), and that resolver cannot supply document identity.
 ``MODEL``            a capability handler owns the capability; the shared
                      extractor fills ONLY the MODEL-owned slots the handler
                      authorizes, and the handler draft is the protected /
@@ -33,13 +36,21 @@ provider explicitly declares the capability for the generic Argument Path Router
 This module maps and documents only: no acquisition logic, no handler
 implementation, no tool execution.
 
-The toolkit trio (``cap-summary`` / ``cap-mindmap`` / ``cap-slides``) is
-DEFERRED_AGENT on the verified contract gap in ``_TOOLKIT_DEFERRED_DETAIL``:
-the real ``summary_gen`` / ``mindmap_gen`` / ``slides_gen`` tools REQUIRE
-``paths: string[]`` (``minItems: 1``), the live Registry declares no parameters
-for them, the chat request carries no selected-workspace-file producer, and the
-executor gate (``binder.legacy.validate_action``) accepts string slots only.
-No argument may be invented to paper over that gap.
+The toolkit pair (``cap-mindmap`` / ``cap-slides``) is DEFERRED_AGENT on the
+verified contract gap in ``_TOOLKIT_DEFERRED_DETAIL``: the real
+``mindmap_gen`` / ``slides_gen`` tools REQUIRE ``paths: string[]``
+(``minItems: 1``), the chat request carries no selected-workspace-file producer,
+and the executor gate (``binder.legacy.validate_action``) accepts string slots
+only. No argument may be invented to paper over that gap.
+
+``cap-summary`` is NOT on that list any more: its tool now declares the string
+slots the funnel can legally produce (``asset_id`` resolved from turn facts,
+``pages`` from the capability-local scope resolver, ``path`` copied verbatim from
+the user's sentence, ``context`` for a conversation summary), so a handler owns
+the content source, and ``output_dir`` is a MODEL-owned slot extracted by the
+shared extractor ONLY when the sentence explicitly asks to save — hence MIXED.
+With no save cue the slot is never requested, so ``summary_gen`` returns the
+summary to the chat window and writes nothing.
 """
 from __future__ import annotations
 
@@ -76,10 +87,10 @@ class AcquisitionPolicy:
 
 _TOOLKIT_DEFERRED_DETAIL = (
     "tool requires paths: string[] (minItems 1) with optional output_dir; "
-    "slides also accepts count 3-20. The Registry declares no parameters, the "
-    "chat request carries no selected-workspace-file source, and validate_action "
-    "accepts string slots only. A toolkit-suite resolver is required before this "
-    "capability can be acquired on the funnel path."
+    "slides also accepts count 3-20. The chat request carries no "
+    "selected-workspace-file source, and validate_action accepts string slots "
+    "only. A toolkit-suite resolver is required before this capability can be "
+    "acquired on the funnel path."
 )
 
 # ── the declaration ─────────────────────────────────────────────────────────────
@@ -102,13 +113,15 @@ POLICIES: dict[str, AcquisitionPolicy] = {
     "cap-read-file": AcquisitionPolicy(STRATEGY_RULE_CONTEXT),
     "cap-pdf-extract-text": AcquisitionPolicy(STRATEGY_RULE_CONTEXT),
     "cap-pdf-table-to-text": AcquisitionPolicy(STRATEGY_RULE_CONTEXT),
+    # Deterministic content source (turn-facts asset / the user's literal path /
+    # the scope resolver's verdict) PLUS one MODEL-owned slot: the output
+    # directory, authorized only when the sentence explicitly asks to save.
+    "cap-summary": AcquisitionPolicy(STRATEGY_MIXED),
     # Admitted, but the real tool contract cannot be satisfied on this path.
     "cap-mindmap": AcquisitionPolicy(STRATEGY_DEFERRED_AGENT,
                                      _TOOLKIT_DEFERRED_DETAIL),
     "cap-slides": AcquisitionPolicy(STRATEGY_DEFERRED_AGENT,
                                     _TOOLKIT_DEFERRED_DETAIL),
-    "cap-summary": AcquisitionPolicy(STRATEGY_DEFERRED_AGENT,
-                                     _TOOLKIT_DEFERRED_DETAIL),
 }
 
 

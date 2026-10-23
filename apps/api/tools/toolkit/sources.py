@@ -180,6 +180,23 @@ def remap_citations(obj: object, offsets: dict[str, int]) -> object:
     return obj
 
 
+def from_text(name: str, text: str, *, path: str = "") -> WorkspaceSource:
+    """A source built from text the caller ALREADY read through its own authorized path.
+
+    Used when there is no workspace file to load: an authorized drive document
+    (read via the shared asset reader) or the conversation transcript. ``name``
+    is the citation label (``[name:line]``), so it must be the document's real
+    name or ``conversation`` — never a synthetic path.
+    """
+    return WorkspaceSource(
+        name=name or "document",
+        path=path or (name or "document"),
+        text=text,
+        char_count=len(text),
+        line_count=text.count("\n") + 1,
+    )
+
+
 async def load_sources(workspace: Path, paths: list[Path], llm) -> list[WorkspaceSource]:
     """Validate, read, and extract text for every input file.
 

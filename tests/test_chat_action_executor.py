@@ -103,8 +103,15 @@ _FAKE_KERNEL = SimpleNamespace(runtime=SimpleNamespace(schemas=lambda: [
     {"name": "summary_gen", "description": "d",
      "parameters": {
          "type": "object",
-         "properties": {"paths": {"type": "array", "items": {"type": "string"}}},
-         "required": ["paths"]}},
+         "properties": {
+             "paths": {"type": "array", "items": {"type": "string"}},
+             "path": {"type": "string"},
+             "asset_id": {"type": "string"},
+             "pages": {"type": "string"},
+             "context": {"type": "string"},
+             "output_dir": {"type": "string"},
+         },
+         "required": []}},
 ]))
 
 
@@ -288,18 +295,16 @@ async def test_malformed_action_escalates_and_never_touches_the_seam():
     assert "missing slot: name" in record["original_error"]
 
 
-# Shadow-A/B #17 pin: cap-summary carries an EMPTY registry
-# schema, so a certified action arrives with args={}; the live summary_gen
-# roster entry requires ["paths"] (workspace files only, per soul.md). The
-# takeover is therefore SEMANTICALLY DEAD: it always escalates at the schema
-# gate, pre-execution, seam untouched. Fail-safe — but it can never produce a
-# true hit for attachment-summarization turns, which is why #17 stays suspect.
-async def test_registry_empty_schema_summary_always_escalates_at_the_gate():
+# Shadow-A/B #17, revisited: cap-summary now publishes the real summary_gen
+# slots (asset_id / path / pages / context / output_dir, none globally
+# required), so a certified attachment summary reaches the seam with its
+# arguments intact instead of dying at the schema gate.
+async def test_certified_summary_asset_action_reaches_the_seam():
     calls = []
 
-    async def run_tool(*a):
-        calls.append(a)
-        return {"ok": True}
+    async def run_tool(tool, args, ctx):
+        calls.append((tool, args))
+        return {"ok": True, "output": "# Summary"}
 
     ctx = SimpleNamespace(user_text="帮我总结一下这份文档", session_memory=_SM(),
                           history=[])
@@ -310,12 +315,13 @@ async def test_registry_empty_schema_summary_always_escalates_at_the_gate():
         run_tool=run_tool,
     )
     plan = ExecutionPlan(kind=PlanKind.ACTION,
-                         action={"tool": "summary_gen", "args": {},
+                         action={"tool": "summary_gen",
+                                 "args": {"asset_id": "asset-1", "pages": "5"},
                                  "capability_id": "cap-summary"})
-    req = TurnRequest(ctx=ctx, deps=deps, plan=plan)
-    with pytest.raises(EscalateToAgent, match="schema"):
-        await _drain(req)
-    assert calls == []  # the certified-but-empty args never reach the seam
+    events = await _drain(TurnRequest(ctx=ctx, deps=deps, plan=plan))
+
+    assert calls == [("summary_gen", {"asset_id": "asset-1", "pages": "5"})]
+    assert events[0]["data"] == "# Summary"
 
 
 async def test_tool_missing_from_live_roster_without_stamp_is_terminal_integrity():

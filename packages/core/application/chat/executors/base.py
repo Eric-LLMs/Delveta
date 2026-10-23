@@ -120,6 +120,13 @@ class ChatDeps:
     # existing tests green). It is turn-independent: the cascade calls it at the
     # acquisition hop with the turn's context bundle.
     argument_extractor: Any = None
+    # Page-scope seam (file capabilities): ``await resolver(*, query, facts,
+    # history, capability, asset_id) -> PageScope``. It asks the ONLINE LLM for
+    # the sentence's reading scope (all / single / range) and returns a typed
+    # verdict; the capability handlers map it to ``pages``. None = not wired ->
+    # the handlers keep their legacy viewer-window rule. Document identity is
+    # NOT part of this seam: ``asset_id`` still comes from TurnFacts.
+    page_scope_resolver: Any = None
     # Deferred-capture seam (funnel-certified vision): the in-process broker that
     # pauses ONE streaming turn until the PC client uploads the page/frame capture.
     # None = not wired → a capture-required plan degrades honestly (the ACTION then

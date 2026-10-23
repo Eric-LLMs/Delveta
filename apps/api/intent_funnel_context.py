@@ -132,6 +132,72 @@ def _context(value: object) -> str:
     return "; ".join(parts) or "none"
 
 
+def _acquisition_failure(value: object) -> list[str]:
+    """Render the handler's structured acquisition exit (none when absent).
+
+    The Agent gets exactly what the business rules require to continue the
+    dialogue: the failure category and stage, the specific validation reason,
+    the page-scope model's own verdict, and the viewer's asset id and page.
+    """
+    if not isinstance(value, dict) or not value:
+        return []
+    lines: list[str] = []
+    bits: list[str] = []
+    category = _one_line(value.get("category"))
+    stage = _one_line(value.get("stage"))
+    if category:
+        bits.append(f"category {_code(category)}")
+    if stage:
+        bits.append(f"stage {_code(stage)}")
+    if bits:
+        lines.append("- acquisition failure: " + "; ".join(bits))
+    detail = _one_line(value.get("detail"), 300)
+    if detail:
+        lines.append(f"- failure detail: {detail}")
+
+    scope = value.get("scope")
+    if isinstance(scope, dict) and scope:
+        parts: list[str] = []
+        for key in ("status", "target", "page_scope", "pages", "reason"):
+            raw = scope.get(key)
+            if raw is None or raw == "":
+                continue
+            parts.append(f"{key}={_one_line(raw, 200)}")
+        if parts:
+            lines.append("- page-scope model result: " + "; ".join(parts))
+
+    context = value.get("context")
+    if isinstance(context, dict) and context:
+        viewer: list[str] = []
+        for key, label in (("viewer_asset_id", "viewer asset_id"),
+                           ("attachment_asset_id", "attachment asset_id"),
+                           ("path_asset_id", "path asset_id")):
+            asset = _one_line(context.get(key))
+            if asset:
+                viewer.append(f"{label}={_code(asset)}")
+        page = context.get("viewer_current_page")
+        if page is not None:
+            viewer.append(f"current page={page}")
+        page_from = context.get("viewer_page_from")
+        page_to = context.get("viewer_page_to")
+        if page_from is not None:
+            last = page_to if page_to is not None else page_from
+            viewer.append(f"visible pages={page_from}-{last}")
+        kind = _one_line(context.get("viewer_kind"))
+        if kind:
+            viewer.append(f"viewer kind={kind}")
+        if viewer:
+            lines.append("- viewer document: " + "; ".join(viewer))
+        conversation = []
+        if context.get("history_messages") is not None:
+            conversation.append(f"{context.get('history_messages')} messages")
+        conversation.append(
+            "last assistant reply: "
+            + ("present" if context.get("has_last_assistant_reply") else "absent"))
+        lines.append("- conversation: " + "; ".join(conversation))
+    return lines
+
+
 def _header(reason: str, stage: str, state: str) -> list[str]:
     detail = f"reason: {reason}"
     if stage:
@@ -187,8 +253,11 @@ def _render_acquisition(record: dict) -> str:
     if query:
         lines.append(f"- original request: {query}")
     lines.append(f"- available context: {_context(record.get('context'))}")
+    handler_failure = _acquisition_failure(record.get("acquisition"))
+    lines.extend(handler_failure)
     detail = _one_line(record.get("detail"), 240)
-    if detail:
+    # The handler block already renders the same detail; do not repeat it.
+    if detail and not handler_failure:
         lines.append(f"- detail: {detail}")
     lines.extend([
         "Nothing was executed. Treat the missing arguments as a question you may need",

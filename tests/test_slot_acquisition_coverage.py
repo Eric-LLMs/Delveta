@@ -8,11 +8,14 @@ that contract as executable code:
    ``acquire()`` copies the turn's sentence VERBATIM as the ``query`` fallback
    (the model may clean it; an explicit ``r/<sub>`` token is the one DETERMINISTIC
    exception and is not a model slot), and the semantic handlers (add-term /
-   create-folder / translate) return the EMPTY ``{}`` draft;
+   create-folder / translate) return the EMPTY ``{}`` draft. The file
+   capabilities consult their OWN page-scope resolver (never the shared
+   extractor), which cannot supply document identity;
 2. the model is authorized ONLY for genuinely semantic slots (search ``query``
    cleaning + the named platform, a rag ``domain`` scope, an add-term
    ``term``/``domain``, a create-folder ``name``, a translate ``text`` and the
-   optional ``target_language``) — NOT the result count (``top_k`` / ``limit``) or
+   optional ``target_language``, and summary's explicitly requested
+   ``output_dir``) — NOT the result count (``top_k`` / ``limit``) or
    ``subreddit``;
 3. an optional slot with no value falls to the tool's own legal default downstream;
 4. every exposed capability is accounted for by an EXPLICIT acquisition policy:
@@ -28,7 +31,6 @@ declared fail-open fails this test.
 from __future__ import annotations
 
 import pytest
-
 from core.application.chat.intent_funnel.cap_handler import (
     HANDLERS,
     POLICIES,
@@ -55,20 +57,21 @@ EXPOSED: dict[str, str] = {
     "cap-pdf-extract-text": "handler",
     "cap-pdf-table-to-text": "handler",
     "cap-translate": "handler",
+    "cap-summary": "handler",
     "cap-mindmap": "deferred",
     "cap-slides": "deferred",
-    "cap-summary": "deferred",
 }
 
 EXPOSED_HANDLER_IDS = frozenset(cid for cid, k in EXPOSED.items() if k == "handler")
 
 # The ONLY capabilities that opt into model-assisted slots (rule 2): the search
-# trio, plus add-term (term/domain), create-folder (name) and translate
-# (text/target_language) — every natural-language slot is MODEL-owned; no DET
-# extraction rule survives.
+# trio, plus add-term (term/domain), create-folder (name), translate
+# (text/target_language) and summary (only the explicitly requested
+# ``output_dir``; its content source stays deterministic) — every
+# natural-language slot is MODEL-owned; no DET extraction rule survives.
 SEARCH_TRIO = frozenset({"cap-web-search", "cap-rag-search", "cap-social-search"})
 MODEL_OPT_IN = SEARCH_TRIO | frozenset(
-    {"cap-add-term", "cap-create-folder", "cap-translate"})
+    {"cap-add-term", "cap-create-folder", "cap-translate", "cap-summary"})
 
 
 def _hidden_ids() -> frozenset[str]:
@@ -110,14 +113,13 @@ def test_policy_matches_the_declared_disposition(cid, kind):
         assert policy.detail        # the contract gap is documented
 
 
-def test_social_search_is_the_explicit_mixed_capability():
+def test_the_mixed_capabilities_are_explicit():
     # MIXED is not a synonym for MODEL: it declares that the handler owns a
-    # deterministic slot (an explicit r/<name> scope) alongside MODEL slots.
-    assert POLICIES["cap-social-search"].strategy == STRATEGY_MIXED
-    assert all(
-        pol.strategy != STRATEGY_MIXED
-        for cid, pol in POLICIES.items() if cid != "cap-social-search"
-    )
+    # deterministic slot alongside MODEL slots (social's explicit r/<name> scope;
+    # summary's content source, with ``output_dir`` as the only model slot).
+    mixed = {cid for cid, pol in POLICIES.items()
+             if pol.strategy == STRATEGY_MIXED}
+    assert mixed == {"cap-social-search", "cap-summary"}
 
 
 def test_every_handler_capability_declares_a_policy():

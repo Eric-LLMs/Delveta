@@ -6521,9 +6521,9 @@ The declared strategies keep five business states apart:
 | Strategy | Meaning | Exit |
 |---|---|---|
 | `NO_ARGS` | The real tool requires no arguments. | `{}` certified; a non-empty Registry schema makes this a `POLICY_CONFLICT`. |
-| `RULE_CONTEXT` | A handler resolves every slot from trusted turn facts, the viewer, an attachment or a literal rule. | draft certified; the model is never called. |
+| `RULE_CONTEXT` | A handler resolves every slot from trusted turn facts, the viewer, an attachment or a literal rule. | draft certified; the shared extractor is never called (a file handler may consult its own page-scope resolver, which cannot supply document identity). |
 | `MODEL` | A handler authorizes the shared extractor for its MODEL-owned slots only. | extracted values + protected draft → Binder. |
-| `MIXED` | The handler owns at least one deterministic slot AND authorizes the shared extractor for the remaining MODEL-owned slots (today: `cap-social-search`'s explicit `r/<name>` scope). | deterministic values are protected; the model fills only the slots the plan authorizes; both sides → Binder. |
+| `MIXED` | The handler owns at least one deterministic slot AND authorizes the shared extractor for the remaining MODEL-owned slots (today: `cap-social-search`'s explicit `r/<name>` scope; `cap-summary`'s `output_dir`, authorized only when the sentence asks to save). | deterministic values are protected; the model fills only the slots the plan authorizes; both sides → Binder. |
 | `DEFERRED_AGENT` | Admitted, but the real tool needs an input with no legal producer on this path. | `ACQUISITION_DEFERRED` → Agent. |
 
 A capability with no policy and no explicit declaration exits
@@ -6541,7 +6541,8 @@ declares the rest in its `slot_plan`.
 
 Scope: `cap-rag-search`, `cap-web-search`, `cap-social-search`, `cap-vision`,
 `cap-read-document`, `cap-pdf-extract-text`, `cap-pdf-table-to-text`,
-`cap-read-file`, `cap-create-folder`, `cap-add-term`, `cap-translate`.
+`cap-read-file`, `cap-summary`, `cap-create-folder`, `cap-add-term`,
+`cap-translate`.
 
 #### 25.16.1 Where the branch lives (`orchestrator.py`)
 
@@ -6565,7 +6566,11 @@ built. The branch:
    §28.4) with the per-capability prompt (`prompt_for(capability_id)`) and
    `accept_model_values` folds ONLY the authorized, schema-valid values — a
    draft value is protected unless its slot is named in `fallback_slots`; the
-   Binder stays the final gate (§28.5);
+   Binder stays the final gate (§28.5). A slot named in
+   `SlotPlan.required_model_slots` MUST be filled by that extraction: if the
+   extractor is unavailable or returns no usable value for it, the hop exits
+   `ACQUISITION_MODEL_PENDING` with an `argument_extraction_failed` record
+   instead of certifying a draft that silently dropped a requested argument;
 5. hands the (possibly model-enriched) draft to the SAME `_certify(...)` the
    generic chain uses;
 6. if NO policy and NO handler exist, falls through to the generic chain, which
@@ -6621,8 +6626,11 @@ Every capability handler obeys the same boundary:
   plain argument draft that still passes `_certify` → Binder;
 - it returns only schema-legal slots for its capability (the Binder is the final
   gate; an unknown slot lands `BIND_INVALID`);
-- it is **fail-closed**: when it cannot produce a legal draft it returns `None`,
-  which the branch maps to `REASON_ACQUISITION_MISSING` → Agent;
+- it is **fail-closed**: when it cannot produce a legal draft it returns an
+  `AcquisitionFailure` (the specific business reason — unsettled content source,
+  broken resolver contract, failed online extraction, unusable destination),
+  which the branch maps to `REASON_ACQUISITION_MISSING` → Agent with that
+  evidence attached;
 - it **never calls a model itself** — a natural-language slot is declared in the
   handler's `slot_plan` and filled by the shared extractor in the branch above,
   never by handler-local code;
@@ -6630,7 +6638,7 @@ Every capability handler obeys the same boundary:
   unless the handler explicitly lists the slot in `SlotPlan.fallback_slots`
   (today only the search trio's verbatim `query` is a replaceable fallback).
 
-#### 25.16.4 The eleven handlers
+#### 25.16.4 The twelve handlers
 
 | Capability | Policy | Handler | `slot_plan` — MODEL slots | replaceable fallback | TOOL_DEFAULT / rule |
 |---|---|---|---|---|---|
@@ -6641,20 +6649,80 @@ Every capability handler obeys the same boundary:
 | `cap-create-folder` | `MODEL` | `CreateFolderHandler` | `name` | — | — |
 | `cap-add-term` | `MODEL` | `AddTermHandler` | `term`, `domain` | — | — |
 | `cap-vision` | `RULE_CONTEXT` | `VisionHandler` | — (no plan) | — | `asset_id` (TurnFacts), `question` (verbatim) |
-| `cap-read-document` | `RULE_CONTEXT` | `ReadDocumentHandler` | — (no plan) | — | `asset_id`, `pages` |
-| `cap-pdf-extract-text` | `RULE_CONTEXT` | `PdfExtractTextHandler` | — (no plan) | — | `asset_id`, `pages` |
+| `cap-read-document` | `RULE_CONTEXT` | `ReadDocumentHandler` | — (no plan) | — | `asset_id` (TurnFacts); `pages` from the page-scope resolver (whole document omits it) |
+| `cap-pdf-extract-text` | `RULE_CONTEXT` | `PdfExtractTextHandler` | — (no plan) | — | `asset_id` (TurnFacts); `pages` from the page-scope resolver (whole document omits it) |
 | `cap-pdf-table-to-text` | `RULE_CONTEXT` | `PdfTableToTextHandler` | — (no plan) | — | `asset_id`, `pages` |
 | `cap-read-file` | `RULE_CONTEXT` | `ReadFileHandler` | — (no plan) | — | `path` (verbatim literal) |
+| `cap-summary` | `MIXED` | `SummaryHandler` | `output_dir` (only on an explicit save cue; REQUIRED that turn) | — | ONE content source: `asset_id` (TurnFacts) + `pages` from the page-scope resolver; a literal `path`; the viewer's current page when the intent is unsettled; or `context` (the last non-empty assistant reply, or the turn's own chat when the model clearly asks for it) |
 
-**Deferred toolkit capabilities.** `cap-summary` / `cap-mindmap` / `cap-slides`
-are admitted by the funnel but declare `DEFERRED_AGENT`. Their real tools
-(`summary_gen` / `mindmap_gen` / `slides_gen`) require `paths: string[]`
-(`minItems: 1`) plus an optional `output_dir` (`slides_gen` also accepts
-`count` 3–20), while the live Registry declares no parameters, the chat request
-carries no selected-workspace-file producer, and `validate_action` accepts string
-slots only. The turn therefore exits with `ACQUISITION_DEFERRED` rather than
-certifying `{}` or inventing `paths`; a toolkit-suite resolver is the
-prerequisite for lifting this policy.
+**Page-scope lane (`cap-read-document` / `cap-pdf-extract-text` / `cap-summary`).** When the
+turn already carries a document fact, the handler asks
+`argument_acquisition/page_scope_resolver.py` for the sentence's reading scope.
+The resolver makes ONE non-streaming online-LLM call (`stream=false`, JSON mode,
+`enable_thinking=false`, bounded tokens/timeout) over the document metadata and
+the last five user turns — never file content and never `asset_id`. Its reply is
+a closed contract (`target` / `page_scope` / `pages` / `reason`); any extra key
+(notably an asset/identity field) is rejected. `all` certifies without `pages`,
+`single` is one 1-based page, `range` is validated and canonicalised by the
+tools' shared strict parser. `target=conversation_context` returns the sanctioned
+recent user turns and never selects a document. `ambiguity`, `invalid` replies
+and `unavailable` calls are three distinct statuses, and no page is ever
+guessed. Document identity always comes from `TurnFacts`; the Binder,
+authorization, and tool bodies are unchanged.
+
+`cap-read-document` / `cap-pdf-extract-text` treat every non-`ok` verdict as
+fail-closed (`ACQUISITION_MISSING`). `cap-summary` follows a FIXED priority
+ladder:
+
+1. a clear, contract-compliant verdict (document whole / single / range, or the
+   conversation) is executed exactly as resolved — the fallback never overrides
+   a recognisably stated intent;
+2. the LLM returned normally but did not settle the intent (`ambiguous` /
+   `unknown`): when the viewer carries BOTH a valid asset id and a valid current
+   page, exactly THAT page of THAT document is summarized — never widened to the
+   whole document, never a guessed page, never another document;
+3. no usable current document page (no asset id, or no valid current page): the
+   LAST non-empty assistant reply is summarized, that reply only — never the
+   transcript;
+4. neither is available: `ACQUISITION_MISSING` → Agent.
+
+A SYSTEM fault in the extraction chain takes none of those fallbacks: an
+`unavailable` call (failure / timeout / non-JSON) or a contract-violating
+`invalid` reply goes straight to the Agent, with the failure category and stage,
+the specific reason, the original query, the conversation context, the viewer's
+asset id and page, and the verdict already obtained. There is no implicit
+current-page or whole-document fallback on that path.
+
+The exit travels as `AcquisitionFailure` from the handler to
+`build_failure(acquisition=…)`; it is routing context only and never
+authorizes or executes a tool.
+
+**The summary tool contract.** `summary_gen` accepts exactly ONE content source:
+workspace files (`paths` / `path`), an authorized `asset_id` (optionally narrowed
+by `pages`), or the conversation transcript (`context`). Every slot is a string
+except `paths`, so the funnel, Binder and `validate_action` can all produce and
+accept it; the tool body rejects an empty or multi-source call with a readable
+error. The asset lane reads through `api/tools/document_content.py` — the same
+drive-ACL / storage / page-extraction reader `read_document` uses — and only
+then hands the real text to the toolkit pipeline. With no `output_dir` the
+rendered Markdown is returned in the chat and nothing is written; an explicit
+`output_dir` persists the artifact. The directory itself is a MODEL-owned slot
+(`cap-summary` is `MIXED`): `slot_plan` authorizes it ONLY when the sentence
+carries a save cue, and marks it REQUIRED for that turn — so an unavailable
+extractor or an unusable destination exits to the Agent
+(`argument_extraction_failed`) rather than silently downgrading the requested
+output mode to chat-only. `cap-summary` is therefore no longer
+`DEFERRED_AGENT`; the migration declaring its slots is
+`0028_cap_summary_parameters.sql`.
+
+**Deferred toolkit capabilities.** `cap-mindmap` / `cap-slides` are admitted by
+the funnel but declare `DEFERRED_AGENT`. Their real tools (`mindmap_gen` /
+`slides_gen`) require `paths: string[]` (`minItems: 1`) plus an optional
+`output_dir` (`slides_gen` also accepts `count` 3–20), while the live Registry
+declares no parameters, the chat request carries no selected-workspace-file
+producer, and `validate_action` accepts string slots only. The turn therefore
+exits with `ACQUISITION_DEFERRED` rather than certifying `{}` or inventing
+`paths`; a toolkit-suite resolver is the prerequisite for lifting this policy.
 
 #### 25.16.5 `cap-rag-search` and `cap-web-search`
 
@@ -6858,21 +6926,25 @@ default acquisition path for every capability that has no registered handler,
 and it is exercised by the same Binder / certified-handoff tail. The two paths
 are distinguished only by the dispatch branch in `_acquisition_hop`.
 
-The eleven handlers split into **two lanes** by whether they declare a
+The twelve handlers split into **two lanes** by whether they declare a
 `slot_plan`:
 
-- **Deterministic lane (5)** — `cap-vision`, `cap-read-file`,
+- **Rule-context lane (5)** — `cap-vision`, `cap-read-file`,
   `cap-read-document`, `cap-pdf-extract-text`, `cap-pdf-table-to-text`. These
-  declare **no** `slot_plan`; every slot is sourced from `TurnFacts` / the
-  verbatim sentence by handler-local code, so Qwen is **never** on their path —
-  the branch returns before the extractor is considered.
-- **Model lane (6)** — the search trio (`cap-rag-search` / `cap-web-search` /
-  `cap-social-search`), `cap-translate`, `cap-create-folder`, `cap-add-term`.
-  These declare a `slot_plan` of MODEL-owned slots; the branch hands the plan to
-  the **one shared extractor** (the §28 machinery — no second, per-handler
-  extractor). The handler's `acquire()` draft (verbatim fallback for the search
-  trio; `{}` for translate / create-folder / add-term) is folded only *after*
-  `accept_model_values` keeps authorized + valid values.
+  declare **no** `slot_plan`; every slot is sourced from `TurnFacts`, the
+  verbatim sentence, or the capability-local page-scope resolver by
+  handler-local code, so Qwen is **never** on their path — the branch returns
+  before the extractor is considered.
+- **Model lane (7)** — the search trio (`cap-rag-search` / `cap-web-search` /
+  `cap-social-search`), `cap-translate`, `cap-create-folder`, `cap-add-term`,
+  and `cap-summary`. These declare a `slot_plan` of MODEL-owned slots; the branch
+  hands the plan to the **one shared extractor** (the §28 machinery — no second,
+  per-handler extractor). The handler's `acquire()` draft (verbatim fallback for
+  the search trio; `{}` for translate / create-folder / add-term; the content
+  source for summary) is folded only *after* `accept_model_values` keeps
+  authorized + valid values. `cap-summary` authorizes exactly one slot —
+  `output_dir` — and only on a turn whose sentence asks to save; the content
+  source itself never goes through Qwen.
 
 The handlers deliberately share **no** `Qwen` abstraction of their own: Qwen 0.6B
 is a plain callable behind the single extractor seam (`deps.argument_extractor`,
@@ -6923,30 +6995,31 @@ every other capability.
 
 #### 25.16.15 Implementation status
 
-**Implemented.** All eleven handlers ship with the roster wiring and the single
+**Implemented.** All twelve handlers ship with the roster wiring and the single
 capability-agnostic dispatch branch in `orchestrator.py::_acquisition_hop`.
 Tests: `tests/test_cap_handler_rag_search.py`,
 `test_cap_handler_web_search.py`, `test_cap_handler_social_search.py`,
 `test_cap_handler_translate.py`, `test_cap_handler_vision.py`,
-`test_cap_handler_read_document.py`, `test_cap_handler_pdf.py`,
-`test_cap_handler_read_file.py`, `test_cap_handler_create_folder.py`,
-`test_cap_handler_add_term.py`.
+`test_cap_handler_read_document.py`, `test_cap_handler_summary.py`,
+`test_cap_handler_pdf.py`, `test_cap_handler_read_file.py`,
+`test_cap_handler_create_folder.py`, `test_cap_handler_add_term.py`.
+The summary tool body is pinned separately by `tests/test_summary_gen.py`.
 
-#### 25.16.16 Phase 3 capability matrix & the deferred toolkit trio
+#### 25.16.16 Phase 3 capability matrix & the deferred toolkit pair
 
 **Phase 3 is closed.** All eighteen Registry capabilities are classified below.
-The Chat fast path acquires arguments for **eleven** of them through a registered
-handler; the other seven are owned by the Agent or a separate lane. Every
+The Chat fast path acquires arguments for **twelve** of them through a registered
+handler; the other six are owned by the Agent or a separate lane. Every
 non-hidden, enabled candidate either has a handler or is an undeclared capability
 that exits to the Agent, so the §28 **generic chain is never the fallback path**
 for a wired capability — but the shared extractor it provides is now the single
 seam the model-lane handlers declare a `slot_plan` into.
 
-**Capability handlers (11)** — modules in `intent_funnel/cap_handler/`, wired by
+**Capability handlers (12)** — modules in `intent_funnel/cap_handler/`, wired by
 `roster.py`. They split into two lanes:
 
-**Deterministic, zero-model handlers (5)** — declare no `slot_plan`; all slots
-come from `TurnFacts` / the verbatim sentence:
+**Rule-context handlers (5)** — declare no `slot_plan`; all slots come from
+`TurnFacts`, the verbatim sentence, or the capability-local page-scope resolver:
 
 | Capability | Handler |
 |---|---|
@@ -6956,31 +7029,34 @@ come from `TurnFacts` / the verbatim sentence:
 | `cap-pdf-table-to-text` | `PdfTableToTextHandler` |
 | `cap-read-file` | `ReadFileHandler` |
 
-**Model-lane handlers (6)** — declare a `slot_plan` of MODEL-owned slots; the
+**Model-lane handlers (7)** — declare a `slot_plan` of MODEL-owned slots; the
 shared extractor fills them (verbatim-fallback for the search trio, `{}` draft
-otherwise):
+otherwise; `cap-summary` keeps its content source deterministic and authorizes
+only `output_dir`, when the sentence asks to save):
 
 | Capability | Handler | MODEL slots |
 |---|---|---|
 | `cap-rag-search` | `RagSearchHandler` | `query`, `domain`, `top_k` |
 | `cap-web-search` | `WebSearchHandler` | `query`, `top_k` |
 | `cap-social-search` | `SocialSearchHandler` | `query`, `platform`, `subreddit`, `limit` |
+| `cap-summary` | `SummaryHandler` | `output_dir` (required when authorized) |
 | `cap-translate` | `TranslateHandler` | `text`, `target_language` |
 | `cap-create-folder` | `CreateFolderHandler` | `name` |
 | `cap-add-term` | `AddTermHandler` | `term`, `domain` |
 
-**Agent-only / Deferred Contract — the toolkit trio (3)**: `cap-summary`,
-`cap-mindmap`, `cap-slides`.
+**Agent-only / Deferred Contract — the toolkit pair (2)**: `cap-mindmap`,
+`cap-slides`.
 
-These bind the toolkit pipeline tools (`summary_gen` / `mindmap_gen` /
-`slides_gen`, `apps/api/tools/toolkit/`) and are **deliberately left without a
-handler**. The reason is structural, not extractor quality:
+These bind `mindmap_gen` / `slides_gen` (`apps/api/tools/toolkit/`) and are
+**deliberately left without a handler**. The reason is structural, not extractor
+quality (`cap-summary`, the third toolkit capability, was lifted once its tool
+also published string slots the funnel can produce — see §25.16.4):
 
-- **Contract rupture.** The Registry declares an EMPTY parameter set for all
-  three, while the live runtime schema requires a workspace file list
+- **Contract rupture.** The Registry declares an EMPTY parameter set for both,
+  while the live runtime schema requires a workspace file list
   `paths: list[str]` (`required: ["paths"]`; `slides_gen` additionally declares an
   optional integer `count`, 3–20). `declaration_for()` therefore returns `{}`,
-  and the trio explicitly declares the `DEFERRED_AGENT` policy in
+  and both explicitly declare the `DEFERRED_AGENT` policy in
   `acquisition_policy.py`; every turn exits `ACQUISITION_DEFERRED → Agent`
   (never certified as `{}` and never given a fabricated `paths`).
 - **No legal `paths` producer.** `paths` is `OWNERSHIP_UNAVAILABLE` — the runtime
@@ -6991,11 +7067,10 @@ handler**. The reason is structural, not extractor quality:
   so neither the array `paths` nor the integer `count` can clear the gate. A
   `count`-only draft would fail at the Binder (`BIND_MISSING`) or the Executor
   (`slot not a string`) regardless.
-- **Decision.** Rather than ship a handler that can never complete, the trio
-  stays Agent-owned — exactly as `cap-summary` and `cap-mindmap` were adjudicated
-  in the Phase-3 capability audit; the toolkit family is isomorphic here. A fast
-  path is created only when a capability's contract, slot ownership **and**
-  producer chain all close; determinism is not pursued for its own sake.
+- **Decision.** Rather than ship a handler that can never complete, both stay
+  Agent-owned. A fast path is created only when a capability's contract, slot
+  ownership **and** producer chain all close; determinism is not pursued for its
+  own sake.
 
 If deterministic toolkit generation is ever wanted, it is a **toolkit-suite
 program**, not a single-capability handler: project the toolkit schemas into the
@@ -7007,12 +7082,12 @@ to admit non-string slots per the runtime JSON schema.
 hidden), and `cap-research` (the separate Research lane, §17 — not a Chat
 capability).
 
-**Matrix.** 18 = **11** capability handlers (**5** deterministic + **6**
-model-lane) + **3** deferred toolkit + **4** specialized.
+**Matrix.** 18 = **12** capability handlers (**6** rule-context + **6**
+model-lane) + **2** deferred toolkit + **4** specialized.
 
 #### 25.16.17 The model-lane contract (U6 query, U1 domain) and open items
 
-The six model-lane handlers share **one** contract with the §28 extractor:
+The seven model-lane handlers share **one** contract with the §28 extractor:
 
 - **No handler-local natural-language rule.** Regex / quote / fixed-phrase
   extraction is retired for every capability. A slot whose value is understood
@@ -7025,11 +7100,16 @@ The six model-lane handlers share **one** contract with the §28 extractor:
   deterministic fallbacks and MAY be replaced (the search trio's `query`); every
   other draft value is protected from the model. `default_slots` records the
   slots the *tool* owns when the model omits them (the search trio's
-  `top_k` / `limit`).
+  `top_k` / `limit`). `required_model_slots` names the slots whose ABSENCE is an
+  acquisition failure on that turn (`cap-summary`'s explicitly requested
+  `output_dir`): the hop exits `ACQUISITION_MODEL_PENDING` to the Agent rather
+  than executing without the requested argument.
 - **`accept_model_values` is the fold gate.** Only authorized + schema-valid
   values replace the `acquire()` draft; an empty / invalid / model-unavailable
   reply leaves the deterministic fallback (verbatim sentence for the search trio;
   the `{}` draft — hence MISSING — for translate / create-folder / add-term).
+  The one exception is a `required_model_slots` slot: there the hop exits
+  instead of certifying the fallback.
 - **Two contract anchors:**
   - **U6 — clean-topic query.** The `query` slot of the search trio is the model's
     *understood topic* (a query), never the raw sentence and never a regex-cleaned

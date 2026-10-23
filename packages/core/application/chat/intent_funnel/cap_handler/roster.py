@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
+from .acquisition_failure import AcquisitionFailure
 from .add_term_handler import AddTermHandler
 from .create_folder_handler import CreateFolderHandler
 from .pdf_extract_text_handler import PdfExtractTextHandler
@@ -16,6 +17,7 @@ from .rag_search_handler import RagSearchHandler
 from .read_document_handler import ReadDocumentHandler
 from .read_file_handler import ReadFileHandler
 from .social_search_handler import SocialSearchHandler
+from .summary_handler import SummaryHandler
 from .translate_handler import TranslateHandler
 from .vision_handler import VisionHandler
 from .web_search_handler import WebSearchHandler
@@ -27,13 +29,23 @@ class CapabilityHandler(Protocol):
 
     ``acquire`` returns the capability's final argument draft (``{slot: value}``,
     keys within the Registry schema), or ``None`` when it cannot produce a legal
-    draft — the caller then exits to the Agent. A handler never executes a tool,
-    never runs the runtime schema gate, and never re-implements a tool body.
+    draft — the caller then exits to the Agent. A handler that can name WHY no
+    draft exists returns an :class:`AcquisitionFailure` instead: the caller
+    publishes that evidence to the Agent through the same acquisition-failure
+    record. A handler never executes a tool, never runs the runtime schema gate,
+    and never re-implements a tool body.
+
+    A file handler MAY opt into the page-scope seam by declaring
+    ``accepts_page_scope = True`` and accepting the keyword-only
+    ``page_scope_resolver`` / ``history`` arguments; every other handler keeps the
+    two-argument call unchanged. That seam supplies ``pages`` only — document
+    identity remains a turn fact.
     """
 
     capability_id: str
 
-    async def acquire(self, *, query: str, facts) -> dict[str, object] | None: ...
+    async def acquire(self, *, query: str, facts
+                      ) -> dict[str, object] | AcquisitionFailure | None: ...
 
 
 # The wiring: only capabilities whose parameter acquisition is owned by a handler
@@ -49,6 +61,7 @@ HANDLERS: dict[str, CapabilityHandler] = {
     "cap-read-file": ReadFileHandler(),
     "cap-pdf-extract-text": PdfExtractTextHandler(),
     "cap-pdf-table-to-text": PdfTableToTextHandler(),
+    "cap-summary": SummaryHandler(),
     "cap-translate": TranslateHandler(),
 }
 
