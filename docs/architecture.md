@@ -7059,6 +7059,124 @@ guardrail (zero unauthorized overwrites, WRITE / permission gates, the Binder's
 required-slot gate, tool defaults, DB name→id resolution, MISSING → Agent) held
 identically in both arms.
 
+#### 25.16.18 Parameter-processing flow (English / 中文)
+
+**English.** The diagram is the complete path from the user's query to an executed
+tool or an Agent fallback. It shows the decision points the implementation owns:
+capability admission, the per-capability acquisition strategy, acquisition
+failure, the Binder contract gate, and the execution boundary. Every "generate a
+structured context block" node publishes the turn-scoped record described in
+§25.8; the record is routing context only and never grants a capability.
+
+```mermaid
+flowchart TD
+    Q["User submits a query"] --> CAP["Determine capability_id"]
+    CAP --> ADM{"Admitted by the Intent Funnel allowlist?"}
+    ADM -- "No" --> AGENT0["Route to the Agent using the existing semantics"]
+    ADM -- "Yes" --> DISPATCH["Dispatch parameter acquisition by capability_id"]
+    DISPATCH --> STRATEGY{"Parameter acquisition strategy"}
+
+    STRATEGY -- "No arguments required" --> EMPTY["Construct a valid empty parameter object"]
+    STRATEGY -- "Rules / UI / existing context" --> RULES["Acquire parameters using the corresponding rules"]
+    STRATEGY -- "Attachment required" --> ATTACH{"Attachment or context available?"}
+    STRATEGY -- "Model-based extraction" --> MODEL["Local Qwen extracts only the permitted MODEL slots"]
+    STRATEGY -- "Hybrid strategy" --> MIXED["Preserve existing parameters and extract the remaining slots"]
+
+    ATTACH -- "No" --> AFAIL["Record acquisition-failure status, error code and reason"]
+    ATTACH -- "Yes — use the attachment or context value" --> RULES
+
+    AFAIL --> ACTX["Generate a structured context block"]
+    ACTX --> AGENT1["Send to the Agent fallback"]
+
+    EMPTY --> AOK{"Parameter acquisition successful?"}
+    RULES --> AOK
+    MODEL --> AOK
+    MIXED --> AOK
+    AOK -- "No" --> AFAIL
+    AOK -- "Yes" --> ASSEMBLE["Assemble the final parameters"]
+
+    ASSEMBLE --> BINDER["Binder validates the parameters"]
+    BINDER --> CONTRACT{"Do the parameters satisfy the capability contract?"}
+    CONTRACT -- "No" --> MFAIL["Record the parameter-mismatch reason"]
+    MFAIL --> MCTX["Generate a structured context block"]
+    MCTX --> AGENT2["Send to the Agent fallback"]
+
+    CONTRACT -- "Yes" --> EXEC["VirtualExecutor / production execution"]
+    EXEC --> RESULT{"Execution result"}
+    RESULT -- "Success" --> DONE["Return the result"]
+    RESULT -- "Explicit parameter-mismatch error" --> MFAIL
+    RESULT -- "Other execution errors" --> ERR["Apply the corresponding error-handling policy and return an error message to the user"]
+```
+
+Reading the diagram against the code:
+
+| Diagram node | Implementation |
+|---|---|
+| Determine `capability_id` | `intent_funnel/orchestrator.py::run_nodes` — Matcher HIT, or Recall → aggregation → cap_router |
+| Admitted by the allowlist? | `registry/entry.py::is_intent_funnel_capability_allowed`; a reject publishes `ADMISSION_REJECT` |
+| Dispatch by `capability_id` | `orchestrator.py::_acquisition_hop` reads `POLICIES` / `HANDLERS` by id — never infers from `parameters == {}` |
+| Strategy branches | `NO_ARGS` / `RULE_CONTEXT` / `MIXED` / `MODEL` / `DEFERRED_AGENT` in `cap_handler/acquisition_policy.py` |
+| Acquisition failed | `ACQUISITION_*` reason, kind `ACQUISITION_FAILURE`, stage `acquisition` |
+| Binder gate | `binder.validate`; a miss publishes `CONTRACT_MISMATCH` at stage `binder` |
+| Execution | `executors/action.py` — schema rejection publishes `CONTRACT_MISMATCH` at stage `executor`; a proven pre-body refusal publishes `EXECUTION_PREFLIGHT`; state-unknown is terminal and never replayed |
+| Agent fallback | `publish_failure` → `turn_orchestrator.resolve_plan` → `AgentExecutor.run(context=…)` → `intent_funnel_reference` prompt section |
+
+**中文。** 下图是从用户 query 到工具执行或 Agent 兜底的完整参数处理流程。图中保留了实现
+真正拥有的决策点：能力准入、按 `capability_id` 分发的取参策略、取参失败、Binder 契约校验
+以及执行边界。每个“生成结构化上下文信息块”节点都会发布 §25.8 描述的 turn 级记录；该记录
+只是路由上下文，不授予任何能力。
+
+```mermaid
+flowchart TD
+    Q["用户提交 query"] --> CAP["确定 capability_id"]
+    CAP --> ADM{"Intent Funnel 白名单准入？"}
+    ADM -- "否" --> AGENT0["按现有语义转 Agent"]
+    ADM -- "是" --> DISPATCH["按 capability_id 分发取参规则"]
+    DISPATCH --> STRATEGY{"取参策略"}
+
+    STRATEGY -- "无需参数" --> EMPTY["构造合法空参数对象"]
+    STRATEGY -- "规则 / UI / 已有上下文" --> RULES["按对应规则获取参数"]
+    STRATEGY -- "需要附件" --> ATTACH{"附件或上下文可用？"}
+    STRATEGY -- "需要模型抽取" --> MODEL["本地 Qwen 只抽取允许的 MODEL 槽位"]
+    STRATEGY -- "混合策略" --> MIXED["保留已有参数并抽取剩余槽位"]
+
+    ATTACH -- "否" --> AFAIL["记录取参失败状态、错误码与原因"]
+    ATTACH -- "是 — 使用附件或上下文值" --> RULES
+
+    AFAIL --> ACTX["生成结构化上下文信息块"]
+    ACTX --> AGENT1["发送给 Agent 兜底"]
+
+    EMPTY --> AOK{"参数获取成功？"}
+    RULES --> AOK
+    MODEL --> AOK
+    MIXED --> AOK
+    AOK -- "否" --> AFAIL
+    AOK -- "是" --> ASSEMBLE["汇总最终参数"]
+
+    ASSEMBLE --> BINDER["Binder 校验参数"]
+    BINDER --> CONTRACT{"参数符合 capability 契约？"}
+    CONTRACT -- "否" --> MFAIL["记录参数不匹配原因"]
+    MFAIL --> MCTX["生成结构化上下文信息块"]
+    MCTX --> AGENT2["发送给 Agent 兜底"]
+
+    CONTRACT -- "是" --> EXEC["VirtualExecutor / 正式执行"]
+    EXEC --> RESULT{"执行结果"}
+    RESULT -- "成功" --> DONE["返回结果"]
+    RESULT -- "明确的参数不匹配错误" --> MFAIL
+    RESULT -- "其他执行错误" --> ERR["按对应错误策略处理，并向用户返回错误信息"]
+```
+
+图中的节点与代码的对应关系：能力判定在 `run_nodes`（Matcher HIT，或 Recall → 聚合 →
+cap_router）；准入判定是 `is_intent_funnel_capability_allowed`，拒绝时发布
+`ADMISSION_REJECT`；取参分发在 `_acquisition_hop`，按 `capability_id` 读取 `POLICIES` /
+`HANDLERS`，不从空参数推断策略；策略取值为 `NO_ARGS` / `RULE_CONTEXT` / `MIXED` /
+`MODEL` / `DEFERRED_AGENT`；取参失败发布 `ACQUISITION_*`（kind `ACQUISITION_FAILURE`，
+stage `acquisition`）；Binder 失败发布 `CONTRACT_MISMATCH`（stage `binder`）；执行器参数
+门失败发布 `CONTRACT_MISMATCH`（stage `executor`），已证明未进入工具体的前置拒绝发布
+`EXECUTION_PREFLIGHT`，执行状态未知则终止且绝不重放；结构化记录经
+`turn_orchestrator.resolve_plan` 进入 `AgentExecutor.run(context=…)`，由
+`intent_funnel_reference` 提示段落渲染。
+
 ### 25.17 Phase 4 — Verification & Hardening (closed)
 
 **Naming.** This is the *verification & hardening* Phase 4. It is **distinct** from the unrelated
