@@ -23,8 +23,9 @@ Wire (the TypeSafe Jev ``/v1/systemone`` shape):
 Configuration (environment):
     LAYA_CHOICE_MODEL_DIR  deployment directory of the fine-tuned checkpoint
                            (rl_agent_config.json + model.safetensors + encoder/
-                           + tokenizer/). Mounted READ-ONLY; never baked into the
-                           image. REQUIRED.
+                           + tokenizer/). Published by bootstrap.py from the
+                           Docker-managed `laya-model` volume; never baked into
+                           the image. REQUIRED.
     LAYA_DEVICE            torch device for inference (default "cpu").
 """
 from __future__ import annotations
@@ -52,8 +53,8 @@ async def lifespan(_app: FastAPI):
 
     _MODEL_DIR = (os.environ.get("LAYA_CHOICE_MODEL_DIR") or "").strip()
     if not _MODEL_DIR:
-        raise RuntimeError("LAYA_CHOICE_MODEL_DIR is not set; mount the "
-                           "LayaChoice checkpoint directory and set it")
+        raise RuntimeError("LAYA_CHOICE_MODEL_DIR is not set; bootstrap.py "
+                           "publishes the checkpoint volume and sets it")
     device = (os.environ.get("LAYA_DEVICE") or "cpu").strip() or "cpu"
     # The 256-token option cap MUST be installed before the Agent encodes anything.
     install()

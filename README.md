@@ -87,7 +87,7 @@ Delveta implements a controllable agent runtime rather than delegating orchestra
 - **Unified knowledge substrate.** Private My Drive and shared workspaces (featuring `Owner` / `Admin` / `Editor` / `Viewer` RBAC, member management, and append-only activity logs) sit atop a SHA-256 content-addressed object store with reference-counted deduplication, 8 MB resumable chunked uploads, multi-level folders, 30-day trash retention, per-file ACLs, workspace sharing, and integrated multi-format previews. Logical file trees map to content-addressed blobs — files sharing a digest share one physical copy — and object lifetime is managed by atomic reference counting with CAS-guarded physical deletion. The drive doubles as the shared data and working directory for content processing, retrieval, and agent workflows.
 - **Resource-bound authorization.** Roles, tenant boundaries, upstream LLM provider credentials, model catalogs, and routing weights are managed from a unified admin console. It features a per-user key-grant matrix with masked credentials (`sk-***`), SMTP for email verification / password reset, and stateless signed admin sessions. Per-role LLM channels bind at login with automatic failover — users without a usable key degrade to the anonymous tier instead of losing login. Usage is metered by a free-first quota that overflows to a wallet; deductions are atomic (`UPDATE ... WHERE balance >= cost` prevents overdraft), snapshot `balance_after`, and are idempotent, returning HTTP 402 when funds run out.
 - **Tenant-safe data isolation.** Request identity rides a ContextVar because the RAG and memory recallers are process-wide singletons that cannot take per-request constructor arguments; the same visibility predicate is written twice — once as a SQLAlchemy expression, once as a raw-SQL fragment — so the tsvector/pgvector recall path enforces the identical three channels (ownership, workspace membership, per-asset ACL with public links). Chunk-level predicates filter on `chunks.user_id` directly, so learning/chat chunks without an asset_id cannot leak past their owner. The vocabulary corpus uses partial unique indexes: public rows stay globally unique while each user's private rows are unique per user, so two users can each own a same-named term without colliding.
-- **Local-first client, self-hostable infrastructure.** The Electron workbench supports offline file workflows (file tree, multi-format viewer, video frame capture); large media is processed on the client and the resulting artifacts submitted back to the server, while most content-processing workloads run server-side. Voice stays fully local too: push-to-talk dictation records `webm/opus` client-side and transcribes through a FunASR SenseVoiceSmall CPU sidecar, and a hands-free voice call is opened with one click — WebAudio energy-VAD segments speech, end-of-speech auto-sends (reasoning tokens suppressed only on call turns), Kokoro reads the answer aloud, and talking over playback barges in and interrupts; a call overlay paints a live spectrum. Videos become PPT/PDF study booklets: subtitle timestamps drive keyframe extraction, one frame plus its caption per page, with CJK-safe fonts so Chinese renders correctly; TTS auto-switches Chinese/English voices, synthesizes sentence-by-sentence so the first sentence plays back immediately, and caches waveforms by content hash for zero-latency replays. The complete backend stack — PostgreSQL/pgvector, Redis, TEI embeddings, Kokoro TTS, FunASR STT, and LiteLLM gateway — deploys seamlessly via `docker-compose`, keeping your workspace data and core backend services within your own infrastructure.
+- **Local-first client, self-hostable infrastructure.** The Electron workbench supports offline file workflows (file tree, multi-format viewer, video frame capture); large media is processed on the client and the resulting artifacts submitted back to the server, while most content-processing workloads run server-side. Voice stays fully local too: push-to-talk dictation records `webm/opus` client-side and transcribes through a FunASR SenseVoiceSmall CPU sidecar, and a hands-free voice call is opened with one click — WebAudio energy-VAD segments speech, end-of-speech auto-sends (reasoning tokens suppressed only on call turns), Kokoro reads the answer aloud, and talking over playback barges in and interrupts; a call overlay paints a live spectrum. Videos become PPT/PDF study booklets: subtitle timestamps drive keyframe extraction, one frame plus its caption per page, with CJK-safe fonts so Chinese renders correctly; TTS auto-switches Chinese/English voices, synthesizes sentence-by-sentence so the first sentence plays back immediately, and caches waveforms by content hash for zero-latency replays. The complete backend stack — PostgreSQL/pgvector, Redis, BGE-M3 INT8 embeddings (ONNX), LayaChoice `cap_router`, the Ollama tool-intent extractor, Kokoro TTS, FunASR STT, and LiteLLM gateway — deploys seamlessly via `docker-compose`, keeping your workspace data and core backend services within your own infrastructure.
 - **Authority / projection / index separation.** Three layers are explicitly decoupled: the server scratch directory is the single authority for task state and artifacts, the cloud-drive task folder is the user-visible projection (spec and session history update in place, and report artifacts mirror live into `outputs/<task name>.md` — no asset explosion), and promotion mints a per-run versioned `outputs/<stem>_vN.md` final flipped to RAG-pending to trigger indexing — the original upload path is no longer used.
 
 ## ✅ Implementation status
@@ -118,6 +118,7 @@ See [docs/architecture.md §Implementation Status](docs/architecture.md#implemen
 - [docs/architecture-diagrams.md](docs/architecture-diagrams.md) — per-module architecture diagrams and mermaid source.
 - [docs/research/](docs/research/) — Research OS contract suite (design-frozen): entities, state machine, four hard gates, three-layer storage, and the 7 research tool contracts (tool interfaces, not workflow stages).
 - [docs/getting-started.md](docs/getting-started.md) — full manual setup, one-click launchers, and the desktop/web/admin walkthrough.
+- [docs/model-deployment.en.md](docs/model-deployment.en.md) — model deployment: code in images, weights in named volumes, runtime configuration, updates, and offline export/import.
 - [docs/configuration.md](docs/configuration.md) — environment-variable reference.
 - [docs/features.md](docs/features.md) — full feature walk-through (desktop workbench, chat assistant, RAG & query repository, study mode, cloud drive, roles & billing).
 
@@ -153,7 +154,7 @@ unified contrastive objective. It is served in three parallel variants — FP32 
 INT8 — inside one Hugging Face repository (no root model copy).
 
 - Model (FP32 / FP16 / INT8): [Delveta-BGE-M3-v1](https://huggingface.co/eric-ml-nlp/Delveta-BGE-M3-v1)
-- Download: `hf download eric-ml-nlp/Delveta-BGE-M3-v1 --local-dir <dir>`
+- Deployment: the `embedding` container downloads the pinned INT8 revision into the `delveta_embedding-model` volume on first boot — see [Model Deployment](docs/model-deployment.en.md). To fetch the artifacts directly, use `hf download eric-ml-nlp/Delveta-BGE-M3-v1 --local-dir <dir>`.
 - Dataset: [Delveta-BGE-M3-v1-Data](https://huggingface.co/datasets/eric-ml-nlp/Delveta-BGE-M3-v1-Data) · [`fine_tuning/bge_m3_finetune/data/`](fine_tuning/bge_m3_finetune/data/)
 - Training code: [`fine_tuning/bge_m3_finetune/`](fine_tuning/bge_m3_finetune/)
 - Training archive: [Delveta-BGE-M3-v1-checkpoints](https://huggingface.co/eric-ml-nlp/Delveta-BGE-M3-v1-checkpoints)
@@ -195,7 +196,7 @@ the frozen **test split and Formal-500 were not evaluated** — and the GGUF's
 | Windows desktop | `bash scripts/start_desktop.sh` |
 | Linux server | `bash scripts/start_server.sh` |
 
-Each script installs Docker if missing, starts the data + model services, ensures the Python environment, seeds the default `admin` / `pwd@Admin` account, and launches the workbench (desktop) or web UI (server).
+Each script installs Docker if missing, starts the data + model services (including `cap-router`; the optional `tool-intent` extractor is not started by the launchers), ensures the Python environment, seeds the default `admin` / `pwd@Admin` account, and launches the workbench (desktop) or web UI (server).
 
 ### Option B — Manual local development
 
@@ -205,10 +206,15 @@ cd Delveta
 conda create -n delveta python=3.11 -y && conda activate delveta
 cp .env.example .env            # fill in LLM_UPSTREAM_KEY
 pip install -e ".[dev]"         # + pip install -e ".[rag]" for semantic search
-docker compose up -d postgres redis embedding tts llm-gateway worker
+docker compose up -d postgres redis embedding tts llm-gateway worker cap-router
 python scripts/init_db.py
 uvicorn apps.api.main:app --reload     # http://localhost:8300/docs
 ```
+
+Add `tool-intent` to that list to enable the local argument extractor
+(`docker compose up -d tool-intent` also starts its one-shot `tool-intent-model`
+initialiser). Model services download their pinned checkpoints into Docker
+volumes on first boot — see [Model Deployment](docs/model-deployment.en.md).
 
 ### Option C — LLM backend: self-hosted or external
 

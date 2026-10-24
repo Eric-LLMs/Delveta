@@ -24,8 +24,11 @@ flowchart LR
         rd[(Redis<br/>cache / queue)]
     end
     subgraph Model services
-        emb[TEI embedding · BGE-M3]
+        emb["BGE-M3 INT8 embedding<br/>ONNX · POST /embed"]
+        cr["cap_router · LayaChoice<br/>capability selection"]
+        ti["tool-intent · Ollama<br/>argument extraction · optional"]
         tts[Kokoro TTS]
+        stt[FunASR SenseVoice STT]
         llm[LiteLLM gateway<br/>→ upstream LLM]
     end
 
@@ -38,7 +41,10 @@ flowchart LR
     api --> rs
     rs --> pg
     api --> emb
+    api --> cr
+    api --> ti
     api --> tts
+    api --> stt
     api --> llm
     wk --> tts
     rs --> emb
@@ -209,7 +215,7 @@ flowchart TB
 corpus. A single query searches your cloud-drive files, Learning-Platform material, and chat Q&A
 together. The pipeline's node list *is* the retrieval topology: compose, reorder, toggle, and tune every
 stage from the admin console — live, no code, no restart. Feature walk-through in
-[**Key Features**](docs/features.md); the design detail lives in
+[**Key Features**](features.md); the design detail lives in
 [§10 RAG Module (architecture.md)](architecture.md#10-rag-module-config-node-pipeline).
 
 ![RAG — config-driven node pipeline](./images/rag-architecture.png)
@@ -235,7 +241,7 @@ flowchart TB
     %% ── ② query repository ────────────────────────────────────────
     subgraph REPO["Query Repository"]
         CHUNK["chunks table<br/>source_type file · learning · chat<br/>source_id · asset_id nullable · owner = importer"]
-        EMBED["build_chunks + BGE-M3 embed → pgvector<br/>leaf-only · chunked per runtime config"]
+        EMBED["build_chunks + BGE-M3 INT8 embed → pgvector<br/>leaf-only · chunked per runtime config"]
         PDFT --> CHUNK
         LEARNP --> CHUNK
         CHATP --> CHUNK
@@ -247,7 +253,7 @@ flowchart TB
         Q["user query · top_k<br/>+ filters.user_id · tenant binding<br/>owner / workspace / ACL · guest → public links"]
         QC["QueryCache<br/>Redis · key(query, filters, top_k,<br/>config_version, corpus_version)<br/>pure accelerator · failure falls through"]
         REWRITE["QueryRewriter<br/>multi-query expansion + HyDE answer"]
-        VEC["VectorRecaller<br/>pgvector cosine · BGE-M3 via TEI<br/>source-aware · LEFT JOIN assets"]
+        VEC["VectorRecaller<br/>pgvector cosine · BGE-M3 INT8 (ONNX)<br/>source-aware · LEFT JOIN assets"]
         KW["KeywordRecaller<br/>tsvector FTS · CJK via jieba<br/>source-aware · READY only for files"]
         RRF["rrf_fusion · k=60<br/>fuses cross-scale scores"]
         CE["CrossEncoderReranker<br/>BGE-reranker · optional"]

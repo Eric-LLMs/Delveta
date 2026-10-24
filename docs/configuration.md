@@ -1,6 +1,6 @@
 # Configuration Reference
 
-Environment variables and their defaults. Model inference never runs inside the API process — LLM channels are managed in the admin console (Providers → Credentials); each is an OpenAI-compatible `base_url` + `api_key`, and a role bound to a channel routes chat straight to that provider (no code change). Web-search (provider + key + google engine id) and SMTP (host, credentials, TLS, enabled) are likewise configured in the admin console (Tools config) rather than `.env`. Swapping embedding/TTS models = change `--model-id` in `docker-compose.yml` and the matching `*_BASE_URL` / dim in `.env` — no business-code change.
+Environment variables and their defaults. Model inference never runs inside the API process, except the optional in-process reranker cross-encoder — LLM channels are managed in the admin console (Providers → Credentials); each is an OpenAI-compatible `base_url` + `api_key`, and a role bound to a channel routes chat straight to that provider (no code change). Web-search (provider + key + google engine id) and SMTP (host, credentials, TLS, enabled) are likewise configured in the admin console (Tools config) rather than `.env`. Model services are swapped through their deployment configuration, not by editing code. The embedding service loads BGE-M3 INT8 (ONNX) and the cap-router loads LayaChoice; both take a pinned manifest from `deploy/model_config/<service>.env` via Compose `env_file`, so a change is `edit the env file → docker compose up -d --force-recreate <service>` (a plain `restart` does not re-read `env_file`). TTS is changed with its Compose service definition and `TTS_*` variables. `--model-id` is a legacy TEI flag; neither current model service uses it. See [model-deployment.en.md](model-deployment.en.md) (§8) for the full procedure.
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -8,7 +8,7 @@ Environment variables and their defaults. Model inference never runs inside the 
 | `REDIS_URL` | `redis://localhost:16379/0` | cache / queue |
 | `LLM_API_KEY` / `LLM_BASE_URL` / `LLM_MODEL` | `""` / `http://localhost:14000/v1` / `delveta-chat` | legacy default client (LiteLLM gateway); active channels + keys live in the DB and are managed in the admin console |
 | `LLM_UPSTREAM_MODEL` / `LLM_UPSTREAM_BASE` / `LLM_UPSTREAM_KEY` | `openai/gpt-4o-mini` / `https://api.openai.com/v1` / `sk-xxx` | real upstream LLM (consumed by the gateway container) |
-| `EMBEDDING_BASE_URL` / `EMBEDDING_MODEL` / `EMBEDDING_DIM` | `http://localhost:18080` / `Delveta-BGE-M3` / `1024` | TEI embedding service |
+| `EMBEDDING_BASE_URL` / `EMBEDDING_MODEL` / `EMBEDDING_DIM` | `http://localhost:18080` / `Delveta-BGE-M3` / `1024` | BGE-M3 INT8 embedding service (ONNX, `deploy/embedding_int8`) |
 | `TTS_BASE_URL` / `TTS_MODEL` / `TTS_VOICE` / `TTS_VOICE_ZH` | `http://localhost:18880/v1` / `kokoro` / `am_michael` / `zm_yunxi` | Kokoro-FastAPI TTS service (auto-switches to the Chinese voice for CJK text) |
 | `RETRIEVAL_MODE` / `RETRIEVAL_GRPC_ADDR` | `in_process` / `localhost:15051` | capability seam: `in_process` or `grpc` |
 | `WORKSPACE_DIR` | `.` | agent filesystem-tool root (`read_file` / `edit_file` / `bash`; path escape rejected) |
@@ -35,4 +35,33 @@ Environment variables and their defaults. Model inference never runs inside the 
 | `LLM_POOL_MAX_CONNECTIONS` / `LLM_POOL_MAX_KEEPALIVE_CONNECTIONS` / `LLM_POOL_KEEPALIVE_EXPIRY_SECONDS` | `1000` / `100` / `300` | per-origin online-LLM HTTP connection pool ([architecture.md §12.8](architecture.md#128-online-llm-transport-pool--one-origin-one-transport-credentials-per-wrapper)): maximum simultaneous connections (in use + idle) / idle connections retained for reuse / idle keep-alive retention in seconds. These are transport limits only — per-request timeout and retry budgets are separate |
 | `EMBED_BATCH_SIZE` | `16` | embedding batch size for indexing cloud-drive files into pgvector |
 
-See [docs/architecture.md](architecture.md) for the full topology.
+## Model deployment variables
+
+These are consumed by the model containers, not by the API process. Their
+defaults live in `docker-compose.yml`, and the two pinned manifests live in
+`deploy/model_config/`.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `MODEL_SPEC_JSON` | set by `deploy/model_config/embedding.env` / `layachoice.env` | Complete model pin (repo, full commit revision, `load_path`, per-file size + SHA256) for `embedding` and `cap-router`. Injected by Compose `env_file` at container creation; changing it requires `up -d --force-recreate`, not `restart`. Never baked into an image |
+| `TOOL_INTENT_MODEL_REPO` / `_REVISION` / `_FILE` / `_SHA256` / `_SIZE` | `eric-ml-nlp/Delveta-Qwen3-0.6B-PE-v1` / pinned SHA / `Q5_K_M/model.gguf` / pinned SHA256 / `444414752` | GGUF pin downloaded and verified by the one-shot `tool-intent-model` service before `tool-intent` starts |
+| `TOOL_INTENT_OLLAMA_MODEL` | `delveta-pe:q5km` | Name the `tool-intent` entrypoint registers with `ollama create` and uses for its health check |
+| `HF_ENDPOINT` | `https://huggingface.co` | Hugging Face endpoint (mirror or proxy) used by all model downloaders |
+| `HF_TOKEN` | `""` | Hugging Face token for private repositories |
+| `HF_HUB_DISABLE_XET` | `1` | Keeps downloads on Range-based HTTP so partial files persist in the model volume across container recreation |
+
+## Model services in Compose
+
+| Service | Role | Started by |
+|---|---|---|
+| `embedding` | BGE-M3 INT8 ONNX dense embeddings on port 18080 | Launchers and manual `docker compose up` |
+| `cap-router` | LayaChoice capability selection on port 18092 | Launchers and manual `docker compose up` |
+| `tool-intent-model` | One-shot GGUF download + verification | Only when `tool-intent` is requested |
+| `tool-intent` | Ollama-served parameter extractor on port 18091 | Optional; `docker compose up -d tool-intent` |
+| `tts` | Kokoro-FastAPI speech synthesis on port 18880 | Launchers and manual `docker compose up` |
+| `stt` | FunASR SenseVoiceSmall transcription on loopback port 18881 | Desktop launcher and manual `docker compose up` |
+| `reranker` | **Legacy** TEI reranker (port 18081) defined in Compose but not wired; the in-process cross-encoder is the actual rerank implementation | Not started by the launchers; leave stopped (a bare `docker compose up -d` would start it, so name services explicitly) |
+
+See [docs/architecture.md](architecture.md) for the full topology and
+[model-deployment.en.md](model-deployment.en.md) for model volumes, updates,
+and offline export/import.

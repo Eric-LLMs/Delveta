@@ -11,3 +11,5 @@ safetensors==0.8.0
 numpy==2.4.6
 fastapi==0.115.14
 uvicorn==0.34.3
+# transformers 5.17.0 pins huggingface-hub >=1.5.0,<2.0 — stay inside that range.
+huggingface_hub==1.33.0

@@ -162,7 +162,7 @@
 | Retrieval | config-driven node pipeline (query rewrite → recall → RRF → rerank, plus optional parent-expand / CRAG nodes; CJK + contextual + parent-child indexing); `in_process` default, gRPC service available (`AuthGuard` token gate / per-peer rate limit / tenant binding); admin RAG console + golden-set eval (Recall@k / Precision@k / MRR); Redis **query cache** (keyed by query/filters/top_k + config + corpus version); **retrieval-feedback loop** — grounded answers get a persistent per-message 👍/👎 source rating: the turn's `rag_search` hits are extracted server-side from the tool trace and snapshotted into `messages.meta.retrieval` (JSONB in the canonical schema; rides the done frame + `GET /sessions/{id}`), the chat bubble's rate panel posts the `POST /rag/feedback` golden-set recorder — [§10.12](#1012-query-cache--retrieval-feedback) |
 | RAG node pipeline config | the whole retrieval chain is runtime-configured from admin **RAG → Nodes**: add / remove / reorder / enable / disable stages and edit params, persisted in `app_settings.rag`, applied live — no code, no restart; ingest side likewise (chunk strategy `fixed` / `paragraph` / `sentence` / `semantic` + contextual / parent-child / CJK-jieba toggles, with a Chunking preview) — [§10.6](#106-nodes), [§10.7](#107-ingest-side-runtime-configured-chunking), [§10.10](#1010-admin-console) |
 | Query repository | unified multi-source corpus: cloud-drive files (`source_type='file'`) + Learning-Platform sentences/articles (`'learning'`) + chat Q&A pairs / LLM-grouped whole-session imports (`'chat'`) + boot-seeded built-in product manual (`'manual'`, owner-NULL, public to every tenant and guests); `chunks.asset_id` nullable + `source_type`/`source_id`, source-aware recall (both recallers `LEFT JOIN assets`); PDF tool chain (body text + tables rendered to PNG → vision LLM, per-table skip on failure); admin RAG → **Repository** tab lists non-file chunks with delete |
-| Model services | TEI embedding (BGE-M3), Kokoro TTS, FunASR SenseVoice STT, the **`cap_router`** capability-selector service (current model: LayaChoice v2), the local **tool-intent / argument-extractor** service (current model: `delveta-pe:q5km`; the extractor model is fine-tuned — §28.6), LiteLLM gateway (all Docker) |
+| Model services | BGE-M3 INT8 embedding service (ONNX), Kokoro TTS, FunASR SenseVoice STT, the **`cap_router`** capability-selector service (current model: LayaChoice v2), the local **tool-intent / argument-extractor** service (current model: `delveta-pe:q5km`; the extractor model is fine-tuned — §28.6), LiteLLM gateway (all Docker) |
 | Edge gateway | **Traefik** as the single public entrypoint: `:80` strips `/api` onto the host-run FastAPI and also fronts the web console (`/admin` + `/audio` `/images` `/avatars` static mounts); retrieval gRPC rides its own entryPoint (`:15052` → `h2c://retrieval:50051`); the host API is reached by **explicit IPv4** (`192.168.65.254:8300` — `host.docker.internal` also yields a ULA IPv6 the host never answers, which hangs Go's dialer); file-provider config in `deploy/traefik/`, LAN-IP published — [§13](#13-multi-tenancy-and-deployment-strategy) |
 | Async enrichment | gateway + arq worker split; `jobs` table is the source of truth; frontend polls `GET /jobs/{id}`; daily `session_events` retention cron in `WorkerSettings.cron_jobs`; `run_agent_turn` job reuses the shared `AgentKernel` composition (`apps/api/agent_factory.py`) for scheduled background turns; `toolkit_generate` runs the 5-stage toolkit pipeline (file mode → workspace output; session / cloud-file modes → caller's Cloud Drive, with a custom `prompt` + `name`) |
 | Session memory | PG-backed `sessions` / `messages` / `session_events`; **client Live State (summary + tail) is the normal-turn context source — zero SQL reads on hot turns**; threshold compaction folds raw rows into one 5-section structured summary behind a dual persistence barrier (`sessions.compaction` JSONB = durable checkpoint, revision CAS); per-session async write queue (one batch INSERT/turn); deferred finalize = incremental embed + first-time-only sidebar summary/title; trigger-gated proactive recall (Lane-1 brief always on) + RRF recency weighting + importance-weighted file recall + supersede-in-place user directives + 30-day audit-event retention — see [§22](#22-chat-session-memory-v2--client-live-state-authority--zero-read-turns) |
@@ -189,7 +189,7 @@
 | GraphRAG node | **deferred** — graph-of-communities `graph_rag` node (LLM entity/relation extraction → community summaries → global/local search), designed in §10.6; revisit after the research claim-graph matures |
 | Research OS (Phase 1) | **deferred, trigger-gated** — the file-backed spike is now a live user surface (chat-created tasks, §17); the PostgreSQL repositories (projects/sources/claims/artifacts) + a research admin console start when multi-instance concurrency or console-wide research reporting is real |
 
-Dropped as non-goals (deliberate decisions, not gaps): recurring-billing **subscriptions** (no payment counterparty; pay-as-you-go wallet covers self-hosted quota needs), **unified PostgreSQL log tables** (the JSONL audit trail + relational usage surfaces already answer single-node forensics; revisit only if cross-node SQL log aggregation becomes a requirement), and the **TEI reranker container** (superseded — the in-process cross-encoder is the rerank implementation, live with `BAAI/bge-reranker-v2-m3`).
+Dropped as non-goals (deliberate decisions, not gaps): recurring-billing **subscriptions** (no payment counterparty; pay-as-you-go wallet covers self-hosted quota needs), **unified PostgreSQL log tables** (the JSONL audit trail + relational usage surfaces already answer single-node forensics; revisit only if cross-node SQL log aggregation becomes a requirement), and the **TEI reranker container** (superseded — the in-process cross-encoder is the rerank implementation, live with `BAAI/bge-reranker-v2-m3`; a legacy `reranker` Compose service remains defined for experimentation but is not wired and is not started by the launchers).
 
 [↑ Back to top](#table-of-contents)
 
@@ -229,7 +229,7 @@ workloads under your control.
 | Config | pydantic-settings | env vars + type validation |
 | Cache / queue | Redis + arq | result caching, async enrichment |
 | LLM gateway | LiteLLM Proxy | legacy default client; pinned channels call their provider directly (`llm_credentials.base_url` + `api_key`) |
-| Embedding | BGE-M3 (dim 1024) via TEI | multilingual, moderate dim |
+| Embedding | BGE-M3 INT8 (dim 1024) served as ONNX | multilingual, moderate dim, local INT8 runtime |
 | Reranking | BGE-reranker cross-encoder | post-recall precision |
 | Retrieval (RAG) | config-driven node pipeline: query rewrite → pgvector + tsvector recall → RRF fusion → rerank, plus optional parent-expand / CRAG nodes | hybrid keyword + semantic search; CJK queries segmented with jieba; topology + params editable live in the admin console |
 | Agent | `AgentKernel` (cache-boundary prompt + deferred tool loading + dual-track memory + sandbox) over `ReactLoopAgent` + plugin `ToolRuntime` | controllable, testable, plugin-based |
@@ -307,6 +307,14 @@ delveta/
 │   ├── traefik/                  # gateway static + dynamic config
 │   ├── retrieval/Dockerfile      # retrieval service image
 │   ├── worker/Dockerfile         # arq worker image
+│   ├── embedding_int8/           # BGE-M3 INT8 ONNX embedding service (port 18080)
+│   ├── laya/                     # cap_router service (LayaChoice, port 18092)
+│   ├── tool_intent/              # tool-intent init + serving images (Ollama, port 18091)
+│   ├── stt/                      # FunASR SenseVoice STT service (port 18881)
+│   ├── model_store/              # shared downloader: resume / lock / verify / atomic publish
+│   ├── model_config/             # MODEL_SPEC_JSON pins for embedding + cap-router
+│   ├── model_volume_bundle.sh    # export/import a model named volume
+│   ├── MODEL_VOLUMES.md          # volume layout, lifecycle, troubleshooting
 │   └── litellm/config.yaml
 ├── tests/                        # pytest (di / jobs / loop / memory / memory_rrf / prompt_engine / rrf / system_prompt / tool_gateway / tool_runtime)
 ├── .github/workflows/ci.yml      # buf lint + pytest
@@ -1052,7 +1060,7 @@ Switching modes never touches the tool code — it only changes what `ctx.provid
                                     ▼                        ▼
                          FastAPI gateway (api)         retrieval service (gRPC)
                          - Agent loop                  - RAGPipeline (embed → recall → RRF → rerank)
-                         - vocabulary usecases         - owns TEI/pgvector/FTS/rerank/rewrite
+                         - vocabulary usecases         - owns embedding/pgvector/FTS/rerank/rewrite
                          - enqueues enrichment jobs
                                     │
                                     │  enqueue (arq)
@@ -1063,9 +1071,11 @@ Switching modes never touches the tool code — it only changes what `ctx.provid
                                                       - session finalize (embed + summary)
                                     │
                                     │    HTTP (OpenAI-compatible) to model services:
-                                    ├───────────────▶ TEI embedding  (POST /embed)
+                                    ├───────────────▶ BGE-M3 INT8 embeddings (POST /embed)
                                     ├───────────────▶ Kokoro TTS     (/v1/audio/speech)
                                     ├───────────────▶ FunASR SenseVoice (/v1/audio/transcriptions)
+                                    ├───────────────▶ cap_router     (LayaChoice, POST /v1/systemone)
+                                    ├───────────────▶ tool-intent    (Ollama, OpenAI-compatible /v1)
                                     └───────────────▶ LiteLLM gateway (/v1)
                                     │
                                     │    DB direct (no service in front); jobs table = job state
@@ -1073,9 +1083,17 @@ Switching modes never touches the tool code — it only changes what `ctx.provid
                             PostgreSQL (pgvector + tsvector + jobs) via SQLAlchemy+asyncpg
 ```
 
-- **Model inference never runs in the API/retrieval/worker process** — embedding/TTS/STT are separate
-  containers; model updates don't restart the app. Reranking is the exception: the cross-encoder
-  loads in-process via `sentence-transformers` when `reranker_model` is set (disabled by default).
+- **Model inference never runs in the API/retrieval/worker process** — embedding, TTS, STT,
+  cap-router, and tool-intent are separate containers; model updates don't restart the app.
+  Reranking is the exception: the cross-encoder loads in-process via `sentence-transformers`
+  when `reranker_model` is set (disabled by default).
+- **Model services are code-only images with weights in named volumes.** `embedding` and
+  `cap-router` download and verify their pinned revision on first boot; `tool-intent` is preceded
+  by a one-shot `tool-intent-model` service that does the same for its GGUF. Pins reach the
+  containers at creation time through `deploy/model_config/*.env` (`MODEL_SPEC_JSON`), never
+  through the image. `tool-intent` is optional and is not started by the launchers.
+  See [model-deployment.en.md](model-deployment.en.md) and
+  [deploy/MODEL_VOLUMES.md](../deploy/MODEL_VOLUMES.md).
 - **Pinned LLM channels call their provider directly** — a session's chat request builds a
   per-request OpenAI client from the channel's `base_url`/`api_key` (the shared client is never
   mutated). The LiteLLM gateway (`llm_base_url`, default `:14000`) is used only for roles with no
@@ -2208,7 +2226,7 @@ acquisition and the Binder.
 | B2B (enterprise) | database-per-tenant |
 | Read scaling | read replicas + pgBouncer connection pool |
 | Edge vs internal | external REST/SSE via Traefik ↔ internal gRPC. Live shape: Traefik is the single entrypoint, published on the machine's **LAN IP** (temporarily by IP — no DNS/TLS yet): `:80` strips `/api` to the host-run FastAPI and also fronts the web console (`/admin` + `/audio` `/images` `/avatars` static mounts), the retrieval gRPC rides its own entryPoint (`:15052`). The host API is reached by explicit IPv4 of the Docker Desktop host gateway (`192.168.65.254:8300`) — `host.docker.internal` also resolves to a ULA IPv6 the host never answers, which hangs Go's dialer |
-| Model scaling | separate model services (TEI/Kokoro/LiteLLM), independent scale-out |
+| Model scaling | separate model services (embedding/cap-router/tool-intent/Kokoro/LiteLLM), independent scale-out |
 
 ---
 
@@ -7889,8 +7907,8 @@ downstream (`accept_model_values` / the Binder), never by mutating the value her
 
 Delveta's embedding model is a **dense-only fine-tune of `BAAI/bge-m3`**
 (XLM-RoBERTa-large, 1024-dim) that serves the retrieval pipeline (§9, §10). The
-serving unit is unchanged: the embedding service (§2, §8) is a TEI container that
-loads the fine-tuned weights; retrieval, reranking (§10.6 `cross_encoder`) and the
+serving unit is a dedicated container: the embedding service (§2, §8) serves the
+exported INT8 ONNX graph; retrieval, reranking (§10.6 `cross_encoder`) and the
 Intent Funnel (§25) are downstream consumers and are **not** reshaped by this
 fine-tune.
 
@@ -8035,7 +8053,8 @@ The 454-sample retrieval figures must **not** be presented as "all 500".
   `0e0ada7fec9367bca6d816b86953e4f9fe8531ebd4e8251f6de0721c0d2b1f0d` — identical to the published
   variant record (§29.3).
 - Smoke test PASSED: input/output signature, 1024-dim output, finite values, L2 ≈ 1.
-- Baseline source: base `BAAI/bge-m3` via production TEI; frozen record `cases.jsonl` (SHA256
+- Baseline source: base `BAAI/bge-m3` via the then-production TEI service (historical baseline; TEI
+  is no longer the serving path); frozen record `cases.jsonl` (SHA256
   `202ec70dc12e9bbf8b473fceb4ff90f4e261c49d60a78c7342a3bf7c0648e124`) and replay
   `recall_replay_validation.jsonl` (SHA256
   `cd4f3b83e7979f75c64f54c6c00bebeaf84cfbed399e4aef2a52a99b837d7f20`).
@@ -8043,8 +8062,9 @@ The 454-sample retrieval figures must **not** be presented as "all 500".
 **Protocol.** Corpus = the live routable corpus (856 rows: 34 standard + 822 similar), the same pool
 as the frozen run. Lane = top-64 per path → cosine → gate `chat_funnel_min_score` 0.60 → keep the
 highest-scoring row per capability. Fine-tuned encodings: batch = 1 (no padding), truncation 64,
-CLS pooling + L2 normalization inside the exported ONNX graph. The base baseline was produced by TEI
-(batched / padded) — see Limitations for the recorded protocol difference.
+CLS pooling + L2 normalization inside the exported ONNX graph. The base baseline was produced by the
+then-production TEI service (batched / padded; historical) — see Limitations for the recorded
+protocol difference.
 
 **Retrieval and threshold results (denominator 454).**
 
@@ -8105,7 +8125,8 @@ Formal-500 tuning exercise.
 2. **INT8 retrieval layer only.** The FP32 fine-tuned model was not evaluated.
 3. **Final tool-selection layer not evaluated.** Laya `cap_router` and Qwen were not re-run, and no
    fine-tuned end-to-end accuracy was computed.
-4. **Runtime-protocol difference.** The base baseline is production TEI (batched / padded); the
+4. **Runtime-protocol difference.** The base baseline is the historical production TEI path
+   (batched / padded), no longer the serving stack; the
    fine-tuned INT8 encodings are standalone ONNX, batch = 1 (no padding). The evaluation artifacts
    record this padding difference and a re-computation; a padding-variant recompute reproduced 84/84
    fixes and 0 regressions, but the run conditions are **not** fully identical.

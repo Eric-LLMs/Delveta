@@ -17,6 +17,23 @@
 
 name: delveta
 
+# One pin, one place: both halves of the tool-intent model lifecycle read these.
+# `tool-intent-model` downloads and verifies the GGUF; `tool-intent` registers
+# and serves it.
+x-tool-intent-model: &tool-intent-model
+  TOOL_INTENT_MODEL_REPO: ${TOOL_INTENT_MODEL_REPO:-eric-ml-nlp/Delveta-Qwen3-0.6B-PE-v1}
+  TOOL_INTENT_MODEL_REVISION: ${TOOL_INTENT_MODEL_REVISION:-1a75945e12bfeb203910bdb765e7cdf07f6a1126}
+  TOOL_INTENT_MODEL_FILE: ${TOOL_INTENT_MODEL_FILE:-Q5_K_M/model.gguf}
+  TOOL_INTENT_MODEL_SHA256: ${TOOL_INTENT_MODEL_SHA256:-17772c20f3bf356f251c29816b24000dfdbf4b412755024dc087ae63591b98f6}
+  TOOL_INTENT_MODEL_SIZE: ${TOOL_INTENT_MODEL_SIZE:-444414752}
+  HF_ENDPOINT: ${HF_ENDPOINT:-https://huggingface.co}
+  HF_TOKEN: ${HF_TOKEN:-}
+  # model_store downloads with plain HTTP Range requests and keeps partial bytes
+  # inside this volume, so a recreated container resumes. Xet's chunk cache lives
+  # in the container filesystem; disable it so nothing reintroduces a cache that
+  # disappears with the container.
+  HF_HUB_DISABLE_XET: "1"
+
 services:
   # ── Data ──────────────────────────────────────────────────────────────
   postgres:
@@ -55,31 +72,53 @@ services:
   # The DEFAULT embedding backend, on the SAME POST /embed contract the retired
   # TEI container spoke (port 18080), so core.infrastructure.vector.TEIEmbedder
   # is unchanged. Backed by the validated fine-tuned INT8 ONNX graph (CLS pooling
-  # + L2 norm inside the graph, 1024-dim). Weights are bind-mounted READ-ONLY from
-  # the host model store (the same pattern as the cap-router checkpoint) and
-  # pointed at by MODEL_DIR — they are deliberately NOT baked into the image.
-  # There is NO fallback to BAAI/bge-m3: a missing/unreadable model.onnx aborts
-  # the container at boot (onnxruntime raises while the module is imported).
+  # + L2 norm inside the graph, 1024-dim).
+  #
+  # The checkpoint lives in the Docker-managed named volume `embedding-model`,
+  # NOT on a host path: the entrypoint downloads the configured revision from
+  # the Hugging Face repo, verifies every file's size + SHA256, and publishes it
+  # under /model/current before uvicorn starts. Container recreation reuses the
+  # volume; `docker compose down` keeps it; only `docker compose down -v`
+  # deletes it (the next boot re-downloads ~0.57 GB).
+  #
+  # Model pins are NOT in the image. They arrive as MODEL_SPEC_JSON from
+  # deploy/model_config/embedding.env (Compose env_file, read at container
+  # creation). To change a model: edit that file, then
+  #   docker compose up -d --force-recreate embedding
+  # Compose recreates the container because its environment changed; no image
+  # rebuild and no host mount is involved. `docker compose restart` does NOT
+  # pick up a new env file value.
+  # There is NO fallback to BAAI/bge-m3: an unverifiable model aborts the
+  # container at boot.
   # Build source: deploy/embedding_int8 (rebuild only if the image is missing).
   embedding:
+    build:
+      context: ./deploy
+      dockerfile: embedding_int8/Dockerfile
     image: delveta-embedding-int8:latest
     container_name: delveta-embedding
     command: uvicorn server:app --host 0.0.0.0 --port 80
     ports:
       - "18080:80"
+    env_file:
+      - ./deploy/model_config/embedding.env
     volumes:
-      # Host model store, overridable via .env (EMBEDDING_MODEL_DIR).
-      - ${EMBEDDING_MODEL_DIR:-F:/WorkSpace/Delveta/.tmp/delveta-bge-m3-v1-int8/INT8}:/model:ro
+      - embedding-model:/model
     environment:
-      MODEL_DIR: /model     # exact-validated protocol: batch=1, truncation=64
       MAX_LEN: "64"
+      HF_ENDPOINT: ${HF_ENDPOINT:-https://huggingface.co}
+      HF_TOKEN: ${HF_TOKEN:-}
+      # See the note on the tool-intent model pin above: HTTP partials live in
+      # the volume, so an interrupted download resumes after a container swap.
+      HF_HUB_DISABLE_XET: "1"
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:80/health').status==200 else 1)"]
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 60s
+      # Generous: a cold volume must download and hash ~0.57 GB first.
+      start_period: 900s
 
   # ── Reranker (BGE-reranker-v2-m3 via TEI) ─────────────────────────────
   # NOTE: not currently wired into the app — rag.rank.cross_encoder uses sentence-transformers
@@ -150,14 +189,43 @@ services:
   #                  full current tag is delveta-pe:q5km)
   # Weight/config live in the named volume only; the app never references a
   # model name in business logic (config.py chat_tool_intent_local_model +
-  # this env var are the ONLY places the tag appears). Host wiring (app .env,
-  # gitignored):
+  # this env var are the ONLY places the tag appears).
+  #
+  # Model initialisation is AUTOMATIC and split across two containers:
+  #   tool-intent-model (one-shot): downloads the pinned GGUF from Hugging Face
+  #     into the `toolintent-cache` volume through the shared `model_store`
+  #     package (size + SHA256 verified, interrupted transfers resume), then
+  #     exits 0. It skips the download entirely when `.model-ready.json` says
+  #     those bytes are already registered.
+  #   tool-intent (below): stock Ollama, no curl and no apt. It registers the
+  #     file with `ollama create`, verifies the resulting blob digest equals the
+  #     pinned SHA256, writes `.model-ready.json`, deletes the staging copy, and
+  #     serves. compose waits for the init service to complete successfully, so
+  #     an unverified download never starts a serving container.
+  # No manual `ollama pull` and no host path is involved. `docker compose down`
+  # keeps the volume; `docker compose down -v` deletes it (next boot
+  # re-downloads ~444 MB). The healthcheck below only passes once the model is
+  # registered.
+  # Host wiring (app .env, gitignored):
   #   CHAT_TOOL_INTENT_LOCAL_URL=http://localhost:18091/v1
   #   CHAT_TOOL_INTENT_LOCAL_MODEL=delveta-pe:q5km   (config default; set only to deviate)
-  # One-time after first boot:
-  #   docker exec delveta-tool-intent ollama pull delveta-pe:q5km
+  tool-intent-model:
+    build:
+      context: ./deploy
+      dockerfile: tool_intent/init.Dockerfile
+    image: delveta-tool-intent-init:latest
+    volumes:
+      - toolintent-cache:/root/.ollama
+    environment:
+      <<: *tool-intent-model
+    # One-shot: exit 0 means "bytes are published", non-zero blocks tool-intent.
+    restart: "no"
+
   tool-intent:
-    image: ollama/ollama:latest
+    build:
+      context: ./deploy
+      dockerfile: tool_intent/Dockerfile
+    image: delveta-tool-intent:latest
     container_name: delveta-tool-intent
     ports:
       # loopback-only, same doctrine as stt: the host-run API reaches it at
@@ -166,48 +234,73 @@ services:
     volumes:
       - toolintent-cache:/root/.ollama
     environment:
+      <<: *tool-intent-model
       OLLAMA_KEEP_ALIVE: "24h"     # ms-level first hop needs a warm model in RAM
-      OLLAMA_MODEL: ${TOOL_INTENT_OLLAMA_MODEL:-delveta-pe:q5km}   # pull-tag documentation only
+      OLLAMA_MODEL: ${TOOL_INTENT_OLLAMA_MODEL:-delveta-pe:q5km}
+    depends_on:
+      tool-intent-model:
+        condition: service_completed_successfully
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "ollama", "list"]
+      # Healthy only when the model is registered — an API-up-but-empty volume
+      # during initialisation must not be reported as ready.
+      test: ["CMD-SHELL", "ollama list | grep -q \"$${OLLAMA_MODEL}\""]
       interval: 10s
       timeout: 10s
       retries: 12
-      start_period: 30s
+      # Generous: a cold volume downloads and verifies ~444 MB first.
+      start_period: 1800s
 
   # ── cap_router (capability-selection model service) ──────────────────────────
   # Built locally from deploy/laya; speaks the TypeSafe Jev POST /v1/systemone
   # wire (one choice question per turn). The current model implementation is
-  # LayaChoice-v2 (4-slot contract: 3 capability cards + the REJECT card). The
-  # fine-tuned checkpoint (~1.3 GB) is NOT baked into the image — it is
-  # bind-mounted READ-ONLY from the host and pointed at by LAYA_CHOICE_MODEL_DIR.
+  # LayaChoice-v2 (4-slot contract: 3 capability cards + the REJECT card).
+  #
+  # The ~1.3 GB checkpoint lives in the Docker-managed named volume `laya-model`,
+  # NOT on a host path: the entrypoint downloads the configured revision,
+  # verifies every file's size + SHA256, and publishes it under
+  # /models/layachoice/current before the server starts. Container recreation
+  # reuses the volume; `docker compose down` keeps it; only
+  # `docker compose down -v` deletes it (the next boot re-downloads ~1.32 GB).
+  #
+  # Model pins are NOT in the image. They arrive as MODEL_SPEC_JSON from
+  # deploy/model_config/layachoice.env (Compose env_file, read at container
+  # creation). To change a model: edit that file, then
+  #   docker compose up -d --force-recreate cap-router
+  # No image rebuild and no host mount is involved. `docker compose restart`
+  # does NOT pick up a new env file value.
   # Host port is bound to loopback only, the same doctrine as stt/tool-intent:
   # the host-run API reaches it at http://localhost:18092. Host wiring (app .env,
   # gitignored):
   #   CHAT_CAP_ROUTER_URL=http://localhost:18092
-  # LAYA_CHOICE_MODEL_DIR is the host path to the checkpoint dir (V2 by default);
-  # override it in .env to point at a different release.
-  # start_period is generous: the FP32 checkpoint loads onto CPU at startup and
-  # the service warms it with one forward pass before it is ready.
+  # start_period is generous: a cold volume downloads first, then the FP32
+  # checkpoint loads onto CPU and is warmed with one forward pass.
   cap-router:
-    build: ./deploy/laya
+    build:
+      context: ./deploy
+      dockerfile: laya/Dockerfile
     image: delveta-cap-router:latest
     container_name: delveta-cap-router
     ports:
       - "127.0.0.1:18092:8000"
+    env_file:
+      - ./deploy/model_config/layachoice.env
     volumes:
-      - ${LAYA_CHOICE_MODEL_DIR:-F:/WorkSpace/Delveta/.tmp/laya_v2_eval_20261003/model}:/models/layachoice:ro
+      - laya-model:/models/layachoice
     environment:
-      LAYA_CHOICE_MODEL_DIR: /models/layachoice
       LAYA_DEVICE: cpu
+      HF_ENDPOINT: ${HF_ENDPOINT:-https://huggingface.co}
+      HF_TOKEN: ${HF_TOKEN:-}
+      # See the note on the tool-intent model pin above: HTTP partials live in
+      # the volume, so an interrupted download resumes after a container swap.
+      HF_HUB_DISABLE_XET: "1"
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
       interval: 10s
       timeout: 5s
       retries: 12
-      start_period: 180s
+      start_period: 1800s
 
   # ── LLM gateway (LiteLLM proxy) ───────────────────────────────────────
   # The API calls a virtual model name (LLM_MODEL=delveta-chat); LiteLLM routes it to
@@ -334,3 +427,7 @@ volumes:
   kokoro-cache:
   funasr-cache:
   toolintent-cache:
+  # Model checkpoints owned by Docker, initialised by each service's entrypoint.
+  # `docker compose down -v` removes them and forces a re-download on next boot.
+  embedding-model:
+  laya-model:

@@ -2,7 +2,7 @@
 
 ## 1. Prerequisites
 
-- **Docker Desktop** — runs PostgreSQL, Redis, and the model services (embedding / rerank / TTS / LLM gateway).
+- **Docker Desktop** — runs PostgreSQL, Redis, and the model services (embedding / cap-router / optional tool-intent / TTS / STT / LLM gateway).
 - **Conda** (Miniconda or Anaconda) — the backend runs in a `delveta` env.
 - **Node.js 18+** — for the web frontend (optional; the API runs without it).
 - **Git**.
@@ -42,11 +42,27 @@ pip install -e ".[rag]"     # optional: RAG semantic search (pulls torch / sente
 docker compose up -d postgres redis embedding tts llm-gateway worker cap-router
 ```
 
-The first start downloads the models (BGE-M3, Kokoro-82M) into Docker volumes — allow a few minutes. The LLM gateway routes the virtual model `delveta-chat` to `LLM_UPSTREAM_MODEL` using `LLM_UPSTREAM_KEY`.
+The first start downloads pinned checkpoints into Docker named volumes: about
+586 MB for the embedding service (BGE-M3 INT8 ONNX) and 1.32 GB for
+`cap-router` (LayaChoice). Kokoro-FastAPI populates its own cache volume, and
+the STT service fetches SenseVoiceSmall on first boot. Expect the first start to
+take longer than later starts; subsequent boots reuse the volumes without
+network access. The LLM gateway routes the virtual model `delveta-chat` to
+`LLM_UPSTREAM_MODEL` using `LLM_UPSTREAM_KEY`. For volume layout, pinning, and
+offline transfer, see [model-deployment.en.md](model-deployment.en.md).
 
-> Skip `embedding` if you don't use semantic search, and `tts` if you don't need audio — the API degrades gracefully.
+To add the local parameter extractor, run `docker compose up -d tool-intent`.
+That also starts the one-shot `tool-intent-model` service, which downloads and
+verifies a 444 MB GGUF before the extractor is allowed to serve. The launchers
+do not start it by default.
+
+> Skip `embedding` if you don't use semantic search, and `tts` / `stt` if you don't need audio or transcription — the API degrades gracefully.
 >
-> **Docker Desktop (Windows) memory note:** the TEI embedding service needs ~9 GB during BGE-M3 warmup. If Docker's WSL2 backend has only ~8 GB (the default on a 16 GB host), the container gets OOM-killed. Raise the limit in `%UserProfile%\.wslconfig`, e.g. `[wsl2]\nmemory=12GB\nswap=4GB`, then run `wsl --shutdown` and restart Docker Desktop.
+> **Docker Desktop (Windows) memory note:** the embedding service is a local
+> INT8 ONNX runtime, not the former TEI server, so the old ~9 GB FP32 warmup
+> requirement no longer applies. If a model container is still OOM-killed,
+> raise the WSL2 limit in `%UserProfile%\.wslconfig`, e.g.
+> `[wsl2]\nmemory=12GB\nswap=4GB`, then run `wsl --shutdown` and restart Docker Desktop.
 
 ## 7. Initialize the database (canonical init script)
 
@@ -108,16 +124,18 @@ images, PDF with annotations, text/code, Office documents rendered in-window), t
 streamed answers and a collapsible thinking panel.
 
 ```bash
-bash scripts/start_desktop.sh    # one-click: infra (postgres/redis) + backend + workbench
+bash scripts/start_desktop.sh    # one-click: all dependency services + backend + workbench
 # or manually:
 cd apps/desktop
 npm install
 npm start                        # opens the workbench window
 ```
 
-`scripts/start_desktop.sh` probes the backend at `http://localhost:8300/health` first, starts the
-infra + `uvicorn apps.api.main:app --port 8300` in the background if it is down (pid in
-`data/uvicorn.pid`), then opens the Electron window.
+`scripts/start_desktop.sh` probes the backend at `http://localhost:8300/health` first. If it is
+down, the script brings up every dependency service the desktop app uses (postgres, redis,
+embedding, tts, stt, llm-gateway, worker, cap-router) and then starts
+`uvicorn apps.api.main:app --port 8300` in the background (pid in `data/uvicorn.pid`) before
+opening the Electron window.
 
 The file tree, viewer, video screenshots, and subtitles work **without the backend**. Chat
 (streaming), session history & search, "生成 PPT / 生成书" (media generation), and sign-in / profile
@@ -135,8 +153,13 @@ First run on a fresh machine also installs Docker and the Python/Node deps autom
 
 | Environment | Script | What it does |
 |---|---|---|
-| **Windows desktop** (local PC client) | `bash scripts/start_desktop.sh` | Auto-installs Docker Desktop if missing → starts **all** dependency services (postgres, redis, embedding, tts, llm-gateway, worker, cap-router) → ensures the Python venv → starts the backend (boot seeds `admin`/`pwd@Admin`) → opens the Electron workbench. |
-| **Linux server** (browser access) | `bash scripts/start_server.sh` | Auto-installs Docker Engine if missing → starts **all** dependency services (postgres, redis, embedding, tts, llm-gateway, worker, cap-router) → ensures the Python venv → starts the backend (boot seeds `admin`/`pwd@Admin`) → builds and serves the React web UI at `http://<server-ip>:5273`. |
+| **Windows desktop** (local PC client) | `bash scripts/start_desktop.sh` | Auto-installs Docker Desktop if missing → starts **all** dependency services used by the desktop app (postgres, redis, embedding, tts, stt, llm-gateway, worker, cap-router) → ensures the Python venv → starts the backend (boot seeds `admin`/`pwd@Admin`) → opens the Electron workbench. |
+| **Linux server** (browser access) | `bash scripts/start_server.sh` | Auto-installs Docker Engine if missing → starts the backend dependency services (postgres, redis, embedding, tts, llm-gateway, worker, cap-router) → ensures the Python venv → starts the backend (boot seeds `admin`/`pwd@Admin`) → builds and serves the React web UI at `http://<server-ip>:5273`. |
+
+Neither launcher starts `tool-intent`; start it explicitly with
+`docker compose up -d tool-intent` when you want local parameter extraction.
+Model downloads, volumes, runtime configuration, and updates are covered in
+[model-deployment.en.md](model-deployment.en.md).
 
 The default `admin` / `pwd@Admin` account is seeded on first boot and ready to sign in from the start.
 

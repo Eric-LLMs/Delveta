@@ -190,8 +190,8 @@ class Settings(BaseSettings):
     # CapabilityRouterUnavailable -> Agent" semantics (ruling: a
     # cap_router failure NEVER falls back to another selection model or to the
     # argument extractor). The model directory is supplied to the SERVICE via
-    # LAYA_CHOICE_MODEL_DIR (a read-only bind mount) — it is never referenced in
-    # this process and never baked into the image.
+    # LAYA_CHOICE_MODEL_DIR (a Docker-managed volume populated at startup) — it is
+    # never referenced in this process and never baked into the image.
     chat_cap_router_url: str = ""                      # deployed cap_router endpoint ("" = none)
     # Per-call guardrail. The sidecar preloads/warms the model at startup, so the
     # first load is NOT counted against this budget; a local endpoint slower than
