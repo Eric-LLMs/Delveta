@@ -328,12 +328,12 @@ docker compose up -d tool-intent-model tool-intent
 The first start after import should hit the receipt and reuse the model without
 any network request.
 
-### 6.3 Status and measurements
+### 6.3 Status and verification
 
 - Export, import, and post-import reuse: **[Implemented]**.
-- A round trip between two independent local volumes has been measured: export
-  52 s producing a 390 MB archive; import 20.5 s; post-import start reusing in
-  1.56 s.
+- A local round trip between two independent volumes confirmed that the archive
+  preserves the published layout and that the first start after import reuses
+  the model without downloading.
 - Import across real machines (different hosts, different architectures):
   **[Pending Verification]**.
 - Re-verifying sha256 on import: **[Pending Implementation]**. The fast path
@@ -611,7 +611,7 @@ container; `restart` has no effect.
 | Ollama registration provenance check | Implemented | Blob digest equals the GGUF SHA256; a mismatch triggers re-registration |
 | Manifest fallback when the marker is absent | Implemented | The upgraded production volume reused the existing model without a 444 MB download |
 | Failure self-healing | Implemented | After deleting the model, restart exits 1 and removes the marker |
-| Volume export/import | Implemented | Local round trip: export 52 s / 390 MB, import 20.5 s, start reuse 1.56 s |
+| Volume export/import | Implemented | A local round trip preserved the published layout; the first start after import reused the model without downloading |
 | Health checks cover initialisation | Implemented | All three services report healthy; embedding and cap-router health endpoints respond normally |
 
 ### 12.2 Pending Implementation
