@@ -3,7 +3,8 @@
 ONE narrow responsibility: turn a user sentence plus the document context the
 turn already carries into the reading scope a file tool accepts:
 
-* ``all``      — the whole document (the tool call omits ``pages``);
+* ``all``      — the request does not restrict pages (the tool call omits
+                 ``pages``); each capability applies its own documented default;
 * ``single``   — exactly one page (``"5"``), including deictic "this page",
                  which resolves to the viewer's current page;
 * ``range``    — several pages, as ``"3-5"`` or ``"1,3"`` (the shared strict
@@ -83,15 +84,19 @@ Rules:
 - target=conversation_context when the user asks about the chat itself
   (e.g. "what we just discussed"). It has no page axis: page_scope may be
   "all" or "unknown", and the caller supplies the transcript.
-- page_scope=all: the whole document; pages MUST be null.
+- page_scope=all: the request does not restrict pages; pages MUST be null.
+  The calling capability applies its own default (the whole document, or the
+  page in view).
 - page_scope=single: exactly one page; pages is one positive integer, e.g. "5".
 - page_scope=range: several pages; pages is "a-b" or a comma list like "1,3,5",
   at most 16 unique pages, ascending.
 - "this page", "current page", "当前页", "这一页", "这页" mean single with the
   provided current page.
-- A request with no page restriction, or one about the whole document, is all.
+- Use "all" both for an explicit whole-document request and for a request that
+  names no page; neither restricts the pages.
 - Never invent a page number. Never output an asset id or any other field.
-- If the target or the scope cannot be determined, use "unknown".
+- If the target or the page intent cannot be determined, use "unknown" — never
+  guess, and never widen an unreadable page or range to all.
 """
 
 

@@ -25,6 +25,9 @@ import pytest
 from core.application.chat.intent_funnel import matcher as matcher_mod
 from core.application.chat.intent_funnel import cap_router as cap_router_mod
 from core.application.chat.intent_funnel.argument_acquisition import AcquisitionInputs
+from core.application.chat.intent_funnel.argument_acquisition import (
+    page_scope_resolver as psr,
+)
 from core.application.chat.intent_funnel.cap_handler import (
     HANDLERS,
     VisionHandler,
@@ -86,6 +89,73 @@ async def test_vision_omits_question_when_the_message_is_empty():
     handler = VisionHandler()
     draft = await handler.acquire(query="   ", facts=TurnFacts(viewer_asset_id=ASSET))
     assert draft == {"asset_id": ASSET}
+
+
+# ── Layer 1b: the page axis is a property of the TARGET, not of the sentence ────
+
+
+def _scope(**over) -> psr.PageScope:
+    base = {"target": psr.TARGET_DOCUMENT, "page_scope": psr.SCOPE_ALL,
+            "pages": None, "status": psr.STATUS_OK, "reason": ""}
+    base.update(over)
+    return psr.PageScope(**base)
+
+
+@pytest.mark.parametrize("kind", ["image", "video", "text", "markdown", "office"])
+async def test_vision_skips_the_page_resolver_for_a_non_paginated_viewer(kind):
+    calls: list = []
+
+    async def resolver(**kwargs):
+        calls.append(kwargs)
+        return _scope()
+
+    evidence: dict = {}
+    draft = await VisionHandler().acquire(
+        query="describe the error in this screenshot",
+        facts=TurnFacts(viewer_asset_id=ASSET, viewer_kind=kind),
+        page_scope_resolver=resolver, scope_evidence=evidence)
+
+    assert calls == []
+    assert draft == {"asset_id": ASSET,
+                     "question": "describe the error in this screenshot"}
+    assert evidence["llm"] == {"status": "not_called"}
+    assert evidence["merged"] == {"pages": None}
+
+
+@pytest.mark.parametrize("kind", ["pdf", ""])
+async def test_vision_keeps_the_resolver_for_a_paginated_or_unknown_viewer(kind):
+    calls: list = []
+
+    async def resolver(**kwargs):
+        calls.append(kwargs)
+        return _scope(page_scope=psr.SCOPE_SINGLE, pages="5")
+
+    draft = await VisionHandler().acquire(
+        query="read page 5",
+        facts=TurnFacts(viewer_asset_id=ASSET, viewer_kind=kind),
+        page_scope_resolver=resolver)
+
+    assert len(calls) == 1
+    assert draft == {"asset_id": ASSET, "question": "read page 5", "page": "5"}
+
+
+async def test_vision_keeps_the_resolver_when_the_asset_is_not_the_viewer():
+    # An attachment / drive-path asset declares no kind this turn, so the page
+    # axis may exist (e.g. a PDF attachment) and the model verdict is kept.
+    calls: list = []
+
+    async def resolver(**kwargs):
+        calls.append(kwargs)
+        return _scope(page_scope=psr.SCOPE_SINGLE, pages="2")
+
+    draft = await VisionHandler().acquire(
+        query="read page 2",
+        facts=TurnFacts(attachment_asset_id="A", viewer_asset_id=ASSET,
+                        viewer_kind="image"),
+        page_scope_resolver=resolver)
+
+    assert len(calls) == 1
+    assert draft == {"asset_id": "A", "question": "read page 2", "page": "2"}
 
 
 # ── Layer 2: the roster wiring ───────────────────────────────────────────────────
@@ -172,10 +242,10 @@ def _wire(monkeypatch, entry: CapabilityEntry):
     return rec, view
 
 
-def _deps(provider):
+def _deps(provider, resolver=None):
     return types.SimpleNamespace(
         session_factory=None, embedder=lambda: object(), llm=object(),
-        acquisition_inputs=provider)
+        acquisition_inputs=provider, page_scope_resolver=resolver)
 
 
 async def _route(ctx, deps, req):
@@ -232,6 +302,30 @@ async def test_handler_bypasses_a_populated_generic_chain(monkeypatch, caplog):
                        _deps(lambda cid: poisoned.get(cid)), req)
 
     assert out is not req
+    assert out.requested_action["args"] == {"asset_id": ASSET, "question": MESSAGE}
+    assert not rec.legacy
+
+
+async def test_an_image_viewer_turn_never_consults_the_page_resolver(monkeypatch):
+    """End-to-end proof through the REAL cascade: the resolver seam is wired but
+    POISONED — an image viewer turn certifies without ever calling it."""
+    entry = _vision_entry()
+    rec, _ = _wire(monkeypatch, entry)
+
+    async def _boom(**kwargs):
+        raise AssertionError("an image viewer has no page axis")
+
+    viewer = types.SimpleNamespace(asset_id=ASSET, page=None, selections=[],
+                                   kind="image")
+    ctx = types.SimpleNamespace(
+        body=types.SimpleNamespace(message=MESSAGE, attach=None, viewer=viewer),
+        owned_asset_id=None, path_asset_id=None, research_turn=False,
+        effective_handoff=None, session_id="s1", history=[],
+    )
+
+    out = await _route(ctx, _deps(None, resolver=_boom), TurnRequirements())
+
+    assert out is not None
     assert out.requested_action["args"] == {"asset_id": ASSET, "question": MESSAGE}
     assert not rec.legacy
 

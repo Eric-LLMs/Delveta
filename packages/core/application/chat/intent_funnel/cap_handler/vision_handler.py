@@ -26,6 +26,14 @@ slots of ``cap-vision``:
   viewer); a multi-page verdict goes to the Agent rather than silently picking
   one of the pages. An unsettled verdict never invents a page.
 
+  The page axis exists only for a PAGINATED target: ``page`` renders a PDF page.
+  When the resolved asset IS the viewer's and the viewer kind is known to be
+  non-paginated, the model is not consulted — there is nothing for it to settle.
+  Every other case (an attachment / drive-path asset, whose kind this turn does
+  not declare, or an unknown viewer kind) keeps the model verdict, so a page the
+  user DID name is never silently dropped. This is a structural target-type
+  check, never a deterministic reading of the sentence.
+
 The returned draft (``{slot: value}``) is passed through the SAME Binder /
 ActionExecutor / ToolRuntime handoff every other capability uses — the Binder
 re-resolves ``asset_id`` from the same facts, so its value is identical here.
@@ -37,6 +45,7 @@ from dataclasses import dataclass
 from core.infrastructure.pdf_pages import parse_pages_spec
 
 from ..argument_acquisition.page_scope_settlement import (
+    SOURCE_NONE,
     settle_page_scope,
     unsettled_scope,
 )
@@ -56,6 +65,11 @@ _ASSET_FACT_FIELDS = ("attachment_asset_id", "path_asset_id", "viewer_asset_id")
 # renders a page canvas for PDF only; local office/text viewers have no page image to
 # capture, so asking for one would dead-end every retry (they exit to the Agent instead).
 _CAPTURE_DOC_KINDS = frozenset({"pdf"})
+
+# Viewer kinds with NO page axis: the vision tool's ``page`` renders a PDF page,
+# so a 1-based page cannot be named or read for these targets. ``office`` is
+# included because the desktop viewer exposes no page image for it either.
+_NON_PAGINATED_VIEWER_KINDS = frozenset({"image", "video", "text", "markdown", "office"})
 
 
 @dataclass(frozen=True)
@@ -98,6 +112,24 @@ def _resolve_asset_id(facts) -> str:
     return ""
 
 
+def _page_axis_applies(facts, asset_id: str) -> bool:
+    """Whether a page number can mean anything for THIS turn's resolved asset.
+
+    Structural only — the page SEMANTICS stay with the online model. The page
+    axis is known to be absent only when the resolved asset IS the viewer's and
+    the viewer's kind is known to be non-paginated. Every other case keeps the
+    model verdict: an attachment / drive-path asset declares no kind on this
+    turn, and an unknown viewer kind may be a PDF.
+    """
+    if facts is None:
+        return False
+    viewer_asset = str(getattr(facts, "viewer_asset_id", "") or "")
+    if not viewer_asset or asset_id != viewer_asset:
+        return True
+    kind = str(getattr(facts, "viewer_kind", "") or "").strip().lower()
+    return kind not in _NON_PAGINATED_VIEWER_KINDS
+
+
 class VisionHandler:
     """``cap-vision`` parameter handler (stateless)."""
 
@@ -117,12 +149,25 @@ class VisionHandler:
             return None
         message = str(query or "").strip()
 
-        settlement = await settle_page_scope(
-            query=message, facts=facts, history=history,
-            resolver=page_scope_resolver, capability=self.capability_id,
-            asset_id=asset_id)
-        if scope_evidence is not None:
-            scope_evidence.update(settlement.record())
+        settlement = None
+        if _page_axis_applies(facts, asset_id):
+            settlement = await settle_page_scope(
+                query=message, facts=facts, history=history,
+                resolver=page_scope_resolver, capability=self.capability_id,
+                asset_id=asset_id)
+            if scope_evidence is not None:
+                scope_evidence.update(settlement.record())
+        elif scope_evidence is not None:
+            # Telemetry only: record that the page-scope model was deliberately
+            # not consulted because this target has no page axis.
+            scope_evidence.update({
+                "ok": True, "source": SOURCE_NONE,
+                "detail": ("the viewer is not a paginated document, so the "
+                           "page axis does not apply; the page-scope model "
+                           "was not consulted"),
+                "llm": {"status": "not_called"},
+                "merged": {"pages": None},
+            })
 
         draft: dict[str, object] = {"asset_id": asset_id}
         if message:
@@ -144,9 +189,11 @@ class VisionHandler:
         documented rule then applies — the page open in the viewer, and a
         multi-page PDF with no page in view is refused rather than rendered as
         page 1. A range / list cannot be satisfied by a single-page tool call,
-        so it goes to the Agent instead of silently choosing one page.
+        so it goes to the Agent instead of silently choosing one page. A
+        non-paginated target has no settlement at all (the model was not asked)
+        and therefore also omits ``page``.
         """
-        if not settlement.ok or settlement.pages is None:
+        if settlement is None or not settlement.ok or settlement.pages is None:
             return None
         try:
             pages = parse_pages_spec(settlement.pages)

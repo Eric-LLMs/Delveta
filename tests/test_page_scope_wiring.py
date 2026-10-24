@@ -16,15 +16,19 @@ Pins the integration boundary rather than the resolver's own rules:
 """
 from __future__ import annotations
 
+import asyncio
 import types
 
 from core.application.chat.intent_funnel import orchestrator as orch_mod
+from core.application.chat.intent_funnel import policy as policy_mod
 from core.application.chat.intent_funnel.argument_acquisition import (
     page_scope_resolver as psr,
 )
 from core.application.chat.intent_funnel.contract import (
     REASON_ACQUISITION_MISSING,
     REASON_ACQUISITION_TERMINAL,
+    REASON_ACQUISITION_TIMEOUT,
+    REASON_CAP_ROUTER_TIMEOUT,
     TurnFacts,
 )
 from core.application.chat.intent_funnel.registry import content_fingerprint
@@ -35,6 +39,7 @@ from core.application.chat.intent_funnel.registry.entry import (
     derive_language,
 )
 from core.application.chat.understanding import TurnRequirements
+from core.config import settings
 
 _READ_DOC_PARAMS = {
     "asset_id": {"type": "string", "required": True,
@@ -88,8 +93,8 @@ def _resolver(scope, *, seen=None):
     return _resolve
 
 
-async def _hop(entry, *, query, facts, resolver=None, history=()):
-    trace: dict = {}
+async def _hop(entry, *, query, facts, resolver=None, history=(), trace=None):
+    trace = {} if trace is None else trace
     capture: dict = {}
     deps = types.SimpleNamespace(argument_extractor=None,
                                  page_scope_resolver=resolver)
@@ -270,3 +275,62 @@ async def test_hop_summary_conversation_survives_an_unknown_page_scope():
     assert "context" in out.requested_action["args"]
     assert "RRF 是倒数排名融合" in out.requested_action["args"]["context"]
     assert "pages" not in out.requested_action["args"]
+
+
+# ── the acquisition lane is its OWN stage for the wall-clock budget ─────────────
+
+
+async def test_the_acquisition_stage_is_current_before_the_resolver_runs():
+    entry = _entry("cap-read-document", "read_document", _READ_DOC_PARAMS)
+    trace: dict = {"stage": "cap_router"}
+    seen: list = []
+
+    async def _resolver_seeing_the_stage(**kwargs):
+        seen.append(trace.get("stage"))
+        return _scope()
+
+    await _hop(entry, query="summarise it", facts=_facts(),
+               resolver=_resolver_seeing_the_stage, trace=trace)
+
+    # Selection has already returned before the resolver is consulted: the
+    # budget must be attributable to THIS hop from its first await onward.
+    assert seen == ["acquisition"]
+
+
+async def test_an_acquisition_timeout_is_not_reported_as_a_cap_router_timeout(
+        monkeypatch):
+    entry = _entry("cap-read-document", "read_document", _READ_DOC_PARAMS)
+
+    async def _slow_resolver(**kwargs):
+        await asyncio.sleep(1.0)
+        return _scope()
+
+    deps = types.SimpleNamespace(argument_extractor=None,
+                                 page_scope_resolver=_slow_resolver)
+    trace: dict = {}
+    monkeypatch.setattr(settings, "chat_funnel_timeout_seconds", 0.05)
+
+    async def _fake_run_nodes(ctx, deps_, requirements, trace_, **kwargs):
+        # The selection hop just finished and left its own stage behind.
+        trace_["stage"] = "cap_router"
+        return await orch_mod._acquisition_hop(
+            requirements, deps_, entry, query="summarise it", facts=_facts(),
+            view=_view(entry), trace=trace_, capture=kwargs.get("capture"))
+
+    monkeypatch.setattr(orch_mod, "run_nodes", _fake_run_nodes)
+
+    out = await orch_mod.run_cascade(None, deps, TurnRequirements(), trace)
+
+    # The hop advanced the stage before awaiting: a timeout in the page-scope
+    # call belongs to acquisition, not to the selection hop that returned.
+    assert out is None
+    assert trace["stage"] == "acquisition"
+    assert trace["fallback"] == REASON_ACQUISITION_TIMEOUT
+
+
+def test_stage_reason_names_the_acquisition_lane():
+    assert policy_mod.stage_reason(
+        "acquisition", timed_out=True) == REASON_ACQUISITION_TIMEOUT
+    # The selection hop keeps its own code — the new one never shadows it.
+    assert policy_mod.stage_reason(
+        "cap_router", timed_out=True) == REASON_CAP_ROUTER_TIMEOUT

@@ -16,7 +16,8 @@ The model's verdict maps to exactly one outcome:
 ===================  ==================================================
 model verdict        settlement
 ===================  ==================================================
-``all``              ok, ``pages=None`` (the whole document)
+``all``              ok, ``pages=None`` (the request restricts no pages;
+                     the capability applies its own documented default)
 ``single``/``range`` ok, canonical page spec
 anything else        not ok — the caller's acquisition-failure path
 ===================  ==================================================
@@ -52,9 +53,11 @@ SOURCE_NONE = "none"
 class PageScopeSettlement:
     """The model's settled verdict.
 
-    ``ok`` and ``pages is None`` together mean "the whole document". ``source``
-    names the producer (``llm`` or ``none``), so a report can tell a settled
-    turn from an Agent hand-off.
+    ``ok`` and ``pages is None`` together mean "the request restricts no
+    pages": each calling capability then applies its own documented default
+    (the whole document, or the page in view). ``source`` names the producer
+    (``llm`` or ``none``), so a report can tell a settled turn from an Agent
+    hand-off.
     """
 
     ok: bool

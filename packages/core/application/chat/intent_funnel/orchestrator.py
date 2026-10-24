@@ -765,6 +765,11 @@ async def _acquisition_hop(requirements, deps, entry, *, query, facts, view, tra
         turn_context,
     )
 
+    # The ARP + handler + extractor lane is its OWN stage. Selection
+    # (``cap_router``) has already returned, so a wall-clock timeout here must be
+    # attributed to acquisition — never to the selection hop that finished.
+    trace["stage"] = "acquisition"
+
     def _acq_fail(reason, *, strategy="", args=None, arg_sources=None,
                   missing=(), invalid=None, detail="", acquisition=None):
         """Record an acquisition exit ONCE: the trace keeps its node code and the

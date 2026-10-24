@@ -144,6 +144,10 @@ REASON_CAP_ROUTER_INELIGIBLE = "CAP_ROUTER_INELIGIBLE"     # retired: no K<3 gat
 # produced these is the ARP, not the Binder.
 REASON_ACQUISITION_UNDECLARED = "ACQUISITION_UNDECLARED"   # no strategy / declaration -> Agent
 REASON_ACQUISITION_MISSING = "ACQUISITION_MISSING"         # §D: no legal value for a required slot
+# The acquisition lane exceeded the funnel's wall-clock budget while a handler,
+# the page-scope resolver or the shared extractor was still running. Kept
+# DISTINCT from CAP_ROUTER_TIMEOUT: capability selection had already returned.
+REASON_ACQUISITION_TIMEOUT = "ACQUISITION_TIMEOUT"
 # The capability is ADMITTED and has an explicit DEFERRED_AGENT policy: its real
 # tool contract needs an input the funnel has no legal producer for (today the
 # toolkit trio's ``paths``). Distinct from UNDECLARED (policy absent) and from

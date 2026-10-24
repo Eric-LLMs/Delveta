@@ -87,6 +87,7 @@ _RECORDED = {
     "读一下第3到第5页": (SCOPE_RANGE, "3-5"),
     "summarise the whole document": (SCOPE_ALL, None),
     "summarise it": (SCOPE_ALL, None),
+    "extract all the text from this document": (SCOPE_ALL, None),
     "提取第2页的表格": (SCOPE_SINGLE, "2"),
     "第2页": (SCOPE_SINGLE, "2"),
     "提取第2到第4页 PDF 的表格": (SCOPE_RANGE, "2-4"),
@@ -191,6 +192,17 @@ async def test_no_page_restriction_follows_the_capability_policy(cid):
         assert draft == {"asset_id": ASSET, "pages": "12"}
     else:
         assert draft == {"asset_id": ASSET}
+
+
+async def test_extract_all_the_text_is_the_whole_document():
+    # "all" = the request restricts no pages; pdf_extract_text's documented
+    # default then reads the whole document (no ``pages`` slot emitted).
+    handler, _ = ALL_THREE["cap-pdf-extract-text"]
+    draft = await _acquire(
+        handler, "cap-pdf-extract-text",
+        "extract all the text from this document",
+        _facts(_pdf_viewer(page=12)))
+    assert draft == {"asset_id": ASSET}
 
 
 # ── scenario 4: a viewer range the sentence does not state is not a page scope ─────

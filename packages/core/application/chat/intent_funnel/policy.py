@@ -15,6 +15,7 @@ Matcher.
 from __future__ import annotations
 
 from .contract import (
+    REASON_ACQUISITION_TIMEOUT,
     REASON_CAP_ROUTER_TIMEOUT,
     REASON_CASCADE_ERROR,
     REASON_CASCADE_TIMEOUT,
@@ -46,6 +47,7 @@ def stage_reason(stage: str, *, timed_out: bool) -> str:
         return {
             "recall": REASON_RECALL_TIMEOUT,
             "cap_router": REASON_CAP_ROUTER_TIMEOUT,  # the ONE selection hop owns the budget
+            "acquisition": REASON_ACQUISITION_TIMEOUT,  # selection already returned
         }.get(stage, REASON_CASCADE_TIMEOUT)
     return {
         "registry": REASON_REGISTRY_UNAVAILABLE,

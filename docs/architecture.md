@@ -3655,6 +3655,13 @@ read this spreadsheet" request collapsed into a parse-failure apology. The `read
   per-capability handler asks the online model for the sentence's reading scope
   (`argument_acquisition/page_scope_resolver.py`) and copy the canonical result
   (§25.16.2). Document identity never comes from the model.
+  `all` means the request does **not restrict pages** — an explicit whole-document
+  request and a request that names no page are both `all`, and each capability
+  then applies its own documented default (whole document, or the viewer's page).
+  The vision handler consults the resolver only for a paginated target: when the
+  resolved asset is the viewer's and its kind is known to be non-paginated
+  (`image` / `video` / `text` / `markdown` / `office`), there is no page axis and
+  the model is skipped.
   `parse_pages_spec` (`core.infrastructure.pdf_pages`) is the ONE shared pure function, used by
   every file-content tool (read_document and the two PDF tools): comma-separated
   1-based tokens (`"3"`, `"2,5"`, `"1-3"`), whitespace-tolerant, `a-b` ranges, deduped and
@@ -6140,7 +6147,7 @@ collides with `Confidence.AMBIGUOUS`):
 ```
 REGISTRY_UNAVAILABLE · RECALL_TIMEOUT · RECALL_UNAVAILABLE · NO_CANDIDATE
 CAP_ROUTER_NONE · CAP_ROUTER_REJECT · CAP_ROUTER_UNAVAILABLE · CAP_ROUTER_TIMEOUT
-INTENT_FUNNEL_ALLOWLIST_REJECT · ACQUISITION_UNDECLARED · ACQUISITION_MISSING · ACQUISITION_MODEL_PENDING
+INTENT_FUNNEL_ALLOWLIST_REJECT · ACQUISITION_UNDECLARED · ACQUISITION_MISSING · ACQUISITION_TIMEOUT · ACQUISITION_MODEL_PENDING
 ACQUISITION_DEFERRED · ACQUISITION_POLICY_CONFLICT · ACQUISITION_HANDLER_MISSING
 REGISTRY_VERSION_MISMATCH · FUNNEL_KIND_DISABLED
 BIND_MISSING · BIND_AMBIGUOUS · BIND_INVALID · CASCADE_TIMEOUT · CASCADE_ERROR

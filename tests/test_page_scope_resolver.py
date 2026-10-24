@@ -55,6 +55,25 @@ def test_all_scope_omits_pages():
     assert out.pages is None
 
 
+def test_prompt_defines_all_as_no_page_restriction():
+    """``all`` is the ABSENCE of a page restriction, not a synonym for a
+    whole-document instruction: each capability applies its own default."""
+    assert "does not restrict pages" in psr.SYSTEM_PROMPT
+    assert "applies its own default" in psr.SYSTEM_PROMPT
+    assert "never widen an unreadable page or range to all" in psr.SYSTEM_PROMPT
+    assert "the whole document; pages MUST be null" not in psr.SYSTEM_PROMPT
+
+
+async def test_read_page_5_resolves_to_a_single_page():
+    llm = _FakeLLM({"target": "document", "page_scope": "single",
+                    "pages": "5", "reason": "page 5"})
+
+    out = await psr.resolve(llm=llm, query="read page 5", facts=_facts(),
+                            capability="cap-vision", asset_id="asset-123")
+
+    assert out.ok and out.pages == "5"
+
+
 def test_single_scope_keeps_one_page():
     out = psr.parse_reply({"target": "document", "page_scope": "single",
                            "pages": "5", "reason": "page 5"})
