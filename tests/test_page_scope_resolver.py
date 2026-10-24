@@ -2,19 +2,24 @@
 
 Pins the contract that makes the resolver safe:
 
-* the reply is a CLOSED JSON object (target / page_scope / pages / reason) —
-  an identity field (``asset_id``) or any unknown key is rejected outright;
+* the reply is a CLOSED four-field JSON object (target / page_scope / pages /
+  reason) — an identity field (``asset_id``), a ``status`` the system derives,
+  or any other unknown key is rejected outright;
 * ``all`` omits ``pages``, ``single`` is one 1-based number, ``range`` is
   validated by the tools' own strict parser and canonicalised;
 * an unknown target/scope is AMBIGUOUS, a contract violation is INVALID, a
   failed/timed-out/malformed call is UNAVAILABLE — three distinct outcomes that
   are never collapsed into "read the whole document";
+* ``conversation_context`` is a settled target even when ``page_scope`` is
+  ``unknown`` (a conversation has no page axis), and its body is the sanctioned
+  recent user turns — never model-generated;
 * the resolver never renders ``asset_id`` or file content into the prompt and
   never lets a model value replace the turn fact's document identity;
-* ``read_document`` / ``pdf_extract_text`` merge the verdict with the
-  deterministic rule: a non-document/invalid/unavailable verdict contributes
-  NOTHING (the rule's value stands), an LLM verdict that differs CORRECTS the
-  rule, and a scope neither producer settles is a TERMINAL failure.
+* every page-addressed handler consumes the verdict alone: a non-ok verdict is
+  a TERMINAL failure for ``read_document`` / ``pdf_extract_text`` (never a
+  guessed page, never the whole document), an Agent hand-off for the table
+  capability, and an omitted ``page`` for ``vision`` unless the request names
+  several pages.
 
 The transport tests pin the actual request shape (``stream=False``,
 ``enable_thinking=False``, JSON mode, bounded tokens) against a fake client — no
@@ -33,6 +38,7 @@ from core.application.chat.intent_funnel.cap_handler import (
     AcquisitionFailure,
     PdfExtractTextHandler,
     ReadDocumentHandler,
+    VisionHandler,
 )
 from core.application.chat.intent_funnel.contract import TurnFacts
 from core.infrastructure import llm as llm_mod
@@ -125,8 +131,9 @@ def test_range_scope_rejects_reversed_bounds():
     ("asset_id", "asset-from-model"),
     ("file", "secret.pdf"),
     ("path", "/tmp/secret.pdf"),
+    ("status", "ok"),
 ])
-def test_reply_may_not_carry_identity_or_unknown_fields(field, value):
+def test_reply_may_not_carry_identity_status_or_unknown_fields(field, value):
     out = psr.parse_reply({"target": "document", "page_scope": "all",
                            "pages": None, "reason": "", field: value})
 
@@ -170,6 +177,20 @@ def test_conversation_target_returns_the_sanctioned_user_turns():
     assert out.ok
     assert out.target == psr.TARGET_CONVERSATION
     assert out.context_content == ("what did we discuss?",)
+    assert out.pages is None
+
+
+def test_conversation_target_survives_an_unknown_page_scope():
+    # A conversation has no page axis: ``page_scope=unknown`` must not discard
+    # the target the model DID identify.
+    out = psr.parse_reply(
+        {"target": "conversation_context", "page_scope": "unknown",
+         "pages": None, "reason": "about the chat"},
+        user_turns=("summarise what we said",))
+
+    assert out.ok
+    assert out.target == psr.TARGET_CONVERSATION
+    assert out.context_content == ("summarise what we said",)
     assert out.pages is None
 
 
@@ -379,14 +400,16 @@ async def test_read_document_maps_single_and_range_to_pages(scope, pages):
     _scope(target=psr.TARGET_CONVERSATION),
     _scope(target=psr.TARGET_UNKNOWN),
 ])
-async def test_read_document_ignores_a_non_document_verdict_when_the_rule_decided(result):
-    # A conversation/invalid/unavailable verdict supplies NO page value, so the
-    # rule's whole-document decision survives (merge priority a).
-    draft = await ReadDocumentHandler().acquire(
+async def test_read_document_never_turns_a_non_document_verdict_into_a_read(result):
+    # A document handler has no conversation lane and no rule to lean on: a
+    # verdict that does not settle THIS document's scope ends the turn.
+    out = await ReadDocumentHandler().acquire(
         query="what did we discuss", facts=_facts(),
         page_scope_resolver=_resolver_returning(result))
 
-    assert draft == {"asset_id": "asset-123"}
+    assert isinstance(out, AcquisitionFailure)
+    assert out.terminal is True
+    assert out.category == CATEGORY_SCOPE_UNSETTLED
 
 
 async def test_read_document_is_terminal_when_neither_producer_settles():
@@ -424,15 +447,15 @@ async def test_read_document_without_an_asset_never_calls_the_resolver():
     assert draft is None
 
 
-async def test_read_document_never_substitutes_the_viewer_window_without_a_resolver():
-    # A whole-document sentence stays whole-document: the viewer's range is not
-    # a page statement, so it never becomes the `pages` slot.
-    draft = await ReadDocumentHandler().acquire(query="summarise it",
-                                                facts=_facts(
-                                                    viewer_page_from=3,
-                                                    viewer_page_to=5))
+async def test_read_document_without_a_resolver_is_unsettled_not_whole_document():
+    # No semantic judge -> a whole-document read would be a silent fallback that
+    # the user never asked for. The turn ends instead.
+    out = await ReadDocumentHandler().acquire(
+        query="summarise it", facts=_facts(viewer_page_from=3, viewer_page_to=5))
 
-    assert draft == {"asset_id": "asset-123"}
+    assert isinstance(out, AcquisitionFailure)
+    assert out.terminal is True
+    assert out.scope["status"] == "not_wired"
 
 
 # ── pdf_extract_text: the same mapping, its own capability id ─────────────────
@@ -461,11 +484,49 @@ async def test_pdf_extract_text_is_terminal_when_the_scope_is_unsettled():
     assert out.category == CATEGORY_SCOPE_UNSETTLED
 
 
-async def test_pdf_extract_text_never_substitutes_the_viewer_window_without_a_resolver():
-    draft = await PdfExtractTextHandler().acquire(query="extract this",
-                                                  facts=_facts())
+async def test_pdf_extract_text_without_a_resolver_is_unsettled():
+    out = await PdfExtractTextHandler().acquire(query="extract this",
+                                                facts=_facts())
 
-    assert draft == {"asset_id": "asset-123"}
+    assert isinstance(out, AcquisitionFailure)
+    assert out.terminal is True
+
+
+# ── vision: the page axis of a one-page tool ──────────────────────────────────
+
+
+async def test_vision_maps_a_single_page_to_the_page_slot():
+    draft = await VisionHandler().acquire(
+        query="what does page 3 show?", facts=_facts(viewer_kind="pdf"),
+        page_scope_resolver=_resolver_returning(
+            _scope(page_scope=psr.SCOPE_SINGLE, pages="3")))
+
+    # The funnel's slots are strings; the tool coerces ``page`` to an int.
+    assert draft == {"asset_id": "asset-123",
+                     "question": "what does page 3 show?", "page": "3"}
+
+
+async def test_vision_omits_page_for_a_whole_document_verdict():
+    # ``page`` omitted -> the tool's documented default (the page open in the
+    # viewer); never a guessed page.
+    draft = await VisionHandler().acquire(
+        query="what is this?", facts=_facts(viewer_kind="pdf"),
+        page_scope_resolver=_resolver_returning(_scope()))
+
+    assert draft == {"asset_id": "asset-123", "question": "what is this?"}
+
+
+async def test_vision_hands_a_multi_page_request_to_the_agent():
+    # One vision call renders exactly one page; picking one of several would be
+    # a guess.
+    out = await VisionHandler().acquire(
+        query="compare pages 3 to 5", facts=_facts(viewer_kind="pdf"),
+        page_scope_resolver=_resolver_returning(
+            _scope(page_scope=psr.SCOPE_RANGE, pages="3-5")))
+
+    assert isinstance(out, AcquisitionFailure)
+    assert out.terminal is False
+    assert out.category == CATEGORY_SCOPE_UNSETTLED
 
 
 # ── the online-LLM adapter never leaks a client/key to the handlers ───────────

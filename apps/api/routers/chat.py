@@ -378,9 +378,9 @@ def _build_chat_deps(queue: TaskQueue, drive: DriveService) -> ChatDeps:
         argument_extractor=_extract_arguments,
         # Page-scope acquisition for the file capabilities: the ONLINE LLM
         # settles the sentence's reading scope (all / single / range), while
-        # document identity stays in TurnFacts. Only read_document /
-        # pdf_extract_text consume it; an unwired/None seam keeps the legacy
-        # viewer-window rule.
+        # document identity stays in TurnFacts. Every page-addressed file
+        # handler consumes it (read_document / pdf_extract_text /
+        # pdf_table_to_text); an unwired seam leaves the scope unsettled.
         page_scope_resolver=_page_scope_for_llm(llm),
         # Deferred client capture: funnel-certified vision pauses the stream until the
         # PC client uploads the page/frame; the same turn then resumes (no re-funnel).

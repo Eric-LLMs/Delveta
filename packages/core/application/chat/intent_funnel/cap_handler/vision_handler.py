@@ -2,7 +2,7 @@
 
 Owns ONLY this capability's parameter preparation; it never loads image bytes
 and never re-implements any recognition logic — the real asset load and the
-multimodal call stay entirely inside the shared ``vision`` tool. The two schema
+multimodal call stay entirely inside the shared ``vision`` tool. The schema
 slots of ``cap-vision``:
 
 * ``asset_id`` — the ONLY legal source is :class:`~..contract.TurnFacts`. The id
@@ -17,6 +17,14 @@ slots of ``cap-vision``:
 * ``question`` — the user's sentence, taken VERBATIM (strip only), so the
   question they ask ABOUT the image reaches the model unaltered. Omitted when
   the message is empty (the tool then runs its own default analysis prompt).
+* ``page`` — the page axis, settled by the ONLINE MODEL
+  (:mod:`..argument_acquisition.page_scope_settlement`) exactly like the three
+  file-content handlers' ``pages`` slot: the model reads the sentence and
+  returns one page, the whole document, or a range. The tool renders exactly ONE
+  page, so a single-page verdict becomes the integer ``page``; ``all`` omits the
+  slot and the tool applies its own documented default (the page open in the
+  viewer); a multi-page verdict goes to the Agent rather than silently picking
+  one of the pages. An unsettled verdict never invents a page.
 
 The returned draft (``{slot: value}``) is passed through the SAME Binder /
 ActionExecutor / ToolRuntime handoff every other capability uses — the Binder
@@ -25,6 +33,19 @@ re-resolves ``asset_id`` from the same facts, so its value is identical here.
 from __future__ import annotations
 
 from dataclasses import dataclass
+
+from core.infrastructure.pdf_pages import parse_pages_spec
+
+from ..argument_acquisition.page_scope_settlement import (
+    settle_page_scope,
+    unsettled_scope,
+)
+from .acquisition_failure import (
+    CATEGORY_SCOPE_UNSETTLED,
+    STAGE_SCOPE_RESOLUTION,
+    AcquisitionFailure,
+    turn_context,
+)
 
 # Mirrors binder._CONTEXT_SLOT_SOURCES["asset_id"] exactly: attachment first,
 # then the drive path, then the on-screen viewer. Keeping the two in lockstep
@@ -81,18 +102,68 @@ class VisionHandler:
     """``cap-vision`` parameter handler (stateless)."""
 
     capability_id = "cap-vision"
+    # The orchestrator passes the online page-scope resolver into ``acquire``.
+    accepts_page_scope = True
+    # The orchestrator passes a dict for the model / merged evidence.
+    accepts_scope_evidence = True
 
-    async def acquire(self, *, query: str, facts) -> dict[str, object] | None:
+    async def acquire(self, *, query: str, facts, page_scope_resolver=None,
+                      history=(), scope_evidence: dict | None = None
+                      ) -> dict[str, object] | AcquisitionFailure | None:
         """Return the ``vision`` argument draft, or ``None`` when no image is in
         context (fail-closed — the Agent owns the clarification)."""
         asset_id = _resolve_asset_id(facts)
         if not asset_id:
             return None
-        draft: dict[str, object] = {"asset_id": asset_id}
         message = str(query or "").strip()
+
+        settlement = await settle_page_scope(
+            query=message, facts=facts, history=history,
+            resolver=page_scope_resolver, capability=self.capability_id,
+            asset_id=asset_id)
+        if scope_evidence is not None:
+            scope_evidence.update(settlement.record())
+
+        draft: dict[str, object] = {"asset_id": asset_id}
         if message:
             draft["question"] = message
+        page = self._settled_page(settlement, facts=facts, history=history)
+        if isinstance(page, AcquisitionFailure):
+            return page
+        if page is not None:
+            draft["page"] = page
         return draft
+
+    @staticmethod
+    def _settled_page(settlement, *, facts, history
+                      ) -> str | AcquisitionFailure | None:
+        """The ONE page the model settled, as the funnel's string slot value, or
+        ``None`` for the tool's default.
+
+        ``all`` (and any unsettled verdict) omits ``page``: the tool's own
+        documented rule then applies — the page open in the viewer, and a
+        multi-page PDF with no page in view is refused rather than rendered as
+        page 1. A range / list cannot be satisfied by a single-page tool call,
+        so it goes to the Agent instead of silently choosing one page.
+        """
+        if not settlement.ok or settlement.pages is None:
+            return None
+        try:
+            pages = parse_pages_spec(settlement.pages)
+        except ValueError:                       # unreachable: the resolver validates
+            return None
+        if len(pages) == 1:
+            # String, like every funnel slot: the Binder and ``validate_action``
+            # normalise to str, and the vision tool coerces it to an int.
+            return str(pages[0])
+        return AcquisitionFailure(
+            category=CATEGORY_SCOPE_UNSETTLED,
+            stage=STAGE_SCOPE_RESOLUTION,
+            detail=("the vision call reads exactly one page, but the sentence "
+                    f"names pages {settlement.pages}"),
+            scope=unsettled_scope(settlement),
+            context=turn_context(facts, history),
+        )
 
     def capture_for(self, *, query: str, facts) -> DeferredCapture | None:
         """The deferred capture this turn needs, or ``None`` when no capture applies.

@@ -102,6 +102,13 @@ async def _ambiguous_resolver(**kwargs):
     return psr.PageScope(status=psr.STATUS_AMBIGUOUS)
 
 
+async def _no_page_resolver(**kwargs):
+    from core.application.chat.intent_funnel.argument_acquisition import (
+        page_scope_resolver as psr,
+    )
+    return psr.PageScope(target=psr.TARGET_DOCUMENT, page_scope=psr.SCOPE_ALL)
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("module,capability", [
     (read_document_handler, "cap-read-document"),
@@ -126,21 +133,29 @@ async def test_every_shared_file_handler_returns_a_terminal_failure(module, capa
 
 @pytest.mark.asyncio
 async def test_the_table_handler_never_terminates_it_settles_or_hands_off():
-    # With no page named, the table policy reads the viewer's current page, so an
-    # ambiguous model verdict is irrelevant: the turn settles, it never ends.
+    # The model judged that no page was named -> the viewer's current page settles
+    # the turn. It never ends and never becomes a whole-document read.
     handler = pdf_table_to_text_handler.PdfTableToTextHandler()
     out = await handler.acquire(
         query="extract some pages", facts=_facts(),
-        page_scope_resolver=_ambiguous_resolver, history=())
+        page_scope_resolver=_no_page_resolver, history=())
     assert out == {"asset_id": "asset-123", "pages": "4"}
 
-    # Without a valid current page it hands the turn to the Agent (non-terminal),
-    # never to the terminal executor and never to a whole-document read.
+    # An ambiguous verdict is not a judgment of "no page": a valid viewer page
+    # may not substitute for it, and the turn goes to the Agent (non-terminal).
+    out = await handler.acquire(
+        query="extract some pages", facts=_facts(),
+        page_scope_resolver=_ambiguous_resolver, history=())
+    assert isinstance(out, AcquisitionFailure)
+    assert out.terminal is False
+    assert out.category == CATEGORY_SCOPE_UNSETTLED
+
+    # Without a valid current page the same hand-off applies.
     no_page = _facts()
     no_page.viewer_current_page = None
     out = await handler.acquire(
         query="extract some pages", facts=no_page,
-        page_scope_resolver=_ambiguous_resolver, history=())
+        page_scope_resolver=_no_page_resolver, history=())
     assert isinstance(out, AcquisitionFailure)
     assert out.terminal is False
     assert out.category == CATEGORY_SCOPE_UNSETTLED

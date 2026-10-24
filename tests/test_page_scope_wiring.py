@@ -1,17 +1,16 @@
-"""Page-scope wiring — the combined rule + online-LLM lane through the hop.
+"""Page-scope wiring — the online-model lane through the acquisition hop.
 
-Pins the integration boundary rather than the producers' own rules:
+Pins the integration boundary rather than the resolver's own rules:
 
 * only the handlers that declare ``accepts_page_scope`` receive the resolver;
 * the resolver is called ONLY when the turn already carries a document fact —
   a document-less turn keeps its existing missing/clarify exit untouched;
-* the deterministic RULE runs first and its value survives an unavailable /
-  ambiguous LLM verdict (rule-only -> keep the rule);
-* when neither producer settles the scope the turn is TERMINAL
-  (``ACQUISITION_TERMINAL``) — never an Agent hand-off, never a guess, never a
-  silent widening to the whole document;
-* without the seam (tests, undecorated deps) the rule runs ALONE and the legacy
-  viewer-window draft is gone: a whole-document sentence stays whole-document;
+* the model's verdict is the ONLY page producer: an unavailable / ambiguous /
+  invalid verdict ends the turn as TERMINAL (``ACQUISITION_TERMINAL``) — never
+  an Agent hand-off, never a guess, never a silent widening to the whole
+  document;
+* without the seam (tests, undecorated deps) the scope is equally unsettled —
+  the viewer's open page/range is never substituted for a stated scope;
 * the draft still passes the SAME Binder -> certified ACTION handoff, and the
   document identity is always the turn fact's ``asset_id`` — never model output.
 """
@@ -150,7 +149,7 @@ async def test_hop_all_scope_certifies_without_a_pages_slot():
     assert out.requested_action["args"] == {"asset_id": "asset-123"}
 
 
-async def test_hop_unavailable_resolver_keeps_the_rule_value():
+async def test_hop_unavailable_resolver_is_terminal_and_never_widens():
     entry = _entry("cap-read-document", "read_document", _READ_DOC_PARAMS)
 
     out, trace, capture = await _hop(
@@ -158,24 +157,23 @@ async def test_hop_unavailable_resolver_keeps_the_rule_value():
         resolver=_resolver(_scope(status=psr.STATUS_UNAVAILABLE,
                                   reason="timeout")))
 
-    # Rule-only: the explicit range is already settled, so the LLM's transport
-    # failure never discards it (merge priority a).
-    assert out.requested_action["args"] == {"asset_id": "asset-123",
-                                            "pages": "3-5"}
-    assert trace["acquisition"] == "CAP_HANDLER"
+    # No rule exists to fall back on: a transport fault must not become a
+    # whole-document read the user never asked for.
+    assert out is not None and out.terminal_error is not None
+    assert trace["fallback"] == REASON_ACQUISITION_TERMINAL
     assert capture["page_scope"]["status"] == psr.STATUS_UNAVAILABLE
-    assert capture["page_scope_evidence"]["source"] == "rule"
-    assert capture["page_scope_evidence"]["merged"]["pages"] == "3-5"
+    assert capture["page_scope_evidence"]["source"] == "none"
+    assert capture["page_scope_evidence"]["merged"]["pages"] is None
 
 
-async def test_hop_ambiguous_resolver_and_ambiguous_rule_is_terminal():
+async def test_hop_ambiguous_resolver_is_terminal():
     entry = _entry("cap-pdf-extract-text", "pdf_extract_text", _EXTRACT_PARAMS)
 
     out, trace, capture = await _hop(
         entry, query="extract some pages", facts=_facts(),
         resolver=_resolver(_scope(status=psr.STATUS_AMBIGUOUS)))
 
-    # Neither producer settled the scope: TERMINAL, never a whole-document widening
+    # The model did not settle the scope: TERMINAL, never a whole-document widening
     # and never an Agent hand-off that would guess the pages.
     assert out is not None and out.terminal_error is not None
     assert trace["fallback"] == REASON_ACQUISITION_TERMINAL
@@ -183,19 +181,19 @@ async def test_hop_ambiguous_resolver_and_ambiguous_rule_is_terminal():
     assert capture["terminal"]["capability_id"] == "cap-pdf-extract-text"
 
 
-async def test_hop_without_the_seam_uses_the_rule_not_the_viewer_window():
+async def test_hop_without_the_seam_is_unsettled_not_the_viewer_window():
     entry = _entry("cap-read-document", "read_document", _READ_DOC_PARAMS)
 
     out, trace, capture = await _hop(
         entry, query="summarise it", facts=_facts(viewer_page_from=3,
                                                   viewer_page_to=5))
 
-    # A whole-document sentence stays whole-document: the viewer's open range is
-    # NEVER substituted merely because a viewer page exists.
-    assert out.requested_action["args"] == {"asset_id": "asset-123"}
-    assert trace["acquisition"] == "CAP_HANDLER"
+    # No semantic judge, so no page decision: the turn ends. The viewer's open
+    # range is NEVER substituted merely because a viewer page exists.
+    assert out is not None and out.terminal_error is not None
+    assert trace["fallback"] == REASON_ACQUISITION_TERMINAL
     assert "page_scope" not in capture
-    assert capture["page_scope_evidence"]["source"] == "rule"
+    assert capture["page_scope_evidence"]["source"] == "none"
     assert capture["page_scope_evidence"]["llm"]["status"] == "not_wired"
 
 
@@ -227,3 +225,48 @@ async def test_hop_does_not_hand_the_seam_to_a_handler_that_does_not_accept_it()
 
     assert out.requested_action["args"] == {"path": "./data/train.csv"}
     assert "page_scope" not in capture
+
+
+# ── the other two page-addressed capabilities ─────────────────────────────────
+
+
+async def test_hop_hands_the_seam_to_the_vision_page_axis():
+    entry = _entry("cap-vision", "vision", {
+        "asset_id": {"type": "string", "required": True},
+        "question": {"type": "string", "required": False},
+        "page": {"type": "integer", "required": False},
+    })
+
+    out, _, capture = await _hop(
+        entry, query="what is on page 3", facts=_facts(),
+        resolver=_resolver(_scope(page_scope=psr.SCOPE_SINGLE, pages="3")))
+
+    assert out.requested_action["args"] == {
+        "asset_id": "asset-123", "question": "what is on page 3", "page": "3"}
+    assert capture["page_scope"]["pages"] == "3"
+
+
+async def test_hop_summary_conversation_survives_an_unknown_page_scope():
+    entry = _entry("cap-summary", "summary_gen", {
+        "asset_id": {"type": "string", "required": False},
+        "pages": {"type": "string", "required": False},
+        "context": {"type": "string", "required": False},
+        "output_dir": {"type": "string", "required": False},
+    })
+    history = [{"role": "user", "content": "什么是 RRF？"},
+               {"role": "assistant", "content": "RRF 是倒数排名融合。"}]
+
+    out, _, capture = await _hop(
+        entry, query="总结一下我们刚才聊的", facts=_facts(),
+        resolver=_resolver(_scope(target=psr.TARGET_CONVERSATION,
+                                  page_scope=psr.SCOPE_UNKNOWN)),
+        history=history)
+
+    # A conversation has no page axis: ``page_scope=unknown`` must not turn the
+    # turn into a document read or an Agent hand-off. The Binder still settles
+    # the asset_id context slot from the facts, and ``summary_gen``'s context
+    # branch ignores it — exactly as before this change.
+    assert out.requested_action["tool"] == "summary_gen"
+    assert "context" in out.requested_action["args"]
+    assert "RRF 是倒数排名融合" in out.requested_action["args"]["context"]
+    assert "pages" not in out.requested_action["args"]

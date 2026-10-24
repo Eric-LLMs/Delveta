@@ -399,14 +399,13 @@ def _make_fake_active_view(view: RegistryLiveView):
 
 
 def _page_scope_seam(llm):
-    """Deterministic, NON-CORRECTING stand-in for the ONLINE page-scope resolver.
+    """Recorded stand-in for the ONLINE page-scope resolver.
 
-    The e2e stack is hermetic (no live model). The stand-in mirrors the sentence's
-    stated scope through the deterministic rule vocabulary and never corrects it,
-    so the turn exercises the real lane end to end (rule -> settlement -> Binder
-    -> tool) without a network call. It deliberately does NOT read the viewer's
-    page/range: those are not a page statement, and a whole-document request must
-    stay whole-document even when a viewer page exists.
+    The e2e stack is hermetic (no live model). These are the answers a correct
+    model gives for the page sentences the matrix uses; every other sentence is
+    the whole document (the slot is omitted). The stand-in never reads the
+    viewer's page/range: those are not a page statement, and a whole-document
+    request must stay whole-document even when a viewer page exists.
     """
     from core.application.chat.intent_funnel.argument_acquisition.page_scope_resolver import (
         SCOPE_ALL,
@@ -415,19 +414,15 @@ def _page_scope_seam(llm):
         TARGET_DOCUMENT,
         PageScope,
     )
-    from core.application.chat.intent_funnel.argument_acquisition.page_scope_rule import (
-        DECISION_PAGE,
-        rule_scope,
-    )
+
+    stated = {
+        "extract pages 4 to 5 from this pdf": (SCOPE_RANGE, "4-5"),
+        "extract page 4 from this pdf": (SCOPE_SINGLE, "4"),
+    }
 
     async def _resolve(*, query, facts, history=(), capability="", asset_id=""):
-        decided = rule_scope(query, None)
-        if decided.decision != DECISION_PAGE or not decided.pages:
-            return PageScope(target=TARGET_DOCUMENT, page_scope=SCOPE_ALL)
-        scope = SCOPE_SINGLE if "-" not in decided.pages and "," not in decided.pages \
-            else SCOPE_RANGE
-        return PageScope(target=TARGET_DOCUMENT, page_scope=scope,
-                         pages=decided.pages)
+        scope, pages = stated.get(query, (SCOPE_ALL, None))
+        return PageScope(target=TARGET_DOCUMENT, page_scope=scope, pages=pages)
 
     return _resolve
 

@@ -5,13 +5,13 @@ Two layers are pinned here:
 * the HANDLER contract itself (unit): ``cap-read-document`` resolves ``asset_id``
   ONLY from :class:`TurnFacts` (precedence ``attachment_asset_id`` ->
   ``path_asset_id`` -> ``viewer_asset_id``) and FAILS CLOSED (``None``) when none
-  is present; ``pages`` comes from the COMBINED lane — the deterministic rule
-  reads the sentence first (a stated page/range/list), the online LLM may
-  supplement or correct it, and a page scope neither settles is TERMINAL. The
-  viewer's open page/range is NEVER substituted for an unstated page: a
-  whole-document request stays whole-document even when a viewer page exists.
-  A deictic "this page" is the ONE form the rule resolves from the viewer's
-  current page. The handler never emits a ``query`` slot (the capability has
+  is present; ``pages`` comes ONLY from the online model seam — there is no
+  deterministic sentence parser in the lane. A scope the model does not settle
+  (ambiguous / invalid / unavailable / seam missing) is TERMINAL. The viewer's
+  open page/range is NEVER substituted for an unstated page: a whole-document
+  request stays whole-document even when a viewer page exists. A deictic "this
+  page" resolves to the viewer's current page only because the MODEL resolves
+  it that way. The handler never emits a ``query`` slot (the capability has
   none);
 * the WIRING: the registered handler short-circuits the generic acquisition chain
   (provider / path_router / Qwen) and its draft goes through the SAME ``_certify``
@@ -30,6 +30,9 @@ import pytest
 
 from core.application.chat.intent_funnel import matcher as matcher_mod
 from core.application.chat.intent_funnel import cap_router as cap_router_mod
+from core.application.chat.intent_funnel.argument_acquisition import (
+    page_scope_resolver as psr,
+)
 from core.application.chat.intent_funnel.argument_acquisition import AcquisitionInputs
 from core.application.chat.intent_funnel.cap_handler import (
     CATEGORY_SCOPE_UNSETTLED,
@@ -62,28 +65,91 @@ ASSET = "0ea50a94-f4f7-45eb-bbaa-43966d6af575"
 MESSAGE = "帮我总结一下这份报告"
 
 
+# ── the model stand-in ───────────────────────────────────────────────────────────
+#
+# No live model in the hermetic suite. These are RECORDED answers — the verdict
+# a correct model gives for each sentence — keyed by the sentence itself. They
+# are not a parser: a sentence missing from the table is answered as ambiguous,
+# exactly like a model that cannot decide.
+
+_RECORDED = {
+    MESSAGE: (psr.SCOPE_ALL, None),
+    "总结第3页的内容": (psr.SCOPE_SINGLE, "3"),
+    "读一下 3-5页": (psr.SCOPE_RANGE, "3-5"),
+    "read pages 3-5": (psr.SCOPE_RANGE, "3-5"),
+    "打开第 2,4,6 页": (psr.SCOPE_RANGE, "2,4,6"),
+    "看下 p.3 的表格": (psr.SCOPE_SINGLE, "3"),
+    "总结全文": (psr.SCOPE_ALL, None),
+    "总结": (psr.SCOPE_ALL, None),
+    "帮我读第3到5页": (psr.SCOPE_RANGE, "3-5"),
+    "帮我总结这一屏的内容": (psr.SCOPE_ALL, None),
+    "总结这份文档": (psr.SCOPE_ALL, None),
+    "读一下部分页": None,          # the sentence names no page
+    "extract some pages": None,
+}
+
+_DEICTIC = ("把当前这一页读一下", "读一下这一页")
+
+
+def _verdict(scope: str, pages: str | None) -> psr.PageScope:
+    return psr.PageScope(target=psr.TARGET_DOCUMENT, page_scope=scope,
+                         pages=pages)
+
+
+def _ambiguous(reason: str) -> psr.PageScope:
+    return psr.PageScope(target=psr.TARGET_DOCUMENT,
+                         page_scope=psr.SCOPE_UNKNOWN,
+                         status=psr.STATUS_AMBIGUOUS, reason=reason)
+
+
+def _model_verdict(query: str, facts) -> psr.PageScope:
+    if query in _DEICTIC:
+        page = getattr(facts, "viewer_current_page", None)
+        if page is None:
+            return _ambiguous("no current page to resolve 'this page'")
+        return _verdict(psr.SCOPE_SINGLE, str(page))
+    recorded = _RECORDED.get(query, None)
+    if recorded is None:
+        return _ambiguous("the model could not settle the target or the scope")
+    scope, pages = recorded
+    return _verdict(scope, pages)
+
+
+async def _resolver(*, query, facts, history=(), capability="", asset_id=""):
+    return _model_verdict(query, facts)
+
+
+async def _boom_resolver(**kwargs):
+    raise AssertionError("the model must not be called without a target document")
+
+
 # ── Layer 1: asset_id sourcing + fail-closed ─────────────────────────────────────
 
 
 async def test_read_doc_asset_id_prefers_attachment_then_path_then_viewer():
     handler = ReadDocumentHandler()
     all_three = TurnFacts(attachment_asset_id="A", path_asset_id="P", viewer_asset_id="V")
-    assert (await handler.acquire(query=MESSAGE, facts=all_three))["asset_id"] == "A"
+    assert (await handler.acquire(query=MESSAGE, facts=all_three,
+                                  page_scope_resolver=_resolver))["asset_id"] == "A"
     path_viewer = TurnFacts(path_asset_id="P", viewer_asset_id="V")
-    assert (await handler.acquire(query=MESSAGE, facts=path_viewer))["asset_id"] == "P"
+    assert (await handler.acquire(query=MESSAGE, facts=path_viewer,
+                                  page_scope_resolver=_resolver))["asset_id"] == "P"
     viewer_only = TurnFacts(viewer_asset_id="V")
-    assert (await handler.acquire(query=MESSAGE, facts=viewer_only))["asset_id"] == "V"
+    assert (await handler.acquire(query=MESSAGE, facts=viewer_only,
+                                  page_scope_resolver=_resolver))["asset_id"] == "V"
 
 
 @pytest.mark.parametrize("facts", [None, TurnFacts(), TurnFacts(has_attachment=True)])
 async def test_read_doc_without_an_asset_id_fails_closed(facts):
     handler = ReadDocumentHandler()
-    assert await handler.acquire(query="总结第3页", facts=facts) is None
+    assert await handler.acquire(query="总结第3页", facts=facts,
+                                 page_scope_resolver=_boom_resolver) is None
 
 
 async def test_read_doc_never_emits_a_query_slot():
     handler = ReadDocumentHandler()
-    draft = await handler.acquire(query=MESSAGE, facts=TurnFacts(viewer_asset_id=ASSET))
+    draft = await handler.acquire(query=MESSAGE, facts=TurnFacts(viewer_asset_id=ASSET),
+                                  page_scope_resolver=_resolver)
     assert set(draft) == {"asset_id"}            # no query/question on this capability
 
 
@@ -100,17 +166,20 @@ async def test_read_doc_never_emits_a_query_slot():
 async def test_read_doc_pages_come_from_the_sentence(message, expected):
     handler = ReadDocumentHandler()
     facts = TurnFacts(viewer_asset_id=ASSET, viewer_current_page=12)
-    draft = await handler.acquire(query=message, facts=facts)
+    draft = await handler.acquire(query=message, facts=facts,
+                                  page_scope_resolver=_resolver)
     assert draft["pages"] == expected
     # the derived spec MUST be parseable by the shared strict parser
     assert parse_pages_spec(draft["pages"]) == parse_pages_spec(expected)
 
 
 async def test_read_doc_deictic_page_uses_the_viewer_current_page():
-    # "this page" is the ONE form whose value is the viewer's settled page.
+    # "this page" is the ONE form whose value is the viewer's settled page — the
+    # model is what resolves it that way.
     handler = ReadDocumentHandler()
     facts = TurnFacts(viewer_asset_id=ASSET, viewer_current_page=12)
-    draft = await handler.acquire(query="把当前这一页读一下", facts=facts)
+    draft = await handler.acquire(query="把当前这一页读一下", facts=facts,
+                                  page_scope_resolver=_resolver)
     assert draft["pages"] == "12"
 
 
@@ -119,7 +188,8 @@ async def test_read_doc_omits_pages_for_the_whole_document():
     # A viewer page/range exists, yet the sentence states no restriction.
     facts = TurnFacts(viewer_asset_id=ASSET, viewer_current_page=12,
                       viewer_page_from=3, viewer_page_to=5)
-    draft = await handler.acquire(query="总结全文", facts=facts)
+    draft = await handler.acquire(query="总结全文", facts=facts,
+                                  page_scope_resolver=_resolver)
     assert draft == {"asset_id": ASSET}
 
 
@@ -131,10 +201,11 @@ async def test_read_doc_omits_pages_for_the_whole_document():
 async def test_read_doc_ignores_a_viewer_range_the_sentence_does_not_state(facts):
     # The viewer's range is not a page statement: the request stays whole-document.
     handler = ReadDocumentHandler()
-    assert await handler.acquire(query="总结", facts=facts) == {"asset_id": ASSET}
+    assert await handler.acquire(query="总结", facts=facts,
+                                 page_scope_resolver=_resolver) == {"asset_id": ASSET}
 
 
-# ── Layer 1c: a page scope neither producer settles is TERMINAL ──────────────────
+# ── Layer 1c: a page scope the model does not settle is TERMINAL ────────────────
 
 
 @pytest.mark.parametrize("message", [
@@ -142,19 +213,31 @@ async def test_read_doc_ignores_a_viewer_range_the_sentence_does_not_state(facts
     "extract some pages",
 ])
 async def test_read_doc_undecided_scope_is_a_terminal_failure(message):
-    # The rule cannot resolve which pages; no LLM is wired; never a guess and
-    # never a silent whole-document widening.
+    # The model cannot resolve which pages; never a guess and never a silent
+    # whole-document widening.
     handler = ReadDocumentHandler()
     facts = TurnFacts(viewer_asset_id=ASSET, viewer_current_page=12)
-    out = await handler.acquire(query=message, facts=facts)
+    out = await handler.acquire(query=message, facts=facts,
+                                page_scope_resolver=_resolver)
     assert isinstance(out, AcquisitionFailure)
     assert out.terminal is True
     assert out.category == CATEGORY_SCOPE_UNSETTLED
 
 
+async def test_read_doc_without_the_model_seam_is_terminal():
+    # No semantic judge -> the scope stays unsettled. There is no deterministic
+    # fallback that could turn "some pages" into the whole document.
+    handler = ReadDocumentHandler()
+    out = await handler.acquire(query=MESSAGE, facts=TurnFacts(viewer_asset_id=ASSET))
+    assert isinstance(out, AcquisitionFailure)
+    assert out.terminal is True
+    assert out.scope["status"] == "not_wired"
+
+
 async def test_read_doc_deictic_without_a_viewer_page_is_terminal():
     handler = ReadDocumentHandler()
-    out = await handler.acquire(query="读一下这一页", facts=TurnFacts(viewer_asset_id=ASSET))
+    out = await handler.acquire(query="读一下这一页", facts=TurnFacts(viewer_asset_id=ASSET),
+                                page_scope_resolver=_resolver)
     assert isinstance(out, AcquisitionFailure)
     assert out.terminal is True
 
@@ -241,7 +324,7 @@ def _wire(monkeypatch, entry: CapabilityEntry):
 def _deps(provider):
     return types.SimpleNamespace(
         session_factory=None, embedder=lambda: object(), llm=object(),
-        acquisition_inputs=provider)
+        acquisition_inputs=provider, page_scope_resolver=_resolver)
 
 
 async def _route(ctx, deps, req):

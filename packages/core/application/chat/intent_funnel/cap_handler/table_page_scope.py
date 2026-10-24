@@ -1,22 +1,27 @@
 """Page-scope policy for ``cap-pdf-table-to-text`` ONLY.
 
 The table capability does not read a whole document: every request must resolve
-to an explicit page or to the page the Viewer is showing. The business priority
-is fixed:
+to a page the user named or to the page the Viewer is showing. The online model
+is the only judge of what the user's sentence means:
 
-1. the sentence spells out a page / range / list -> that page. The online model
-   identifies the explicit intent and may correct the deterministic parse; it
-   may NOT erase an explicit page by answering ``all``.
-2. the sentence names no page, the target document IS the viewer document, and
-   the viewer reports a positive current page -> that page. Model inference is
-   never consulted here: the current page is a turn fact, not a model value.
-3. no target document at all -> the handler returns no draft (fail-closed); the
-   funnel never guesses a document.
-4. a target document exists but no valid current page can be established ->
-   an acquisition failure with the turn context, handed to the Agent for
-   clarification. The scope is NEVER widened to the whole document.
-5. the model call raises, or its reply violates the output contract -> an
-   acquisition failure handed to the Agent, with no automatic fallback.
+1. no target document at all -> the handler returns no draft (fail-closed); the
+   funnel never guesses a document and never defaults to the whole document.
+2. the model reads the raw sentence and decides whether the user explicitly
+   named pages. When it did -> those pages are used; the Viewer's current page
+   never overrides them.
+3. the model decides the user named no page -> the current page of the SAME
+   target document, when the Viewer reports a valid one.
+4. no valid current page (or the model judged the request is not about this
+   document, or could not decide) -> an acquisition failure with the turn
+   context, handed to the Agent for clarification. The scope is NEVER widened
+   to the whole document.
+5. the model call raises, is unavailable, or its reply violates the output
+   contract -> an acquisition failure handed to the Agent, with NO
+   deterministic-rule fallback.
+
+No deterministic page parser participates in this decision: the table path
+reads document identity from the turn facts, the page intent from the model,
+and the current page from the Viewer.
 
 This module owns ONLY that decision. Document identity stays in ``TurnFacts``;
 the Binder, authorization and the tool runtime are untouched.
@@ -28,7 +33,6 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..argument_acquisition.page_scope_resolver import (
-    SCOPE_ALL,
     SCOPE_RANGE,
     SCOPE_SINGLE,
     STATUS_INVALID,
@@ -36,7 +40,6 @@ from ..argument_acquisition.page_scope_resolver import (
     STATUS_UNAVAILABLE,
     TARGET_DOCUMENT,
 )
-from ..argument_acquisition.page_scope_rule import DECISION_PAGE, rule_scope
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +50,6 @@ LLM_UNAVAILABLE = "llm_unavailable"
 LLM_CONTRACT_INVALID = "llm_contract_invalid"
 
 # ── evidence sources ──────────────────────────────────────────────────────────
-SOURCE_RULE = "rule"
 SOURCE_LLM = "llm"
 SOURCE_VIEWER = "viewer"
 SOURCE_NONE = "none"
@@ -65,7 +67,6 @@ class TablePageScope:
     pages: str | None = None
     source: str = SOURCE_NONE
     detail: str = ""
-    rule: dict[str, Any] = field(default_factory=dict)
     llm: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -78,7 +79,6 @@ class TablePageScope:
             "ok": self.settled,
             "source": self.source,
             "detail": self.detail,
-            "rule": dict(self.rule),
             "llm": dict(self.llm),
             "merged": {"pages": self.pages},
         }
@@ -97,16 +97,6 @@ def _viewer_asset(facts) -> str:
     if facts is None:
         return ""
     return str(getattr(facts, "viewer_asset_id", "") or "")
-
-
-def _is_model_owned(rule) -> bool:
-    """A page the sentence SPELLS OUT (``第3页`` / ``pages 2-4``).
-
-    Deictic forms (``this page`` / ``当前页``) are resolved from the viewer fact,
-    so they must never depend on a model call: the model seam cannot make the
-    viewer's own page unavailable.
-    """
-    return rule.decision == DECISION_PAGE and rule.reason.startswith("explicit")
 
 
 def _llm_evidence(scope) -> dict[str, Any]:
@@ -148,90 +138,77 @@ async def settle_table_page_scope(
     ``asset_id`` is the already-resolved target document (attachment -> path ->
     viewer). The caller has established that it exists.
     """
-    rule = rule_scope(query, facts)
-    rule_evidence = {
-        "decision": rule.decision,
-        "pages": rule.pages,
-        "reason": rule.reason,
-    }
-    llm_evidence: dict[str, Any] = {"status": "not_called"}
-
-    # ── priority 1: the sentence states a page ───────────────────────────────
-    if _is_model_owned(rule):
-        if resolver is None:
-            # Degraded host (no model seam): the deterministic rule already read
-            # the explicit page, so the parameter is still settled.
-            return TablePageScope(
-                status=SETTLED, pages=rule.pages, source=SOURCE_RULE,
-                detail="explicit page taken from the deterministic rule; "
-                       "the model seam is not wired",
-                rule=rule_evidence, llm=llm_evidence)
-        try:
-            scope = await resolver(
-                query=query, facts=facts, history=history,
-                capability=capability, asset_id=asset_id)
-        except Exception as exc:  # noqa: BLE001 - a model fault is a hand-off
-            logger.info(
-                "table_page_scope model fault capability=%s error=%s",
-                capability, f"{type(exc).__name__}: {exc}")
-            llm_evidence = {"status": STATUS_UNAVAILABLE,
-                            "reason": f"{type(exc).__name__}: {exc}"}
-            return TablePageScope(
-                status=LLM_UNAVAILABLE, source=SOURCE_NONE,
-                detail="the page-scope model call failed; the turn goes to the Agent",
-                rule=rule_evidence, llm=llm_evidence)
-
-        llm_evidence = _llm_evidence(scope)
-        status = getattr(scope, "status", "")
-        if status == STATUS_UNAVAILABLE:
-            return TablePageScope(
-                status=LLM_UNAVAILABLE, source=SOURCE_NONE,
-                detail="the page-scope model is unavailable; the turn goes to the Agent",
-                rule=rule_evidence, llm=llm_evidence)
-        if status == STATUS_INVALID:
-            return TablePageScope(
-                status=LLM_CONTRACT_INVALID, source=SOURCE_NONE,
-                detail="the page-scope model violated its output contract; "
-                       "the turn goes to the Agent",
-                rule=rule_evidence, llm=llm_evidence)
-
-        pages = _llm_pages(scope)
-        if pages:
-            return TablePageScope(
-                status=SETTLED, pages=pages, source=SOURCE_LLM,
-                detail="the model identified the page(s) named in the sentence",
-                rule=rule_evidence, llm=llm_evidence)
-
-        # The model supplied no usable page (ambiguous / conversation target /
-        # all). An explicit page in the sentence stands: the whole document is
-        # not an outcome this capability may take.
-        if status == STATUS_OK and getattr(scope, "page_scope", "") == SCOPE_ALL:
-            detail = ("the model reported the whole document; the explicit page "
-                      "in the sentence stands")
-        else:
-            detail = ("the model supplied no page; the explicit page in the "
-                      "sentence stands")
+    # ── priority 5: no model seam -> no semantic judge -> Agent ──────────────
+    if resolver is None:
         return TablePageScope(
-            status=SETTLED, pages=rule.pages, source=SOURCE_RULE,
-            detail=detail, rule=rule_evidence, llm=llm_evidence)
+            status=LLM_UNAVAILABLE, source=SOURCE_NONE,
+            detail="the page-scope model seam is not wired; the turn goes to the Agent",
+            llm={"status": "not_wired"})
 
-    # ── priorities 2 and 4: the sentence names no page ───────────────────────
+    # ── priority 2: the model reads the raw sentence ─────────────────────────
+    try:
+        scope = await resolver(
+            query=query, facts=facts, history=history,
+            capability=capability, asset_id=asset_id)
+    except Exception as exc:  # noqa: BLE001 - a model fault is a hand-off
+        logger.info(
+            "table_page_scope model fault capability=%s error=%s",
+            capability, f"{type(exc).__name__}: {exc}")
+        return TablePageScope(
+            status=LLM_UNAVAILABLE, source=SOURCE_NONE,
+            detail="the page-scope model call failed; the turn goes to the Agent",
+            llm={"status": STATUS_UNAVAILABLE,
+                 "reason": f"{type(exc).__name__}: {exc}"})
+
+    llm_evidence = _llm_evidence(scope)
+    status = getattr(scope, "status", "")
+    if status == STATUS_UNAVAILABLE:
+        return TablePageScope(
+            status=LLM_UNAVAILABLE, source=SOURCE_NONE,
+            detail="the page-scope model is unavailable; the turn goes to the Agent",
+            llm=llm_evidence)
+    if status == STATUS_INVALID:
+        return TablePageScope(
+            status=LLM_CONTRACT_INVALID, source=SOURCE_NONE,
+            detail="the page-scope model violated its output contract; "
+                   "the turn goes to the Agent",
+            llm=llm_evidence)
+    if status != STATUS_OK:
+        # ambiguous = the model could not decide the target or the scope. That is
+        # not a judgment of "no page", so the viewer page may not substitute.
+        return TablePageScope(
+            status=PAGE_UNDETERMINED, source=SOURCE_NONE,
+            detail="the model could not determine the page scope; "
+                   "the turn goes to the Agent",
+            llm=llm_evidence)
+    if getattr(scope, "target", "") != TARGET_DOCUMENT:
+        # The model judged the request is about something other than this
+        # document; a page of this document would answer a different request.
+        return TablePageScope(
+            status=PAGE_UNDETERMINED, source=SOURCE_NONE,
+            detail="the model judged the request is not about this document; "
+                   "the turn goes to the Agent",
+            llm=llm_evidence)
+
+    # ── priority 3: the model identified an explicit page / range ────────────
+    pages = _llm_pages(scope)
+    if pages:
+        return TablePageScope(
+            status=SETTLED, pages=pages, source=SOURCE_LLM,
+            detail="the model identified the page(s) named in the sentence",
+            llm=llm_evidence)
+
+    # ── priority 4: the model judged that no page was named ──────────────────
     page = _viewer_page(facts)
     viewer_is_target = bool(_viewer_asset(facts)) and _viewer_asset(facts) == asset_id
     if page is not None and viewer_is_target:
-        if rule.decision == DECISION_PAGE:
-            detail = "the sentence refers to the current page; the viewer's page is used"
-        else:
-            detail = ("no page was named; the target document is open in the "
-                      "viewer, so its current page is used")
         return TablePageScope(
             status=SETTLED, pages=str(page), source=SOURCE_VIEWER,
-            detail=detail, rule=rule_evidence, llm=llm_evidence)
+            detail=("the model judged that no page was named; the target "
+                    "document is open in the viewer, so its current page is used"),
+            llm=llm_evidence)
 
-    if rule.decision == DECISION_PAGE:
-        detail = ("the sentence refers to the current page, but the target "
-                  "document is not the viewer document")
-    elif page is None:
+    if page is None:
         detail = ("no page was named and the target document has no valid "
                   "viewer page")
     else:
@@ -239,4 +216,4 @@ async def settle_table_page_scope(
                   "different document")
     return TablePageScope(
         status=PAGE_UNDETERMINED, source=SOURCE_NONE, detail=detail,
-        rule=rule_evidence, llm=llm_evidence)
+        llm=llm_evidence)

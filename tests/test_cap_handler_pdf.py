@@ -1,15 +1,18 @@
 """cap_handler — the two PDF handlers (Phase 2-C) + the shared file-content scope.
 
-The Phase-2-C acceptance matrix, exercised over the THREE page-addressed handlers
+The acceptance matrix, exercised over the THREE page-addressed handlers
 (``read_document`` / ``pdf_extract_text`` / ``pdf_table_to_text``) because they share
 ONE acquisition lane (``argument_acquisition.page_scope_settlement``):
 
-1. a page named in the sentence (``第1页``/``pages 3-5``) -> that canonical spec;
-2. a deictic "this page"                                -> the viewer's current page;
+1. a page named in the sentence (``第1页``/``pages 3-5``) -> the model's canonical
+   spec (the ONLINE MODEL is the only page producer; no sentence parser runs);
+2. a deictic "this page"                                -> the model resolves it to
+   the viewer's current page;
 3. no page restriction stated                           -> the slot is omitted
    (whole document), even when the viewer declares a page/range;
-4. an unspelled page reference (``部分页``) with no LLM   -> TERMINAL acquisition
-   failure — never a guess, never a silent whole-document widening;
+4. an unspelled page reference (``部分页``)              -> the model does not
+   settle it: TERMINAL for the shared handlers, an Agent hand-off for the table
+   capability — never a guess, never a silent whole-document widening;
 5. no asset id in any fact                              -> ``acquire()`` -> ``None``;
 6. a forged generic-chain provider / MODEL value is fully bypassed — the handler owns the
    draft and ``pages`` still comes from the trusted producers alone;
@@ -26,6 +29,15 @@ from api.schemas import ViewerPayload
 from core.application.chat.intent_funnel import matcher as matcher_mod
 from core.application.chat.intent_funnel import cap_router as cap_router_mod
 from core.application.chat.intent_funnel.argument_acquisition import AcquisitionInputs
+from core.application.chat.intent_funnel.argument_acquisition.page_scope_resolver import (
+    SCOPE_ALL,
+    SCOPE_RANGE,
+    SCOPE_SINGLE,
+    SCOPE_UNKNOWN,
+    STATUS_AMBIGUOUS,
+    TARGET_DOCUMENT,
+    PageScope,
+)
 from core.application.chat.intent_funnel.cap_handler import (
     CATEGORY_SCOPE_UNSETTLED,
     HANDLERS,
@@ -60,6 +72,70 @@ ALL_THREE = {
     "cap-pdf-table-to-text": (PdfTableToTextHandler(), "pdf_table_to_text"),
 }
 
+TABLE = "cap-pdf-table-to-text"
+
+
+# ── the model stand-in ───────────────────────────────────────────────────────────
+#
+# No live model in the hermetic suite. These are RECORDED answers — the verdict
+# a correct model gives for each sentence — keyed by the sentence itself, plus
+# the one deictic form whose answer depends on the viewer. Not a parser: an
+# unrecorded sentence is answered as ambiguous.
+
+_RECORDED = {
+    "总结第12页": (SCOPE_SINGLE, "12"),
+    "读一下第3到第5页": (SCOPE_RANGE, "3-5"),
+    "summarise the whole document": (SCOPE_ALL, None),
+    "summarise it": (SCOPE_ALL, None),
+    "提取第2页的表格": (SCOPE_SINGLE, "2"),
+    "第2页": (SCOPE_SINGLE, "2"),
+    "提取第2到第4页 PDF 的表格": (SCOPE_RANGE, "2-4"),
+    "q": (SCOPE_ALL, None),
+    "读一下部分页": None,          # the sentence names no page
+}
+
+_DEICTIC = ("读一下当前这一页",)
+
+
+def _model_verdict(query: str, facts) -> PageScope:
+    """The verdict the online model returns for the sentence."""
+    if query in _DEICTIC:
+        page = getattr(facts, "viewer_current_page", None)
+        if page is None:
+            return PageScope(target=TARGET_DOCUMENT, page_scope=SCOPE_UNKNOWN,
+                             status=STATUS_AMBIGUOUS,
+                             reason="no current page to resolve 'this page'")
+        return PageScope(target=TARGET_DOCUMENT, page_scope=SCOPE_SINGLE,
+                         pages=str(page))
+    recorded = _RECORDED.get(query, None)
+    if recorded is None:
+        return PageScope(target=TARGET_DOCUMENT, page_scope=SCOPE_UNKNOWN,
+                         status=STATUS_AMBIGUOUS,
+                         reason="the model could not settle the target or the scope")
+    scope, pages = recorded
+    return PageScope(target=TARGET_DOCUMENT, page_scope=scope, pages=pages)
+
+
+def _model_resolver(query: str, facts):
+    async def _resolve(**kwargs):
+        return _model_verdict(query, facts)
+    return _resolve
+
+
+async def _resolver(*, query, facts, history=(), capability="", asset_id=""):
+    """The seam shape the orchestrator calls (``ChatDeps.page_scope_resolver``)."""
+    return _model_verdict(query, facts)
+
+
+async def _boom_resolver(**kwargs):
+    raise AssertionError("the model must not be called without a target document")
+
+
+async def _acquire(handler, cid, query, facts, *, resolver=None):
+    return await handler.acquire(
+        query=query, facts=facts,
+        page_scope_resolver=resolver or _model_resolver(query, facts))
+
 
 def _facts(viewer) -> TurnFacts:
     """The settled facts for a viewer payload — the SAME path the funnel uses."""
@@ -82,21 +158,23 @@ def _pdf_viewer(**kw) -> ViewerPayload:
 @pytest.mark.parametrize("cid", ALL_THREE)
 async def test_a_sentence_named_page_is_a_single_page_spec(cid):
     handler, _ = ALL_THREE[cid]
-    draft = await handler.acquire(query="总结第12页", facts=_facts(_pdf_viewer()))
+    draft = await _acquire(handler, cid, "总结第12页", _facts(_pdf_viewer()))
     assert draft == {"asset_id": ASSET, "pages": "12"}
 
 
 @pytest.mark.parametrize("cid", ALL_THREE)
 async def test_a_sentence_named_range_becomes_a_from_to_spec(cid):
     handler, _ = ALL_THREE[cid]
-    draft = await handler.acquire(query="读一下第3到第5页", facts=_facts(_pdf_viewer()))
+    draft = await _acquire(handler, cid, "读一下第3到第5页",
+                           _facts(_pdf_viewer()))
     assert draft == {"asset_id": ASSET, "pages": "3-5"}
 
 
 @pytest.mark.parametrize("cid", ALL_THREE)
 async def test_a_deictic_page_uses_the_viewer_current_page(cid):
     handler, _ = ALL_THREE[cid]
-    draft = await handler.acquire(query="读一下当前这一页", facts=_facts(_pdf_viewer(page=12)))
+    draft = await _acquire(handler, cid, "读一下当前这一页",
+                           _facts(_pdf_viewer(page=12)))
     assert draft == {"asset_id": ASSET, "pages": "12"}
 
 
@@ -106,9 +184,9 @@ async def test_no_page_restriction_follows_the_capability_policy(cid):
     # The shared handlers read the whole document; the table capability reads the
     # viewer's current page (it has no whole-document outcome).
     handler, _ = ALL_THREE[cid]
-    draft = await handler.acquire(
-        query="summarise the whole document",
-        facts=_facts(_pdf_viewer(page=12, page_from=3, page_to=5)))
+    draft = await _acquire(
+        handler, cid, "summarise the whole document",
+        _facts(_pdf_viewer(page=12, page_from=3, page_to=5)))
     if cid == "cap-pdf-table-to-text":
         assert draft == {"asset_id": ASSET, "pages": "12"}
     else:
@@ -126,7 +204,7 @@ async def test_no_page_restriction_follows_the_capability_policy(cid):
 ])
 async def test_a_viewer_range_the_sentence_does_not_state_is_ignored(cid, facts):
     handler, _ = ALL_THREE[cid]
-    out = await handler.acquire(query="summarise it", facts=facts)
+    out = await _acquire(handler, cid, "summarise it", facts)
     if cid == "cap-pdf-table-to-text":
         # No current page -> the table capability asks the Agent, never widens
         # the request to the whole document.
@@ -140,21 +218,37 @@ async def test_a_viewer_range_the_sentence_does_not_state_is_ignored(cid, facts)
 @pytest.mark.asyncio
 @pytest.mark.parametrize("cid", ["cap-read-document", "cap-pdf-extract-text"])
 async def test_an_unspelled_page_reference_is_a_terminal_failure(cid):
+    # The model cannot name the pages, so the scope is unsettled: these two
+    # capabilities end the turn rather than guess.
     handler, _ = ALL_THREE[cid]
-    out = await handler.acquire(query="读一下部分页", facts=_facts(_pdf_viewer(page=12)))
+    out = await _acquire(handler, cid, "读一下部分页", _facts(_pdf_viewer(page=12)))
     assert isinstance(out, AcquisitionFailure)
     assert out.terminal is True
     assert out.category == CATEGORY_SCOPE_UNSETTLED
 
 
 @pytest.mark.asyncio
-async def test_an_unspelled_page_reference_uses_the_viewer_page_for_tables():
-    # The table policy only distinguishes "a page is stated" from "none is
-    # stated": with no number in the sentence, the viewer's current page is the
-    # settled scope.
-    handler, _ = ALL_THREE["cap-pdf-table-to-text"]
+@pytest.mark.parametrize("cid", ["cap-read-document", "cap-pdf-extract-text"])
+async def test_an_unwired_model_seam_is_also_terminal(cid):
+    # No semantic judge at all — still never a guess and never a whole-document
+    # widening for these two capabilities.
+    handler, _ = ALL_THREE[cid]
     out = await handler.acquire(query="读一下部分页", facts=_facts(_pdf_viewer(page=12)))
-    assert out == {"asset_id": ASSET, "pages": "12"}
+    assert isinstance(out, AcquisitionFailure)
+    assert out.terminal is True
+    assert out.scope["status"] == "not_wired"
+
+
+@pytest.mark.asyncio
+async def test_an_unspelled_page_reference_hands_off_to_the_agent_for_tables():
+    # The table capability has no whole-document outcome and never terminates: an
+    # unsettled scope goes to the Agent (non-terminal), even with a viewer page.
+    handler, _ = ALL_THREE["cap-pdf-table-to-text"]
+    out = await _acquire(handler, "cap-pdf-table-to-text", "读一下部分页",
+                         _facts(_pdf_viewer(page=12)))
+    assert isinstance(out, AcquisitionFailure)
+    assert out.terminal is False
+    assert out.category == CATEGORY_SCOPE_UNSETTLED
 
 
 # ── scenario 5: no asset id fails closed ───────────────────────────────────────────
@@ -164,7 +258,8 @@ async def test_an_unspelled_page_reference_uses_the_viewer_page_for_tables():
 @pytest.mark.parametrize("facts", [None, TurnFacts(), TurnFacts(has_attachment=True)])
 async def test_without_an_asset_id_fails_closed(cid, facts):
     handler, _ = ALL_THREE[cid]
-    assert await handler.acquire(query="q", facts=facts) is None
+    assert await _acquire(handler, cid, "q", facts,
+                          resolver=_boom_resolver) is None
 
 
 @pytest.mark.parametrize("cid", ALL_THREE)
@@ -173,12 +268,13 @@ async def test_asset_id_precedence_attachment_then_path_then_viewer(cid):
     # The table capability needs a settled page too; an explicit page keeps this
     # test about identity precedence only.
     query = "提取第2页的表格" if cid == "cap-pdf-table-to-text" else "q"
-    assert (await handler.acquire(query=query, facts=TurnFacts(
+    assert (await _acquire(handler, cid, query, TurnFacts(
         attachment_asset_id="A", path_asset_id="P", viewer_asset_id="V")))["asset_id"] == "A"
-    assert (await handler.acquire(query=query, facts=TurnFacts(
+    assert (await _acquire(handler, cid, query, TurnFacts(
         path_asset_id="P", viewer_asset_id="V")))["asset_id"] == "P"
-    assert (await handler.acquire(query="第2页" if cid == "cap-pdf-table-to-text" else "q",
-                                  facts=TurnFacts(viewer_asset_id="V")))["asset_id"] == "V"
+    assert (await _acquire(handler, cid,
+                           "第2页" if cid == "cap-pdf-table-to-text" else "q",
+                           TurnFacts(viewer_asset_id="V")))["asset_id"] == "V"
 
 
 # ── roster wiring ──────────────────────────────────────────────────────────────────
@@ -261,7 +357,7 @@ def _wire(monkeypatch, entry: CapabilityEntry):
 def _deps(provider):
     return types.SimpleNamespace(
         session_factory=None, embedder=lambda: object(), llm=object(),
-        acquisition_inputs=provider)
+        acquisition_inputs=provider, page_scope_resolver=_resolver)
 
 
 async def _route(ctx, deps, req):

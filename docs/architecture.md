@@ -3651,9 +3651,10 @@ read this spreadsheet" request collapsed into a parse-failure apology. The `read
 - **Page-scoped reads (`pages`)** — the schema gains an optional string `pages` for
   page-addressable formats, and its semantics are a strict tri-state: *omitted* → the legacy
   whole-document path, byte-identical to before; *empty string* → rejected; *a spec* → only
-  the requested pages are parsed. The spec is settled **upstream** from the viewer context, not
-  parsed out of the user's sentence: the per-capability acquisition handler reads it from the
-  turn facts (`viewer_page_from` / `viewer_page_to`) and the model never mediates it (§25.16.2).
+  the requested pages are parsed. The spec is settled **upstream** in the acquisition phase: the
+  per-capability handler asks the online model for the sentence's reading scope
+  (`argument_acquisition/page_scope_resolver.py`) and copy the canonical result
+  (§25.16.2). Document identity never comes from the model.
   `parse_pages_spec` (`core.infrastructure.pdf_pages`) is the ONE shared pure function, used by
   every file-content tool (read_document and the two PDF tools): comma-separated
   1-based tokens (`"3"`, `"2,5"`, `"1-3"`), whitespace-tolerant, `a-b` ranges, deduped and
@@ -4659,7 +4660,7 @@ section states up front that the document's content is **not** in the prompt, th
 asset name (escalating `_fence` — a crafted filename cannot forge a bullet line of a trusted section),
 the asset id, and routing guidelines the model must follow: read the open document by asset id
 (`read_document(asset_id="<id>")`) — page scope is settled **upstream** by the per-capability
-acquisition handler from the viewer facts (`viewer_page_from` / `viewer_page_to`, §25.16.2), so the
+acquisition handler from the online model's reading of the sentence (§25.16.2), so the
 model must **not** parse a page number out of the sentence and must **not** pass a `pages` argument
 itself; treat reading the viewer material as mandatory (web/RAG may supplement, never replace), and
 answer unrelated chatter directly without a tool call. P0 selections always outrank the stub (a surviving block means
@@ -4700,7 +4701,8 @@ citation validation that never rewrites; forged-asset and per-frame permission p
 the stub eligibility matrix (kind / follow / asset-readability exclusions, P0 precedence, video-FULL-
 never-degrades) and the Access-Context render contract (routing guidelines + not-injected statement
 present, no vision mention, forged
-asset names fenced, no page passed — page scope is settled upstream, never from the sentence, section
+asset names fenced, no page passed by the answering model — page scope is settled upstream by
+the acquisition lane, never by the agent's tool call, section
 dispatch stub-vs-injected-vs-none); the shared `pages` parser
 contract (dedupe/sort, malformed/range/over-cap/`""` rejections, bounds-checked before extraction,
 page-axis-less formats refused); ACL-before-storage on `read_document`; the stub read trace — including a
@@ -6320,14 +6322,14 @@ packages/core/application/chat/
     ├── cap_handler/               # capability-specific acquisition handlers (§25.16)
     │   ├── __init__.py            #   package facade — public re-exports only
     │   ├── roster.py              #   the ONE capability_id → handler wiring point
-    │   ├── scope.py               #   shared TurnFacts → asset_id + page-window (fail-closed)
+    │   ├── scope.py               #   shared TurnFacts → asset_id (fail-closed)
     │   ├── rag_search_handler.py  #   cap-rag-search    — query (verbatim)
     │   ├── web_search_handler.py  #   cap-web-search    — query (verbatim)
     │   ├── social_search_handler.py # cap-social-search — query + platform (+ subreddit)
     │   ├── vision_handler.py      #   cap-vision        — asset_id (TurnFacts) + question
-    │   ├── read_document_handler.py     # cap-read-document      — asset_id + pages (viewer facts)
-    │   ├── pdf_extract_text_handler.py  # cap-pdf-extract-text   — asset_id + pages (viewer facts)
-    │   └── pdf_table_to_text_handler.py # cap-pdf-table-to-text  — asset_id + pages (viewer facts)
+    │   ├── read_document_handler.py     # cap-read-document      — asset_id + pages (online model)
+    │   ├── pdf_extract_text_handler.py  # cap-pdf-extract-text   — asset_id + pages (online model)
+    │   └── pdf_table_to_text_handler.py # cap-pdf-table-to-text  — asset_id + pages (online model)
     ├── binder/                     # Node 4 (validate on the active path; bind for the L0 lane)
     │   ├── __init__.py
     │   ├── binder.py               #   active Binder: draft + Registry schema -> BoundArguments
@@ -6655,7 +6657,8 @@ Every capability handler obeys the same boundary:
 | `cap-read-file` | `RULE_CONTEXT` | `ReadFileHandler` | — (no plan) | — | `path` (verbatim literal) |
 | `cap-summary` | `MIXED` | `SummaryHandler` | `output_dir` (only on an explicit save cue; REQUIRED that turn) | — | ONE content source: `asset_id` (TurnFacts) + `pages` from the page-scope resolver; a literal `path`; the viewer's current page when the intent is unsettled; or `context` (the last non-empty assistant reply, or the turn's own chat when the model clearly asks for it) |
 
-**Page-scope lane (`cap-read-document` / `cap-pdf-extract-text` / `cap-summary`).** When the
+**Page-scope lane (`cap-read-document` / `cap-pdf-extract-text` /
+`cap-pdf-table-to-text` / `cap-summary`).** When the
 turn already carries a document fact, the handler asks
 `argument_acquisition/page_scope_resolver.py` for the sentence's reading scope.
 The resolver makes ONE non-streaming online-LLM call (`stream=false`, JSON mode,
@@ -6671,7 +6674,10 @@ guessed. Document identity always comes from `TurnFacts`; the Binder,
 authorization, and tool bodies are unchanged.
 
 `cap-read-document` / `cap-pdf-extract-text` treat every non-`ok` verdict as
-fail-closed (`ACQUISITION_MISSING`). `cap-summary` follows a FIXED priority
+TERMINAL (`SCOPE_UNSETTLED`): the turn ends honestly rather than guessing;
+`cap-pdf-table-to-text` hands a non-`ok` verdict to the Agent (non-terminal) and
+otherwise reads the viewer's current page when the model states no page.
+`cap-summary` follows a FIXED priority
 ladder:
 
 1. a clear, contract-compliant verdict (document whole / single / range, or the
@@ -6788,22 +6794,21 @@ present in any fact → `None` (fail-closed); a guessed id or a fabricated path 
 never produced. No handler loads any bytes: `vision`'s `question` is the verbatim
 sentence (omitted when empty, letting the tool's default analysis prompt run).
 
-The three file-content handlers share ONE scope rule
-(`cap_handler/scope.py`, `acquire_file_scope`) and source `pages` **only** from
-the viewer facts (`viewer_page_from` / `viewer_page_to`) — never from the
-sentence, never mediated by a model. The range is a strict tri-state:
-
-- both bounds `None` → the `pages` slot is **omitted** (whole document);
-- equal bounds (`3,3`) → `"3"`; an ascending range (`3,5`) → `"3-5"`;
-- a half-open (`3,None` / `None,5`) or reversed (`5,3`) range → `None`
-  (fail-closed → Agent) — a page-scoped read is **never** silently widened to
-  the whole document.
-
-The handler never parses a page number out of the user's text, so a year /
-standard / product number (`2024 年`, `ISO 9001`, `GPT-4`) can never be
-mis-read as a page; the derived spec is legal for the shared `parse_pages_spec`
-(`core.infrastructure.pdf_pages`) by construction. The `read_document` and the
-two PDF capabilities have **no `query` / `question` slot** in their schema, so
+The three file-content handlers share ONE page-scope lane
+(`argument_acquisition/page_scope_settlement.py` over the ONLINE model in
+`argument_acquisition/page_scope_resolver.py`). The model reads the user's
+sentence plus the turn's document metadata and settles the reading scope; no
+deterministic sentence parser participates, so a year / standard / product
+number (`2024 年`, `ISO 9001`, `GPT-4`) can never be mis-read as a page, and a
+scope the model does not settle is never guessed. `all` omits the `pages` slot
+(whole document); `single` / `range` yield a spec that is legal for the shared
+`parse_pages_spec` (`core.infrastructure.pdf_pages`) by construction. The
+viewer's open page/range is NOT a page statement: it never narrows a
+whole-document request. `cap-read-document` / `cap-pdf-extract-text` treat a
+non-`ok` verdict as TERMINAL; `cap-pdf-table-to-text` hands it to the Agent
+(non-terminal) and otherwise reads the viewer's current page when the model
+states no page. The `read_document` and the two PDF capabilities have **no
+`query` / `question` slot** in their schema, so
 the handlers emit none — inventing one would land `BIND_INVALID` and the
 capability could never certify. (A free-text `query` slot for these capabilities
 is a separate future architecture question, not a handler defect.)
@@ -6980,8 +6985,9 @@ every other capability.
 - No shared `BaseHandler`; each handler is an independent module. The three
   file-content handlers share only the **stateless** `scope.py` helper, not a
   base class.
-- No page number parsed from the sentence and no `pages` widening: a half-open /
-  reversed viewer range fails closed (→ Agent), never a whole-document read.
+- No page number parsed from the sentence by a rule: `pages` is settled only by
+  the online model's semantic verdict, and a verdict it does not settle is never
+  widened to the whole document.
 - No `parent_path` emitted by `CreateFolderHandler`, and the model is never asked
   for one (the public contract exposes only `name`).
 - No deletion of `argument_acquisition/`; §28 stays live — it now backs the

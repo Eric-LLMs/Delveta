@@ -8,11 +8,10 @@ rule lives here exactly once and cannot drift between capabilities:
   -> ``viewer_asset_id``). No fact carries one -> ``""`` (the caller fails
   closed; a sentence-copied or model-invented id is never a source).
 
-The page axis is deliberately NOT here: it is acquired by the combined
-rule + online-LLM lane in
-:mod:`..argument_acquisition.page_scope_settlement`. The viewer's open page/range
-is never substituted for a page the user did not state — a whole-document
-request stays whole-document even when a viewer page exists.
+The page axis is deliberately NOT here: it is acquired by the online-model
+lane in :mod:`..argument_acquisition.page_scope_settlement`. The viewer's open
+page/range is never substituted for a page the user did not state — a
+whole-document request stays whole-document even when a viewer page exists.
 """
 from __future__ import annotations
 

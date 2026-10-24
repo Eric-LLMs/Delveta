@@ -10,11 +10,11 @@ inside the shared ``read_document`` tool. The two schema slots of
   There is NO fail-open path: when no fact carries an asset id the handler returns
   ``None`` and the turn exits to the Agent's existing missing/clarify handling —
   never a guessed or fabricated id.
-* ``pages`` — acquired by the COMBINED lane
-  (:mod:`..argument_acquisition.page_scope_settlement`): the deterministic rule
-  runs first over the sentence and the trusted turn facts, then the online LLM
-  supplements/corrects it, and the approved merge priority picks the value
-  (rule-only -> rule, LLM-only -> LLM, conflict -> LLM, neither -> terminal).
+* ``pages`` — acquired by the ONLINE MODEL
+  (:mod:`..argument_acquisition.page_scope_settlement`): the model reads the
+  user's sentence and returns the whole document, a single page or a range.
+  No deterministic sentence parser participates — keyword parsing cannot
+  express "this page", a corrected range or a reference it does not spell out.
   ``all`` omits the slot (whole document). A whole-document request is NEVER
   turned into the viewer's current page merely because a viewer page exists.
 
@@ -53,17 +53,16 @@ class ReadDocumentHandler:
     """``cap-read-document`` parameter handler (stateless)."""
 
     capability_id = "cap-read-document"
-    # The orchestrator may pass the page-scope resolver into ``acquire`` (the
-    # online-LLM half of the combined lane).
+    # The orchestrator may pass the online page-scope resolver into ``acquire``.
     accepts_page_scope = True
-    # The orchestrator passes a dict for the rule / LLM / merged evidence.
+    # The orchestrator passes a dict for the model / merged evidence.
     accepts_scope_evidence = True
 
     async def acquire(self, *, query: str, facts, page_scope_resolver=None,
                       history=(), scope_evidence: dict | None = None):
         """Return the ``read_document`` argument draft, or ``None`` when no
-        document is in context, or a TERMINAL failure when the page scope cannot
-        be settled by the rule and the online LLM together."""
+        document is in context, or a TERMINAL failure when the online model
+        cannot settle the page scope."""
         asset_id = resolve_asset_id(facts)
         if not asset_id:
             return None
@@ -75,9 +74,8 @@ class ReadDocumentHandler:
             scope_evidence.update(settlement.record())
         if not settlement.ok:
             logger.info(
-                "read_document page scope unsettled rule=%s llm=%s detail=%s",
-                settlement.rule.get("decision"), settlement.llm.get("status"),
-                settlement.detail)
+                "read_document page scope unsettled llm=%s detail=%s",
+                settlement.llm.get("status"), settlement.detail)
             return AcquisitionFailure(
                 category=CATEGORY_SCOPE_UNSETTLED,
                 stage=STAGE_SCOPE_RESOLUTION,

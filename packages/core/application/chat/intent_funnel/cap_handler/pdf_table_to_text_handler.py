@@ -8,14 +8,17 @@ rendering and vision transcription stay entirely inside the shared
   ``viewer_asset_id``; no fact carries one -> ``None`` (fail-closed: no draft,
   the turn never guesses a document).
 * ``pages`` — the capability-local policy in
-  :mod:`..cap_handler.table_page_scope`: an explicit page in the sentence, or
-  the Viewer's current page when the target document is the open one. The table
+  :mod:`..cap_handler.table_page_scope`: the online model reads the raw sentence
+  and decides whether the user named pages. When it did, those pages are used;
+  otherwise the Viewer's current page of the same document is used. The table
   capability has NO whole-document outcome.
 
 Failures never fall back. A missing target document returns ``None``; a
-document without a valid current page, a failed model call or a model contract
-violation returns a NON-TERMINAL :class:`AcquisitionFailure`, which the funnel
-hands to the Agent with the turn context for clarification.
+document without a valid current page, a failed/unavailable model call or a
+model contract violation returns a NON-TERMINAL
+:class:`AcquisitionFailure`, which the funnel hands to the Agent with the turn
+context for clarification. A missing model seam is treated the same way: no
+semantic judge, no settlement.
 
 The returned draft is passed through the SAME Binder / ActionExecutor /
 ToolRuntime handoff every other capability uses.
@@ -74,9 +77,8 @@ class PdfTableToTextHandler:
             return draft
 
         logger.info(
-            "pdf_table_to_text page scope undetermined status=%s rule=%s llm=%s detail=%s",
-            scope.status, scope.rule.get("decision"), scope.llm.get("status"),
-            scope.detail)
+            "pdf_table_to_text page scope undetermined status=%s llm=%s detail=%s",
+            scope.status, scope.llm.get("status"), scope.detail)
         if scope.status == LLM_UNAVAILABLE:
             category, stage = CATEGORY_EXTRACTION_FAILED, STAGE_ARGUMENT_EXTRACTION
         elif scope.status == LLM_CONTRACT_INVALID:

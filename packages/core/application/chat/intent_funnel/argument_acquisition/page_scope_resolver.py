@@ -66,8 +66,9 @@ STATUS_INVALID = "invalid"
 STATUS_UNAVAILABLE = "unavailable"
 
 _SINGLE_RE = re.compile(r"^\d+$")
-# The reply's whole allow-list. Anything else (notably an asset id) is rejected.
-_ALLOWED_KEYS = frozenset({"target", "page_scope", "pages", "status", "reason"})
+# The reply's whole allow-list — the four contract fields and nothing else. The
+# ``status`` is DERIVED here by validation; a reply that carries one is rejected.
+_ALLOWED_KEYS = frozenset({"target", "page_scope", "pages", "reason"})
 
 SYSTEM_PROMPT = """You decide the reading scope of ONE user request about a document.
 You do NOT answer the request, summarise, translate or explain anything.
@@ -80,7 +81,8 @@ Return ONLY a JSON object with exactly these keys:
 Rules:
 - target=document when the user asks about the document currently shown or attached.
 - target=conversation_context when the user asks about the chat itself
-  (e.g. "what we just discussed").
+  (e.g. "what we just discussed"). It has no page axis: page_scope may be
+  "all" or "unknown", and the caller supplies the transcript.
 - page_scope=all: the whole document; pages MUST be null.
 - page_scope=single: exactly one page; pages is one positive integer, e.g. "5".
 - page_scope=range: several pages; pages is "a-b" or a comma list like "1,3,5",
@@ -193,17 +195,24 @@ def parse_reply(payload: Mapping, *, page_count: int | None = None,
         return PageScope(target=target, page_scope=scope,
                          status=STATUS_INVALID, reason=f"invalid page_scope {scope!r}")
 
-    if target == TARGET_UNKNOWN or scope == SCOPE_UNKNOWN:
+    if target == TARGET_UNKNOWN:
         return PageScope(target=target, page_scope=scope,
                          status=STATUS_AMBIGUOUS,
-                         reason=reason or "target or scope is unknown")
+                         reason=reason or "the target is unknown")
 
     if target == TARGET_CONVERSATION:
-        # A conversation request has no page axis; ignore any page field and
-        # hand the caller the sanctioned recent user turns.
+        # A conversation request has NO page axis, so its ``page_scope`` carries no
+        # decision: an ``unknown`` scope here must not discard a target the model
+        # DID identify. The context body is never model-generated — the caller
+        # receives the sanctioned recent user turns.
         return PageScope(target=target, page_scope=scope, pages=None,
                          status=STATUS_OK, reason=reason,
                          context_content=tuple(user_turns))
+
+    if scope == SCOPE_UNKNOWN:
+        return PageScope(target=target, page_scope=scope,
+                         status=STATUS_AMBIGUOUS,
+                         reason=reason or "the page scope is unknown")
 
     raw = payload.get("pages")
     if scope == SCOPE_ALL:
