@@ -276,6 +276,7 @@ class Cap:
     source: str = "none"
     needs_asset: bool = False
     query_arg: bool = False
+    viewer_page: bool = False
     extra: tuple[tuple[str, str], ...] = ()
 
 
@@ -307,7 +308,8 @@ CAPABILITIES: tuple[Cap, ...] = (
         source="viewer_pdf", needs_asset=True),
     Cap("cap-pdf-table-to-text", "pdf_table_to_text",
         "pull the tables out of this pdf", write=False,
-        source="viewer_pdf", needs_asset=True),
+        source="viewer_pdf", needs_asset=True, viewer_page=True,
+        extra=(("pages", "1"),)),
 )
 
 CAP_BY_ID: dict[str, Cap] = {c.cap_id: c for c in CAPABILITIES}
@@ -326,6 +328,7 @@ def expected_args(cap: Cap, asset_id: Any) -> dict:
 
 
 def turn_fields(cap: Cap, *, asset_id: Any = None,
+                page: int | None = 1,
                 page_from: int | None = None, page_to: int | None = None) -> dict:
     """The ``/chat/stream`` body extras that supply this capability's context."""
     if cap.source == "attach_image":
@@ -336,8 +339,13 @@ def turn_fields(cap: Cap, *, asset_id: Any = None,
                            "name": "report.pdf", "mime_type": "application/pdf",
                            "owned": True}}
     if cap.source == "viewer_pdf":
+        # The table capability reads the viewer's current page when the sentence
+        # names none, so its scenario reports the visible page like the real
+        # client does. Other viewer capabilities keep their previous payload.
         viewer: dict = {"kind": "pdf", "name": "report.pdf",
                         "asset_id": str(asset_id), "follow": True}
+        if page is not None and cap.viewer_page:
+            viewer["page"] = page
         if page_from is not None:
             viewer["page_from"] = page_from
         if page_to is not None:

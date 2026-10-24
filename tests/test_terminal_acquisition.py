@@ -106,13 +106,11 @@ async def _ambiguous_resolver(**kwargs):
 @pytest.mark.parametrize("module,capability", [
     (read_document_handler, "cap-read-document"),
     (pdf_extract_text_handler, "cap-pdf-extract-text"),
-    (pdf_table_to_text_handler, "cap-pdf-table-to-text"),
 ])
-async def test_every_file_handler_returns_a_terminal_failure(module, capability):
+async def test_every_shared_file_handler_returns_a_terminal_failure(module, capability):
     handler = module.__dict__[
         {"cap-read-document": "ReadDocumentHandler",
-         "cap-pdf-extract-text": "PdfExtractTextHandler",
-         "cap-pdf-table-to-text": "PdfTableToTextHandler"}[capability]]()
+         "cap-pdf-extract-text": "PdfExtractTextHandler"}[capability]]()
     evidence: dict = {}
 
     out = await handler.acquire(
@@ -124,6 +122,28 @@ async def test_every_file_handler_returns_a_terminal_failure(module, capability)
     assert out.terminal is True
     assert out.category == CATEGORY_SCOPE_UNSETTLED
     assert evidence["ok"] is False
+
+
+@pytest.mark.asyncio
+async def test_the_table_handler_never_terminates_it_settles_or_hands_off():
+    # With no page named, the table policy reads the viewer's current page, so an
+    # ambiguous model verdict is irrelevant: the turn settles, it never ends.
+    handler = pdf_table_to_text_handler.PdfTableToTextHandler()
+    out = await handler.acquire(
+        query="extract some pages", facts=_facts(),
+        page_scope_resolver=_ambiguous_resolver, history=())
+    assert out == {"asset_id": "asset-123", "pages": "4"}
+
+    # Without a valid current page it hands the turn to the Agent (non-terminal),
+    # never to the terminal executor and never to a whole-document read.
+    no_page = _facts()
+    no_page.viewer_current_page = None
+    out = await handler.acquire(
+        query="extract some pages", facts=no_page,
+        page_scope_resolver=_ambiguous_resolver, history=())
+    assert isinstance(out, AcquisitionFailure)
+    assert out.terminal is False
+    assert out.category == CATEGORY_SCOPE_UNSETTLED
 
 
 @pytest.mark.asyncio

@@ -101,13 +101,18 @@ async def test_a_deictic_page_uses_the_viewer_current_page(cid):
 
 
 @pytest.mark.parametrize("cid", ALL_THREE)
-async def test_no_page_restriction_omits_the_slot(cid):
+async def test_no_page_restriction_follows_the_capability_policy(cid):
     # The viewer declares a page AND a range; the sentence states no restriction.
+    # The shared handlers read the whole document; the table capability reads the
+    # viewer's current page (it has no whole-document outcome).
     handler, _ = ALL_THREE[cid]
     draft = await handler.acquire(
         query="summarise the whole document",
         facts=_facts(_pdf_viewer(page=12, page_from=3, page_to=5)))
-    assert draft == {"asset_id": ASSET}
+    if cid == "cap-pdf-table-to-text":
+        assert draft == {"asset_id": ASSET, "pages": "12"}
+    else:
+        assert draft == {"asset_id": ASSET}
 
 
 # ── scenario 4: a viewer range the sentence does not state is not a page scope ─────
@@ -121,17 +126,35 @@ async def test_no_page_restriction_omits_the_slot(cid):
 ])
 async def test_a_viewer_range_the_sentence_does_not_state_is_ignored(cid, facts):
     handler, _ = ALL_THREE[cid]
-    assert await handler.acquire(query="summarise it", facts=facts) == {
-        "asset_id": ASSET}
+    out = await handler.acquire(query="summarise it", facts=facts)
+    if cid == "cap-pdf-table-to-text":
+        # No current page -> the table capability asks the Agent, never widens
+        # the request to the whole document.
+        assert isinstance(out, AcquisitionFailure)
+        assert out.terminal is False
+        assert out.category == CATEGORY_SCOPE_UNSETTLED
+    else:
+        assert out == {"asset_id": ASSET}
 
 
-@pytest.mark.parametrize("cid", ALL_THREE)
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cid", ["cap-read-document", "cap-pdf-extract-text"])
 async def test_an_unspelled_page_reference_is_a_terminal_failure(cid):
     handler, _ = ALL_THREE[cid]
     out = await handler.acquire(query="读一下部分页", facts=_facts(_pdf_viewer(page=12)))
     assert isinstance(out, AcquisitionFailure)
     assert out.terminal is True
     assert out.category == CATEGORY_SCOPE_UNSETTLED
+
+
+@pytest.mark.asyncio
+async def test_an_unspelled_page_reference_uses_the_viewer_page_for_tables():
+    # The table policy only distinguishes "a page is stated" from "none is
+    # stated": with no number in the sentence, the viewer's current page is the
+    # settled scope.
+    handler, _ = ALL_THREE["cap-pdf-table-to-text"]
+    out = await handler.acquire(query="读一下部分页", facts=_facts(_pdf_viewer(page=12)))
+    assert out == {"asset_id": ASSET, "pages": "12"}
 
 
 # ── scenario 5: no asset id fails closed ───────────────────────────────────────────
@@ -147,12 +170,15 @@ async def test_without_an_asset_id_fails_closed(cid, facts):
 @pytest.mark.parametrize("cid", ALL_THREE)
 async def test_asset_id_precedence_attachment_then_path_then_viewer(cid):
     handler, _ = ALL_THREE[cid]
-    assert (await handler.acquire(query="q", facts=TurnFacts(
+    # The table capability needs a settled page too; an explicit page keeps this
+    # test about identity precedence only.
+    query = "提取第2页的表格" if cid == "cap-pdf-table-to-text" else "q"
+    assert (await handler.acquire(query=query, facts=TurnFacts(
         attachment_asset_id="A", path_asset_id="P", viewer_asset_id="V")))["asset_id"] == "A"
-    assert (await handler.acquire(query="q", facts=TurnFacts(
+    assert (await handler.acquire(query=query, facts=TurnFacts(
         path_asset_id="P", viewer_asset_id="V")))["asset_id"] == "P"
-    assert (await handler.acquire(query="q", facts=TurnFacts(
-        viewer_asset_id="V")))["asset_id"] == "V"
+    assert (await handler.acquire(query="第2页" if cid == "cap-pdf-table-to-text" else "q",
+                                  facts=TurnFacts(viewer_asset_id="V")))["asset_id"] == "V"
 
 
 # ── roster wiring ──────────────────────────────────────────────────────────────────
