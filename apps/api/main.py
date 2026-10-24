@@ -33,6 +33,7 @@ from core.application.drive_service import DriveError
 from core.application.services import VocabError
 from core.config import settings
 from core.infrastructure.db import SessionLocal, init_db
+from core.infrastructure.llm import aclose_llm_clients
 from core.infrastructure.security import ensure_admin_user, ensure_default_admin
 from core.logger import configure_logging, reset_log_context, set_log_context
 from fastapi import FastAPI, Request
@@ -105,6 +106,7 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.warning("product-manual seed failed — retrying next boot", exc_info=True)
     yield
+    await aclose_llm_clients()
     await redis.aclose()
 
 

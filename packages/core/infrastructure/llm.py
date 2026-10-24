@@ -6,18 +6,168 @@ and every call must carry (or find in the request context) a channel resolved by
 LLM dispatch gateway (:mod:`core.infrastructure.llm_routing`), else it raises
 :class:`NoActiveChannelError`. Global-key fallback is forbidden by platform doctrine.
 """
+import asyncio
+import hashlib
 import json
+import logging
+import threading
+import time
+from collections import OrderedDict
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 
+import httpx
 from agent.llm.llm_errors import raise_classified
 from openai import AsyncOpenAI
 
 from core.config import settings
 from core.infrastructure.request_context import get_request_llm_channel
 
+logger = logging.getLogger(__name__)
+
 # The OpenAI SDK refuses to build a client without credentials, but the real key is loaded
 # from the DB (admin panel) at startup. Use a placeholder until ``configure`` supplies it.
 _PLACEHOLDER_KEY = "sk-placeholder"
+
+
+# ── Connection pooling ────────────────────────────────────────────────────────────────
+# Every turn resolves its channel from the DB, so a naive per-call ``AsyncOpenAI(...)``
+# opens a fresh TCP+TLS connection on every call (~1s to this provider). Two caches fix
+# that without ever letting a credential outlive the request that resolved it:
+#
+# * TRANSPORTS — one ``httpx.AsyncClient`` per ORIGIN (scheme/host/port), shared by every
+#   credential of that provider. A transport is never evicted while the process lives; it
+#   is closed once, at app shutdown, by :func:`aclose_llm_clients`.
+# * WRAPPERS — thin ``AsyncOpenAI`` objects keyed by ``(base_url, sha256(api_key))``,
+#   sharing the origin's transport. LRU + TTL bounded; eviction is a pure dict removal
+#   and NEVER calls ``close()`` (``AsyncOpenAI.close()`` closes the shared transport).
+#
+# Eviction is not revocation: correctness comes from resolving the channel per request.
+# Dropping a cached wrapper only frees memory; the next call re-reads the DB channel and
+# builds a new wrapper. In-flight requests hold their own references, so eviction while
+# a request is running cannot affect it.
+_WRAPPER_CACHE_MAX = 256
+_WRAPPER_CACHE_TTL_SECONDS = 30 * 60
+
+
+@dataclass
+class _TransportEntry:
+    client: httpx.AsyncClient
+    # An httpx.AsyncClient is bound to the event loop that opened its sockets. Production
+    # runs one loop per process; pytest gives every test a fresh loop, so a mismatch
+    # (only ever seen in tests) drops the stale transport instead of reusing it.
+    loop: asyncio.AbstractEventLoop | None
+
+
+@dataclass
+class _WrapperEntry:
+    client: AsyncOpenAI
+    created_at: float
+
+
+_TRANSPORTS: dict[tuple[str, str, int], _TransportEntry] = {}
+_WRAPPERS: OrderedDict[tuple[str, str], _WrapperEntry] = OrderedDict()
+_POOL_LOCK = threading.Lock()
+
+
+def _origin_of(base_url: str) -> tuple[str, str, int]:
+    """Return ``(scheme, host, port)`` — the identity that owns one TCP/TLS pool."""
+    url = httpx.URL(base_url)
+    port = url.port or (443 if url.scheme == "https" else 80)
+    return url.scheme, url.host, port
+
+
+def _key_fingerprint(api_key: str) -> str:
+    """Cache-key form of a credential: never keep or log the plaintext key."""
+    return hashlib.sha256(api_key.encode("utf-8")).hexdigest()
+
+
+def _get_transport(base_url: str) -> httpx.AsyncClient:
+    origin = _origin_of(base_url)
+    try:
+        loop: asyncio.AbstractEventLoop | None = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    with _POOL_LOCK:
+        entry = _TRANSPORTS.get(origin)
+        if entry is not None and entry.loop is loop:
+            return entry.client
+        # Keep the SDK's own transport defaults (5/600/600/600, 1000/100) and change ONE
+        # thing: keepalive_expiry 5s → 300s. At 5s an idle socket is dropped between two
+        # turns of the same user, which is exactly the latency this cache exists to save.
+        client = httpx.AsyncClient(
+            timeout=httpx.Timeout(connect=5.0, read=600.0, write=600.0, pool=600.0),
+            limits=httpx.Limits(
+                max_connections=settings.llm_pool_max_connections,
+                max_keepalive_connections=settings.llm_pool_max_keepalive_connections,
+                keepalive_expiry=settings.llm_pool_keepalive_expiry_seconds,
+            ),
+            follow_redirects=True,
+            trust_env=True,
+        )
+        _TRANSPORTS[origin] = _TransportEntry(client=client, loop=loop)
+        return client
+
+
+def _get_wrapper(base_url: str, api_key: str) -> AsyncOpenAI:
+    """Return the cached ``AsyncOpenAI`` for one (endpoint, credential) pair."""
+    key = (base_url, _key_fingerprint(api_key))
+    transport = _get_transport(base_url)
+    now = time.monotonic()
+    with _POOL_LOCK:
+        entry = _WRAPPERS.get(key)
+        if entry is not None:
+            if now - entry.created_at < _WRAPPER_CACHE_TTL_SECONDS:
+                _WRAPPERS.move_to_end(key)
+                return entry.client
+            del _WRAPPERS[key]  # expired: drop the reference, never close()
+        while len(_WRAPPERS) >= _WRAPPER_CACHE_MAX:
+            _WRAPPERS.popitem(last=False)  # LRU: drop the reference, never close()
+        client = AsyncOpenAI(
+            base_url=base_url,
+            api_key=api_key,
+            timeout=settings.llm_timeout_seconds,
+            http_client=transport,
+        )
+        _WRAPPERS[key] = _WrapperEntry(client=client, created_at=now)
+        return client
+
+
+def invalidate_channel(base_url: str | None = None, api_key: str | None = None) -> int:
+    """Drop cached credential wrappers, optionally filtered by endpoint and key.
+
+    This is memory hygiene after a credential is rotated or removed from the DB. It is
+    NOT the revocation mechanism and does not need to be: the channel is resolved from
+    the DB on every call, so a revoked key is never selected again regardless of what
+    this cache holds. No transport is closed and no in-flight request is affected.
+    """
+    fingerprint = _key_fingerprint(api_key) if api_key else None
+    with _POOL_LOCK:
+        if base_url is None and fingerprint is None:
+            dropped = len(_WRAPPERS)
+            _WRAPPERS.clear()
+            return dropped
+        doomed = [
+            key for key in _WRAPPERS
+            if (base_url is None or key[0] == base_url)
+            and (fingerprint is None or key[1] == fingerprint)
+        ]
+        for key in doomed:
+            del _WRAPPERS[key]
+        return len(doomed)
+
+
+async def aclose_llm_clients() -> None:
+    """Close every pooled transport. Idempotent; called once from the API lifespan."""
+    with _POOL_LOCK:
+        entries = list(_TRANSPORTS.values())
+        _TRANSPORTS.clear()
+        _WRAPPERS.clear()
+    for entry in entries:
+        try:
+            await entry.client.aclose()
+        except Exception:
+            logger.warning("failed to close a pooled LLM transport", exc_info=True)
 
 
 class NoActiveChannelError(RuntimeError):
@@ -109,6 +259,13 @@ class OpenAILLM:
         :class:`NoActiveChannelError` unless BOTH base_url and api_key come from the
         explicit args or the gateway-pinned contextvar — the embedded/global config is
         never consulted, which is what "worker holds no resident key" means in code.
+
+        A resolved channel rides the shared per-origin transport (see ``_get_wrapper``);
+        per-call ``timeout``/``max_retries`` are applied to that cached wrapper through
+        ``with_options``, which reuses its ``http_client`` instead of opening a new pool.
+        Calls with NO resolved channel keep the historical behaviour exactly: the
+        embedded-config client for plain calls, a throwaway client when the caller pins a
+        timeout/retry budget.
         """
         ch = get_request_llm_channel()
         if ch is not None:
@@ -121,10 +278,23 @@ class OpenAILLM:
                 "no gateway-resolved LLM channel for this call — the shell client holds no "
                 "key and global-key fallback is forbidden (Fail-Fast at call site)"
             )
-        if base_url or api_key or timeout is not None or max_retries is not None:
+        if base_url or api_key:
+            client = _get_wrapper(
+                base_url=base_url or str(self.client.base_url),
+                api_key=api_key or self.client.api_key or _PLACEHOLDER_KEY,
+            )
+            options: dict = {}
+            if timeout is not None:
+                options["timeout"] = timeout
+            if max_retries is not None:
+                options["max_retries"] = max_retries
+            if options:
+                client = client.with_options(**options)
+            return client, model or self.model
+        if timeout is not None or max_retries is not None:
             kwargs: dict = {
-                "base_url": base_url or str(self.client.base_url),
-                "api_key": api_key or self.client.api_key or _PLACEHOLDER_KEY,
+                "base_url": str(self.client.base_url),
+                "api_key": self.client.api_key or _PLACEHOLDER_KEY,
                 "timeout": timeout if timeout is not None else settings.llm_timeout_seconds,
             }
             if max_retries is not None:

@@ -258,6 +258,15 @@ class Settings(BaseSettings):
     llm_max_retries: int = 2                   # retries on temporary errors (timeout / 429 / 5xx)
     llm_retry_backoff: float = 1.0             # base backoff seconds (doubles per retry)
 
+    # LLM HTTP connection pooling: ONE transport per origin (scheme/host/port), shared by
+    # every credential of that provider. Connection caps mirror the OpenAI SDK's own
+    # transport so pooling changes only keepalive lifetime, not capacity. 300s (not the
+    # SDK's 5s) keeps the socket alive between two turns of the same user, which is the
+    # whole point of the pool.
+    llm_pool_max_connections: int = 1000
+    llm_pool_max_keepalive_connections: int = 100
+    llm_pool_keepalive_expiry_seconds: float = 300.0
+
     # Bash sandbox: "docker" runs each command in a fresh container (docker-py, hard dep);
     # "host" uses the local-process fallback (explicit opt-in, dev only — NOT a security boundary).
     bash_sandbox: str = "docker"                # "docker" | "host"
