@@ -190,6 +190,44 @@ def test_scorer_canonical_equality():
     assert S._eq(" x ", "x")           # whitespace is not significant
 
 
+# ── the ``pages`` slot compares as a page set, not as text ───────────────────
+def test_scorer_pages_slot_equality_is_set_based():
+    assert S._slot_eq("pages", "2,3", "2-3")
+    assert S._slot_eq("pages", "2-3", "2,3")
+    assert S._slot_eq("pages", "1,5,6,10", "1,5-6,10")
+    assert S._slot_eq("pages", "1,5-6,10", "1,5,6,10")
+    assert S._slot_eq("pages", "1-3", "3,2,1")     # order + duplicates are irrelevant
+    assert S._slot_eq("pages", "3", "3")
+    # a different page set is still a miss, whichever way it is written
+    assert not S._slot_eq("pages", "2,3", "2,4")
+    assert not S._slot_eq("pages", "1,5-6,10", "1,5-7,10")
+    assert not S._slot_eq("pages", "2-3", None)
+    # a non-``pages`` slot keeps exact canonical equality
+    assert not S._slot_eq("query", "2,3", "2-3")
+    # unparseable specs fall back to string equality, never to a silent match
+    assert S._slot_eq("pages", "abc", "abc")
+    assert not S._slot_eq("pages", "abc", "abd")
+
+
+def test_scorer_accepts_either_pages_format_end_to_end():
+    """M7/M8 score the page SET: "2-3" hits gold "2,3", a wrong set still misses."""
+    dataset = [
+        _row("ok", "cap-read-document", {}, [], {"pages": "2,3"},
+             forbidden=["asset_id"], ownership={"pages": OWN.CONTEXT}),
+        _row("bad", "cap-read-document", {}, [], {"pages": "2,3"},
+             forbidden=["asset_id"], ownership={"pages": OWN.CONTEXT}),
+    ]
+    preds = [
+        _pred("ok", "cap-read-document", {"pages": "2-3"}),
+        _pred("bad", "cap-read-document", {"pages": "2,3,4"}),
+    ]
+    rep = S.score(dataset, preds)
+    assert rep["metrics"]["M7_tool_contract_match"]["numerator"] == 1
+    assert rep["metrics"]["M7_tool_contract_match"]["denominator"] == 2
+    ctx = rep["metrics"]["M8_non_pe_slot_sources"]["buckets"][OWN.CONTEXT]
+    assert ctx == {"expected": 2, "supplied": 2, "matched": 1}
+
+
 def test_from_execution_trace_adapter():
     trace = {"case_id": "ws-01", "stages": {
         "decided_capability": "cap-web-search", "model_values": {"query": "x"},

@@ -31,6 +31,15 @@ M6 stage_failures          histogram of fallback_reason / deepest_stage (counts,
 M7 tool_contract_match     num: pred == expected_tool_arguments (exact) den: cases with a non-empty expectation
 M8 non_pe_slot_sources     per-ownership-bucket supply/match counts (the non-PE side of the contract)
 
+Value equality
+--------------
+Every slot compares on its canonical value, with ONE exception: ``pages`` is a
+SET of 1-based pages, so ``"2,3"`` and ``"2-3"`` (and ``"1,5-6,10"`` /
+``"1,5,6,10"``) are equal. Both sides go through the shared production parser
+``core.infrastructure.pdf_pages.parse_pages_spec``; a value that does not parse
+falls back to plain string equality (a malformed spec is never a match by
+accident). Format is not scored — only the page set is.
+
 The dataset version and the scorer version are recorded on every report.
 """
 from __future__ import annotations
@@ -40,12 +49,14 @@ import os
 import sys
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-if _HERE not in sys.path:
-    sys.path.insert(0, _HERE)
+for _p in (_HERE, os.path.join(os.path.dirname(os.path.dirname(_HERE)), "packages")):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 import formal500_ownership as OWN  # noqa: E402
+from core.infrastructure.pdf_pages import parse_pages_spec  # noqa: E402
 
-SCORER_VERSION = "formal500_v2_score/1"
+SCORER_VERSION = "formal500_v2_score/2"
 DATASET_VERSION = "formal500-v2"
 
 
@@ -67,6 +78,39 @@ def _canon(value):
 
 def _eq(a, b) -> bool:
     return _canon(a) == _canon(b)
+
+
+PAGES_SLOT = "pages"
+
+
+def _pages_eq(a, b) -> bool:
+    """``pages`` equal when both name the same set of 1-based pages.
+
+    ``"2,3"`` == ``"2-3"`` and ``"1,5-6,10"`` == ``"1,5,6,10"``. The comparison is
+    set-based, so order and duplicates are irrelevant too. An unparseable value
+    falls back to canonical string equality — never a silent match.
+    """
+    if a is None or b is None:
+        return a is None and b is None
+    if not isinstance(a, str) or not isinstance(b, str):
+        return _eq(a, b)
+    try:
+        return parse_pages_spec(a) == parse_pages_spec(b)
+    except ValueError:
+        return _eq(a, b)
+
+
+def _slot_eq(slot: str, a, b) -> bool:
+    if slot == PAGES_SLOT:
+        return _pages_eq(a, b)
+    return _eq(a, b)
+
+
+def _args_eq(pred_args: dict, gold_args: dict) -> bool:
+    """Exact key set + slot-aware value equality (used by M2 and M7)."""
+    if set(pred_args) != set(gold_args):
+        return False
+    return all(_slot_eq(k, pred_args[k], gold_args[k]) for k in gold_args)
 
 
 def _restrict(args: dict, slots) -> dict:
@@ -158,14 +202,14 @@ def score(dataset: list[dict], predictions: list[dict]) -> dict:
         # M2 — PE strict (exact key set + values over the PE slots)
         if pe_slots:
             m2d += 1
-            if _restrict(pred_args, pe_slots) == _restrict(gold_args, pe_slots):
+            if _args_eq(_restrict(pred_args, pe_slots), _restrict(gold_args, pe_slots)):
                 m2n += 1
 
         # M3 — PE lenient (per gold PE slot value match)
         for slot in gold_args:
             if slot in pe_slots:
                 m3d += 1
-                if _eq(pred_args.get(slot), gold_args[slot]):
+                if _slot_eq(slot, pred_args.get(slot), gold_args[slot]):
                     m3n += 1
         # an extra PE slot the model emitted but gold did not ask for is a miss
         pe_extra_slots += sum(1 for s in pred_args if s in pe_slots and s not in gold_args)
@@ -189,7 +233,7 @@ def score(dataset: list[dict], predictions: list[dict]) -> dict:
         # M7 — complete Tool contract match
         if expected:
             m7d += 1
-            if _restrict(pred_args, expected) == expected:
+            if _args_eq(_restrict(pred_args, expected), expected):
                 m7n += 1
         # forbidden emissions (the model must never emit these)
         for s in forbidden:
@@ -206,7 +250,7 @@ def score(dataset: list[dict], predictions: list[dict]) -> dict:
             st["expected"] += 1
             if slot in pred_args:
                 st["supplied"] += 1
-                if _eq(pred_args[slot], want):
+                if _slot_eq(slot, pred_args[slot], want):
                     st["matched"] += 1
 
     return {
@@ -220,7 +264,7 @@ def score(dataset: list[dict], predictions: list[dict]) -> dict:
                 "rule": "pred capability_id == gold capability_id",
                 **_ratio(m1n, m1d)},
             "M2_pe_model_strict": {
-                "rule": "pred(arguments restricted to pe_model_slots) == gold_arguments (exact key set + values)",
+                "rule": "pred(arguments restricted to pe_model_slots) == gold_arguments (exact key set + values; pages compared as a page set)",
                 **_ratio(m2n, m2d)},
             "M3_pe_model_lenient": {
                 "rule": "per gold PE slot: value matches; denominator = gold PE slot instances",
@@ -238,7 +282,7 @@ def score(dataset: list[dict], predictions: list[dict]) -> dict:
                 "deepest_stage": dict(sorted(deepest_hist.items())),
                 "forbidden_emissions": forbidden_emitted},
             "M7_tool_contract_match": {
-                "rule": "pred(arguments restricted to expected_tool_arguments) == expected_tool_arguments (exact)",
+                "rule": "pred(arguments restricted to expected_tool_arguments) == expected_tool_arguments (exact; pages compared as a page set)",
                 **_ratio(m7n, m7d)},
             "M8_non_pe_slot_sources": {
                 "rule": "per ownership bucket: expected / supplied / value-matched slot counts (no ratio)",
