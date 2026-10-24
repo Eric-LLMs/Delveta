@@ -1,360 +1,412 @@
-# Phase 4 — Argument Acquisition Contract (Step 0)
+# Parameter Acquisition — Three Classes and One Contract
 
-Status: **Step 0 (2026-10-01). Specification only. Nothing implemented, nothing wired.**
+Status: **current design.** This page owns the three acquisition mechanisms, their
+responsibility boundaries, the routing relations between them, and their failure handling.
 
-Follow-up review (2026-10-01): rulings #1/#3/#4/#5 are folded in as explicit contract rules —
-§B (evidence-driven MODEL slot source; actual-source merge provenance), §C (a required
-parameter with no declaration entry → `MISSING`), §D (required MODEL slot source),
-§E (evidence as a router input; the detector is deferred to Step 2). The status line above
-still describes Step 0: this document is a specification; only the pure ARP modules of
-Step 1 implement it, and nothing here is wired.
+| Layer | Authoritative document |
+|---|---|
+| Overall funnel, call chain, budget, LLM channel lifecycle | [architecture.md](architecture.md) §25.16 / §28 |
+| Parameter-processing diagrams | [architecture-diagrams.md](architecture-diagrams.md#parameter-processing-flow) |
+| Environment variables | [configuration.md](configuration.md) |
 
-Precedence: this document is binding per `CLAUDE.md` → *Business Logic First*. Where current
-code conflicts, the current code is **legacy / current implementation**, never the spec.
-No production code, no `orchestrator` change, no `path_router`, no Qwen, no Laya, no
-`selection_transition` removal, no Binder/Executor change are performed in Step 0.
-
-> **Superseded mechanism, binding contract.** The `backend=` switch and the fused
-> `ToolIntentModel` lane named below were deleted by the single-path cleanup. The
-> contract itself — the acquisition declaration, the four ownership values, evidence
-> routing, the double readiness gate and fail-closed exits — shipped; `architecture.md`
-> §28 describes the implemented form.
-
-Scope boundary (this file): the acquisition contract that sits **between** a decided
-capability and the existing Binder. Abstract nodes only — the concrete modules
-(`path_router.py`, `context_bundle.py`, `merge.py`, the Qwen extractor) are **Step 1+**.
-
-Only business logic the user has explicitly approved is stated as contract. The four
-previously open items (strategy precedence, declaration completeness, reason constants,
-evidence constraints) are now **RESOLVED** — see the rulings inline in §B, §C, §E, §G.
+This page does not restate those layers. Where an older paragraph elsewhere names a
+removed mechanism, the removed mechanism is recorded as history in §9.
 
 ---
 
-## A. Approved Phase 4 business contract
+## 0. Position in the turn
 
-1. **`Registry.parameters` is the ONLY schema truth.** `required` / `type` / `enum` /
-   `description` / `max_len` come from `parameters` alone.
-2. **The acquisition declaration is a NEW, independent entry** (working name
-   `acquisition`). It MUST NOT reuse the legacy `arg_slots` string semantics
-   (`{slot: "user_input" | "plugin:<name>" | ...}`) and MUST NOT be interpreted by a
-   `SlotDecl`. The acquisition declaration describes **ownership / allowed_sources /
-   escalation only** — never required/type/enum/description.
-3. **Opt-in is explicit.** On the new lane (`backend=stub|cap_router`):
-   - a capability **with** an `acquisition` declaration MAY enter the Argument Path Router;
-   - a capability **without** one MUST NOT fall back to legacy
-     `ToolIntentModel.select_and_extract`; the safe result is **Agent** with an
-     acquisition-undeclared reason (see §G).
-4. **`backend=off` is the legacy lane, unaffected.** It keeps the full legacy chain
-   (HIT and MISS/AMBIGUOUS alike) byte-identically. The new contract neither reads nor
-   changes it.
-5. **Ownership is exactly four values** — `MODEL`, `SYSTEM_BINDER`, `TOOL_DEFAULT`,
-   `UNAVAILABLE` — with the derivations in §C.
-6. **`SYSTEM_BINDER` slots NEVER enter a Qwen schema. In particular, `asset_id` is never produced by Qwen**, in either direction (a model-copied or hallucinated asset id dies before the Binder).
-7. **Readiness is a DOUBLE GATE** (§D): *Required Readiness* and *Acquisition Need* are
-   distinct and MUST NOT be conflated.
-8. **An optional MODEL slot existing in the schema is NOT evidence.** It triggers
-   acquisition only when a deterministic, schema-aware *evidence* signal is present (§E);
-   deciding “call Qwen or not” is never delegated to an LLM.
-9. **cap_router and Qwen never overlap.** cap_router = capability selection only
-   (`ONE | NONE`), never args, never Binder, never a tool call. Qwen = MODEL-owned
-   argument acquisition only, and only AFTER the capability is decided; it never selects
-   a capability.
-10. **MATCH_HIT invariant.** When the Matcher returns HIT with a known capability: **no
-    Recall, no Candidate Aggregation, no cap_router, no re-selection** — the turn goes
-    **straight to the Argument Path Router**. Phase 3's `CAP_ROUTER_HIT_DEFERRED` is
-    transitional compatibility only and is **replaced by the ARP in Phase 4**.
-
----
-
-## B. Strategy determination — two dimensions (no global precedence)
-
-**RESOLVED:** a strategy is **not** chosen by a fixed global precedence. It is decided by
-two independent dimensions, evaluated in order:
-
-- **A. Required Readiness** (§D, Gate 1) — are all `required` slots deterministically ready?
-- **B. Acquisition Need** (§D, Gate 2) — is there a MODEL acquisition need?
-
-Determination:
-
-| Required readiness | Acquisition need (dimension B) | Strategy |
-|---|---|---|
-| all `required` deterministically ready (SYSTEM_BINDER/TOOL_DEFAULT) | none | **CONTEXT_DIRECT** |
-| — | MODEL need, and the current query alone provides the needed MODEL evidence | **QUERY_TO_EXTRACTOR** |
-| — | MODEL need, and the needed info depends on the last-5 user turns | **QUERY_PLUS_5TURNS_TO_EXTRACTOR** |
-| — | system-sourced params AND a MODEL acquisition both present | **MIXED** |
-| `required` args cannot be legally obtained from the allowed sources | — | **MISSING / INVALID** |
-
-No linear precedence such as `MISSING > CONTEXT_DIRECT > MIXED > …` is defined. Ordering
-between QUERY_TO_EXTRACTOR and QUERY_PLUS_5TURNS_TO_EXTRACTOR is not a precedence ladder — it is the
-`escalation`/evidence determination (§E, §I).
-
-**Model-slot source is evidence-driven — never inferred from `allowed_sources`.**
-For every MODEL-owned slot that must be acquired, WHERE its value comes from is decided by
-the presence of the **actual** evidence signal, never by what the declaration merely
-*allows*:
-
-- query evidence present (source `QUERY`, allowed) → **QUERY_TO_EXTRACTOR**;
-- history evidence present (source `CONVERSATION_5_USER_TURNS`, allowed) →
-  **QUERY_PLUS_5TURNS_TO_EXTRACTOR**;
-- neither evidence present → the slot's source cannot be legally determined →
-  **MISSING / INVALID** (§D); never a guess, never a legacy fallback.
-
-`allowed_sources` gates whether a given evidence source is ACCEPTABLE; it never CREATES
-evidence. A slot whose `allowed_sources` contains `QUERY` does **not** thereby have query
-evidence.
-
-**Merge provenance is the ACTUAL source — never inferred from `allowed_sources`.**
-A system-owned slot (`SYSTEM_BINDER` / `TOOL_DEFAULT`) entering a `MIXED` merge records the
-**actual** `source` and value it was resolved from, supplied to the merge as inputs
-(`system_values` + `system_sources`). A declaration's `allowed_sources[0]` is **not** a
-legal provenance source and MUST NOT be used as a fallback. A system slot with no actual
-source/value produces **no** provenance record and is **not** merged — never fabricated
-(§D). MODEL-owned provenance likewise records the **actual** acquisition source (query or
-last-5 user turns), never a merely-allowed one.
-
-Every strategy is derived deterministically from `(parameters, acquisition, turn facts,
-query, recent-5-user-turns)`.
-
-### Per-strategy detail (input / output / forbidden)
-
-| Strategy | Input (precondition) | Output | Forbidden |
-|---|---|---|---|
-| **CONTEXT_DIRECT** | All `required` slots are deterministically satisfied (SYSTEM_BINDER/TOOL_DEFAULT) **and** no MODEL acquisition need | A fully-determined args draft → existing `certified()` / execution handoff | **Any Qwen call (Qwen call = 0)**; any Recall/aggregation/selection |
-| **QUERY_TO_EXTRACTOR** | MODEL acquisition need satisfiable from the **current query alone**; no system-sourced slots to merge | Qwen returns MODEL-owned args → **Binder validates** → certified | Sending non-MODEL slots to Qwen; sending history; >1 Qwen call by default |
-| **QUERY_PLUS_5TURNS_TO_EXTRACTOR** | MODEL acquisition need requires recent conversation context | Qwen input = **exactly** current query + last **5** `role=="user"` messages → Binder → certified | Sending assistant/system/Agent history; sending the full transcript; >1 Qwen call by default |
-| **MIXED** | MODEL acquisition need **and** ≥1 non-MODEL slot filled by a system source (SYSTEM_BINDER/TOOL_DEFAULT) | **merge** system values + Qwen values → Binder/validate → certified, **provenance preserved per slot** | Binder before merge; dropping provenance; letting Qwen author a system-sourced slot |
-| **MISSING / INVALID** | No legal value obtainable from query / last-5 user turns / UI-context / resolver / callback / default | **Agent / follow-up** (exit) | **Guessing / fabrication**; a partial certified action |
-
-Inside `MIXED`, the Qwen **bundle** still obeys the query-vs-query+5 rule above.
-
----
-
-## C. Acquisition declaration — data structure
-
-A NEW Registry entry (working name `acquisition`), shape `{slot_name: SlotDecl}`:
-
-```jsonc
-{
-  "asset_id": { "ownership": "SYSTEM_BINDER",
-                "allowed_sources": ["UI_CONTEXT", "RESOLVER"] },
-  "pages":    { "ownership": "MODEL",
-                "allowed_sources": ["QUERY", "CONVERSATION_5_USER_TURNS"],
-                "escalation":    ["QUERY", "CONVERSATION_5_USER_TURNS"] }
-}
+```
+Matcher HIT ─────────────────────────────────────────────┐
+                                                         ├─→ capability decided
+Matcher MISS / AMBIGUOUS → Recall → candidate aggregation → cap_router ─┘
+                                                         │
+                                                         ▼
+                                             ARGUMENT ACQUISITION
+                                              (this page: 3 classes)
+                                                         │
+                                                         ▼
+                                      Binder → certified ACTION → executor
 ```
 
-`SlotDecl` fields: `ownership` (required, no default) / `allowed_sources` / `escalation`.
-It carries **no** `required`/`type`/`enum`/`description`/`max_len` — those live in
-`Registry.parameters` alone (no duplication).
-
-**Existing invariant (already true in code):**
-
-- **I4** `allowed_sources` never crosses ownership boundaries — one table, no drift.
-  (This invariant already exists in `argument_acquisition/contract.py`; it is restated
-  here, not newly added.)
-
-**RESOLVED — approved scope of the declaration (Step 0):**
-
-- the `acquisition` entry is the **opt-in acquisition contract**;
-- a capability **with** a declaration MAY enter the Argument Path Router;
-- a capability **without** one MUST NOT fall back to legacy `select_and_extract`, and exits
-  to the approved acquisition-undeclared → Agent semantics (§G);
-- whether the declaration must cover every `required` parameter is **not** an additional
-  state in Step 0 — **no** “incomplete declaration” status or reason is defined.
-
-**RESOLVED — a `required` parameter with NO declaration entry has no legal acquisition
-source.** Because ownership (and therefore any allowed source) is undeclared, nothing can
-legally fill the slot: it is treated as `UNAVAILABLE` → Gate 1 `UNSAT` → **MISSING /
-INVALID** → Agent / follow-up (§D). It is **never** resolved by falling back to the legacy
-`select_and_extract`, and never guessed. This is **not** an additional “incomplete
-declaration” reason: no separate status is introduced — the outcome is the ordinary
-`MISSING` path.
-
-### Transitional bridge — legacy `arg_slots` → `acquisition` (approved adapter)
-
-Live Registry entries still carry the **legacy** `arg_slots` shape (`{slot: {"source": str}}`
-or `{slot: str}`), which §A.2 forbids reusing as the contract. Until the Registry itself
-exposes the new `acquisition` entry, a **narrow adapter** (`argument_acquisition/declaration.py`)
-synthesizes the declaration so a decided capability can enter the router:
-
-- **ownership from the slot NAME** via a frozen RULES table (mirrors the validated
-  `logs/_argbench/ownership.py`), default `MODEL`;
-- **reconciled with the legacy `arg_slots` source** when present (`user_input`→MODEL,
-  `attachment`/`viewer.*`/`turn_context`→SYSTEM_BINDER, `fixed`→TOOL_DEFAULT, `plugin:*`→MODEL);
-- the legacy source string is **never** exposed as a `SlotDecl` and never used as an
-  `allowed_sources` value — it only selects an ownership, which is what the declaration
-  already encodes. `SlotDecl` still carries ownership/allowed_sources/escalation only.
-
-This adapter is **transitional** and lives entirely on the acquisition side; it changes no
-DB row, no admin surface and no public schema. It disappears once the Registry serves an
-`acquisition` entry directly.
-
-### Ownership derivations (approved)
-
-- **MODEL** → Qwen MAY obtain it; sources limited to `QUERY` / `CONVERSATION_5_USER_TURNS`.
-- **SYSTEM_BINDER** → obtainable ONLY from deterministic system sources —
-  `UI_CONTEXT` / `RESOLVER` / `CALLBACK_CONTEXT`. **Never Qwen.**
-- **TOOL_DEFAULT** → obtainable ONLY from the tool's default (`DEFAULT`).
-- **UNAVAILABLE** → obtainable from nothing; **never fabricated**.
+- **`MATCH_HIT` invariant.** A Matcher HIT means the capability is already determined:
+  no Recall, no candidate aggregation, no `cap_router`, **no re-selection**. The turn goes
+  straight to argument acquisition.
+- **MISS / AMBIGUOUS.** Recall → candidate aggregation → `cap_router` selects the
+  capability. Acquisition begins only after that decision.
+- **Acquisition never selects a capability**, and the extractor never sees the candidate
+  list. A `REJECT` / `NONE` decision exits to the Agent before this stage.
+- **The capability's arguments and the capability's selection are separate concerns.**
+  Nothing in this page may be used to re-open a decided capability.
 
 ---
 
-## D. Readiness — the double gate
+## 1. The three acquisition classes
 
-`Readiness` result fields: `ready` / `needs_acquisition` / `unsatisfiable`.
+Every argument a capability receives is produced by exactly one of three mechanisms.
 
-**Gate 1 — Required Readiness.** Iterate slots where `parameters[slot].required == True`:
-- `SYSTEM_BINDER` → **must** have a real deterministic value now (from turn facts);
-  value present → satisfied; absent → **UNSAT**.
-- `TOOL_DEFAULT` → must resolve to the tool default; else **UNSAT**.
-- `MODEL` → **PENDING_MODEL** (deferred to Gate 2 / acquisition).
-- `UNAVAILABLE` (and required) → **UNSAT**.
-- `ready == True` ⇔ no required slot is `PENDING_MODEL` and none is `UNSAT`.
+| # | Class | Producer | Deterministic | Produces | Never produces |
+|---|---|---|---|---|---|
+| 1 | **Rules / handler / trusted context** | capability handlers (`cap_handler/`), slot plan, `declaration.py` / `evidence.py` / `context_values.py` | yes | the handler draft: verbatim query text, DET values, and trusted identifiers from `TurnFacts` / UI context / callback context | a model-regenerated identifier; a capability choice |
+| 2 | **Dedicated page-scope resolver** | `argument_acquisition/page_scope_resolver.py` (online LLM, narrow contract) | no (model) | only the page scope of a document request: `all` / `single` / `range` | `asset_id`; any other slot; tool selection or execution |
+| 3 | **Shared Qwen extractor** | `argument_acquisition/extractor.py` (native function-call contract) | no (model) | only the MODEL-owned, caller-authorized slots of the already-selected tool | a capability choice; SYSTEM_BINDER / TOOL_DEFAULT / UNAVAILABLE slots; document identity |
 
-**Gate 2 — Acquisition Need.** Over MODEL-owned slots:
-- **required** MODEL slot → `needs_acquisition = True` (MUST);
-- **optional** MODEL slot → `needs_acquisition = True` **iff** an evidence signal exists
-  (§E); with no evidence it contributes **nothing**.
-- An optional MODEL slot that merely *exists in the schema* MUST NOT trigger Qwen.
-
-**Required MODEL slot — its source is evidence-driven (§B).** A required MODEL slot always
-sets `needs_acquisition = True`, but WHERE its value comes from (`QUERY` vs
-`CONVERSATION_5_USER_TURNS`) is decided by the **actual** evidence signal, never by
-`allowed_sources`. If neither query nor history evidence is present — or the present
-evidence's source is not in the slot's `allowed_sources` — the slot's source cannot be
-legally determined → **MISSING / INVALID** (§C), never a guess, never a legacy fallback.
-
-`unsatisfiable` = the required slots nothing can fill (Gate 1 `UNSAT`) → `MISSING` → Agent/follow-up.
-
-### Worked examples
-
-- **“打开这个文件”** — `asset_id` is provided by system context; `pages` is an **optional
-  MODEL** slot with **no** query evidence. Gate 1: required satisfied. Gate 2: no need.
-  → **CONTEXT_DIRECT** → **no Qwen call.**
-- **“打开这个文件第 3 页”** — `pages` now has explicit query evidence (`第 3 页`).
-  → **acquisition needed** → **must NOT be CONTEXT_DIRECT**; goes through Qwen.
+Class 2 is **capability-local**: it is invoked inside a file handler's `acquire()`, not as a
+global parameter rule. Class 3 is **shared**: the handler lane and the generic Argument Path
+Router both call the same extractor.
 
 ---
 
-## E. MODEL evidence — a router input (the detector is NOT implemented in Step 1)
+## 2. Class 1 — rules, handler and trusted context
 
-**RESOLVED — Step 0 locks only these properties:**
+### 2.1 What this class owns
 
-- Evidence MUST be **deterministic**;
-- Evidence MUST be **schema-aware**;
-- Evidence MUST be **non-LLM** — deciding “call Qwen or not”, and “from where”, is never
-  delegated to an LLM;
-- Evidence is a **router input**: it is produced OUTSIDE the router by a deterministic,
-  schema-aware, non-LLM producer and injected as `{slot: source}`. The router never computes
-  evidence itself and never reads a DB or a parser.
-- Evidence is used for **two** purposes:
-  1. to decide whether an **optional** MODEL slot has a **real acquisition need** (Gate 2, §D);
-  2. to decide the **source / path** of a required MODEL slot — query vs query + last-5 user
-     turns (§B) — so a required MODEL slot with no determinable source becomes `MISSING`.
-- **Default is conservative:** no evidence → no Qwen need for an optional slot (the slot is
-  simply omitted, never fabricated); for a required slot → the source cannot be determined →
-  **MISSING / INVALID**.
-- **Step 1 does NOT implement the detector.** Evidence is an injected external input; the
-  real producer and the orchestrator wiring land in **Step 2**. Step 0 / Step 1 specify **no**
-  further implementation detail — no DB access, no latency budget, no matcher / regex /
-  parser shape.
+This class turns the turn's already-known facts into a **draft**:
 
----
+- deterministic values the handler computes from the sentence and the turn facts;
+- trusted identifiers carried by `TurnFacts` (viewer asset, viewer kind, current page,
+  selected text, callback context);
+- tool defaults, which belong to the tool and are resolved at the boundary.
 
-## F. Qwen input / output schema boundary (approved)
+It never invokes a model to re-derive something the turn already knows, and it never
+decides which capability to run.
 
-- Qwen receives a schema containing **only MODEL-owned slots** (their `parameters`
-  entries). `SYSTEM_BINDER`, `TOOL_DEFAULT`, `UNAVAILABLE` slots are **excluded**.
-- **`asset_id` (SYSTEM_BINDER) never appears in the Qwen schema or output.**
-- Qwen output is a **draft**; the Binder remains the gate. Any non-MODEL slot appearing in
-  the draft is ignored/stripped — the system value is truth, in both directions.
-- Qwen input bundle: current query only, **or** current query + last 5 `role=="user"`
-  messages (never assistant/system/Agent history, never the full transcript).
+### 2.2 Handler precedence
 
----
+A capability with a registered parameter handler (§25.16) and a declared policy is owned by
+that handler; the generic Argument Path Router is **not** entered. A capability without a
+handler uses the generic router. Both paths share the same Binder / certified-handoff tail.
 
-## G. Undeclared capability on the new lane
+Wiring faults fail closed:
 
-- `backend ∈ {stub, laya}` and the selected capability has **no** `acquisition`
-  declaration → **Agent** with an acquisition-undeclared reason.
-- **Never** fall back to legacy `ToolIntentModel.select_and_extract` on the new lane.
-- `backend=off` is exempt (it IS the legacy lane).
+- a handler mounted **without** a declared policy → Agent (a handler must not choose its own
+  strategy implicitly);
+- a declared handler-backed policy **without** a mounted handler → Agent;
+- `NO_ARGS` on a capability that publishes parameters or mounts a handler → Agent.
 
-**RESOLVED — semantics only (constant naming is implementation detail):**
+### 2.3 Declared policies
 
-- The approved business semantic is: **undeclared acquisition → Agent**, surfaced as an
-  “acquisition-undeclared” reason.
-- The full set of reason constants and their exact names are **implementation detail**, not
-  part of this business contract (illustrative only, not locked: `ACQUISITION_UNDECLARED`).
+The per-capability strategy table is explicit (`cap_handler/acquisition_policy.py`). It is
+never inferred from `parameters == {}`, from a missing handler, or from “the slot is not in
+the draft” — those are different business states.
 
-Phase 4 **removes** `REASON_CAP_ROUTER_HIT_DEFERRED` (transitional; the ARP replaces it).
-
----
-
-## H. `backend=off` vs `backend=stub|laya` (approved boundary)
-
-| | `backend=off` (legacy / rollback) | `backend=stub|laya` (new lane) |
+| Policy | Meaning | Extractor |
 |---|---|---|
-| HIT | legacy `select_and_extract` | **ARP** (no Recall/aggregation/cap_router/re-selection) |
-| MISS/AMBIGUOUS | legacy `select_and_extract` | Recall → Aggregation → cap_router → **ARP** |
-| Acquisition | n/a (legacy extraction inside select_and_extract) | ARP per §B |
-| Undeclared cap | n/a | Agent (acquisition-undeclared) |
-| `tool_intent.select_and_extract` | **reachable (rollback)** | **never called** |
+| `NO_ARGS` | the capability genuinely takes no arguments (empty Registry schema and a tool that requires none) | never |
+| `RULE_CONTEXT` | the handler resolves **every** slot from trusted context, the viewer, an attachment or an explicit rule in the user's sentence | never by the shared extractor; the handler may invoke class 2 |
+| `MODEL` | the handler owns the capability; the shared extractor fills only the MODEL-owned slots the handler authorizes | at most once |
+| `MIXED` | the handler has authoritative deterministic slots **and** MODEL-owned slots; deterministic values are never overwritten | at most once |
+| `DEFERRED_AGENT` | the capability is admitted, but its real tool needs an input with no legal producer on this path | never — exit to the Agent |
 
-The two lanes MUST stay physically distinguishable (CLAUDE.md rule 8).
+An undeclared capability is not a policy. On the generic path it is
+`ACQUISITION_UNDECLARED` → Agent; it never falls back to a fused select-and-extract path.
+
+### 2.4 Trusted context first
+
+If the turn already carries a trusted value, acquisition injects it verbatim:
+
+- a viewer asset id, viewer kind, current page or selection;
+- a `TurnFacts` field, a callback context value, or an attachment identity;
+- an explicit filename or path the user wrote in the sentence.
+
+**A trusted identifier is never regenerated by a model.** `asset_id` in particular is
+**never produced by Qwen**, in either direction: it does not appear in the extractor's input
+schema, and a model-copied or hallucinated identity field is rejected before the Binder.
+
+### 2.5 Per-capability semantics and defaults stay with the capability
+
+This page defines no tool-specific parameter rules. Each handler owns the meaning and the
+default of its own slots:
+
+- **File capabilities** — the page default belongs to the capability. `all` means “the
+  request restricts no pages”: the tool call omits `pages` and the tool applies its own
+  documented default. It does not mean “page 1”, and it is never the result of a failure.
+- **Summary** — `output_dir` is requested only when the sentence explicitly asks to save.
+  With no save cue it is never requested, and the tool returns the summary to the chat
+  window instead of writing a file.
+- **Vision** — a video viewer always uses the client capture, never a cloud asset id,
+  because the vision tool cannot read a video file.
+- **Mind map / slides** — the real tool contract needs a selected input with no legal
+  producer on this path, so the capability is `DEFERRED_AGENT`; no argument is invented to
+  bridge the gap.
+
+### 2.6 Slot plan, not inference
+
+A handler's `slot_plan()` states, per slot, one of `ACQUIRED` / `PENDING_MODEL` /
+`DEFAULTED` / `MISSING`. The caller never infers “needs a model” from “the slot is absent
+from the draft”.
+
+- An empty plan → no extractor call.
+- A slot in `required_model_slots` must be filled **this turn**; if the extractor is
+  unavailable or returns no valid value for it, the turn exits to the Agent rather than
+  certifying a draft that silently dropped a requested argument.
+- Any other authorized MODEL slot that fails extraction leaves the handler draft intact, so
+  the original request is never lost.
+
+### 2.7 Deterministic inputs of the generic Argument Path Router
+
+The production provider (`argument_acquisition/provider.py::for_turn`) composes three
+non-LLM producers per turn:
+
+- **declaration** — the capability's `{slot: SlotDecl}`. Ownership is a property of the slot
+  name via a frozen table, reconciled with the legacy `arg_slots` source when present; an
+  explicit declaration always wins over the name heuristic.
+- **evidence** — the deterministic `{slot: source}` signal. Evidence is **deterministic**,
+  schema-aware and non-LLM; deciding whether to call the extractor is never delegated to an LLM.
+  Evidence is a **router input** produced outside the router.
+- **context values** — the settled SYSTEM_BINDER values and their actual sources from the
+  turn facts.
+
+`allowed_sources` gates which sources are acceptable; it never creates evidence. A MODEL
+slot's source is **evidence-driven** — it is **never inferred from `allowed_sources`**: a
+slot that merely allows `QUERY` does not thereby have query evidence.
+
+Provenance records the **actual** source and value. A declaration's `allowed_sources[0]` is
+never a legal provenance fallback, and a system slot with no actual value is not merged.
 
 ---
 
-## I. Escalation discipline & HIT invariant (approved)
+## 3. Class 2 — the dedicated page-scope resolver
 
-- **No double Qwen by default.** Query-only scenarios: **at most 1** Qwen call. Turns
-  already known to need history: query + last-5 user turns, **at most 1** Qwen call.
-- **Escalation** to query + last-5 user turns is allowed **only when the query-only
-  acquisition is proven insufficient** — never “for safety.”
-- **Never send the full history** by default.
-- **HIT invariant** (§A.10): HIT → ARP directly; no Recall, no Aggregation, no cap_router,
-  no re-selection.
+### 3.1 Responsibility
+
+One narrow job: turn the user's sentence plus the document context the turn already carries
+into the reading scope a file tool accepts.
+
+It emits exactly one verdict:
+
+| Verdict | Meaning | Acquisition result |
+|---|---|---|
+| `all` | the request does not restrict pages | the tool call omits `pages`; the capability applies its own documented default |
+| `single` | exactly one page, including deictic “this page” resolved to the viewer's current page | canonical page spec |
+| `range` | several pages, in the shared strict parser's grammar (`"3-5"`, `"1,3"`), bounded by `MAX_REQUESTED_PAGES` | canonical page spec |
+
+### 3.2 Hard boundaries
+
+- It produces **only** the page scope. No tool selection, no tool execution, no other
+  business parameter.
+- It never produces or rewrites `asset_id`. Document identity stays in `TurnFacts` and the
+  existing authorization path; an identity field in the reply is a contract violation.
+- It emits only the agreed JSON. An unknown field, an invalid page spec, an out-of-range
+  page or an ambiguous target is rejected.
+- It never guesses a page, never widens a half-understood range to the whole document, and
+  never turns a failure into `all`.
+- It runs only for handlers that declare `accepts_page_scope`, and only when the host wired
+  the seam. It is a capability-local resolver, not a global extraction rule.
+
+### 3.3 Non-paginated viewers — a structural skip
+
+When the viewer kind is known to be non-paginated (for example an image), the model is not
+consulted: there is nothing for it to settle. This is a **structural** check on the viewer
+kind, not a set of deterministic keyword rules replacing model page semantics.
+
+For every paginated document — and for every case where the viewer kind does not settle the
+question — the model remains the sole page producer. No sentence keyword rule may override
+it. The skip is recorded as “not asked”; it is never converted into an `all` verdict.
+
+### 3.4 Failure taxonomy
+
+The three outcomes stay distinct and never collapse:
+
+- `unavailable` — the call failed, timed out, or returned non-JSON;
+- `ambiguous` — the model could not decide the target or the scope;
+- `invalid` — the reply violated this contract (bad enum, bad pages, identity field,
+  unknown field, out-of-range page).
+
+All three take the caller's acquisition-failure path. None is retried into a different
+parameter, and none becomes a default.
 
 ---
 
-## J. Deliverables, deferred work, and resolved decisions
+## 4. Class 3 — the shared Qwen extractor
 
-**Delivered (Step 0):** this contract + `tests/test_phase4_acquisition_contract.py`
-(green vocabulary-invariant tests + doc markers).
+### 4.1 One extractor, two callers
 
-**Deferred to Step 1+ (production):** the `acquisition` declaration entry; the Qwen extractor;
-the orchestrator wiring; `selection_transition.py` removal;
-`REASON_CAP_ROUTER_HIT_DEFERRED` removal. The deterministic ARP modules
-(`path_router.py` / `context_bundle.py` / `merge.py`) are delivered as pure functions in
-**Step 1**; the **evidence producer** and the **system value / source resolution** that feed
-them are external inputs wired in **Step 2** — Step 1 implements neither.
+The same extractor serves:
 
-**Resolved decisions (formerly open):**
-1. **Strategy determination** — two dimensions (Required Readiness, then Acquisition Need),
-   **no** global linear precedence (§B).
-2. **Declaration completeness** — Step 0 defines only the opt-in contract and the
-   undeclared → Agent semantics; **no** “incomplete declaration” state or reason (§C).
-3. **Reason codes** — only the acquisition-undeclared **semantics** is locked; constant
-   names are implementation detail (§G).
-4. **Evidence** — locked only as deterministic / schema-aware / non-LLM, and as a **router
-   input** with **two** approved uses: a **real** optional-MODEL acquisition need AND the
-   **source / path** of a required MODEL slot. No DB / latency / matcher / regex / parser
-   detail; the detector (producer) and the wiring are deferred to Step 2 (§E).
-5. **Required parameter without a declaration entry** — no legal source → treated as
-   `UNAVAILABLE` → `MISSING / INVALID`; never a legacy fallback and never a guess (§C).
-6. **Provenance source** — the **actual** source/value supplied as inputs; a declaration's
-   `allowed_sources[0]` is **never** a fallback, and an unprovenanced system slot is **not**
-   merged (§B).
+1. the **handler lane**, for `MODEL` / `MIXED` policies and the handler's authorized slot
+   plan;
+2. the **generic Argument Path Router**, for the `QUERY_TO_EXTRACTOR`,
+   `QUERY_PLUS_5TURNS_TO_EXTRACTOR` and `MIXED` strategies.
 
-**Future test checklist (Step 1+) — to be written only when the modules exist.** Recorded
-here as a list on purpose; **not** implemented as `skip`ped pytest tests in Step 0:
-- Argument Path Router selection per strategy (CONTEXT_DIRECT / QUERY_TO_EXTRACTOR /
-  QUERY_PLUS_5TURNS_TO_EXTRACTOR / MIXED / MISSING);
-- the Readiness double gate (Gate 1 required readiness; Gate 2 acquisition need);
-- optional-MODEL evidence vs. mere schema presence;
-- the Qwen schema boundary (only MODEL-owned slots; `asset_id` excluded);
-- the undeclared-capability rule on the new lane (`backend ∈ {stub, laya}`);
-- `backend=off` still takes the legacy chain (byte-identical).
+There is no second extraction model and no fused select-and-extract path.
 
-**Naming note:** `tests/test_funnel_p4.py` belongs to the OLD P0–P4 funnel numbering —
-it is **not** this Phase 4.
+### 4.2 Fixed contract
+
+- **Input:** only the MODEL-owned slots the caller authorizes, with their schema from
+  `Registry.parameters`, plus the sanctioned context bundle.
+- **Sanctioned bundle:** the current query alone, or the current query plus the last **5**
+  `role == "user"` messages. Never the full transcript; never assistant / system / Agent
+  history; never the candidate list.
+- **Excluded slots:** `SYSTEM_BINDER`, `TOOL_DEFAULT` and `UNAVAILABLE` slots are not sent
+  and are stripped if they appear in the reply. `asset_id` is never produced by Qwen.
+- **Output is a draft, not authority.** The Binder validates. In a `MIXED` merge the
+  deterministic value wins any collision, and per-slot provenance is preserved.
+
+### 4.3 Call discipline
+
+- **At most one call by default** on every strategy.
+- Escalation from query-only to query + last-5 user turns is allowed **only when query-only
+  acquisition is proven insufficient** — never “for safety”, never pre-emptively.
+- The extractor is optional. A `NO_ARGS` or `RULE_CONTEXT` turn makes zero extraction calls;
+  a capability must not be forced through Qwen merely because the model exists.
+
+### 4.4 Output handling
+
+- Valid authorized values are folded into the handler draft.
+- An empty, invalid or unavailable reply leaves the handler draft intact, **unless** a slot
+  was declared as required for this turn — then the turn exits to the Agent.
+- A value is never fabricated to fill a slot, and a failed extraction never silently
+  widens the operation (for example, a failed page extraction never becomes “whole
+  document”).
+
+---
+
+## 5. Routing relations
+
+Routing is by declared policy and deterministic inputs — never by inference from an empty
+schema or a missing slot.
+
+| Situation | Acquisition path | Model call |
+|---|---|---|
+| Policy `NO_ARGS` | empty arguments | none |
+| Policy `RULE_CONTEXT` (handler) | handler draft only | none, unless the handler invokes class 2 |
+| Policy `MODEL` (handler) | handler draft + shared extractor over authorized slots | Qwen, at most one |
+| Policy `MIXED` (handler) | handler's deterministic slots + extractor for the remaining authorized slots | Qwen, at most one |
+| Policy `DEFERRED_AGENT` | no value is produced | none — Agent |
+| No policy, handler mounted | wiring fault | none — Agent |
+| No policy, no handler | generic Argument Path Router | per strategy below |
+| ARP `CONTEXT_DIRECT` | every required slot is already settled | none |
+| ARP `QUERY_TO_EXTRACTOR` | extractor over the current query | Qwen, at most one |
+| ARP `QUERY_PLUS_5TURNS_TO_EXTRACTOR` | extractor over the query plus the last 5 user turns | Qwen, at most one |
+| ARP `MIXED` | system values + extractor values, merged with provenance | Qwen, at most one |
+| ARP `MISSING` | no legal value for a required slot | none — Agent / follow-up |
+
+The ARP's strategy vocabulary is model-agnostic: the names say where a MODEL-owned value
+comes from, never which model extracts it. Swapping the extractor does not rename a
+strategy.
+
+---
+
+## 6. Readiness and evidence — the double gate
+
+Strategies are determined by two independent dimensions, evaluated in order. There is
+**no linear precedence** between strategies and no global ladder such as
+`MISSING > CONTEXT_DIRECT > …`.
+
+**Gate 1 — Required Readiness.** For every `parameters[slot].required == True`:
+
+- `SYSTEM_BINDER` → must have a real deterministic value now, or `UNSAT`;
+- `TOOL_DEFAULT` → must resolve to the tool default, or `UNSAT`;
+- `MODEL` → `PENDING_MODEL`, deferred to Gate 2;
+- `UNAVAILABLE` (and required) → `UNSAT`.
+
+**Gate 2 — Acquisition need.** Over MODEL-owned slots:
+
+- a **required** MODEL slot always needs acquisition;
+- an **optional** MODEL slot needs acquisition **iff** a real evidence signal exists. The
+  mere presence of an optional MODEL slot in the schema is not evidence and must not
+  trigger the extractor.
+
+A required MODEL slot's source is decided by the actual evidence (query vs. last-5 user
+turns), never by `allowed_sources`. If no legal source exists, the result is `MISSING`,
+never a guess.
+
+**A required parameter with no declaration entry** has **no legal acquisition** source:
+ownership is undeclared, so nothing may fill it. It is treated as `UNAVAILABLE` →
+`MISSING` → Agent / follow-up. It is never resolved by a legacy fallback, and no separate
+“incomplete declaration” status is introduced — the outcome is the ordinary `MISSING` path.
+
+---
+
+## 7. Failure handling
+
+### 7.1 Exit reasons
+
+| Reason | Situation |
+|---|---|
+| `ACQUISITION_UNDECLARED` | no declared policy and no declaration on the generic path — the approved acquisition-undeclared semantics |
+| `ACQUISITION_POLICY_CONFLICT` | `NO_ARGS` with a schema/handler; handler without a policy; a strategy with no dispatcher |
+| `ACQUISITION_HANDLER_MISSING` | a handler-backed policy with no mounted handler |
+| `ACQUISITION_DEFERRED` | `DEFERRED_AGENT`: the real tool contract cannot be satisfied on this path |
+| `ACQUISITION_MISSING` | no legal value for a required slot |
+| `ACQUISITION_MODEL_PENDING` | the strategy needs a model value that was not produced |
+| `ACQUISITION_TIMEOUT` | the acquisition stage exceeded its wall-clock budget |
+| `ACQUISITION_TERMINAL` | safety guard: an attempt to reach the executor without a usable argument record |
+
+A handler that cannot produce a draft returns an `AcquisitionFailure` record instead of
+raising. The record is labelled `CAP_HANDLER_ABORTED` in the acquisition capture and keeps
+the handler's own category: `scope_contract_violation`, `argument_extraction_failed`,
+`scope_unsettled`, `no_content`, `invalid_destination`. Its `terminal` flag marks a request
+whose parameters could not be settled by any trusted producer; that turn ends with the
+handler's honest answer rather than being papered over by the Agent. Every other handler
+failure keeps its Agent-facing routing-context behaviour.
+
+### 7.2 Common rules
+
+- **Never fabricate an argument** to keep a turn certifiable.
+- **Never silently widen the operation** — a failed page decision is not `all`; a dropped
+  required slot is not “it was optional”.
+- **Fail closed.** An acquisition failure exits to the Agent / follow-up with a structured
+  record. The record is routing context for the Agent; it never authorizes a tool call.
+- **One Binder tail.** Whatever produced the draft, it goes through the same
+  Binder → certified ACTION → executor path. Class boundaries never create a second
+  execution path.
+- **Stage attribution.** An acquisition timeout is attributed to acquisition, never to the
+  capability-selection hop that already returned.
+
+---
+
+## 8. Boundaries and design constraints
+
+- Acquisition never selects or re-selects a capability.
+- The extractor never sees candidate lists, and the page resolver never supplies document
+  identity.
+- **Qwen is optional.** Only MODEL-owned slots that require extraction invoke it; rule-only
+  and no-argument turns make no model call.
+- **Trusted context first.** Trusted identifiers are injected verbatim and are never
+  regenerated by a model.
+- **Per-capability semantics stay per capability.** This page is not a global
+  parameter-rule engine; defaults and slot meanings are owned by the handler and the tool.
+- **A model failure is never a default.** Unavailable / ambiguous / invalid all exit; none
+  degrades into a wider operation or a guessed value.
+- **Future design goal, not current behavior.** Complex or unreliable `MODEL` / `MIXED`
+  slots may later be planned to escalate to the online LLM through an additional narrow,
+  per-parameter resolver in the style of class 2. That is a design goal only. Today the
+  online LLM resolves **page scope alone**, and all other MODEL-owned slots go through the
+  shared Qwen extractor.
+- **No HTTP, routing or permission responsibility** belongs to this stage. Model access is
+  governed by the dispatch gateway and its channel resolution
+  ([architecture.md](architecture.md) §12.6); connection reuse is described in §12.8.
+
+---
+
+## 9. Historical decisions retained
+
+The rules below were approved in the Step-0 contract and remain binding. The surrounding
+framing of that document — “specification only, nothing implemented” — is historical: the
+contract shipped, and `architecture.md` §28 plus this page describe the implemented scheme.
+
+- **Declaration is separate from schema.** `Registry.parameters` remains the ONLY schema
+  truth. The acquisition declaration carries `ownership` / `allowed_sources` / `escalation`
+  only. It **must not reuse** the legacy `arg_slots` string semantics
+  (`{slot: "user_input" | "plugin:<name>" | …}`) as a `SlotDecl` contract; the legacy shape
+  is bridged only to select an ownership and disappears once the Registry serves an
+  acquisition entry directly.
+- **Four ownership values:** `MODEL`, `SYSTEM_BINDER`, `TOOL_DEFAULT`, `UNAVAILABLE`.
+  `SYSTEM_BINDER` draws from `UI_CONTEXT` / `RESOLVER` / `CALLBACK_CONTEXT`; `MODEL` draws
+  from `QUERY` / `CONVERSATION_5_USER_TURNS`; the two sets are disjoint.
+- **The `backend=off | stub | laya` switch was removed** by the single-path ruling, together
+  with the fused `ToolIntentModel.select_and_extract` lane. `backend=off` is not a current
+  configuration option and must not be reintroduced as a rollback path; the funnel is the
+  only formal lane. `ToolIntentModel.select_and_extract` is never a fallback.
+- **`REASON_CAP_ROUTER_HIT_DEFERRED`** (`CAP_ROUTER_HIT_DEFERRED`) was transitional and has
+  been removed. A `MATCH_HIT` goes directly to acquisition with **no re-selection**.
+- **No “incomplete declaration” state.** A required parameter with no declaration entry is
+  the ordinary `MISSING` path (see §6); no extra status or reason is defined.
+- **Evidence is deterministic, schema-aware and non-LLM**, and was originally deferred to
+  Step 2 as a router input. It is now produced by `evidence.py` and injected.
+- **Strategy determination is two-dimensional** (Required Readiness, then Acquisition need),
+  with no linear precedence.
+- **Provenance records the actual source**, and `allowed_sources[0]` is never used as a
+  fallback.

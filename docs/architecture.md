@@ -48,6 +48,7 @@
   - [12.5 Session & message deletion](#125-session--message-deletion)
   - [12.6 LLM Dispatch Gateway — one funnel, shell workers, Job-level fail-fast](#126-llm-dispatch-gateway--one-funnel-shell-workers-job-level-fail-fast)
   - [12.7 Chat attachments — `scope='chat'`, the `chat_attachments` authority, and GC](#127-chat-attachments--scopechat-the-chat_attachments-authority-and-gc)
+  - [12.8 Online LLM transport pool — one origin, one transport, credentials per wrapper](#128-online-llm-transport-pool--one-origin-one-transport-credentials-per-wrapper)
 - [13. Multi-Tenancy and Deployment Strategy](#13-multi-tenancy-and-deployment-strategy)
 - [14. Cloud Drive Module](#14-cloud-drive-module)
   - [14.1 Database](#141-database)
@@ -2124,6 +2125,78 @@ on a missing / soft-deleted / cross-user asset), then drops the column, its inde
 `0012`/`0013` so a from-scratch install reproduces the curated Registry; on an already-migrated
 database they are no-ops. Tests: `tests/test_chat_assets.py` (14 fake-backed) and
 `tests/test_chat_assets_integration.py` (8 real-PostgreSQL).
+
+[↑ Back to top](#table-of-contents)
+
+### 12.8 Online LLM transport pool — one origin, one transport, credentials per wrapper
+
+`core/infrastructure/llm.py` keeps a process-local connection pool for online-LLM calls.
+Four things that are routinely conflated are kept separate:
+
+| Level | Object | Identity | Lifetime |
+|---|---|---|---|
+| **Client (SDK wrapper)** | `AsyncOpenAI` | `(base_url, sha256(api_key))` | cached per credential; LRU + TTL |
+| **HTTP transport** | `httpx.AsyncClient` | origin `(scheme, host, port)` | process lifetime; closed once at shutdown |
+| **TCP/TLS connection** | a socket in the transport's keep-alive pool | transport + connection pool | governed by the pool limits below |
+| **API key** | request credential | never a cache key in plaintext | resolved per request, carried by its wrapper |
+
+**1. One transport per origin.** An origin is `(scheme, host, port)`, with the scheme's
+default port when the URL omits one. Every wrapper that points at an origin shares that
+origin's `httpx.AsyncClient`; a different origin — including the same host on a different
+port — gets its own transport. The pool is process-local: each API or worker process owns
+its own connections, and nothing is shared between processes.
+
+**2. Client-wrapper cache.** Wrappers are cached by `(base_url, sha256(api_key))` — the
+digest, never the plaintext key — with an LRU bound of 256 entries and a 30-minute TTL.
+Eviction (LRU pressure, TTL expiry, `invalidate_channel()`) only removes the dictionary
+reference. It never calls `close()` / `aclose()` on the wrapper, because that would close
+the shared transport and abort in-flight requests owned by other credentials. Eviction is
+memory hygiene, not credential revocation; correctness comes from per-request channel
+resolution (point 4), not from the cache state.
+
+**3. Model and connection are decoupled.** The model name belongs to the request, not to
+the connection. Switching models on the same provider reuses the same transport and opens
+no new connection; a model served from a different origin uses that origin's transport. The
+same holds for per-call `timeout` / `max_retries`: they are applied to a copy of the wrapper
+via `with_options`, and that copy keeps the original transport.
+
+**4. Permission and credential isolation.** Pooling never authorizes anything. Every request
+resolves its allowed model, `base_url` and API key through the server-side channel resolution
+of §12.6; the pool is a transport cache for an already-authorized channel. The cache key
+includes the credential fingerprint, so two credentials never share a wrapper, and each
+request carries exactly the key its channel resolution produced — a credential is never
+mixed across requests. A call with no resolved channel keeps the pre-existing client path
+(the object's own client, or a throwaway client when a per-call timeout is requested); it
+never falls back to a global key through the pool.
+
+**5. Lifecycle.** The application lifespan in `apps/api/main.py` calls `aclose_llm_clients()`
+once after the server stops serving, and that is the only place a shared transport is
+closed. Wrapper eviction never closes. `aclose_llm_clients()` is idempotent: it drains both
+maps and closes each transport exactly once.
+
+**6. Pool configuration.** Three settings extend the existing LLM settings in
+`core/config.py`; their environment variables are listed in
+[configuration.md](configuration.md):
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `llm_pool_max_connections` | `1000` | Upper bound on simultaneous connections (in use + idle) per origin. On reaching it, a new request waits for a connection to be released. |
+| `llm_pool_max_keepalive_connections` | `100` | How many idle connections per origin are retained for reuse. A returned connection beyond this count is closed instead of kept. |
+| `llm_pool_keepalive_expiry_seconds` | `300` | How long an idle keep-alive connection is retained. This is the one transport parameter that intentionally differs from the SDK default (5 s). |
+
+Transport parameters otherwise mirror the SDK defaults: connect / read / write / pool
+timeouts of 5 / 600 / 600 / 600 s, redirects followed, and environment proxies respected.
+The transport is HTTP/1.1.
+
+**7. Timeouts and retries.** A request's timeout and retry budget remain a per-call policy:
+`timeout=` and `max_retries=` ride `with_options` and change neither the transport, nor the
+pool, nor any other caller. Connection reuse changes how the HTTP exchange is carried, never
+what a turn is allowed to do; the funnel stage budgets (§25, §28) are unchanged.
+
+**8. Boundaries.** The pool does not enable HTTP/2, does not route between channels, does
+not grant or revoke permissions, does not change quotas, and does not change the funnel
+budget or any business default. It is orthogonal to capability selection, argument
+acquisition and the Binder.
 
 [↑ Back to top](#table-of-contents)
 
@@ -7561,6 +7634,16 @@ goes straight to the Agent.
 > it is neither deprecated nor deleted. Both paths share the same Binder /
 > certified-handoff tail.
 
+**Three acquisition classes.** Every argument a capability receives is produced by one of
+exactly three mechanisms: (1) **rules / handler / trusted context** — deterministic values
+from the capability handler, turn facts, the viewer or the user's own sentence; (2) the
+dedicated **page-scope resolver** — a narrow online-LLM decision that produces only the page
+scope of a document request, invoked inside a file handler; (3) the shared **Qwen
+extractor** — the MODEL-slot producer for the capability that was already selected. The
+classes' responsibilities, routing relations and failure handling are specified in
+[phase4-acquisition-contract.md](phase4-acquisition-contract.md); this section owns the ARP
+contract that class (1) and class (3) obey on the generic path.
+
 ### 28.1 Contract — ownership and source
 
 Two ORTHOGONAL dimensions, kept apart on purpose:
@@ -7576,8 +7659,10 @@ Two ORTHOGONAL dimensions, kept apart on purpose:
 schema truth; a `SlotDecl` carries acquisition METADATA only (`ownership` /
 `allowed_sources` / `escalation`) and never overrides or duplicates the schema.
 `allowed_sources` is constrained to the sources its ownership may legitimately
-draw from (one table, no drift). Opt-in stays explicit: a capability that
-declares no acquisition keeps legacy semantics untouched.
+draw from (one table, no drift). Declaration stays explicit: a capability with
+no legal acquisition source is never certified on a guess — it exits through the
+ordinary `MISSING` path (Agent / follow-up), and there is no legacy fused
+select-and-extract fallback.
 
 ### 28.2 Strategy vocabulary (model-agnostic)
 

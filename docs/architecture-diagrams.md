@@ -632,6 +632,13 @@ stage `acquisition`）；Binder 失败发布 `CONTRACT_MISMATCH`（stage `binder
 `turn_orchestrator.resolve_plan` 进入 `AgentExecutor.run(context=…)`，由
 `intent_funnel_reference` 提示段落渲染。
 
+> 说明：图中“规则 / UI / 已有上下文”对应第 1 类取参（确定性规则、Handler、可信上下文）。
+> 文件类能力的 `pages` 不属于这一类，而是第 2 类的专用 `page_scope_resolver`（在线 LLM
+> 只产出 `all` / `single` / `range`），由文件 Handler 在自己的 `acquire()` 内调用；非分页
+> viewer 的跳过是 viewer kind 的结构化判断，不是用关键词规则替代模型分页语义。第 3 类是
+> 共享 Qwen 抽取器。三类的职责边界、路由关系与失败处理见
+> [phase4-acquisition-contract.md](phase4-acquisition-contract.md)。
+
 > Design: [architecture.md §25.16 — Capability-Specific Acquisition Handlers](architecture.md#2516-capability-specific-acquisition-handlers).
 
 > [architecture.md](architecture.md) is the single source of truth for the full design —
