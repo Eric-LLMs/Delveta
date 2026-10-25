@@ -5,18 +5,24 @@ The acceptance matrix, exercised over the THREE page-addressed handlers
 ONE acquisition lane (``argument_acquisition.page_scope_settlement``):
 
 1. a page named in the sentence (``第1页``/``pages 3-5``) -> the model's canonical
-   spec (the ONLINE MODEL is the only page producer; no sentence parser runs);
+   spec (the ONLINE MODEL is the only semantic judge; no sentence parser runs);
 2. a deictic "this page"                                -> the model resolves it to
    the viewer's current page;
 3. no page restriction stated                           -> the slot is omitted
-   (whole document), even when the viewer declares a page/range;
-4. an unspelled page reference (``部分页``)              -> the model does not
-   settle it: TERMINAL for the shared handlers, an Agent hand-off for the table
+   (whole document) for ALL THREE capabilities, even when the viewer declares a
+   page/range;
+4. an unspelled page reference (``部分页``)              -> a SEMANTIC ambiguous
+   reply: the viewer's current page of the SAME document is kept; without one it
+   is TERMINAL for the shared handlers and an Agent hand-off for the table
    capability — never a guess, never a silent whole-document widening;
-5. no asset id in any fact                              -> ``acquire()`` -> ``None``;
-6. a forged generic-chain provider / MODEL value is fully bypassed — the handler owns the
+5. a timeout / unavailable / invalid reply / missing seam -> a TECHNICAL failure:
+   TERMINAL for the shared handlers and an Agent hand-off for the table
+   capability — the viewer's page is never substituted and the call is never
+   reported as a successful read;
+6. no asset id in any fact                              -> ``acquire()`` -> ``None``;
+7. a forged generic-chain provider / MODEL value is fully bypassed — the handler owns the
    draft and ``pages`` still comes from the trusted producers alone;
-7. the tool layer still RAISES on an out-of-range/malformed spec, and a read-only tool
+8. the tool layer still RAISES on an out-of-range/malformed spec, and a read-only tool
    failure escalates to the Agent (never swallowed into a silent whole-document read).
 """
 from __future__ import annotations
@@ -180,18 +186,15 @@ async def test_a_deictic_page_uses_the_viewer_current_page(cid):
 
 
 @pytest.mark.parametrize("cid", ALL_THREE)
-async def test_no_page_restriction_follows_the_capability_policy(cid):
+async def test_no_page_restriction_reads_the_whole_document(cid):
     # The viewer declares a page AND a range; the sentence states no restriction.
-    # The shared handlers read the whole document; the table capability reads the
-    # viewer's current page (it has no whole-document outcome).
+    # The model's explicit ``all`` verdict wins for every capability, so the
+    # whole document is read and the viewer's page never narrows it.
     handler, _ = ALL_THREE[cid]
     draft = await _acquire(
         handler, cid, "summarise the whole document",
         _facts(_pdf_viewer(page=12, page_from=3, page_to=5)))
-    if cid == "cap-pdf-table-to-text":
-        assert draft == {"asset_id": ASSET, "pages": "12"}
-    else:
-        assert draft == {"asset_id": ASSET}
+    assert draft == {"asset_id": ASSET}
 
 
 async def test_extract_all_the_text_is_the_whole_document():
@@ -217,50 +220,55 @@ async def test_extract_all_the_text_is_the_whole_document():
 async def test_a_viewer_range_the_sentence_does_not_state_is_ignored(cid, facts):
     handler, _ = ALL_THREE[cid]
     out = await _acquire(handler, cid, "summarise it", facts)
-    if cid == "cap-pdf-table-to-text":
-        # No current page -> the table capability asks the Agent, never widens
-        # the request to the whole document.
-        assert isinstance(out, AcquisitionFailure)
-        assert out.terminal is False
-        assert out.category == CATEGORY_SCOPE_UNSETTLED
-    else:
-        assert out == {"asset_id": ASSET}
+    # A visible-range fact is not the requested page scope: the model's ``all``
+    # verdict still reads the whole document, and the range is never emitted.
+    assert out == {"asset_id": ASSET}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cid", ALL_THREE)
+async def test_an_unspelled_page_reference_keeps_the_viewer_page(cid):
+    # The model replies that it did not extract a page (a semantic unknown); the
+    # viewer is showing the SAME document on page 12, so that is the handler's
+    # value and the approved fallback.
+    handler, _ = ALL_THREE[cid]
+    out = await _acquire(handler, cid, "读一下部分页", _facts(_pdf_viewer(page=12)))
+    assert out == {"asset_id": ASSET, "pages": "12"}
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("cid", ["cap-read-document", "cap-pdf-extract-text"])
-async def test_an_unspelled_page_reference_is_a_terminal_failure(cid):
-    # The model cannot name the pages, so the scope is unsettled: these two
+async def test_a_semantic_unknown_without_a_viewer_page_is_terminal(cid):
+    # The model did not extract a page and the handler has no value: these two
     # capabilities end the turn rather than guess.
     handler, _ = ALL_THREE[cid]
-    out = await _acquire(handler, cid, "读一下部分页", _facts(_pdf_viewer(page=12)))
+    out = await _acquire(handler, cid, "读一下部分页", _facts(_pdf_viewer()))
     assert isinstance(out, AcquisitionFailure)
     assert out.terminal is True
+    assert out.category == CATEGORY_SCOPE_UNSETTLED
+
+
+@pytest.mark.asyncio
+async def test_a_semantic_unknown_without_a_viewer_page_hands_off_for_tables():
+    handler, _ = ALL_THREE["cap-pdf-table-to-text"]
+    out = await _acquire(handler, "cap-pdf-table-to-text", "读一下部分页",
+                         _facts(_pdf_viewer()))
+    assert isinstance(out, AcquisitionFailure)
+    assert out.terminal is False
     assert out.category == CATEGORY_SCOPE_UNSETTLED
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("cid", ["cap-read-document", "cap-pdf-extract-text"])
 async def test_an_unwired_model_seam_is_also_terminal(cid):
-    # No semantic judge at all — still never a guess and never a whole-document
-    # widening for these two capabilities.
+    # A missing semantic judge is a TECHNICAL failure: never a guess, never the
+    # viewer's page and never a whole-document widening for these two
+    # capabilities — even though the viewer reports page 12.
     handler, _ = ALL_THREE[cid]
     out = await handler.acquire(query="读一下部分页", facts=_facts(_pdf_viewer(page=12)))
     assert isinstance(out, AcquisitionFailure)
     assert out.terminal is True
     assert out.scope["status"] == "not_wired"
-
-
-@pytest.mark.asyncio
-async def test_an_unspelled_page_reference_hands_off_to_the_agent_for_tables():
-    # The table capability has no whole-document outcome and never terminates: an
-    # unsettled scope goes to the Agent (non-terminal), even with a viewer page.
-    handler, _ = ALL_THREE["cap-pdf-table-to-text"]
-    out = await _acquire(handler, "cap-pdf-table-to-text", "读一下部分页",
-                         _facts(_pdf_viewer(page=12)))
-    assert isinstance(out, AcquisitionFailure)
-    assert out.terminal is False
-    assert out.category == CATEGORY_SCOPE_UNSETTLED
 
 
 # ── scenario 5: no asset id fails closed ───────────────────────────────────────────

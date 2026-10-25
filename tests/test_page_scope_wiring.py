@@ -5,12 +5,14 @@ Pins the integration boundary rather than the resolver's own rules:
 * only the handlers that declare ``accepts_page_scope`` receive the resolver;
 * the resolver is called ONLY when the turn already carries a document fact —
   a document-less turn keeps its existing missing/clarify exit untouched;
-* the model's verdict is the ONLY page producer: an unavailable / ambiguous /
-  invalid verdict ends the turn as TERMINAL (``ACQUISITION_TERMINAL``) — never
-  an Agent hand-off, never a guess, never a silent widening to the whole
-  document;
-* without the seam (tests, undecorated deps) the scope is equally unsettled —
-  the viewer's open page/range is never substituted for a stated scope;
+* a valid model verdict is the page producer: an explicit page / range or a
+  whole document overrides the handler's viewer page;
+* only a SEMANTIC ``ambiguous`` verdict keeps the viewer's current page of the
+  same document;
+* an unavailable / invalid verdict, a resolver fault or a missing seam ends the
+  turn as TERMINAL (``ACQUISITION_TERMINAL``) — never an Agent hand-off, never a
+  guess, never a silent widening to the whole document and never a disguised
+  success on the handler's page;
 * the draft still passes the SAME Binder -> certified ACTION handoff, and the
   document identity is always the turn fact's ``asset_id`` — never model output.
 """
@@ -154,7 +156,7 @@ async def test_hop_all_scope_certifies_without_a_pages_slot():
     assert out.requested_action["args"] == {"asset_id": "asset-123"}
 
 
-async def test_hop_unavailable_resolver_is_terminal_and_never_widens():
+async def test_hop_unavailable_resolver_is_terminal_and_never_falls_back():
     entry = _entry("cap-read-document", "read_document", _READ_DOC_PARAMS)
 
     out, trace, capture = await _hop(
@@ -162,44 +164,53 @@ async def test_hop_unavailable_resolver_is_terminal_and_never_widens():
         resolver=_resolver(_scope(status=psr.STATUS_UNAVAILABLE,
                                   reason="timeout")))
 
-    # No rule exists to fall back on: a transport fault must not become a
-    # whole-document read the user never asked for.
+    # A transport fault is a technical failure: it must neither become a
+    # whole-document read the user never asked for nor be disguised as a
+    # successful read of the viewer's page.
     assert out is not None and out.terminal_error is not None
     assert trace["fallback"] == REASON_ACQUISITION_TERMINAL
     assert capture["page_scope"]["status"] == psr.STATUS_UNAVAILABLE
     assert capture["page_scope_evidence"]["source"] == "none"
     assert capture["page_scope_evidence"]["merged"]["pages"] is None
+    assert capture["page_scope_evidence"]["handler_pages"] == "4"
+    assert capture["page_scope_evidence"]["fallback_applied"] is False
 
 
-async def test_hop_ambiguous_resolver_is_terminal():
+async def test_hop_ambiguous_resolver_keeps_the_viewer_page():
     entry = _entry("cap-pdf-extract-text", "pdf_extract_text", _EXTRACT_PARAMS)
 
     out, trace, capture = await _hop(
         entry, query="extract some pages", facts=_facts(),
-        resolver=_resolver(_scope(status=psr.STATUS_AMBIGUOUS)))
+        resolver=_resolver(_scope(status=psr.STATUS_AMBIGUOUS,
+                                  page_scope=psr.SCOPE_UNKNOWN)))
 
-    # The model did not settle the scope: TERMINAL, never a whole-document widening
-    # and never an Agent hand-off that would guess the pages.
-    assert out is not None and out.terminal_error is not None
-    assert trace["fallback"] == REASON_ACQUISITION_TERMINAL
+    # A semantic "not extracted" reply keeps the handler value: the viewer is
+    # showing the same document on page 4.
+    assert out is not None and out.terminal_error is None
+    assert out.requested_action["args"] == {"asset_id": "asset-123",
+                                            "pages": "4"}
+    assert trace["acquisition"] == "CAP_HANDLER"
     assert capture["page_scope"]["status"] == psr.STATUS_AMBIGUOUS
-    assert capture["terminal"]["capability_id"] == "cap-pdf-extract-text"
+    assert capture["page_scope_evidence"]["source"] == "viewer"
+    assert capture["page_scope_evidence"]["fallback_applied"] is True
 
 
-async def test_hop_without_the_seam_is_unsettled_not_the_viewer_window():
+async def test_hop_without_the_seam_is_unsettled_not_the_viewer_page():
     entry = _entry("cap-read-document", "read_document", _READ_DOC_PARAMS)
 
     out, trace, capture = await _hop(
         entry, query="summarise it", facts=_facts(viewer_page_from=3,
                                                   viewer_page_to=5))
 
-    # No semantic judge, so no page decision: the turn ends. The viewer's open
-    # range is NEVER substituted merely because a viewer page exists.
+    # No semantic judge: the missing seam is a technical failure, so the turn
+    # ends. Neither the viewer's open range nor its current page is substituted.
     assert out is not None and out.terminal_error is not None
     assert trace["fallback"] == REASON_ACQUISITION_TERMINAL
     assert "page_scope" not in capture
     assert capture["page_scope_evidence"]["source"] == "none"
     assert capture["page_scope_evidence"]["llm"]["status"] == "not_wired"
+    assert capture["page_scope_evidence"]["handler_pages"] == "4"
+    assert capture["page_scope_evidence"]["fallback_applied"] is False
 
 
 async def test_hop_never_calls_the_resolver_without_a_document_fact():

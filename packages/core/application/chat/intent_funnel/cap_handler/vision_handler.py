@@ -17,14 +17,16 @@ slots of ``cap-vision``:
 * ``question`` — the user's sentence, taken VERBATIM (strip only), so the
   question they ask ABOUT the image reaches the model unaltered. Omitted when
   the message is empty (the tool then runs its own default analysis prompt).
-* ``page`` — the page axis, settled by the ONLINE MODEL
+* ``page`` — the page axis, settled by the handler-default + ONLINE MODEL lane
   (:mod:`..argument_acquisition.page_scope_settlement`) exactly like the three
-  file-content handlers' ``pages`` slot: the model reads the sentence and
-  returns one page, the whole document, or a range. The tool renders exactly ONE
-  page, so a single-page verdict becomes the integer ``page``; ``all`` omits the
+  file-content handlers' ``pages`` slot: the viewer's current page of the same
+  document is the handler value; the model reads the sentence and returns one
+  page, the whole document, or a range; a valid verdict wins and only a semantic
+  unknown keeps the handler value. The tool renders exactly ONE page, so a
+  single-page verdict becomes the integer ``page``; ``all`` omits the
   slot and the tool applies its own documented default (the page open in the
   viewer); a multi-page verdict goes to the Agent rather than silently picking
-  one of the pages. An unsettled verdict never invents a page.
+  one of the pages. A technical failure never invents a page.
 
   The page axis exists only for a PAGINATED target: ``page`` renders a PDF page.
   When the resolved asset IS the viewer's and the viewer kind is known to be
@@ -185,13 +187,14 @@ class VisionHandler:
         """The ONE page the model settled, as the funnel's string slot value, or
         ``None`` for the tool's default.
 
-        ``all`` (and any unsettled verdict) omits ``page``: the tool's own
+        ``all`` (and a technical failure) omits ``page``: the tool's own
         documented rule then applies — the page open in the viewer, and a
         multi-page PDF with no page in view is refused rather than rendered as
-        page 1. A range / list cannot be satisfied by a single-page tool call,
-        so it goes to the Agent instead of silently choosing one page. A
-        non-paginated target has no settlement at all (the model was not asked)
-        and therefore also omits ``page``.
+        page 1. A semantic unknown settles on the viewer's current page when the
+        same document is shown, so it carries that page. A range / list cannot be
+        satisfied by a single-page tool call, so it goes to the Agent instead of
+        silently choosing one page. A non-paginated target has no settlement at
+        all (the model was not asked) and therefore also omits ``page``.
         """
         if settlement is None or not settlement.ok or settlement.pages is None:
             return None

@@ -48,7 +48,7 @@ Every argument a capability receives is produced by exactly one of three mechani
 | # | Class | Producer | Deterministic | Produces | Never produces |
 |---|---|---|---|---|---|
 | 1 | **Rules / handler / trusted context** | capability handlers (`cap_handler/`), slot plan, `declaration.py` / `evidence.py` / `context_values.py` | yes | the handler draft: verbatim query text, DET values, and trusted identifiers from `TurnFacts` / UI context / callback context | a model-regenerated identifier; a capability choice |
-| 2 | **Dedicated page-scope resolver** | `argument_acquisition/page_scope_resolver.py` (online LLM, narrow contract) | no (model) | only the page scope of a document request: `all` / `single` / `range` | `asset_id`; any other slot; tool selection or execution |
+| 2 | **Dedicated page-scope resolver** | `argument_acquisition/page_scope_resolver.py` (online LLM, narrow contract) over the handler's `handler_page_default.py` | no (model) / yes (handler page) | only the page scope of a document request: `all` / `single` / `range`, merged with the viewer's current page of the same document (§3.2) | `asset_id`; any other slot; tool selection or execution |
 | 3 | **Shared Qwen extractor** | `argument_acquisition/extractor.py` (native function-call contract) | no (model) | only the MODEL-owned, caller-authorized slots of the already-selected tool | a capability choice; SYSTEM_BINDER / TOOL_DEFAULT / UNAVAILABLE slots; document identity |
 
 Class 2 is **capability-local**: it is invoked inside a file handler's `acquire()`, not as a
@@ -120,7 +120,8 @@ default of its own slots:
 
 - **File capabilities** — the page default belongs to the capability. `all` means “the
   request restricts no pages”: the tool call omits `pages` and the tool applies its own
-  documented default. It does not mean “page 1”, and it is never the result of a failure.
+  documented default. The handler's same-document current page participates only under the
+  merge order in §3.2. It does not mean “page 1”, and it is never the result of a failure.
 - **Summary** — `output_dir` is requested only when the sentence explicitly asks to save.
   With no save cue it is never requested, and the tool returns the summary to the chat
   window instead of writing a file.
@@ -177,11 +178,30 @@ It emits exactly one verdict:
 
 | Verdict | Meaning | Acquisition result |
 |---|---|---|
-| `all` | the request does not restrict pages | the tool call omits `pages`; the capability applies its own documented default |
+| `all` | the request does not restrict pages — an explicit whole-document request, or no page named | the tool call omits `pages` (whole document); this overrides the handler value |
 | `single` | exactly one page, including deictic “this page” resolved to the viewer's current page | canonical page spec |
 | `range` | several pages, in the shared strict parser's grammar (`"3-5"`, `"1,3"`), bounded by `MAX_REQUESTED_PAGES` | canonical page spec |
 
-### 3.2 Hard boundaries
+### 3.2 Merge with the handler value
+
+The handler supplies at most one deterministic candidate: the viewer's current page,
+and only when `viewer_asset_id` equals the target `asset_id`. The producer is a value
+reader on `TurnFacts`, not a sentence parser; a page belonging to another document, a
+missing page and a non-positive / non-numeric page all yield no value.
+
+| Model verdict | Handler value | Merged `pages` |
+|---|---|---|
+| `all` | any | omitted — the whole document; the model's explicit value wins |
+| `single` / `range` | any | the model's canonical spec |
+| semantic `unknown` / `ambiguous` | present | the handler value (`viewer` source) |
+| semantic `unknown` / `ambiguous` | absent | missing — the capability follows its own failure path |
+| `unavailable` / `invalid` | any | no merge — the capability follows its own failure path |
+
+A valid model verdict always overrides the handler value. `asset_id` is system-owned:
+neither source may be produced by the model, and a reply carrying one is a contract
+violation.
+
+### 3.3 Hard boundaries
 
 - It produces **only** the page scope. No tool selection, no tool execution, no other
   business parameter.
@@ -194,27 +214,32 @@ It emits exactly one verdict:
 - It runs only for handlers that declare `accepts_page_scope`, and only when the host wired
   the seam. It is a capability-local resolver, not a global extraction rule.
 
-### 3.3 Non-paginated viewers — a structural skip
+### 3.4 Non-paginated viewers — a structural skip
 
 When the viewer kind is known to be non-paginated (for example an image), the model is not
 consulted: there is nothing for it to settle. This is a **structural** check on the viewer
 kind, not a set of deterministic keyword rules replacing model page semantics.
 
 For every paginated document — and for every case where the viewer kind does not settle the
-question — the model remains the sole page producer. No sentence keyword rule may override
-it. The skip is recorded as “not asked”; it is never converted into an `all` verdict.
+question — the model remains the sole semantic page judge. No sentence keyword rule may
+override it. The handler's current-page value participates only under the merge order in
+§3.2. The skip is recorded as “not asked”; it is never converted into an `all` verdict.
 
-### 3.4 Failure taxonomy
+### 3.5 Failure taxonomy
 
 The three outcomes stay distinct and never collapse:
 
-- `unavailable` — the call failed, timed out, or returned non-JSON;
-- `ambiguous` — the model could not decide the target or the scope;
+- `ambiguous` — the model could not decide the target or the scope. This is a **semantic**
+  “not extracted”, and the only outcome that keeps the handler's page value;
+- `unavailable` — the call failed, timed out, or returned non-JSON. This is a **technical**
+  failure: no reliable result exists;
 - `invalid` — the reply violated this contract (bad enum, bad pages, identity field,
-  unknown field, out-of-range page).
+  unknown field, out-of-range page). This is also a **technical** failure.
 
-All three take the caller's acquisition-failure path. None is retried into a different
-parameter, and none becomes a default.
+`unavailable` and `invalid` never fall back to the handler value and are never reported as
+a successful read. With no handler value, all three take the caller's acquisition-failure
+path. None is retried into a different parameter, and none becomes a default beyond the
+handler value named in §3.2.
 
 ---
 
@@ -368,8 +393,10 @@ failure keeps its Agent-facing routing-context behaviour.
   regenerated by a model.
 - **Per-capability semantics stay per capability.** This page is not a global
   parameter-rule engine; defaults and slot meanings are owned by the handler and the tool.
-- **A model failure is never a default.** Unavailable / ambiguous / invalid all exit; none
-  degrades into a wider operation or a guessed value.
+- **A technical model failure is never a default.** `unavailable` / `invalid` exit; neither
+  degrades into a wider operation, a guessed value, or the handler's page. A semantic
+  `ambiguous` reply is not a failure: it keeps the handler's page value when one exists
+  (§3.2).
 - **Future design goal, not current behavior.** Complex or unreliable `MODEL` / `MIXED`
   slots may later be planned to escalate to the online LLM through an additional narrow,
   per-parameter resolver in the style of class 2. That is a design goal only. Today the

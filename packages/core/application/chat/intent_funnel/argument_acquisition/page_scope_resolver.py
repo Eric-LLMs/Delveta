@@ -45,10 +45,10 @@ from . import context_bundle
 
 logger = logging.getLogger(__name__)
 
-# The bounded call: a page scope is a handful of tokens; the scope decision must
-# never become an open-ended generation.
+# The bounded call: a page scope is a handful of tokens; 256 leaves headroom for
+# a verbose reason string without letting the decision become open-ended.
 DEFAULT_TIMEOUT_SECONDS = 3.0
-DEFAULT_MAX_TOKENS = 128
+DEFAULT_MAX_TOKENS = 256
 
 TARGET_DOCUMENT = "document"
 TARGET_CONVERSATION = "conversation_context"

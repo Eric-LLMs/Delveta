@@ -5,14 +5,15 @@ Two layers are pinned here:
 * the HANDLER contract itself (unit): ``cap-read-document`` resolves ``asset_id``
   ONLY from :class:`TurnFacts` (precedence ``attachment_asset_id`` ->
   ``path_asset_id`` -> ``viewer_asset_id``) and FAILS CLOSED (``None``) when none
-  is present; ``pages`` comes ONLY from the online model seam — there is no
-  deterministic sentence parser in the lane. A scope the model does not settle
-  (ambiguous / invalid / unavailable / seam missing) is TERMINAL. The viewer's
-  open page/range is NEVER substituted for an unstated page: a whole-document
-  request stays whole-document even when a viewer page exists. A deictic "this
-  page" resolves to the viewer's current page only because the MODEL resolves
-  it that way. The handler never emits a ``query`` slot (the capability has
-  none);
+  is present; ``pages`` merges the handler's viewer-current-page value of the
+  SAME document with the online model verdict. A valid model verdict wins; only
+  a SEMANTIC ``ambiguous`` reply keeps the handler value. Technical failures
+  (``invalid`` / ``unavailable`` / seam missing) are TERMINAL and never fall
+  back. The viewer's open page/range is NEVER substituted for an unstated page:
+  a whole-document request stays whole-document even when a viewer page exists.
+  A deictic "this page" resolves to the viewer's current page only because the
+  MODEL resolves it that way. The handler never emits a ``query`` slot (the
+  capability has none);
 * the WIRING: the registered handler short-circuits the generic acquisition chain
   (provider / path_router / Qwen) and its draft goes through the SAME ``_certify``
   -> Binder -> ``tool_intent`` handoff.
@@ -205,30 +206,64 @@ async def test_read_doc_ignores_a_viewer_range_the_sentence_does_not_state(facts
                                  page_scope_resolver=_resolver) == {"asset_id": ASSET}
 
 
-# ── Layer 1c: a page scope the model does not settle is TERMINAL ────────────────
+# ── Layer 1c: semantic unknown vs technical failure ─────────────────────────────
 
 
 @pytest.mark.parametrize("message", [
     "读一下部分页",
     "extract some pages",
 ])
-async def test_read_doc_undecided_scope_is_a_terminal_failure(message):
-    # The model cannot resolve which pages; never a guess and never a silent
-    # whole-document widening.
+async def test_read_doc_semantic_unknown_keeps_the_viewer_page(message):
+    # The model replied that it did not extract a page; the viewer shows the
+    # SAME document on page 12, so that is the handler's value.
     handler = ReadDocumentHandler()
     facts = TurnFacts(viewer_asset_id=ASSET, viewer_current_page=12)
     out = await handler.acquire(query=message, facts=facts,
+                                page_scope_resolver=_resolver)
+    assert out == {"asset_id": ASSET, "pages": "12"}
+
+
+async def test_read_doc_semantic_unknown_without_a_viewer_page_is_terminal():
+    # No model extraction and no handler value: never a guess, never a silent
+    # whole-document widening.
+    handler = ReadDocumentHandler()
+    facts = TurnFacts(viewer_asset_id=ASSET)
+    out = await handler.acquire(query="读一下部分页", facts=facts,
                                 page_scope_resolver=_resolver)
     assert isinstance(out, AcquisitionFailure)
     assert out.terminal is True
     assert out.category == CATEGORY_SCOPE_UNSETTLED
 
 
-async def test_read_doc_without_the_model_seam_is_terminal():
-    # No semantic judge -> the scope stays unsettled. There is no deterministic
-    # fallback that could turn "some pages" into the whole document.
+@pytest.mark.parametrize("status", [
+    psr.STATUS_INVALID,
+    psr.STATUS_UNAVAILABLE,
+])
+async def test_read_doc_technical_failure_never_falls_back_to_the_viewer(status):
+    # A timeout / non-JSON / contract violation is not a semantic "not
+    # extracted": the viewer page may not be substituted and the turn fails.
+    async def _bad(**kwargs):
+        return psr.PageScope(target=psr.TARGET_DOCUMENT,
+                             page_scope=psr.SCOPE_UNKNOWN,
+                             status=status, reason="call failed")
+
     handler = ReadDocumentHandler()
-    out = await handler.acquire(query=MESSAGE, facts=TurnFacts(viewer_asset_id=ASSET))
+    facts = TurnFacts(viewer_asset_id=ASSET, viewer_current_page=12)
+    out = await handler.acquire(query=MESSAGE, facts=facts,
+                                page_scope_resolver=_bad)
+    assert isinstance(out, AcquisitionFailure)
+    assert out.terminal is True
+    assert out.category == CATEGORY_SCOPE_UNSETTLED
+    assert out.scope["pages"] is None
+
+
+async def test_read_doc_without_the_model_seam_is_terminal():
+    # A missing semantic judge is a technical failure -> the scope stays
+    # unsettled. There is no deterministic fallback that could turn "some pages"
+    # into the whole document, or into the viewer's page.
+    handler = ReadDocumentHandler()
+    facts = TurnFacts(viewer_asset_id=ASSET, viewer_current_page=12)
+    out = await handler.acquire(query=MESSAGE, facts=facts)
     assert isinstance(out, AcquisitionFailure)
     assert out.terminal is True
     assert out.scope["status"] == "not_wired"

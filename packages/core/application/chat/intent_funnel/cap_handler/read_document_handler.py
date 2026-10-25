@@ -10,11 +10,14 @@ inside the shared ``read_document`` tool. The two schema slots of
   There is NO fail-open path: when no fact carries an asset id the handler returns
   ``None`` and the turn exits to the Agent's existing missing/clarify handling —
   never a guessed or fabricated id.
-* ``pages`` — acquired by the ONLINE MODEL
-  (:mod:`..argument_acquisition.page_scope_settlement`): the model reads the
-  user's sentence and returns the whole document, a single page or a range.
-  No deterministic sentence parser participates — keyword parsing cannot
-  express "this page", a corrected range or a reference it does not spell out.
+* ``pages`` — the merge of two value sources
+  (:mod:`..argument_acquisition.page_scope_settlement`): the UI handler value
+  is the viewer's current page of the SAME document; the ONLINE MODEL reads the
+  user's sentence and is the only semantic judge of the page intent. A valid
+  whole document / single page / range from the model overrides the handler
+  value. Only a SEMANTIC "not extracted" reply (``unknown``/``ambiguous``)
+  keeps the handler value; a timeout, transport error, empty/non-JSON reply or
+  contract violation is a technical failure in which no result is trusted.
   ``all`` omits the slot (whole document). A whole-document request is NEVER
   turned into the viewer's current page merely because a viewer page exists.
 

@@ -7,7 +7,8 @@ Pins the three pieces of the terminal path:
 * the terminal executor answers with deterministic text, records the turn in
   session memory and runs no tool/LLM/Agent;
 * the page handlers return a TERMINAL ``AcquisitionFailure`` when neither the
-  rule nor the online LLM settles the pages.
+  handler's viewer page nor the online LLM settles the pages; a SEMANTIC
+  ``ambiguous`` reply instead keeps the handler's page.
 """
 from __future__ import annotations
 
@@ -85,14 +86,16 @@ async def test_the_terminal_executor_answers_honestly_and_records_the_turn():
     ]
 
 
-def _facts():
-    return types.SimpleNamespace(
-        attachment_asset_id="", path_asset_id="", viewer_asset_id="asset-123",
-        viewer_current_page=4, viewer_page_from=None, viewer_page_to=None,
-        viewer_kind="pdf", viewer_name="survey.pdf",
-        has_viewer_selection=False, has_viewer=True, has_attachment=False,
-        has_turn_context=False,
-    )
+def _facts(**over):
+    base = {
+        "attachment_asset_id": "", "path_asset_id": "", "viewer_asset_id": "asset-123",
+        "viewer_current_page": 4, "viewer_page_from": None, "viewer_page_to": None,
+        "viewer_kind": "pdf", "viewer_name": "survey.pdf",
+        "has_viewer_selection": False, "has_viewer": True, "has_attachment": False,
+        "has_turn_context": False,
+    }
+    base.update(over)
+    return types.SimpleNamespace(**base)
 
 
 async def _ambiguous_resolver(**kwargs):
@@ -121,7 +124,7 @@ async def test_every_shared_file_handler_returns_a_terminal_failure(module, capa
     evidence: dict = {}
 
     out = await handler.acquire(
-        query="extract some pages", facts=_facts(),
+        query="extract some pages", facts=_facts(viewer_current_page=None),
         page_scope_resolver=_ambiguous_resolver, history=(),
         scope_evidence=evidence)
 
@@ -132,30 +135,52 @@ async def test_every_shared_file_handler_returns_a_terminal_failure(module, capa
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("module,capability", [
+    (read_document_handler, "cap-read-document"),
+    (pdf_extract_text_handler, "cap-pdf-extract-text"),
+])
+async def test_every_shared_file_handler_keeps_the_viewer_page(module, capability):
+    handler = module.__dict__[
+        {"cap-read-document": "ReadDocumentHandler",
+         "cap-pdf-extract-text": "PdfExtractTextHandler"}[capability]]()
+    evidence: dict = {}
+
+    out = await handler.acquire(
+        query="extract some pages", facts=_facts(),
+        page_scope_resolver=_ambiguous_resolver, history=(),
+        scope_evidence=evidence)
+
+    assert out == {"asset_id": "asset-123", "pages": "4"}
+    assert evidence["source"] == "viewer"
+    assert evidence["fallback_applied"] is True
+
+
+@pytest.mark.asyncio
 async def test_the_table_handler_never_terminates_it_settles_or_hands_off():
-    # The model judged that no page was named -> the viewer's current page settles
-    # the turn. It never ends and never becomes a whole-document read.
+    # The model settled the whole document -> the slot is omitted; it never ends
+    # and never narrows to the viewer's page.
     handler = pdf_table_to_text_handler.PdfTableToTextHandler()
     out = await handler.acquire(
         query="extract some pages", facts=_facts(),
         page_scope_resolver=_no_page_resolver, history=())
-    assert out == {"asset_id": "asset-123", "pages": "4"}
+    assert out == {"asset_id": "asset-123"}
 
-    # An ambiguous verdict is not a judgment of "no page": a valid viewer page
-    # may not substitute for it, and the turn goes to the Agent (non-terminal).
+    # A semantic "not extracted" reply keeps the viewer's current page.
     out = await handler.acquire(
         query="extract some pages", facts=_facts(),
         page_scope_resolver=_ambiguous_resolver, history=())
-    assert isinstance(out, AcquisitionFailure)
-    assert out.terminal is False
-    assert out.category == CATEGORY_SCOPE_UNSETTLED
+    assert out == {"asset_id": "asset-123", "pages": "4"}
 
-    # Without a valid current page the same hand-off applies.
-    no_page = _facts()
-    no_page.viewer_current_page = None
+    # The whole-document verdict does not depend on a viewer page either.
     out = await handler.acquire(
-        query="extract some pages", facts=no_page,
+        query="extract some pages", facts=_facts(viewer_current_page=None),
         page_scope_resolver=_no_page_resolver, history=())
+    assert out == {"asset_id": "asset-123"}
+
+    # Without a handler value a semantic unknown hands the turn to the Agent.
+    out = await handler.acquire(
+        query="extract some pages", facts=_facts(viewer_current_page=None),
+        page_scope_resolver=_ambiguous_resolver, history=())
     assert isinstance(out, AcquisitionFailure)
     assert out.terminal is False
     assert out.category == CATEGORY_SCOPE_UNSETTLED

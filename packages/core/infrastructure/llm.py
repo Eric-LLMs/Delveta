@@ -456,10 +456,12 @@ class OpenAILLM:
         :meth:`complete_json` streams. A small, bounded extraction call is the
         opposite case — one request, one response, no partial-JSON assembly.
 
-        Thinking is disabled with the provider flag this repository already uses
-        (``enable_thinking``, gated by ``settings.llm_disable_thinking`` unless
-        the caller pins it). A caller that needs the flag regardless of the
-        global knob passes ``disable_thinking=True``.
+        Thinking is disabled with both provider dialects this repository uses:
+        the Qwen-compatible ``enable_thinking`` body switch and
+        ``reasoning_effort="none"`` for reasoning-first providers such as
+        DeepSeek (which ignores ``enable_thinking``). Both are gated by
+        ``settings.llm_disable_thinking`` unless the caller pins them with
+        ``disable_thinking=True``.
 
         Raises the classified provider error on transport failure and
         :class:`TypeError` when the reply is not a JSON object — neither is
@@ -476,7 +478,13 @@ class OpenAILLM:
         if max_tokens is not None:
             kwargs["max_tokens"] = max_tokens
         if settings.llm_disable_thinking or disable_thinking:
+            # Two dialects for one intent: Qwen reads ``enable_thinking``, while
+            # reasoning-first providers (DeepSeek) ignore it and expose
+            # ``reasoning_effort``. Send both so a structured call never spends
+            # its bounded ``max_tokens`` budget on reasoning, whichever channel
+            # the request resolved to.
             kwargs["extra_body"] = {"enable_thinking": False}
+            kwargs["reasoning_effort"] = "none"
         try:
             resp = await client.chat.completions.create(**kwargs)
         except Exception as exc:

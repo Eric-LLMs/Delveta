@@ -7,18 +7,21 @@ rendering and vision transcription stay entirely inside the shared
 * ``asset_id`` — precedence ``attachment_asset_id`` -> ``path_asset_id`` ->
   ``viewer_asset_id``; no fact carries one -> ``None`` (fail-closed: no draft,
   the turn never guesses a document).
-* ``pages`` — the capability-local policy in
-  :mod:`..cap_handler.table_page_scope`: the online model reads the raw sentence
-  and decides whether the user named pages. When it did, those pages are used;
-  otherwise the Viewer's current page of the same document is used. The table
-  capability has NO whole-document outcome.
+* ``pages`` — the capability-local merge in
+  :mod:`..cap_handler.table_page_scope`: the UI handler value is the viewer's
+  current page of the SAME document; the online model reads the raw sentence
+  and is the only semantic judge of the page intent. A valid whole document
+  (the slot is then omitted), single page or range from the model overrides the
+  handler value. Only a SEMANTIC "not extracted" reply (``unknown``/``ambiguous``)
+  keeps the handler value; a timeout, transport error, non-JSON reply or
+  contract violation is a technical failure in which no result is trusted.
 
 Failures never fall back. A missing target document returns ``None``; a
-document without a valid current page, a failed/unavailable model call or a
-model contract violation returns a NON-TERMINAL
-:class:`AcquisitionFailure`, which the funnel hands to the Agent with the turn
-context for clarification. A missing model seam is treated the same way: no
-semantic judge, no settlement.
+document without a handler page value and without a model extraction, a
+failed/unavailable model call or a model contract violation returns a
+NON-TERMINAL :class:`AcquisitionFailure`, which the funnel hands to the Agent
+with the turn context for clarification. A missing model seam is treated the
+same way: no semantic judge, no settlement.
 
 The returned draft is passed through the SAME Binder / ActionExecutor /
 ToolRuntime handoff every other capability uses.

@@ -350,6 +350,7 @@ async def test_complete_json_once_is_non_streaming_json_mode_thinking_off(
     assert completions.seen["stream"] is False
     assert completions.seen["response_format"] == {"type": "json_object"}
     assert completions.seen["extra_body"] == {"enable_thinking": False}
+    assert completions.seen["reasoning_effort"] == "none"
     assert completions.seen["max_tokens"] == 64
     assert completions.seen["temperature"] == 0.0
 
@@ -361,6 +362,30 @@ async def test_complete_json_once_honours_the_global_thinking_knob(monkeypatch):
     await llm.complete_json_once("prompt", "system")
 
     assert completions.seen["extra_body"] == {"enable_thinking": False}
+    assert completions.seen["reasoning_effort"] == "none"
+
+
+async def test_complete_json_once_leaves_reasoning_on_when_thinking_is_on(
+        monkeypatch):
+    monkeypatch.setattr(llm_mod.settings, "llm_disable_thinking", False)
+    llm, completions = _llm_with('{"ok": true}', monkeypatch)
+
+    await llm.complete_json_once("prompt", "system")
+
+    assert "extra_body" not in completions.seen
+    assert "reasoning_effort" not in completions.seen
+
+
+@pytest.mark.parametrize("content", [
+    "",  # no content: a reasoning-first provider can spend the whole budget
+    '{"target": "document", "page_scope": "all", "pages": null, "reason": "cut',
+])
+async def test_complete_json_once_rejects_empty_or_truncated_content(
+        content, monkeypatch):
+    llm, _ = _llm_with(content, monkeypatch)
+
+    with pytest.raises(ValueError, match="valid JSON"):
+        await llm.complete_json_once("prompt", "system", disable_thinking=True)
 
 
 async def test_complete_json_once_rejects_a_non_object_reply(monkeypatch):
@@ -413,15 +438,15 @@ async def test_read_document_maps_single_and_range_to_pages(scope, pages):
 
 
 @pytest.mark.parametrize("result", [
-    _scope(status=psr.STATUS_AMBIGUOUS),
     _scope(status=psr.STATUS_INVALID),
     _scope(status=psr.STATUS_UNAVAILABLE),
     _scope(target=psr.TARGET_CONVERSATION),
     _scope(target=psr.TARGET_UNKNOWN),
 ])
 async def test_read_document_never_turns_a_non_document_verdict_into_a_read(result):
-    # A document handler has no conversation lane and no rule to lean on: a
-    # verdict that does not settle THIS document's scope ends the turn.
+    # A document handler has no conversation lane. A technical failure or a
+    # verdict about a different target ends the turn; the viewer's page is not a
+    # substitute for a request this handler cannot answer.
     out = await ReadDocumentHandler().acquire(
         query="what did we discuss", facts=_facts(),
         page_scope_resolver=_resolver_returning(result))
@@ -431,11 +456,22 @@ async def test_read_document_never_turns_a_non_document_verdict_into_a_read(resu
     assert out.category == CATEGORY_SCOPE_UNSETTLED
 
 
-async def test_read_document_is_terminal_when_neither_producer_settles():
+async def test_read_document_keeps_the_viewer_page_after_a_semantic_unknown():
     out = await ReadDocumentHandler().acquire(
         query="extract some pages", facts=_facts(),
         page_scope_resolver=_resolver_returning(
-            _scope(status=psr.STATUS_AMBIGUOUS)))
+            _scope(status=psr.STATUS_AMBIGUOUS,
+                   page_scope=psr.SCOPE_UNKNOWN)))
+
+    assert out == {"asset_id": "asset-123", "pages": "4"}
+
+
+async def test_read_document_is_terminal_when_neither_producer_settles():
+    out = await ReadDocumentHandler().acquire(
+        query="extract some pages", facts=_facts(viewer_current_page=None),
+        page_scope_resolver=_resolver_returning(
+            _scope(status=psr.STATUS_AMBIGUOUS,
+                   page_scope=psr.SCOPE_UNKNOWN)))
 
     assert isinstance(out, AcquisitionFailure)
     assert out.terminal is True

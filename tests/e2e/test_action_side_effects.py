@@ -135,7 +135,7 @@ async def test_read_pdf_table_effect(monkeypatch):
 
     res = await sse_for(stack, cap.message, **turn_fields(cap, asset_id=asset_id))
 
-    assert stack.pdf_seam.table_calls == [[1]]
+    assert stack.pdf_seam.table_calls == [None]  # no page restriction -> all pages
     assert len(stack.pdf_seam.transcribe_calls) == 1
     assert stack.recorder.recorded_value == "[table text]"
     assert res.approvals == []

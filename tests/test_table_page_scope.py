@@ -1,17 +1,18 @@
-"""``cap-pdf-table-to-text`` page-scope policy — the capability-local rule.
+"""``cap-pdf-table-to-text`` page-scope policy — the capability-local merge.
 
-The business priority under test:
+The business rules under test:
 
 1. no target document at all -> no draft (fail-closed, never a guessed document);
-2. with a target document, the ONLINE MODEL reads the raw sentence and decides
-   whether the user explicitly named pages;
-3. when it did -> those pages are used, and the Viewer's current page never
-   overrides them;
-4. when it judged that no page was named -> the Viewer's current page of the
-   SAME document is used; without a valid one the turn goes to the Agent, never
-   to the whole document;
-5. a failed / unavailable call, an ambiguous verdict, or a contract violation ->
-   the Agent, with NO deterministic-rule fallback.
+2. the ONLINE MODEL is the only semantic judge of the sentence; a valid
+   whole-document / page / range verdict wins;
+3. an explicit page / range from the model is used as-is and the Viewer's
+   current page never overrides it; an explicit whole-document verdict omits
+   ``pages``;
+4. only a SEMANTIC ``ambiguous`` verdict (the model replied that it did not
+   extract a page) keeps the Viewer's current page of the SAME document;
+   without one the turn goes to the Agent;
+5. a failed / unavailable call or a contract violation -> the Agent, with NO
+   fallback to the handler value.
 
 The last group drives the REAL acquisition hop (handler -> Binder -> certified
 ACTION / Agent exit), so the assertions cover the final tool arguments and the
@@ -84,6 +85,12 @@ def _scope(**over) -> psr.PageScope:
     return psr.PageScope(**base)
 
 
+def _ambiguous(**over) -> psr.PageScope:
+    """A semantically legal "page not extracted" reply."""
+    return _scope(status=psr.STATUS_AMBIGUOUS, page_scope=psr.SCOPE_UNKNOWN,
+                  **over)
+
+
 def _resolver(scope=None, *, exc: Exception | None = None, seen=None):
     async def _resolve(**kwargs):
         if seen is not None:
@@ -103,7 +110,7 @@ async def _acquire(query, facts, resolver):
         query=query, facts=facts, page_scope_resolver=resolver, history=())
 
 
-# ── priority 2: the model reads the raw sentence ──────────────────────────────
+# ── the model's valid verdict wins ───────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -147,42 +154,44 @@ async def test_a_deictic_page_is_resolved_by_the_model_from_the_viewer_page():
     assert out == {"asset_id": ASSET, "pages": "7"}
 
 
-# ── priority 4: the model judged that no page was named ──────────────────────
+# ── the model identified the whole document ──────────────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_no_page_uses_the_viewer_current_page():
+async def test_a_whole_document_verdict_omits_the_pages_slot():
     out = await _acquire(
-        "把表格转成文本", _facts(viewer_current_page=3),
+        "把整个文档的表格都转成文本", _facts(viewer_current_page=3),
         _resolver(_scope(page_scope=psr.SCOPE_ALL)))
 
-    assert out == {"asset_id": ASSET, "pages": "3"}
+    assert out == {"asset_id": ASSET}
 
 
 @pytest.mark.asyncio
-async def test_a_model_no_page_verdict_uses_the_viewer_page():
-    # The sentence contains "第3页"; the model judged the request names no page.
-    # The model is the judge, so the Viewer's page is the outcome.
+async def test_a_whole_document_verdict_is_not_narrowed_to_the_viewer_page():
+    # The viewer sits on page 1; the request names no page, so the model's
+    # explicit whole-document verdict must not shrink to that page.
     out = await _acquire(
         "提取第3页的表格", _facts(viewer_current_page=1),
         _resolver(_scope(page_scope=psr.SCOPE_ALL)))
 
-    assert out == {"asset_id": ASSET, "pages": "1"}
+    assert out == {"asset_id": ASSET}
 
 
 @pytest.mark.asyncio
 async def test_a_missing_current_page_hands_the_turn_to_the_agent():
     evidence: dict = {}
     out = await PdfTableToTextHandler().acquire(
-        query="把表格转成文本",
+        query="把这些页的表格转成文本",
         facts=_facts(viewer_current_page=None),
-        page_scope_resolver=_resolver(_scope()),
+        page_scope_resolver=_resolver(_ambiguous()),
         history=(), scope_evidence=evidence)
 
     assert out is not None and out.terminal is False
     assert out.category == CATEGORY_SCOPE_UNSETTLED
     assert evidence["ok"] is False
     assert evidence["merged"]["pages"] is None
+    assert evidence["handler_pages"] is None
+    assert evidence["fallback_applied"] is False
     assert out.context["viewer_asset_id"] == ASSET
 
 
@@ -190,8 +199,8 @@ async def test_a_missing_current_page_hands_the_turn_to_the_agent():
 async def test_an_invalid_current_page_hands_the_turn_to_the_agent():
     for bad in (0, -3, "none", ""):
         out = await _acquire(
-            "把表格转成文本", _facts(viewer_current_page=bad),
-            _resolver(_scope()))
+            "把这些页的表格转成文本", _facts(viewer_current_page=bad),
+            _resolver(_ambiguous()))
         assert out is not None and out.terminal is False, bad
         assert out.category == CATEGORY_SCOPE_UNSETTLED, bad
 
@@ -205,13 +214,14 @@ async def test_a_viewer_page_from_another_document_is_not_reused():
         attachment_asset_id="asset-attachment",
         viewer_asset_id=VIEWER, viewer_current_page=8,
         viewer_kind="pdf", viewer_name="other.pdf")
-    out = await _acquire("把表格转成文本", facts, _resolver(_scope()))
+    out = await _acquire("把这些页的表格转成文本", facts,
+                         _resolver(_ambiguous()))
 
     assert out is not None and out.terminal is False
     assert out.category == CATEGORY_SCOPE_UNSETTLED
 
 
-# ── priority 1: no target document -> no draft, no model call ────────────────
+# ── no target document -> no draft, no model call ────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -221,7 +231,7 @@ async def test_no_target_document_produces_no_draft():
         "把表格转成文本", TurnFacts(has_attachment=True), _boom) is None
 
 
-# ── priority 5: model faults -> Agent, never a rule fallback ─────────────────
+# ── technical failures -> Agent, never the handler value ─────────────────────
 
 
 @pytest.mark.asyncio
@@ -258,16 +268,19 @@ async def test_a_contract_violation_hands_the_turn_to_the_agent():
 
 
 @pytest.mark.asyncio
-async def test_an_ambiguous_verdict_hands_the_turn_to_the_agent():
-    # Ambiguous is not a judgment of "no page": a valid viewer page may not be
-    # substituted for it.
-    out = await _acquire(
-        "读一下部分页", _facts(viewer_current_page=3),
-        _resolver(_scope(status=psr.STATUS_AMBIGUOUS,
-                         page_scope=psr.SCOPE_UNKNOWN)))
+async def test_a_semantic_unknown_keeps_the_viewer_current_page():
+    # The model replied that it did not extract a page; the handler value (the
+    # viewer's current page of the same document) is the approved fallback.
+    evidence: dict = {}
+    out = await PdfTableToTextHandler().acquire(
+        query="读一下部分页", facts=_facts(viewer_current_page=3),
+        page_scope_resolver=_resolver(_ambiguous()),
+        history=(), scope_evidence=evidence)
 
-    assert out is not None and out.terminal is False
-    assert out.category == CATEGORY_SCOPE_UNSETTLED
+    assert out == {"asset_id": ASSET, "pages": "3"}
+    assert evidence["source"] == SOURCE_VIEWER
+    assert evidence["handler_pages"] == "3"
+    assert evidence["fallback_applied"] is True
 
 
 @pytest.mark.asyncio
@@ -300,16 +313,26 @@ async def test_the_policy_records_which_producer_supplied_the_page():
         resolver=_resolver(_scope(page_scope=psr.SCOPE_SINGLE, pages="2")),
         asset_id=ASSET)
     assert from_model.status == SETTLED and from_model.source == SOURCE_LLM
+    assert from_model.fallback_applied is False
 
-    no_page = await settle_table_page_scope(
-        query="把表格转成文本", facts=_facts(), resolver=_resolver(_scope()),
-        asset_id=ASSET)
-    assert no_page.source == SOURCE_VIEWER and no_page.pages == "3"
+    whole = await settle_table_page_scope(
+        query="把整个文档的表格转成文本", facts=_facts(),
+        resolver=_resolver(_scope()), asset_id=ASSET)
+    assert whole.status == SETTLED and whole.source == SOURCE_LLM
+    assert whole.pages is None
+    assert whole.handler_pages == "3"
+
+    from_viewer = await settle_table_page_scope(
+        query="把表格转成文本", facts=_facts(),
+        resolver=_resolver(_ambiguous()), asset_id=ASSET)
+    assert from_viewer.source == SOURCE_VIEWER and from_viewer.pages == "3"
+    assert from_viewer.fallback_applied is True
 
     undetermined = await settle_table_page_scope(
         query="把表格转成文本", facts=_facts(viewer_current_page=None),
-        resolver=_resolver(_scope()), asset_id=ASSET)
+        resolver=_resolver(_ambiguous()), asset_id=ASSET)
     assert undetermined.status == PAGE_UNDETERMINED
+    assert undetermined.fallback_applied is False
 
 
 # ── the real acquisition hop: Binder args and the Agent exit ──────────────────
@@ -381,10 +404,33 @@ async def test_the_hop_hands_a_model_failure_to_the_agent_with_context():
 
 
 @pytest.mark.asyncio
+async def test_the_hop_certifies_a_whole_document_verdict_without_pages():
+    out, trace, capture = await _hop(
+        "把整个文档的表格转成文本", _facts(viewer_current_page=5),
+        _resolver(_scope(page_scope=psr.SCOPE_ALL)))
+
+    assert out.requested_action["tool"] == TOOL
+    assert out.requested_action["args"] == {"asset_id": ASSET}
+    assert capture["page_scope_evidence"]["source"] == SOURCE_LLM
+    assert capture["page_scope_evidence"]["merged"]["pages"] is None
+
+
+@pytest.mark.asyncio
+async def test_the_hop_certifies_the_handler_page_after_a_semantic_unknown():
+    out, trace, capture = await _hop(
+        "读一下这些页的表格", _facts(viewer_current_page=3),
+        _resolver(_ambiguous()))
+
+    assert out.requested_action["args"] == {"asset_id": ASSET, "pages": "3"}
+    assert capture["page_scope_evidence"]["source"] == SOURCE_VIEWER
+    assert capture["page_scope_evidence"]["fallback_applied"] is True
+
+
+@pytest.mark.asyncio
 async def test_the_hop_hands_a_missing_viewer_page_to_the_agent():
     out, trace, capture = await _hop(
-        "把表格转成文本", _facts(viewer_current_page=None),
-        _resolver(_scope()))
+        "把这些页的表格转成文本", _facts(viewer_current_page=None),
+        _resolver(_ambiguous()))
 
     assert out is None
     assert trace["fallback"] == REASON_ACQUISITION_MISSING

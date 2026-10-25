@@ -308,8 +308,7 @@ CAPABILITIES: tuple[Cap, ...] = (
         source="viewer_pdf", needs_asset=True),
     Cap("cap-pdf-table-to-text", "pdf_table_to_text",
         "pull the tables out of this pdf", write=False,
-        source="viewer_pdf", needs_asset=True, viewer_page=True,
-        extra=(("pages", "1"),)),
+        source="viewer_pdf", needs_asset=True, viewer_page=True),
 )
 
 CAP_BY_ID: dict[str, Cap] = {c.cap_id: c for c in CAPABILITIES}
@@ -339,9 +338,8 @@ def turn_fields(cap: Cap, *, asset_id: Any = None,
                            "name": "report.pdf", "mime_type": "application/pdf",
                            "owned": True}}
     if cap.source == "viewer_pdf":
-        # The table capability reads the viewer's current page when the sentence
-        # names none, so its scenario reports the visible page like the real
-        # client does. Other viewer capabilities keep their previous payload.
+        # The scenario reports the visible page like the real client does; the
+        # model's page scope still decides whether it becomes a ``pages`` value.
         viewer: dict = {"kind": "pdf", "name": "report.pdf",
                         "asset_id": str(asset_id), "follow": True}
         if page is not None and cap.viewer_page:
