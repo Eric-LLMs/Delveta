@@ -273,7 +273,7 @@ def _sha256(path: Path) -> str:
 
 def _is_complete(load_path: Path, files: Sequence[FileSpec]) -> bool:
     # Fast path: sizes only. Integrity is established once, at download time,
-    # over an immutable versions/<revision> directory; re-hashing 1.3 GB on
+    # over an immutable versions/<revision> directory; re-hashing 0.64 GB on
     # every boot would add minutes for no new information.
     base = load_path.resolve() if load_path.exists() else None
     if base is None or not base.is_dir():

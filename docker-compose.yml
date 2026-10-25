@@ -256,12 +256,12 @@ services:
   # wire (one choice question per turn). The current model implementation is
   # LayaChoice-v2 (4-slot contract: 3 capability cards + the REJECT card).
   #
-  # The ~1.3 GB checkpoint lives in the Docker-managed named volume `laya-model`,
+  # The ~0.64 GB checkpoint lives in the Docker-managed named volume `laya-model`,
   # NOT on a host path: the entrypoint downloads the configured revision,
   # verifies every file's size + SHA256, and publishes it under
   # /models/layachoice/current before the server starts. Container recreation
   # reuses the volume; `docker compose down` keeps it; only
-  # `docker compose down -v` deletes it (the next boot re-downloads ~1.32 GB).
+  # `docker compose down -v` deletes it (the next boot re-downloads ~678 MB).
   #
   # Model pins are NOT in the image. They arrive as MODEL_SPEC_JSON from
   # deploy/model_config/layachoice.env (Compose env_file, read at container

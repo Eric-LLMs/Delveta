@@ -1,6 +1,6 @@
 # Delveta-LayaChoice sidecar: serves the fine-tuned Laya (System-1) decision
 # model over the TypeSafe Jev /v1/systemone protocol for the Intent Funnel's
-# cap_router lane. The ~1.3 GB checkpoint is NOT baked into the image: the
+# cap_router lane. The ~0.64 GB checkpoint is NOT baked into the image: the
 # entrypoint downloads the pinned revision into the Docker-managed volume and
 # verifies it before the server starts.
 # Pinned by digest: the tag can move, the digest cannot.
