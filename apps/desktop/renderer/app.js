@@ -1920,6 +1920,12 @@
     // minimal wire payload.
     const liveFocus = Viewer.getFocus ? Viewer.getFocus() : null;
     const viewerPayload = buildViewerPayload(liveFocus);
+    // The Cloud Drive working folder frozen for THIS turn (null in Local mode). It
+    // travels with the message so the server's write tools default there; the user
+    // may still name another destination inside the sentence, which wins for that
+    // one operation only.
+    const driveContext = window.__getCloudDriveSelection
+      ? window.__getCloudDriveSelection() : null;
     const carried = viewerPayload && Array.isArray(viewerPayload.selections)
       && viewerPayload.selections.length
       ? { selections: viewerPayload.selections } : null;
@@ -1966,6 +1972,7 @@
     // spliced into ``message`` and it is not viewer CONTENT: the funnel decides first,
     // then the client collects data for the selected tool.
     if (viewerPayload) payload.viewer = viewerPayload;
+    if (driveContext) payload.drive = driveContext;
     // Frozen copy for the approval flow (below): the generation dialog must offer the SAME
     // source the question was about, even if the user navigates the viewer mid-turn.
     state.lastSentViewer = liveFocus ? JSON.parse(JSON.stringify(liveFocus)) : null;
@@ -4597,6 +4604,10 @@
       // Reset the main viewer so it never keeps showing content from the other
       // source (e.g. a cloud folder view lingering after switching back to Local).
       Viewer.close();
+      // The Cloud working-folder chip belongs to Cloud mode only: switching to
+      // Local drops it. (Startup restore happens before the chat bar exists, and
+      // has no chips to refresh.)
+      renderAttachBar();
       // Pull the sidebar back to the Files tab so the chosen source is what's shown.
       const tabFiles = document.getElementById("tab-files");
       if (tabFiles && !tabFiles.classList.contains("active")) tabFiles.click();
@@ -5181,9 +5192,11 @@
 
   function renderAttachBar() {
     chatAttachBar.innerHTML = "";
+    const driveChip = buildDriveChip();
     const focusChip = buildFocusChip();
     chatAttachBar.classList.toggle(
-      "hidden", !pendingAttach && !focusChip && !pendingSelections.length);
+      "hidden", !pendingAttach && !driveChip && !focusChip && !pendingSelections.length);
+    if (driveChip) chatAttachBar.appendChild(driveChip);
     if (focusChip) chatAttachBar.appendChild(focusChip);
     // Pinned P0 selections first: they survive the ✕ chip (only viewport sharing stops).
     pendingSelections.forEach((sel, idx) => {
@@ -5247,6 +5260,29 @@
     if (s >= 3600) return `${Math.floor(s / 3600)}:${String(Math.floor((s % 3600) / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
     return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
   }
+
+  // ── Cloud Drive working-folder chip ──
+  // The folder the user is browsing in the Cloud panel is also the turn's working
+  // directory: tools create folders/files and save summaries there unless the user
+  // names another destination. It is tracked SEPARATELY from the open file (👁 chip):
+  // opening a document inside the folder keeps both, and browsing away from a
+  // document clears only the document's chip.
+  function buildDriveChip() {
+    const sel = window.__getCloudDriveSelection ? window.__getCloudDriveSelection() : null;
+    if (!sel) return null;
+    const chip = document.createElement("span");
+    chip.className = "chat-attach-chip drive-cwd-chip";
+    const txt = document.createElement("span");
+    txt.textContent = `📁 ${sel.label || "My Drive"}`;
+    txt.title = "Cloud Drive working folder: new folders/files and saved summaries go here unless you name another folder.";
+    chip.appendChild(txt);
+    return chip;
+  }
+  // The Cloud panel calls this whenever the working folder changes: ordinary
+  // navigation (folder/workspace/root/up-one-level) and a background refresh that
+  // demotes a deleted folder to its scope root. Opening or closing a document is
+  // NOT a folder change — that path goes through the viewer's focus event.
+  window.__cloudDriveSelectionChanged = () => renderAttachBar();
 
   function buildFocusChip() {
     if (!viewerFollow) return null;

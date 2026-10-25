@@ -68,6 +68,38 @@
   window.__getViewerCloudFile = () => viewerCloudFile;
   window.__setViewerCloudFile = (f) => { viewerCloudFile = f || null; };
 
+  // The folder the user is WORKING IN. The chat needs the real identity (workspace id
+  // + folder id + path), not just the label the panel draws, because its write tools
+  // create folders/files and save summaries there. app.js reads this at send time.
+  // It is a WORKING DIRECTORY, not a read scope: browsing a folder never asks for its
+  // contents to be opened.
+  function currentSelection() {
+    const loc = drive.loc || { kind: "root" };
+    if (loc.kind === "trash") return null;
+    const workspaceId = locKindWs(loc);
+    const path = locFolderPath(loc) || "";
+    const row = path
+      ? drive.folders.find((d) => d.workspace_id === workspaceId && d.path === path)
+      : null;
+    return {
+      workspace_id: workspaceId,
+      folder_id: row ? row.id : null,
+      path,
+      label: locLabel(loc),
+    };
+  }
+  window.__getCloudDriveSelection = () => (window.__cloudDriveActive ? currentSelection() : null);
+
+  // Called when the working folder changes WITHOUT a re-render of the main area (a
+  // background refresh demoting a deleted folder to its scope root). app.js owns the
+  // chip and registers this hook; ordinary navigation already reaches it through the
+  // viewer's focus event.
+  function notifySelectionChanged() {
+    if (typeof window.__cloudDriveSelectionChanged === "function") {
+      try { window.__cloudDriveSelectionChanged(); } catch { /* chip refresh is best-effort */ }
+    }
+  }
+
   // ── Location model (mirrors apps/web/src/CloudDrive.tsx Loc) ──
   // A workspace is a top-level scope; a "folder" loc is a subfolder inside a
   // workspace (or My Drive when ws is null).
@@ -240,6 +272,7 @@
         drive.query = "";
         drive.editMode = false;
         drive.selected = new Set();
+        notifySelectionChanged();
       }
       renderDrive();
       if (quiet) refreshMainQuiet();
@@ -340,6 +373,7 @@
     drive.query = "";
     drive.editMode = false;
     drive.selected = new Set();
+    notifySelectionChanged();
     renderDrive();
     refreshPending = false;
     browseCloudFolder(drive.loc);

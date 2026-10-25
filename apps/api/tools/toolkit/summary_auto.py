@@ -29,6 +29,12 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 
+from api.tools.drive_destination import (
+    current_cwd,
+    declared_error,
+    resolve_destination,
+    write_mime_type,
+)
 from api.tools.turn_material import (
     DOCUMENT_KINDS,
     ChatMessage,
@@ -38,7 +44,9 @@ from api.tools.turn_material import (
     turn_query,
     viewer_info,
 )
+from core.application.drive_service import DriveService
 from core.infrastructure.pdf_pages import parse_pages_spec
+from core.infrastructure.request_context import get_request_user_id
 
 logger = logging.getLogger(__name__)
 
@@ -141,6 +149,51 @@ def save_target(save_path: str) -> tuple[str, str]:
         parent = str(target.parent)
         return ("" if parent in ("", ".") else parent), (target.stem or "summary")
     return raw, ""
+
+
+def _drive_target(save_path: str, stem: str) -> tuple[str, str]:
+    """``(file name, parent folder)`` for a Cloud Drive save.
+
+    The name the user wrote is used verbatim ("保存成 report.md" → ``report.md``);
+    a path with no file name ("放到 notes 里") names the FOLDER and the summary
+    keeps ``<stem>.md``. Nothing is invented when the user named nothing.
+    """
+    raw = _normalise_path(save_path)
+    target = Path(raw)
+    if raw and target.suffix and target.name:
+        parent = str(target.parent)
+        return target.name, ("" if parent in ("", ".") else parent)
+    return f"{stem or 'summary'}.md", raw
+
+
+async def _save_to_drive(ctx, text: str, save_path: str, *, stem: str) -> str | None:
+    """Save the rendered summary into the turn's Cloud Drive, or ``None``.
+
+    ``None`` means "not a Cloud turn" — the caller keeps the local workspace
+    persist stage untouched. On a Cloud turn the save goes through the shared
+    destination rule (a folder the user named > the working folder) and the
+    drive service's own name/ACL checks; it never falls back to another
+    directory, because a summary in the wrong folder is worse than no file.
+    """
+    if current_cwd() is None and not declared_error():
+        return None
+    uid = get_request_user_id()
+    if uid is None:
+        raise ValueError("saving into the Cloud Drive requires a signed-in user")
+    drive = DriveService(ctx.resolve("session_factory"))
+    name, parent = _drive_target(save_path, stem)
+    destination = await resolve_destination(
+        drive, uid, query=turn_query(), explicit=parent)
+    if destination is None:  # defensive: the guard above already established a cwd
+        raise ValueError("the Cloud Drive destination could not be resolved")
+    asset = await drive.save_artifact(
+        uid, name, write_mime_type(name), str(text or "").encode("utf-8"),
+        folder_path=destination.folder_path or None,
+        workspace_id=destination.workspace_id,
+    )
+    where = destination.join(asset.name)
+    logger.info("summary auto: saved to the Cloud Drive at %s", where)
+    return f"- {where}"
 
 
 def parse_decision(data: dict, *, query: str, doc_asset: str,
@@ -251,6 +304,9 @@ async def run_auto_summary(*, args: dict, ctx, llm, pipeline) -> str:
     if decision.ready:
         text = decision.summary
         if decision.save_to_file:
+            saved = await _save_to_drive(ctx, text, decision.save_path, stem="summary")
+            if saved is not None:
+                return f"{text}\n{saved}"
             out_dir, named_stem = save_target(decision.save_path)
             result = await pipeline.persist_text(
                 text, out_dir or None, stem=named_stem or "summary")
@@ -273,20 +329,20 @@ async def run_auto_summary(*, args: dict, ctx, llm, pipeline) -> str:
         if transcript:
             return await _summarize_text(
                 query=query, name="conversation", text=transcript,
-                pipeline=pipeline, decision=decision, stem="conversation")
+                pipeline=pipeline, decision=decision, stem="conversation", ctx=ctx)
         logger.info("summary auto: session target with no chat rows; using the ladder")
 
     if decision.target == "previous_message" and previous is not None:
         return await _summarize_text(
             query=query, name="previous message", text=previous.content,
-            pipeline=pipeline, decision=decision, stem="previous_message")
+            pipeline=pipeline, decision=decision, stem="previous_message", ctx=ctx)
 
     # ── default ladder: previous content -> current page -> honest failure ──
     if previous is not None and previous.content.strip():
         logger.info("summary auto: unclear target; defaulting to the previous message")
         return await _summarize_text(
             query=query, name="previous message", text=previous.content,
-            pipeline=pipeline, decision=decision, stem="previous_message")
+            pipeline=pipeline, decision=decision, stem="previous_message", ctx=ctx)
 
     if doc_asset and viewer.page is not None:
         logger.info("summary auto: no previous content; defaulting to the current page")
@@ -314,14 +370,24 @@ async def _summarize_document(*, query, asset_id, pages_spec, ctx, llm,
     return await _summarize_text(
         query=query, name=document.name, text=document.text,
         pipeline=pipeline, decision=decision,
-        stem=(document.name.rsplit(".", 1)[0] or "summary"))
+        stem=(document.name.rsplit(".", 1)[0] or "summary"), ctx=ctx)
 
 
 async def _summarize_text(*, query, name, text, pipeline, decision: SummaryDecision,
-                          stem: str) -> str:
+                          stem: str, ctx) -> str:
     from .sources import from_text
 
     body = f"Current summary request: {query}\n\n{text}"
+    if decision.save_to_file and (
+            current_cwd() is not None or declared_error()):
+        # Cloud lane: render ONCE, then write the rendered body at the resolved
+        # destination. The local persist stage is not used — it is confined to the
+        # desktop workspace and would land the file in the wrong place.
+        rendered = await pipeline.run_sources(
+            [from_text(name, body)], None, persist=False, stem=stem)
+        saved = await _save_to_drive(ctx, rendered.text, decision.save_path, stem=stem)
+        return f"{rendered.text}\n{saved}"
+
     out_dir, named_stem = save_target(decision.save_path)
     result = await pipeline.run_sources(
         [from_text(name, body)],

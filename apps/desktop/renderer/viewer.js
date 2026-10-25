@@ -1499,6 +1499,14 @@ const Viewer = (() => {
     state.path = path || rootPath || rootName;
     state.name = segs.length ? segs[segs.length - 1] : rootName;
     state.kind = "folder";
+    // Browsing a folder means no document is open in the viewer any more: drop the
+    // per-document state (the stale "current file" the chat would otherwise keep
+    // reporting) and tell the focus chip to refresh. Without this the chat kept the
+    // previously opened file as the attached context while the panel showed a folder.
+    state.openPath = null;
+    state.cloudFile = null;
+    resetFocusTracking();
+    fireFocus();
 
     // Folder browsing always belongs in the main window: drop any column mount.
     mount = null;

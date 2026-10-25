@@ -223,6 +223,80 @@ async def _resolve_path_asset(message: str | None, drive: DriveService,
     return str((found or {}).get("asset_id") or "")
 
 
+def _drive_label(workspace_id: str | None, path: str) -> str:
+    """Display path for a resolved working folder (cosmetic only)."""
+    base = "My Drive" if not workspace_id else "Workspace"
+    return f"{base} / {path.replace('/', ' / ')}" if path else base
+
+
+async def _resolve_drive_cwd(
+    body: Any, drive: DriveService, user_id: Any
+) -> tuple[dict | None, str]:
+    """Resolve the Cloud Drive folder the client is WORKING IN for this turn.
+
+    Returns ``(drive_cwd, error)``. ``drive_cwd`` is ``{"workspace_id",
+    "folder_id", "path", "label"}`` — the sink every write tool defaults its
+    destination to. A ``folder_id`` is authoritative: the row is looked up among
+    the folders THIS user can see, so a forged id cannot widen access and a
+    deleted folder never silently becomes another one. Without an id, the
+    (workspace, path) pair is checked for workspace membership.
+
+    ``error`` is non-empty only when the client DID declare a folder that cannot
+    be honoured; the turn's drive writes then refuse instead of falling back to
+    some other directory (writing in the wrong place is worse than not writing).
+    """
+    declared = getattr(body, "drive", None)
+    if declared is None or user_id is None:
+        return None, ""
+    folder_id = getattr(declared, "folder_id", None)
+    workspace_id = getattr(declared, "workspace_id", None)
+    path = str(getattr(declared, "path", "") or "").strip().strip("/")
+    label = str(getattr(declared, "label", "") or "").strip()
+
+    if folder_id is not None:
+        try:
+            folders = await drive.list_folders(user_id)
+        except Exception:  # noqa: BLE001 — a lookup hiccup must not break the turn
+            logger.warning("drive cwd lookup failed — no cwd for this turn", exc_info=True)
+            return None, "the selected Cloud Drive folder could not be verified"
+        row = next((f for f in folders if str(f.get("id")) == str(folder_id)), None)
+        if row is None:
+            return None, "the selected Cloud Drive folder is no longer available"
+        row_path = str(row.get("path") or "")
+        row_ws = str(row["workspace_id"]) if row.get("workspace_id") else None
+        return (
+            {
+                "workspace_id": row_ws,
+                "folder_id": str(folder_id),
+                "path": row_path,
+                "label": label or _drive_label(row_ws, row_path),
+            },
+            "",
+        )
+
+    ws_id = str(workspace_id) if workspace_id else None
+    if ws_id is not None:
+        try:
+            await drive.ensure_workspace_member(user_id, workspace_id)
+        except DriveError as exc:
+            return None, f"the selected Cloud Drive folder is not accessible ({exc})"
+        except Exception:  # noqa: BLE001
+            logger.warning("drive cwd membership check failed", exc_info=True)
+            return None, "the selected Cloud Drive folder could not be verified"
+    # A folder with no row of its own is still a real browsing location when files
+    # imply it (the client derives paths from the same visible listing); the write
+    # below is confined to this workspace/user scope either way.
+    return (
+        {
+            "workspace_id": ws_id,
+            "folder_id": None,
+            "path": path,
+            "label": label or _drive_label(ws_id, path),
+        },
+        "",
+    )
+
+
 async def attach_note(
     body: Any, drive: DriveService, user_id: Any, *, inline: bool
 ) -> str | None:
@@ -721,12 +795,18 @@ async def build_turn_context(
     # The kernel run(context=…) payload. Viewer rides the reference-context channel
     # (never user_text); ``inline_image`` reaches the kernel only on the legacy route —
     # the streaming route never passed it and Phase 1 keeps that byte-for-byte.
+    drive_cwd, drive_error = await _resolve_drive_cwd(body, drive, user_id)
     agent_context = {
         # The chat surface's standing tool grant (see CHAT_TOOL_PERMISSIONS).
         "tool_permissions": CHAT_TOOL_PERMISSIONS,
         **({"handoff": ctx.effective_handoff} if ctx.effective_handoff else {}),
         **({"viewer": viewer_assembly} if viewer_assembly and viewer_assembly["status"] in ("injected", "stub") else {}),
         **({"inline_image": inline_image} if (inline_image and not stream) else {}),
+        # The Cloud Drive working folder: the DEFAULT destination of this turn's
+        # writes (create_folder / create_file / summary save). Not a read scope —
+        # browsing a folder never asks for its contents to be opened.
+        **({"drive_cwd": drive_cwd} if drive_cwd else {}),
+        **({"drive_error": drive_error} if drive_error else {}),
     } or None
     ctx.agent_context = agent_context
     # Video FOCUS turns are on-screen Q&A about a small subtitle window — never pay the

@@ -233,6 +233,38 @@ class ViewerPayload(BaseModel):
         return self
 
 
+class DriveContext(BaseModel):
+    """The Cloud Drive folder the desktop client is WORKING IN for this turn.
+
+    Distinct from an open file: a folder is a working directory, not a request to
+    read its contents. Tools that WRITE (create a folder/file, save a summary)
+    default their destination here; a destination the user names in the sentence
+    still wins for that one operation.
+
+    ``folder_id`` is the authoritative identity when the client has a real folder
+    row; ``path`` is the folder path inside ``workspace_id`` ("" = its root, and
+    ``workspace_id=None`` = My Drive). Both are resolved and ACL-checked at
+    context-build, never trusted as given.
+    """
+
+    workspace_id: UUID | None = None
+    folder_id: UUID | None = None
+    path: str = ""
+    label: str = ""
+
+    @model_validator(mode="after")
+    def _guard_drive_context(self) -> "DriveContext":
+        if len(self.path) > 1024:
+            raise ValueError("drive.path too long")
+        if any(seg == ".." for seg in self.path.split("/")):
+            raise ValueError("drive.path must not contain '..'")
+        if self.path.startswith("/") or self.path.endswith("/"):
+            raise ValueError("drive.path must not start or end with '/'")
+        if len(self.label) > 512:
+            raise ValueError("drive.label too long")
+        return self
+
+
 class ChatRequest(BaseModel):
     message: str
     context_state: ChatContextState | None = None  # None = legacy client → recovery-mode
@@ -262,6 +294,10 @@ class ChatRequest(BaseModel):
                                      #   window, full text, explicit selections). Delivered to
                                      #   the LLM as a separate reference-context section; the
                                      #   user's raw query is never modified by it.
+    drive: DriveContext | None = None  # optional: the Cloud Drive folder the client is working
+                                     #   in. Sunk into the turn context as ``drive_cwd`` so WRITE
+                                     #   tools default their destination to it. Never a read
+                                     #   scope: browsing a folder asks for nothing to be opened.
 
     @model_validator(mode="after")
     def _guard_v2_payload(self) -> "ChatRequest":

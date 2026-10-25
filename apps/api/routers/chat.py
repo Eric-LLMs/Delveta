@@ -288,7 +288,7 @@ async def _resolve_identity(request: Request, body: ChatRequest, user: AuthUser 
 # (approvals.py: ``feedback or decision.reason or …``), so it cannot be matched by a prefix
 # — hence the polarity is "exclude the runtime-generated post-body markers", defaulting the
 # nameless case to a decided denial rather than enumerating every possible pre-body text.
-_MUTATING_DIRECT_TOOLS = frozenset({"create_folder", "add_term"})
+_MUTATING_DIRECT_TOOLS = frozenset({"create_folder", "create_file", "add_term"})
 # Runtime-authored (NOT client-authored) prefixes marking a failure that occurred after the
 # body was entered (runtime.py:118 / :129). These keep the STATE_UNKNOWN classification.
 _POST_BODY_MARKERS = ("execute failed:", "post-execute failed:")
