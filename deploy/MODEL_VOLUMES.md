@@ -80,11 +80,11 @@ Code changes rebuild an image; model changes never do. A model change edits
 | Configuration | `deploy/model_config/embedding.env` | `deploy/model_config/layachoice.env` | Compose environment variables |
 | Volume | `delveta_embedding-model` | `delveta_laya-model` | `delveta_toolintent-cache` |
 | Mount point | `/model` | `/models/layachoice` | `/root/.ollama` |
-| Load path | `current/INT8` | `current` | Ollama blob store |
+| Load path | `current/INT8` | `current/FP16` | Ollama blob store |
 | Downloader | `bootstrap.py` | `bootstrap.py` | `tool-intent-model` service |
 | Repository | `Delveta-BGE-M3-v1` | `Delveta-LayaChoice-v2` | `Delveta-Qwen3-0.6B-PE-v1` |
-| Revision | `625d25d37490…` | `0e9c8facc4aa…` | `1a75945e12bf…` |
-| Size | 0.57 GB | 1.29 GB | 0.44 GB |
+| Revision | `625d25d37490…` | `24981b07e1ef…` | `1a75945e12bf…` |
+| Size | 0.57 GB | 0.64 GB | 0.44 GB |
 
 Every file the service loads is listed with its size and SHA256: embedding and
 cap-router read the list from `MODEL_SPEC_JSON` in their `env_file`, and

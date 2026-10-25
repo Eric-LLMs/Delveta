@@ -41,7 +41,7 @@ Docker 命名卷中**，由容器启动时的初始化步骤负责下载、校�
 | 服务 | 职责 | 模型体量 |
 |---|---|---|
 | `embedding` | INT8 ONNX 文本向量服务，兼容 `POST /embed` | 约 586 MB |
-| `cap-router` | LayaChoice 能力选择模型，`POST /v1/systemone` | 约 1.32 GB |
+| `cap-router` | LayaChoice 能力选择模型，`POST /v1/systemone` | 约 678 MB |
 | `tool-intent-model` + `tool-intent` | 参数抽取模型（GGUF，Ollama 服务） | 约 444 MB |
 
 每个服务只加载自己声明过的文件。仓库中的训练代码、README、其他量化版本不会被下载。
@@ -172,7 +172,7 @@ Ollama 会以文件的 SHA256 命名权重 blob，因此 `ollama show --modelfil
 ### 4.3 复用判定的粒度
 
 正常启动只比较回执与文件长度，不重新计算摘要。完整性由下载时的校验保证一次，且
-`versions/<revision>` 发布后不再修改。这样避免了每次启动对 1.3 GB 文件重复哈希。
+`versions/<revision>` 发布后不再修改。这样避免了每次启动对 0.64 GB 文件重复哈希。
 
 ## 5. 设计理由
 
@@ -433,7 +433,7 @@ tool-intent`）。由于只保留一个版本，旧版本需要重新下载；�
 | `repo_id` | Hugging Face 仓库 | `eric-ml-nlp/Delveta-BGE-M3-v1` |
 | `revision` | 不可变的 commit SHA，禁止使用分支或可移动标签 | `625d25d3…` |
 | `files` | 服务启动必需的文件：路径、字节数、SHA256 | `INT8/model.onnx`, `568511234`, `0e0ada7f…` |
-| `load_path` | `current` 下服务实际加载的子目录 | `INT8`（embedding）、`.`（cap-router） |
+| `load_path` | `current` 下服务实际加载的子目录 | `INT8`（embedding）、`FP16`（cap-router） |
 | 卷 | Compose 卷键与挂载点 | `embedding-model` → `/model` |
 | 加载路径 | 服务读取的目录，由 `load_path` 决定 | `/model/current/INT8` |
 | 健康检查 | 首个健康判定前的等待时间，需覆盖下载 | `start_period: 900s` |
@@ -473,10 +473,10 @@ tool-intent`）。由于只保留一个版本，旧版本需要重新下载；�
 | 卷（Compose 键） | `embedding-model` | `laya-model` | `toolintent-cache` |
 | 卷（实际名称） | `delveta_embedding-model` | `delveta_laya-model` | `delveta_toolintent-cache` |
 | 挂载点 | `/model` | `/models/layachoice` | `/root/.ollama` |
-| 加载路径 | `/model/current/INT8` | `/models/layachoice/current` | `delveta-pe:q5km`（Ollama blob） |
+| 加载路径 | `/model/current/INT8` | `/models/layachoice/current/FP16` | `delveta-pe:q5km`（Ollama blob） |
 | 仓库 | `eric-ml-nlp/Delveta-BGE-M3-v1` | `eric-ml-nlp/Delveta-LayaChoice-v2` | `eric-ml-nlp/Delveta-Qwen3-0.6B-PE-v1` |
-| Revision | `625d25d3749076cee90abcd1904da3a6e7ce4c9b` | `0e9c8facc4aa72eb222caac490a020b01745ba89` | `1a75945e12bfeb203910bdb765e7cdf07f6a1126` |
-| 下载总量 | 585,611,532 字节（约 586 MB） | 1,322,020,109 字节（约 1.32 GB） | 444,414,752 字节（约 444 MB） |
+| Revision | `625d25d3749076cee90abcd1904da3a6e7ce4c9b` | `24981b07e1efca2c15aafc165d5d1b888574f717` | `1a75945e12bfeb203910bdb765e7cdf07f6a1126` |
+| 下载总量 | 585,611,532 字节（约 586 MB） | 678,202,185 字节（约 678 MB） | 444,414,752 字节（约 444 MB） |
 | 宿主端口 | `18080 → 80` | `127.0.0.1:18092 → 8000` | `127.0.0.1:18091 → 11434` |
 | 健康检查起点 | `start_period: 900s` | `start_period: 1800s` | `start_period: 1800s` |
 

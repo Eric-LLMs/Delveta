@@ -43,7 +43,7 @@ docker compose up -d postgres redis embedding tts llm-gateway worker cap-router
 ```
 
 The first start downloads pinned checkpoints into Docker named volumes: about
-586 MB for the embedding service (BGE-M3 INT8 ONNX) and 1.32 GB for
+586 MB for the embedding service (BGE-M3 INT8 ONNX) and 678 MB for
 `cap-router` (LayaChoice). Kokoro-FastAPI populates its own cache volume, and
 the STT service fetches SenseVoiceSmall on first boot. Expect the first start to
 take longer than later starts; subsequent boots reuse the volumes without

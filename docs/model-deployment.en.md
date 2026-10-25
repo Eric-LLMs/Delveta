@@ -45,7 +45,7 @@ top-level `name: delveta` in `docker-compose.yml`.
 | Service | Responsibility | Model size |
 |---|---|---|
 | `embedding` | INT8 ONNX text embedding, `POST /embed` compatible | about 586 MB |
-| `cap-router` | LayaChoice capability-selection model, `POST /v1/systemone` | about 1.32 GB |
+| `cap-router` | LayaChoice capability-selection model, `POST /v1/systemone` | about 678 MB |
 | `tool-intent-model` + `tool-intent` | Argument extractor (GGUF, served by Ollama) | about 444 MB |
 
 Each service loads only the files it declares. Training code, READMEs, and other
@@ -194,7 +194,7 @@ The health check passes only when the model is registered:
 
 A normal start compares only the receipt and file lengths; it does not recompute
 digests. Integrity is established once at download time, and
-`versions/<revision>` is never modified after publish. This avoids hashing 1.3 GB
+`versions/<revision>` is never modified after publish. This avoids hashing 0.64 GB
 on every start.
 
 ## 5. Design Rationale
@@ -508,7 +508,7 @@ access.
 | `repo_id` | Hugging Face repository | `eric-ml-nlp/Delveta-BGE-M3-v1` |
 | `revision` | Immutable commit SHA; branches and movable tags are forbidden | `625d25d3…` |
 | `files` | Files required to start: path, byte size, SHA256 | `INT8/model.onnx`, `568511234`, `0e0ada7f…` |
-| `load_path` | Subdirectory under `current` that the service loads | `INT8` (embedding), `.` (cap-router) |
+| `load_path` | Subdirectory under `current` that the service loads | `INT8` (embedding), `FP16` (cap-router) |
 | Volume | Compose volume key and mount point | `embedding-model` → `/model` |
 | Load path | Directory the service reads, determined by `load_path` | `/model/current/INT8` |
 | Health check | Time before the first health verdict; must cover the download | `start_period: 900s` |
@@ -556,10 +556,10 @@ container; `restart` has no effect.
 | Volume (Compose key) | `embedding-model` | `laya-model` | `toolintent-cache` |
 | Volume (actual name) | `delveta_embedding-model` | `delveta_laya-model` | `delveta_toolintent-cache` |
 | Mount point | `/model` | `/models/layachoice` | `/root/.ollama` |
-| Load path | `/model/current/INT8` | `/models/layachoice/current` | `delveta-pe:q5km` (Ollama blob) |
+| Load path | `/model/current/INT8` | `/models/layachoice/current/FP16` | `delveta-pe:q5km` (Ollama blob) |
 | Repository | `eric-ml-nlp/Delveta-BGE-M3-v1` | `eric-ml-nlp/Delveta-LayaChoice-v2` | `eric-ml-nlp/Delveta-Qwen3-0.6B-PE-v1` |
-| Revision | `625d25d3749076cee90abcd1904da3a6e7ce4c9b` | `0e9c8facc4aa72eb222caac490a020b01745ba89` | `1a75945e12bfeb203910bdb765e7cdf07f6a1126` |
-| Total download | 585,611,532 bytes (about 586 MB) | 1,322,020,109 bytes (about 1.32 GB) | 444,414,752 bytes (about 444 MB) |
+| Revision | `625d25d3749076cee90abcd1904da3a6e7ce4c9b` | `24981b07e1efca2c15aafc165d5d1b888574f717` | `1a75945e12bfeb203910bdb765e7cdf07f6a1126` |
+| Total download | 585,611,532 bytes (about 586 MB) | 678,202,185 bytes (about 678 MB) | 444,414,752 bytes (about 444 MB) |
 | Host port | `18080 → 80` | `127.0.0.1:18092 → 8000` | `127.0.0.1:18091 → 11434` |
 | Health start period | `start_period: 900s` | `start_period: 1800s` | `start_period: 1800s` |
 
