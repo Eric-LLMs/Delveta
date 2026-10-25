@@ -157,12 +157,18 @@ FROZEN_PARAMETERS: dict[str, dict] = {
         "text": {"type": "string", "required": True,
                  "description": "the text to translate, copied from the sentence"},
         # deliberate post-0927 change (migration 0019): target_language is the
-        # confirmed optional semantic slot — always model-authorized via the
-        # TranslateHandler slot_plan, omitted -> the executor's English default.
+        # confirmed optional semantic slot — the translate tool's own decision
+        # call fills it; omitted -> the executor's English default.
         "target_language": {
             "type": "string", "required": False,
             "description": 'optional target language name (e.g. "English", '
                            '"Chinese"); omitted -> executor default (English)'},
+        # 0029: the deferred-capture resume injects the uploaded frame's asset id;
+        # never a model output (the handler supplies the sentence verbatim).
+        "asset_id": {
+            "type": "string", "required": False,
+            "description": "captured video-frame asset id injected by the funnel "
+                           "after a deferred capture; never a model output"},
     },
     "cap-vision": {
         "asset_id": {"type": "string", "max_len": 64, "required": True,
@@ -359,8 +365,11 @@ async def test_binder_requires_the_real_slots_and_accepts_a_complete_draft():
         # a complete minimal draft normalizes to COMPLETE
         bound = binder.validate(e, dict(MINIMAL_ARGS[cid]), _facts_for(cid))
         assert bound.is_complete, f"{cid}: minimal draft rejected: {bound.state}"
-        assert set(bound.args) == {
-            k for k, v in e.parameters.items() if v.get("required")}
+        # A context slot present in the schema is ALWAYS injected from the turn
+        # facts (Binder rule), so the certified set is required ∪ context slots.
+        assert set(bound.args) == (
+            {k for k, v in e.parameters.items() if v.get("required")}
+            | {k for k in e.parameters if k in _CONTEXT_SLOT_SOURCES})
         # the context-slot contract: an asset_id ONLY from the
         # draft, with no turn fact, is never certified (no hallucinated bind)
         if cid in _ASSET_SOURCED:

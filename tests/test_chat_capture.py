@@ -68,6 +68,7 @@ from core.infrastructure.request_context import request_user
 from core.infrastructure.storage import LocalStorage, object_key
 
 from apps.api.tools import vision_tool
+from api.tools import asset_bytes  # the module the tool bodies import the ACL seam from
 from tests._drive_fakes import make_drive
 
 MESSAGE = "这一页的图表讲了什么"
@@ -669,7 +670,7 @@ async def test_vision_makes_one_call_with_picture_text_and_question(monkeypatch,
     drive = make_drive(tmp_path)
     uid = uuid4()
     asset = await drive.assets.create(uid, "page_3.png", object_sha256=sha, scope="chat")
-    monkeypatch.setattr(vision_tool, "DriveService", lambda sf: drive)
+    monkeypatch.setattr(asset_bytes, "DriveService", lambda sf: drive)
     request_user.set(uid)
 
     calls: list[dict] = []

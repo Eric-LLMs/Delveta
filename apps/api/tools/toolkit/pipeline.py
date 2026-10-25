@@ -164,6 +164,27 @@ class ToolKitPipeline:
         except Exception as exc:
             raise ToolKitError(f"{self.tool} generation failed: {exc}") from exc
 
+    async def persist_text(self, text: str, output_dir: str | None = None, *,
+                           stem: str = "summary") -> ToolKitResult:
+        """Persist ONE already-rendered Markdown body, with no generation call.
+
+        The summary auto-flow's first call can answer directly; when that same
+        call also decided the user asked to save, the body must still land on
+        disk through the SAME persist stage (atomic write, workspace confinement,
+        collision-proof name) as every other toolkit artifact.
+        """
+        rendered = {"summary.md": str(text or "")}
+        try:
+            await self._hook("before-persist", rendered)
+            out_dir = self._resolve_output_dir(output_dir)
+            result = await self.stage_persist(rendered, out_dir, stem=stem)
+            await self._observe("after-persist", result)
+            return result
+        except ToolKitError:
+            raise
+        except Exception as exc:
+            raise ToolKitError(f"{self.tool} save failed: {exc}") from exc
+
     async def _run(self, paths: list[str], output_dir: str | None, params: dict, *,
                    persist: bool) -> ToolKitResult:
         await self._hook("before-validate", paths)

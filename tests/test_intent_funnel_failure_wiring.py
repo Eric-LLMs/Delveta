@@ -172,16 +172,18 @@ async def test_acquisition_failure_reaches_the_kernel_context(monkeypatch):
     assert kernel.calls[0]["user_text"] == "帮我处理这个"  # byte-identical replay
 
 
-async def test_summary_contract_violation_reaches_the_agent_with_its_evidence(
-        monkeypatch):
-    """A handler-level acquisition exit rides the SAME kernel-facing record.
+async def test_summary_ignores_a_broken_page_scope_resolver(monkeypatch):
+    """cap-summary has no page-scope seam: a wired resolver is never consulted.
 
-    ``cap-summary``'s scope model returned a contract-violating reply. The
-    handler must NOT fall back to a page or the document: the Agent receives the
-    category, stage, validation reason, resolver verdict, and the viewer's asset
-    id and page — as real control flow, not logs.
+    The tool's FIRST LLM call decides the target, the page range and the save
+    intent, so a resolver whose reply would once have been a contract violation
+    cannot turn this turn into an Agent hand-off. The certified ACTION carries
+    the deterministic marker plus the Binder's asset_id.
     """
-    entry = _entry("cap-summary", tool="summary_gen", parameters={})
+    entry = _entry("cap-summary", tool="summary_gen", parameters={
+        "asset_id": {"type": "string", "required": False},
+        "auto": {"type": "string", "required": False},
+    })
     _wire_hit(monkeypatch, entry)
     kernel = _Kernel()
 
@@ -201,47 +203,28 @@ async def test_summary_contract_violation_reaches_the_agent_with_its_evidence(
     orchestrator = TurnOrchestrator(deps)
 
     plan = await orchestrator.resolve_plan(ctx, deps)
-    assert plan.kind is PlanKind.AGENT
-
-    record = ctx.agent_context["intent_funnel"]
-    assert record["kind"] == "ACQUISITION_FAILURE"
-    assert record["capability_id"] == "cap-summary"
-    assert record["query"] == "总结第 5 页"
-    acquisition = record["acquisition"]
-    assert acquisition["category"] == "scope_contract_violation"
-    assert acquisition["stage"] == "scope_resolution"
-    assert "pages must ascend" in acquisition["detail"]
-    assert acquisition["scope"]["status"] == STATUS_INVALID
-    assert acquisition["scope"]["pages"] == "9-5"
-    assert acquisition["context"]["viewer_asset_id"] == "asset-123"
-    assert acquisition["context"]["viewer_current_page"] == 7
-
-    await AgentExecutor().run(TurnRequest(ctx=ctx, deps=deps, plan=plan))
-    call = kernel.calls[0]
-    assert call["user_text"] == "总结第 5 页"        # the original request
-    assert call["history"] == ctx.history           # the conversation context
-    sent = call["context"]["intent_funnel"]
-    assert sent["acquisition"] == acquisition       # byte-identical at the kernel
+    assert plan.kind is PlanKind.ACTION
+    assert plan.action["tool"] == "summary_gen"
+    assert plan.action["args"] == {"auto": "1", "asset_id": "asset-123"}
+    assert kernel.calls == []
 
 
-# ── a required model slot that the extractor cannot fill -> Agent ───────────────
+# ── the save intent is never an acquisition slot -> no extractor, no hand-off ───
 
 
-async def test_summary_missing_output_dir_extraction_reaches_the_agent(
-        monkeypatch):
-    """An explicitly requested save destination that cannot be extracted is an
-    acquisition failure, not a silent chat-only summary.
+async def test_summary_save_cue_certifies_without_an_extractor(monkeypatch):
+    """An explicit save request is decided by the tool's FIRST call.
 
-    ``cap-summary`` authorized ``output_dir`` because the sentence says "保存到",
-    but no extractor is wired. The hop exits and the Agent receives the
-    category, stage, and the turn context — through the real control flow.
+    It is not an acquisition slot, so a missing argument extractor can no longer
+    downgrade the turn to chat-only or hand it to the Agent: the certified ACTION
+    carries the literal path and the tool persists whatever its first call says.
     """
     entry = _entry(
         "cap-summary", tool="summary_gen",
         parameters={"path": {"type": "string", "required": False,
                              "description": "one file"},
-                    "output_dir": {"type": "string", "required": False,
-                                   "description": "directory"}})
+                    "auto": {"type": "string", "required": False,
+                             "description": "marker"}})
     _wire_hit(monkeypatch, entry)
     kernel = _Kernel()
     deps = _deps(kernel)                      # no argument_extractor
@@ -251,21 +234,11 @@ async def test_summary_missing_output_dir_extraction_reaches_the_agent(
     orchestrator = TurnOrchestrator(deps)
 
     plan = await orchestrator.resolve_plan(ctx, deps)
-    assert plan.kind is PlanKind.AGENT
-
-    record = ctx.agent_context["intent_funnel"]
-    assert record["kind"] == "ACQUISITION_FAILURE"
-    assert record["capability_id"] == "cap-summary"
-    assert record["query"] == "总结 ./reports/q3.md 并保存到 outputs"
-    acquisition = record["acquisition"]
-    assert acquisition["category"] == "argument_extraction_failed"
-    assert acquisition["stage"] == "argument_extraction"
-    assert "output_dir" in acquisition["detail"]
-    assert acquisition["context"]["viewer_current_page"] == 3
-
-    await AgentExecutor().run(TurnRequest(ctx=ctx, deps=deps, plan=plan))
-    sent = kernel.calls[0]["context"]["intent_funnel"]
-    assert sent["acquisition"] == acquisition       # byte-identical at the kernel
+    assert plan.kind is PlanKind.ACTION
+    assert plan.action["tool"] == "summary_gen"
+    assert plan.action["args"] == {"path": "./reports/q3.md"}
+    assert "output_dir" not in plan.action["args"]
+    assert kernel.calls == []
 
 
 # ── Binder contract mismatch -> the same Agent context ───────────────────────────

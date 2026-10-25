@@ -23,6 +23,11 @@ as regression locks — an edit to the fix that re-opens the gap turns them red 
   F1  approval chain raises                        → decided DENY (fixed safe text), 0 effect
   F2  a MUTATING body overruns its deadline        → _STATE_UNKNOWN, 0 effect, no retry
   F2′ a NON-MUTATING body overruns its deadline    → denied terminal (NOT _STATE_UNKNOWN)
+
+Production chat turns carry the surface's standing tool grant, so an ASK never fires
+there. The approval-waterfall cases (R2, F1) therefore build the stack with
+``chat_permissions=()`` — a turn from a kernel that did not receive the chat control
+plane's context, which is exactly where an approval prompt can still occur.
 """
 from __future__ import annotations
 
@@ -109,7 +114,9 @@ async def test_e4_unwired_run_tool_is_terminal(monkeypatch):
 # ── R2: no approver bound ⇒ the ASK degrades to a decided DENY, zero effect ─────────
 async def test_r2_missing_approver_degrades_to_deny(monkeypatch):
     cap = CAP_BY_ID["cap-create-folder"]
-    stack = build_stack(monkeypatch)
+    # The chat surface pre-grants its tools, so the ASK waterfall (and the missing
+    # approver behind it) is only reachable from a kernel without that grant.
+    stack = build_stack(monkeypatch, chat_permissions=())
     no_approver(stack.runtime)
 
     res = await sse_for(stack, cap.message)
@@ -225,7 +232,9 @@ async def test_f1_raising_approval_chain_degrades_to_a_decided_denial(monkeypatc
     STATE UNKNOWN text (which would falsely imply the operation might have been applied).
     """
     cap = CAP_BY_ID["cap-create-folder"]
-    stack = build_stack(monkeypatch)
+    # A raising approval chain is only reached when the turn actually ASKs, so drive
+    # the fault from a surface without the chat standing grant.
+    stack = build_stack(monkeypatch, chat_permissions=())
     raise_from_broker(stack.broker)
 
     res = await sse_for(stack, cap.message)

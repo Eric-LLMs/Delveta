@@ -36,6 +36,7 @@ from core.infrastructure.pdf_pages import parse_pages_spec
 
 from .pipeline import ToolKitPipeline
 from .sources import WorkspaceSource, from_text
+from .summary_auto import run_auto_summary
 
 logger = logging.getLogger(__name__)
 
@@ -45,8 +46,9 @@ _DESCRIPTIONS = {
         "per-section analysis, Q&A) from exactly ONE content source: workspace files "
         "(`paths` / `path`), a document the user attached to the chat or has open in the "
         "viewer (`asset_id`, optionally narrowed by `pages`), or the conversation itself "
-        "(`context`). The summary is returned in the chat; pass `output_dir` only when "
-        "the user explicitly asked to save it to a directory."
+        "(`context`). `auto` is set by the intent funnel, which then decides the source "
+        "from the turn. The summary is returned in the chat unless the user explicitly "
+        "asked to save it."
     ),
     "mindmap": (
         "Generate a Mermaid mind map (.mmd, depth <= 4) from one or more workspace files, "
@@ -103,6 +105,13 @@ _SUMMARY_PROPERTIES = {
         "(e.g. \"summarize what we just discussed\").",
     },
     "output_dir": _OUTPUT_DIR_PROPERTY,
+    "auto": {
+        "type": "string",
+        "description": "Internal marker set by the intent funnel: decide the source "
+                       "from the turn material (previous message / open document / "
+                       "session) and the save intent in the first call. Do not set "
+                       "manually.",
+    },
 }
 
 
@@ -246,11 +255,23 @@ def build_toolkit_plugin(tool: str, llm, events=None, workspace=None,
     async def _execute_summary(args: dict) -> str:
         """Return the Markdown summary itself, or a one-line saved-file note.
 
+        ``auto`` is the intent-funnel marker: the source was NOT decided upstream,
+        so the two-stage flow in :mod:`summary_auto` owns it (first call decides
+        target / readiness / save intent, second call reads only the chosen
+        material). An explicit source on the call always takes the deterministic
+        path below, so the Agent lane is unchanged.
+
         The chat-window lane (``persist=False``) returns the rendered Markdown so the
         ACTION result carries the actual summary. The explicit ``output_dir`` lane
         writes the artifact and returns its location, keeping the (potentially long)
         body out of the tool result.
         """
+        auto = str(args.get("auto") or "").strip()
+        explicit_source = any(str(args.get(key) or "").strip()
+                              for key in ("paths", "path", "context"))
+        if auto and not explicit_source:
+            return await run_auto_summary(
+                args=args, ctx=ctx, llm=llm, pipeline=pipeline)
         content = await _summary_content(args, ctx, llm)
         output_dir = str(args.get("output_dir") or "").strip()
         persist = bool(output_dir)

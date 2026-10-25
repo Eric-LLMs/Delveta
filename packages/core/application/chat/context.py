@@ -44,6 +44,14 @@ IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg"}
 # request and risk a provider size 4xx); the caller falls back to the ``vision`` tool path.
 INLINE_IMAGE_MAX_BYTES = 5 * 1024 * 1024
 
+# The chat workbench runs its tools with the user's standing consent. The client only
+# offers Allow/Deny (120 s timeout → deny), which interrupted every write tool the
+# surface itself selected (summary_gen, create_folder, …). Chat turns therefore carry
+# the FULL tool permission set. This is a grant, not a bypass: the sandbox's hard DENY
+# fences (source policy) still apply, and the worker/research kernels keep their own
+# READ-only default because they never receive this context.
+CHAT_TOOL_PERMISSIONS = ("read", "write", "network")
+
 
 class ResearchConflict(Exception):
     """begin_run refused the turn (409 already-running / 404 task missing).
@@ -714,6 +722,8 @@ async def build_turn_context(
     # (never user_text); ``inline_image`` reaches the kernel only on the legacy route —
     # the streaming route never passed it and Phase 1 keeps that byte-for-byte.
     agent_context = {
+        # The chat surface's standing tool grant (see CHAT_TOOL_PERMISSIONS).
+        "tool_permissions": CHAT_TOOL_PERMISSIONS,
         **({"handoff": ctx.effective_handoff} if ctx.effective_handoff else {}),
         **({"viewer": viewer_assembly} if viewer_assembly and viewer_assembly["status"] in ("injected", "stub") else {}),
         **({"inline_image": inline_image} if (inline_image and not stream) else {}),

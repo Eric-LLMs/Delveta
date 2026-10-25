@@ -1,9 +1,8 @@
 """Deterministic effect verification at the tool boundary (Phase 4-A / A-1).
 
-WRITE caps: the REAL tool body performed EXACTLY the expected mutation (observed
+Every cap: the REAL tool body performed EXACTLY the expected mutation (observed
 through the service double behind the REAL ``DriveService`` / ``VocabularyService``
-seam) and the sandbox surfaced an ASK. READ caps: the REAL tool body consulted its
-outer seam exactly once and surfaced NO ASK.
+seam) and, because chat turns carry the surface's standing grant, surfaced NO ASK.
 
 None of this asserts a persisted database row — persistence is A-2 Live's job.
 
@@ -20,7 +19,7 @@ from api.routers import chat as chat_mod
 from tests.e2e.harness import CAP_BY_ID, USER, build_stack, sse_for, turn_fields
 
 
-# ── WRITE: exact effect + ASK ───────────────────────────────────────────────────────
+# ── exact effect; chat's standing grant means no ASK ────────────────────────────────
 async def test_write_create_folder_exact_effect(monkeypatch):
     cap = CAP_BY_ID["cap-create-folder"]
     stack = build_stack(monkeypatch)
@@ -30,7 +29,7 @@ async def test_write_create_folder_exact_effect(monkeypatch):
     assert stack.spy.folders_created == [(str(USER), "gamma")]
     assert stack.recorder.call_count == 1
     assert stack.recorder.recorded_value  # the tool body returned a confirmation
-    assert res.approvals and res.approvals[0]["name"] == "create_folder"
+    assert res.approvals == []
     assert stack.port.steps == 0
 
 
@@ -45,7 +44,7 @@ async def test_write_add_term_exact_effect(monkeypatch):
     assert word == "quantum"
     assert user_id == str(USER)
     assert domain_id == "d0"  # the resolved "physics terms" domain
-    assert res.approvals and res.approvals[0]["name"] == "add_term"
+    assert res.approvals == []
 
 
 # ── READ: outer-seam effect counted, no ASK ─────────────────────────────────────────
@@ -81,10 +80,15 @@ async def test_read_translate_effect(monkeypatch):
 
     res = await sse_for(stack, cap.message)
 
-    # The tool's OWN model call goes through the decoupled ToolLLM — proving the
+    # The tool's OWN decision call goes through the decoupled ToolLLM — proving the
     # "zero funnel/Agent LLM" counters and a real tool-internal LLM call coexist.
-    assert len(stack.tool_llm.calls) == 1
-    assert stack.tool_llm.calls[0][0] == "hello world"
+    # Exactly ONE call, and it sees the user's sentence (no previous chat here).
+    assert len(stack.tool_llm.translate_calls) == 1
+    call = stack.tool_llm.translate_calls[0]
+    assert cap.message in call["prompt"]
+    assert "<previous_chat>" not in call["prompt"]
+    assert call["images"] == []
+    assert stack.slot_seam.calls == []          # no Qwen extraction on this lane
     assert stack.port.steps == 0
     assert stack.port.single_shot == 0
     assert stack.port.judged == 0

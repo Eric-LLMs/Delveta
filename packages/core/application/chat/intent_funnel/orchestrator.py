@@ -640,7 +640,8 @@ def _certify_capture(requirements, entry, deferred, *, facts, view, trace, captu
     """Certify a DEFERRED vision ACTION: the capability is decided, the picture is owed.
 
     The capture request rides ``TurnRequirements.capture_request``; the action carries
-    the final ``question`` but NO ``asset_id`` yet — the orchestrator patches it in
+    every argument the handler already settled (vision's ``question``, translate's
+    verbatim ``text``) but NO ``asset_id`` yet — the orchestrator patches it in
     from the client's uploaded capture before the executor runs. The kind gate is
     still enforced here (入表≠开闸 holds for the deferred lane too); the Binder is
     bypassed only because its one missing slot is the picture itself, which the
@@ -660,8 +661,8 @@ def _certify_capture(requirements, entry, deferred, *, facts, view, trace, captu
         capture["entry"] = {"intent_kind": entry.intent_kind,
                             "tool_binding": entry.tool_binding}
     trace["stage"] = "certified"
-    args: dict[str, object] = {}
-    if deferred.question:
+    args: dict[str, object] = dict(getattr(deferred, "args", None) or {})
+    if deferred.question and "question" not in args:
         args["question"] = deferred.question
     action = {
         "tool": entry.tool_binding, "args": args,

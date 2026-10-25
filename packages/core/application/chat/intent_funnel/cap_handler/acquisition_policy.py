@@ -43,14 +43,21 @@ verified contract gap in ``_TOOLKIT_DEFERRED_DETAIL``: the real
 and the executor gate (``binder.legacy.validate_action``) accepts string slots
 only. No argument may be invented to paper over that gap.
 
-``cap-summary`` is NOT on that list any more: its tool now declares the string
+``cap-summary`` is NOT on that list any more: its tool declares the string
 slots the funnel can legally produce (``asset_id`` resolved from turn facts,
-``pages`` from the capability-local scope resolver, ``path`` copied verbatim from
-the user's sentence, ``context`` for a conversation summary), so a handler owns
-the content source, and ``output_dir`` is a MODEL-owned slot extracted by the
-shared extractor ONLY when the sentence explicitly asks to save — hence MIXED.
-With no save cue the slot is never requested, so ``summary_gen`` returns the
-summary to the chat window and writes nothing.
+``path`` copied verbatim from the user's sentence, ``context`` for a
+conversation summary, and the explicit ``auto`` marker), so a handler owns the
+draft and the TOOL's first LLM call owns the source decision. Both
+``cap-summary`` and ``cap-translate`` are therefore RULE_CONTEXT: they never
+reach the shared extractor.
+
+The two content capabilities deliberately carry NO MODEL-owned slot:
+
+* ``cap-translate`` sends the user's sentence VERBATIM as ``text``; the tool's
+  single multimodal call decides what to translate (sentence / previous chat /
+  document page / video frame) and returns the translation ONLY.
+* ``cap-summary`` certifies ``auto`` and the tool's first call decides the
+  source, the readiness, and the save intent.
 """
 from __future__ import annotations
 
@@ -106,17 +113,18 @@ POLICIES: dict[str, AcquisitionPolicy] = {
     # Deterministic scope (an explicit r/<name> token pins subreddit/platform)
     # PLUS MODEL-owned natural-language slots (query cleaning, a named platform).
     "cap-social-search": AcquisitionPolicy(STRATEGY_MIXED),
-    "cap-translate": AcquisitionPolicy(STRATEGY_MODEL),
     # Deterministic acquisition from trusted turn facts / the user's literal text.
+    # ``cap-translate`` sends the sentence verbatim; its tool decides the payload
+    # and the target language in ONE call — no extractor, no model slots.
+    "cap-translate": AcquisitionPolicy(STRATEGY_RULE_CONTEXT),
     "cap-vision": AcquisitionPolicy(STRATEGY_RULE_CONTEXT),
     "cap-read-document": AcquisitionPolicy(STRATEGY_RULE_CONTEXT),
     "cap-read-file": AcquisitionPolicy(STRATEGY_RULE_CONTEXT),
     "cap-pdf-extract-text": AcquisitionPolicy(STRATEGY_RULE_CONTEXT),
     "cap-pdf-table-to-text": AcquisitionPolicy(STRATEGY_RULE_CONTEXT),
-    # Deterministic content source (turn-facts asset / the user's literal path /
-    # the scope resolver's verdict) PLUS one MODEL-owned slot: the output
-    # directory, authorized only when the sentence explicitly asks to save.
-    "cap-summary": AcquisitionPolicy(STRATEGY_MIXED),
+    # A literal workspace path is deterministic; everything else is the explicit
+    # ``auto`` marker consumed by the summary tool's first LLM call.
+    "cap-summary": AcquisitionPolicy(STRATEGY_RULE_CONTEXT),
     # Admitted, but the real tool contract cannot be satisfied on this path.
     "cap-mindmap": AcquisitionPolicy(STRATEGY_DEFERRED_AGENT,
                                      _TOOLKIT_DEFERRED_DETAIL),

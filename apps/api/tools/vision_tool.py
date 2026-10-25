@@ -41,10 +41,9 @@ from uuid import UUID
 
 from agent import Context, ToolExecution, ToolOutput, ToolRuntime, define_tool, text_block
 from agent.engine.context import current_turn
-from core.application.drive_service import DriveError, DriveService
+from api.tools.asset_bytes import load_asset_bytes
 from core.infrastructure import pdf as pdf_lib
 from core.infrastructure.request_context import get_request_user_id
-from core.infrastructure.storage import object_key
 from core.infrastructure.vision_caption import (
     DEFAULT_PROMPT as _DEFAULT_PROMPT,
     VisionNotAuthorized,
@@ -135,50 +134,6 @@ def _turn_prepared_text(image_asset_id: str) -> str:
     return "\n\n".join(pieces)
 
 
-async def _owned_chat_asset(drive: DriveService, user_id: UUID, asset_id: UUID) -> Any:
-    """The caller's OWNED ``scope='chat'`` capture, or ``None``.
-
-    Screenshots, page/region captures and video frames live in the chat plane, which the
-    drive plane deliberately refuses (404) — but they are exactly what the ``vision``
-    tool is asked to read. Authorize owner-only on ``scope='chat' AND user_id = caller``
-    (the same check ``attach_note`` / ``_frame_asset_readable`` use) BEFORE any bytes are
-    read. Any other scope, owner or deleted row returns ``None``.
-    """
-    try:
-        asset = await drive.assets.get(asset_id)
-    except Exception:  # noqa: BLE001 — an unreadable row is simply not authorized
-        return None
-    if asset is None or asset.deleted_at is not None:
-        return None
-    if (asset.scope or "drive") != "chat" or asset.user_id != user_id:
-        return None
-    return asset
-
-
-async def _load_asset(asset_id: str, ctx: Context, user_id: UUID) -> tuple[Any, bytes]:
-    """Fetch an asset's stored bytes plus its row, after the ACL check.
-
-    Permission is decided up-front (mirrors ``read_document``): a foreign/unknown asset
-    raises here, so no bytes are ever read for an asset the request user may not see.
-    A drive file goes through the drive ACL; an owned chat capture is authorized
-    owner-only in the chat plane (it is invisible to the drive plane by design).
-    """
-    drive = DriveService(ctx.resolve("session_factory"))
-    aid = UUID(str(asset_id))
-    try:
-        asset = await drive.ensure_asset_readable(user_id, aid)
-    except DriveError as exc:
-        asset = await _owned_chat_asset(drive, user_id, aid)
-        if asset is None:
-            raise ValueError(f"asset {asset_id} not readable: {exc}") from None
-    if not asset.object_sha256:
-        raise ValueError(f"asset {asset_id} not found or has no stored object")
-    data = await ctx.resolve("storage").get(object_key(asset.object_sha256))
-    if data is None:
-        raise ValueError(f"object bytes missing for asset {asset_id}")
-    return asset, data
-
-
 def register(runtime: ToolRuntime, ctx: Context, llm) -> None:
     async def vision_analyze(args: dict, exec: ToolExecution) -> str:
         asset_id = args["asset_id"]
@@ -186,7 +141,7 @@ def register(runtime: ToolRuntime, ctx: Context, llm) -> None:
         user_id = get_request_user_id()
         if user_id is None:
             raise ValueError("vision requires an authenticated request user context")
-        asset, raw = await _load_asset(asset_id, ctx, user_id)
+        asset, raw = await load_asset_bytes(ctx, asset_id, user_id=user_id)
         if not raw:
             # A deferred capture that produced an empty upload must NEVER reach the
             # multimodal model: fail honestly so the client can retry the screenshot.

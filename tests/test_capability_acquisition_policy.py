@@ -305,7 +305,7 @@ async def test_model_policy_that_produces_nothing_falls_to_the_binder_gate():
 # ── DEFERRED_AGENT: a known contract gap has its own exit ──────────────────────
 
 
-# ── MIXED (cap-summary): deterministic source + a REQUIRED model slot ──────────
+# ── RULE_CONTEXT (cap-summary / cap-translate): no extractor, ever ─────────────
 
 _SUMMARY_PARAMS = {
     "paths": {"type": "array", "required": False, "description": "files"},
@@ -314,6 +314,7 @@ _SUMMARY_PARAMS = {
     "pages": {"type": "string", "required": False, "description": "pages"},
     "context": {"type": "string", "required": False, "description": "chat"},
     "output_dir": {"type": "string", "required": False, "description": "dir"},
+    "auto": {"type": "string", "required": False, "description": "marker"},
 }
 
 
@@ -321,135 +322,65 @@ def _summary_entry() -> CapabilityEntry:
     return _entry("cap-summary", "summary_gen", dict(_SUMMARY_PARAMS))
 
 
-async def test_summary_mixed_acquires_a_literal_workspace_path_without_a_model():
-    # cap-summary is handler-owned: a literal path in the sentence is the source.
-    # With NO save cue the plan authorizes nothing, so the extractor is never
-    # called — and therefore no output_dir can be invented.
-    entry = _summary_entry()
-    out, trace, capture = await _hop(
-        entry, query="总结 ./reports/q3.md", extractor=_boom, facts=None)
+def _translate_entry() -> CapabilityEntry:
+    return _entry("cap-translate", "translate", {
+        "text": {"type": "string", "required": True, "description": "sentence"},
+        "target_language": {"type": "string", "required": False, "description": "lang"},
+        "asset_id": {"type": "string", "required": False, "description": "frame"},
+    })
 
-    assert trace["acquisition_policy"] == STRATEGY_MIXED
-    assert out.requested_action["args"] == {"path": "./reports/q3.md"}
+
+@pytest.mark.parametrize("cid", ["cap-summary", "cap-translate"])
+def test_the_content_capabilities_are_rule_context(cid):
+    assert policy_for(cid).strategy == STRATEGY_RULE_CONTEXT
+
+
+async def test_summary_auto_marker_certifies_without_the_extractor():
+    out, trace, capture = await _hop(
+        _summary_entry(), query="总结前面几条的聊天内容", extractor=_boom)
+
+    assert out is not None
+    assert out.requested_action["args"] == {"auto": "1"}
+    assert trace["acquisition_policy"] == STRATEGY_RULE_CONTEXT
     assert "extractor" not in capture["acquisition"]
-    assert "slot_plan" not in capture["acquisition"]
 
 
-async def test_summary_save_cue_folds_the_extracted_output_dir():
-    # The user explicitly asked to save; the shared extractor supplies the
-    # directory and the deterministic content source is kept.
-    entry = _summary_entry()
-    seen: dict = {}
+async def test_summary_literal_path_is_deterministic():
     out, trace, capture = await _hop(
-        entry, query="总结 ./reports/q3.md 并保存到 outputs", facts=None,
-        extractor=_extractor({"output_dir": "outputs"}, seen=seen))
+        _summary_entry(), query="总结 ./reports/q3.md", extractor=_boom)
 
-    assert trace["acquisition_policy"] == STRATEGY_MIXED
-    assert out.requested_action["args"] == {"path": "./reports/q3.md",
-                                            "output_dir": "outputs"}
-    assert seen["slots"] == ("output_dir",)
-    assert capture["acquisition"]["slot_plan"]["required_model_slots"] == [
-        "output_dir"]
+    assert out.requested_action["args"] == {"path": "./reports/q3.md"}
+    assert trace["acquisition_policy"] == STRATEGY_RULE_CONTEXT
+    assert "extractor" not in capture["acquisition"]
 
 
-async def test_summary_extractor_unavailable_hands_the_turn_to_the_agent():
-    # The ONLINE extraction failed. The requested output mode cannot be honoured,
-    # so the turn exits with the structured record instead of silently returning
-    # the summary in chat.
-    entry = _summary_entry()
-
-    async def _down(**kw):
-        raise ExtractionUnavailable("endpoint timed out")
-
-    out, trace, capture = await _hop(
-        entry, query="总结 ./reports/q3.md 并保存到 outputs", facts=None,
-        extractor=_down)
-
-    assert out is None
-    assert trace["fallback"] == REASON_ACQUISITION_MODEL_PENDING
-    record = capture["acquisition"]["failure"]
-    assert record["category"] == CATEGORY_EXTRACTION_FAILED
-    assert record["stage"] == STAGE_ARGUMENT_EXTRACTION
-    assert "endpoint timed out" in record["detail"]
-    assert "output_dir" in record["detail"]
-
-
-async def test_summary_extraction_without_the_slot_hands_the_turn_to_the_agent():
-    # The call succeeded but returned no usable directory: same rule, no
-    # chat-only downgrade.
-    entry = _summary_entry()
-    out, trace, capture = await _hop(
-        entry, query="总结 ./reports/q3.md 并保存到 outputs", facts=None,
-        extractor=_extractor({"output_dir": "   "}))
-
-    assert out is None
-    assert trace["fallback"] == REASON_ACQUISITION_MODEL_PENDING
-    assert capture["acquisition"]["failure"]["category"] == CATEGORY_EXTRACTION_FAILED
-
-
-async def test_summary_required_slot_without_an_extractor_hands_the_turn_to_the_agent():
-    entry = _summary_entry()
-    out, trace, capture = await _hop(
-        entry, query="总结 ./reports/q3.md 并保存到 outputs", facts=None,
-        extractor=None)
-
-    assert out is None
-    assert trace["fallback"] == REASON_ACQUISITION_MODEL_PENDING
-    record = capture["acquisition"]["failure"]
-    assert record["category"] == CATEGORY_EXTRACTION_FAILED
-    assert "no shared argument extractor is wired" in record["detail"]
-
-
-async def test_summary_ambiguous_intent_with_a_viewer_page_uses_that_page():
-    # Priority 2: the LLM answered normally but did not settle the intent. The
-    # viewer carries an asset id AND a current page, so exactly that page of
-    # that document is summarized — not the whole document, not a previous reply.
-    entry = _summary_entry()
-
-    async def _ambiguous(**kw):
-        return PageScope(target=TARGET_UNKNOWN, page_scope="unknown",
-                         status=STATUS_AMBIGUOUS, reason="target not determined")
-
-    out, trace, capture = await _hop(
-        entry, query="总结一下", extractor=_boom,
-        facts=TurnFacts(viewer_asset_id="asset-9", viewer_current_page=4),
-        resolver=_ambiguous,
-        history=[{"role": "assistant", "content": "之前说过 RRF"}])
-
-    assert out.requested_action["args"] == {"asset_id": "asset-9", "pages": "4"}
-    assert trace["acquisition_policy"] == STRATEGY_MIXED
-    assert capture["page_scope"]["status"] == STATUS_AMBIGUOUS
-
-
-async def test_summary_ambiguous_intent_without_a_page_uses_the_last_reply():
-    entry = _entry("cap-summary", "summary_gen", {
-        "context": {"type": "string", "required": False, "description": "chat"},
-    })
-
-    async def _ambiguous(**kw):
-        return PageScope(target=TARGET_UNKNOWN, page_scope="unknown",
-                         status=STATUS_AMBIGUOUS)
-
+async def test_summary_document_identity_rides_the_binder():
     out, _trace, _capture = await _hop(
-        entry, query="总结一下", extractor=_boom,
-        facts=TurnFacts(viewer_asset_id="asset-9"),
-        resolver=_ambiguous,
-        history=[{"role": "assistant", "content": "之前说过 RRF"}])
+        _summary_entry(), query="总结第3页", extractor=_boom,
+        facts=TurnFacts(viewer_asset_id="asset-9", viewer_current_page=4))
 
-    assert out.requested_action["args"] == {"context": "之前说过 RRF"}
+    assert out.requested_action["args"] == {"auto": "1", "asset_id": "asset-9"}
 
 
-async def test_summary_without_a_resolver_still_receives_the_chat_history():
-    # The history is not part of the page-scope seam: cap-summary's last-reply
-    # fallback must work even when the host wired no scope model.
-    entry = _entry("cap-summary", "summary_gen", {
-        "context": {"type": "string", "required": False, "description": "chat"},
-    })
-    out, _trace, _capture = await _hop(
-        entry, query="总结一下", extractor=_boom,
-        history=[{"role": "assistant", "content": "之前说过 RRF"}])
+async def test_summary_never_extracts_an_output_dir():
+    # The save intent is decided by the tool's FIRST LLM call, never by the
+    # shared extractor: a save cue changes nothing on the acquisition lane.
+    out, trace, _capture = await _hop(
+        _summary_entry(), query="总结 ./reports/q3.md 并保存到 outputs",
+        extractor=_boom)
 
-    assert out.requested_action["args"] == {"context": "之前说过 RRF"}
+    assert out.requested_action["args"] == {"path": "./reports/q3.md"}
+    assert trace["acquisition_policy"] == STRATEGY_RULE_CONTEXT
+
+
+async def test_translate_sentence_is_certified_verbatim():
+    message = '把 "hello world" 翻译成中文'
+    out, trace, capture = await _hop(
+        _translate_entry(), query=message, extractor=_boom)
+
+    assert out.requested_action["args"] == {"text": message}
+    assert trace["acquisition_policy"] == STRATEGY_RULE_CONTEXT
+    assert "extractor" not in capture["acquisition"]
 
 
 @pytest.mark.parametrize("cid,tool", [

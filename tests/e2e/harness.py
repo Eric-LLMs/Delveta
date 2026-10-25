@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import uuid4
 
+from api.tools import asset_bytes as asset_bytes_mod
 from api.tools import document_content as document_content_mod
 from api.tools import pdf_tools as pdf_mod
 from api.tools import rag_search_tool as rag_mod
@@ -36,6 +37,7 @@ from api.tools import read_document_tool as read_document_mod
 from api.tools import translate_tool as translate_mod
 from api.tools import vision_tool as vision_mod
 from api.tools import web_search_tool as web_search_mod
+from api.tools.toolkit.plugins import build_toolkit_plugin
 from core.application.chat.intent_funnel import registry as registry_pkg
 from core.application.chat.intent_funnel.registry import (
     STATUS_ACTIVE,
@@ -64,22 +66,96 @@ STEP = {"content": ["unused"], "tool_calls": None}
 
 
 # ── decoupled tool-internal LLM double ─────────────────────────────────────────────
+_TRANSLATE_REPLY: dict = {
+    "source": "sentence",
+    "target_language": "Chinese",
+    "translation": "你好世界",
+    "explanation": "A common greeting used when meeting someone.",
+}
+
+# A valid ``summary`` toolkit response (the generation stage validates it).
+_SUMMARY_GENERATION_REPLY: dict = {
+    "title": "Summary",
+    "executive_summary": "A short summary.",
+    "key_points": [],
+    "sections": [],
+    "qa": [],
+}
+
+_SUMMARY_FIRST_REPLY: dict = {
+    "target": "none",
+    "ready": False,
+    "summary": "",
+    "asset_id": "",
+    "pages": "",
+    "save_to_file": False,
+    "save_path": "",
+    "reason": "nothing to summarize",
+}
+
+
 class ToolLLM:
-    """The fake ``llm`` handed to tool REGISTRATION (translate's `complete`).
+    """The fake ``llm`` handed to tool REGISTRATION (translate / summary_gen).
 
     Deliberately SEPARATE from ``ScriptedPort``: a tool's own external-LLM call is
     a legitimate part of the real tool body and must NOT be visible to the funnel /
     Agent zero-LLM counters. Keeping the two objects distinct is what lets a test
-    assert "the funnel/Agent spent zero model calls" AND "the translate tool really
-    called its model" at the same time, with no contradiction.
+    assert "the funnel/Agent spent zero model calls" AND "the tool really called
+    its model" at the same time, with no contradiction.
+
+    The content tools use three shapes:
+
+    * ``complete`` — the legacy explicit-payload translation;
+    * ``complete_json`` — translate's ONE decision call AND every toolkit generation
+      call (the pipeline passes the system prompt positionally);
+    * ``complete_json_once`` — summary's FIRST decision call.
+
+    Replies are scripted per scenario; the defaults make a benign one-call turn.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, translate: dict | None = None,
+                 summary_first: dict | None = None,
+                 summary_generation: dict | None = None,
+                 once_raises: bool = False) -> None:
         self.calls: list[tuple[str, str]] = []
+        self.json_calls: list[dict] = []
+        self.once_calls: list[dict] = []
+        self.translate = dict(translate or _TRANSLATE_REPLY)
+        self.summary_first = dict(summary_first or _SUMMARY_FIRST_REPLY)
+        self.summary_generation = dict(summary_generation
+                                       or _SUMMARY_GENERATION_REPLY)
+        self.once_raises = once_raises
 
     async def complete(self, prompt: str, system_prompt: str = "") -> str:
         self.calls.append((prompt, system_prompt))
         return "已翻译"
+
+    async def complete_json(self, prompt: str, system_prompt: str = "",
+                            images=None, timeout=None) -> dict:
+        self.json_calls.append({"prompt": prompt, "system_prompt": system_prompt,
+                                "images": list(images or []), "timeout": timeout})
+        if "translation assistant" in system_prompt:
+            return dict(self.translate)
+        return dict(self.summary_generation)
+
+    async def complete_json_once(self, prompt: str, system_prompt: str = "",
+                                 max_tokens=None) -> dict:
+        self.once_calls.append({"prompt": prompt, "system_prompt": system_prompt,
+                                "max_tokens": max_tokens})
+        if self.once_raises:
+            raise RuntimeError("summary first call unavailable")
+        return dict(self.summary_first)
+
+    # ── convenience views for assertions ──
+    @property
+    def translate_calls(self) -> list[dict]:
+        return [c for c in self.json_calls
+                if "translation assistant" in c["system_prompt"]]
+
+    @property
+    def generation_calls(self) -> list[dict]:
+        return [c for c in self.json_calls
+                if "translation assistant" not in c["system_prompt"]]
 
 
 # ── storage / asset seams ──────────────────────────────────────────────────────────
@@ -149,13 +225,15 @@ class SlotSeam:
     """Stand-in for the local Qwen slot extractor (``argument_acquisition.extract``).
 
     A NETWORK / outer-world seam (the same class as ``VisionSeam`` / ``ToolLLM``):
-    the model-lane capabilities (create-folder / add-term / translate) return the
-    EMPTY handler draft and rely on the shared extractor for their natural-language
-    slots, so a hermetic e2e stack needs a deterministic double. Canned values keyed
-    by capability make the certified ACTION observable at the tool boundary with
-    ZERO real LLM calls; the extraction QUALITY is benchmarked by the Formal-500 A/B
-    runs, not here.
+    the MODEL-lane capabilities (create-folder / add-term) return the EMPTY handler
+    draft and rely on the shared extractor for their natural-language slots, so a
+    hermetic e2e stack needs a deterministic double. Canned values keyed by
+    capability make the certified ACTION observable at the tool boundary with ZERO
+    real LLM calls; the extraction QUALITY is benchmarked by the Formal-500 A/B runs,
+    not here.
 
+    ``cap-translate`` / ``cap-summary`` are RULE_CONTEXT: they never reach this
+    seam, so any call recorded for them is a regression the tests must fail on.
     The verbatim-query capabilities (web / rag / social) are intentionally NOT
     canned: the seam returns an EMPTY read so the handler's verbatim ``query``
     fallback stands (this matrix pins wiring, not query cleaning).
@@ -164,7 +242,6 @@ class SlotSeam:
     CANNED: dict[str, dict[str, str]] = {
         "cap-create-folder": {"name": "gamma"},
         "cap-add-term": {"term": "quantum", "domain": "physics terms"},
-        "cap-translate": {"text": "hello world"},
     }
 
     def __init__(self, overrides: dict[str, dict[str, str]] | None = None) -> None:
@@ -234,10 +311,12 @@ class EffectRecorder:
         ex = payload["exec"]
         result = payload["result"]
         is_error = bool(result.is_error)
+        error = getattr(result, "error", None)
         self.calls.append({
             "tool": ex.name,
             "args": dict(ex.arguments or {}),
             "is_error": is_error,
+            "error": (getattr(error, "message", "") or "") if is_error else "",
             "value": None if is_error else getattr(result, "value", None),
         })
 
@@ -295,7 +374,9 @@ CAPABILITIES: tuple[Cap, ...] = (
         query_arg=True),
     Cap("cap-translate", "translate",
         'translate "hello world" into Chinese', write=False,
-        extra=(("text", "hello world"),)),
+        # The handler copies the user's sentence VERBATIM; the tool's own decision
+        # call extracts the payload and the target language.
+        extra=(("text", 'translate "hello world" into Chinese'),)),
     Cap("cap-vision", "vision",
         "describe this image", write=False,
         source="attach_image", needs_asset=True,
@@ -436,17 +517,29 @@ def build_stack(
     domains: tuple[str, ...] = ("physics terms",),
     query_overrides: dict[str, str] | None = None,
     slot_values: dict[str, dict[str, str]] | None = None,
+    workspace=None,
+    tool_llm: "ToolLLM | None" = None,
+    extra_caps: tuple[Cap, ...] = (),
+    chat_permissions: tuple[str, ...] | None = None,
 ) -> Stack:
     """Compose the in-process real-chain stack (see module docstring).
 
     ``domains`` is the visible-domain list the vocabulary double exposes (0/1/N
     matches drive add_term's preflight); ``slot_values`` overrides the ``SlotSeam``
     canned extraction per capability — a test pins the MODEL's contribution (e.g. an
-    omitted required slot) without touching production code.
+    omitted required slot) without touching production code. ``workspace`` confines
+    the toolkit tools' local writes (the summary save lane); ``tool_llm`` lets a test
+    script the tool-internal model replies before the stack is built. ``extra_caps``
+    appends fixture rows to the injected Registry view (e.g. ``cap-summary``, whose
+    scenarios live in the content-capability suite rather than the A-1 matrix).
+    ``chat_permissions`` overrides the CHAT surface's standing tool grant
+    (``core.application.chat.context.CHAT_TOOL_PERMISSIONS``): production chat turns
+    carry read/write/network so no approval frame is emitted, and a test that must
+    exercise the ASK waterfall passes ``()`` to stand in for the worker kernel.
     """
     port = ScriptedPort(steps=[dict(STEP)])
     spy = Spy()
-    tool_llm = ToolLLM()
+    tool_llm = tool_llm or ToolLLM()
     slot_seam = SlotSeam(slot_values)
     storage = FakeStorage()
     retrieval = FakeSeam(hits=[{"text": "learning material chunk"}])
@@ -477,7 +570,7 @@ def build_stack(
 
     # The vision tool now authorizes through ``DriveService.ensure_asset_readable`` (ACL
     # before bytes) and reads the object via the shared storage — same seams as read_document.
-    monkeypatch.setattr(vision_mod, "DriveService", _read_drive(image_asset))
+    monkeypatch.setattr(asset_bytes_mod, "DriveService", _read_drive(image_asset))
     monkeypatch.setattr(vision_mod, "_mime_for", lambda asset: "image/png")
     monkeypatch.setattr(vision_mod, "describe_image", vision_seam.describe)
     # The authorized read lives in ``api.tools.document_content`` (shared with
@@ -496,6 +589,13 @@ def build_stack(
     # registered by build_kernel).
     rag_mod.register(runtime, ctx, None)
     translate_mod.register(runtime, ctx, tool_llm)
+    # ``summary_gen`` is a toolkit plugin: register its ToolDefinition on the SAME
+    # runtime so the funnel's certified ACTION reaches the REAL body (the two-stage
+    # auto flow) with the tool-internal ToolLLM.
+    summary_plugin = build_toolkit_plugin(
+        "summary", tool_llm, events=runtime.events, workspace=workspace, ctx=ctx)
+    for definition in summary_plugin.tools:
+        runtime.register(definition)
     vision_mod.register(runtime, ctx, None)
     read_document_mod.register(runtime, ctx, None)
     pdf_mod.register(runtime, ctx, None)
@@ -521,7 +621,7 @@ def build_stack(
             status=STATUS_ACTIVE,
             intent_kind="action",
         )
-        for cap in CAPABILITIES
+        for cap in CAPABILITIES + tuple(extra_caps)
     )
     view = RegistryLiveView(fingerprint=content_fingerprint(entries), entries=entries)
 
@@ -531,10 +631,11 @@ def build_stack(
     # both and returns the SAME fingerprint-stable view.
     monkeypatch.setattr(registry_pkg, "active_view", _make_fake_active_view(view))
 
-    # The MODEL-lane capabilities (create-folder / add-term / translate) acquire their
+    # The MODEL-lane capabilities (create-folder / add-term) acquire their
     # natural-language slots from the shared extractor seam. The e2e stack serves it
     # with a DETERMINISTIC canned double so the whole matrix stays hermetic (no live
-    # model) while the real handler -> Binder -> tool-body chain still runs.
+    # model) while the real handler -> Binder -> tool-body chain still runs. The
+    # content capabilities (translate / summary) never reach it.
     from api.routers import chat as chat_mod   # the module the app's router is built from
 
     monkeypatch.setattr(chat_mod, "_extract_arguments", slot_seam.extract)
@@ -542,6 +643,15 @@ def build_stack(
     # hermetic by answering from the viewer facts (the production resolver's
     # verdict for an explicit range), never from a live model.
     monkeypatch.setattr(chat_mod, "_page_scope_for_llm", _page_scope_seam)
+
+    # The chat surface's standing tool grant (production: read/write/network, so its
+    # tools run without an Allow/Deny frame). Approval-machinery tests pin it to ()
+    # to stand in for a kernel that did not receive the chat control plane's context.
+    if chat_permissions is not None:
+        from core.application.chat import context as chat_context_mod
+
+        monkeypatch.setattr(chat_context_mod, "CHAT_TOOL_PERMISSIONS",
+                            tuple(chat_permissions))
 
     _set_gates(monkeypatch)
     app = build_app(monkeypatch, port, retrieval, kernel, broker)

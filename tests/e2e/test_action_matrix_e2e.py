@@ -73,11 +73,8 @@ async def test_action_matrix(monkeypatch, cap_id):
     assert stack.port.single_shot == 0
     assert stack.port.judged == 0
 
-    # ── permission: WRITE caps ASK, READ caps do not ──
-    if cap.write:
-        assert res.approvals and res.approvals[0]["name"] == cap.tool
-    else:
-        assert res.approvals == []
+    # ── permission: the chat surface's standing grant runs the ACTION without an ASK ──
+    assert res.approvals == []
 
 
 # ── Page-scope contract: the SENTENCE states it; the viewer never substitutes ──────

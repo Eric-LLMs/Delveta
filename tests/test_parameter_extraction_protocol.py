@@ -51,6 +51,12 @@ import pe_contract as C  # noqa: E402
 CAPS = ["cap-web-search", "cap-rag-search", "cap-social-search",
         "cap-translate", "cap-add-term", "cap-create-folder"]
 
+# The capabilities the ONLINE funnel still authorizes the shared extractor for.
+# ``cap-translate`` stays in the frozen training contract (the Formal-500 rows are
+# historical data) but its production lane is RULE_CONTEXT: the sentence rides
+# verbatim and the translate tool's own call decides the payload.
+LIVE_EXTRACTOR_CAPS = [c for c in CAPS if c != "cap-translate"]
+
 
 def _entry(cid: str):
     """A Registry-shaped entry built from the shared contract's param table."""
@@ -64,7 +70,7 @@ def _entry(cid: str):
 # ── one source of truth: pe_contract order == the handler's slot_plan order ───────
 
 
-@pytest.mark.parametrize("cid", CAPS)
+@pytest.mark.parametrize("cid", LIVE_EXTRACTOR_CAPS)
 def test_contract_slot_order_matches_the_production_handler(cid):
     # The online order comes from the handler; the training contract mirrors it.
     h = handler_for(cid)

@@ -2,9 +2,9 @@
 
 A path value on the funnel path may come ONLY from literal text the user wrote:
 this module owns the grammar once, so ``cap-read-file`` (a path slot) and
-``cap-summary`` (a workspace-file input) cannot drift apart. The output
-DIRECTORY is not extracted here: it is a MODEL-owned slot, and this module only
-recognises the save cue that authorizes that slot for the turn.
+``cap-summary`` (a workspace-file input) cannot drift apart. A save cue is used
+only to decide which ROLE a path token plays — the destination that follows it is
+never read as the source.
 
 Two shapes are recognised, copied VERBATIM (no translation, no case change, no
 prefix stripping):
@@ -73,12 +73,20 @@ def literal_path(message: str) -> str | None:
     return drive_path(message) or workspace_path(message)
 
 
-def has_destination_cue(message: str) -> bool:
-    """True when the sentence explicitly asks to save/export to a destination.
+def is_destination(message: str, token: str) -> bool:
+    """True when ``token`` is the DESTINATION named after an explicit save cue.
 
-    This is the per-turn AUTHORIZATION for the ``output_dir`` model slot — not a
-    value source. The directory itself is extracted by the shared model
-    extractor; a cue with no usable directory there is an extraction failure the
-    Agent owns, never a silent fall-back to chat-only output.
+    "summarize ./notes.md and save it to reports/q3.md" names TWO paths: the source
+    that comes BEFORE the cue and the destination that follows it. Only a source
+    token is a file to read; taking the destination as the input would make the
+    turn fail on a file that does not exist. The token is copied verbatim either
+    way — this only decides which role it plays.
     """
-    return _DEST_CUE_RE.search(message) is not None
+    if not token:
+        return False
+    text = message or ""
+    cue = _DEST_CUE_RE.search(text)
+    if cue is None:
+        return False
+    start = text.find(token)
+    return start >= cue.end()

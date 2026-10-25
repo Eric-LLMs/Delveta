@@ -55,7 +55,9 @@ async def test_create_folder_each_phrase_executes_once(monkeypatch, msg, name):
     res = await sse_for(stack, msg)
 
     assert stack.spy.folders_created == [(str(stack_user()), name)]
-    assert res.approvals and res.approvals[0]["name"] == "create_folder"
+    # Chat turns carry the surface's standing grant: the certified ACTION runs
+    # without an Allow/Deny frame.
+    assert res.approvals == []
     assert stack.port.steps == 0 and stack.port.single_shot == 0
 
 
@@ -82,9 +84,9 @@ async def test_add_term_each_phrase_executes_once(monkeypatch, msg, term, domain
 
     assert len(stack.spy.terms_added) == 1
     assert stack.spy.terms_added[0][1] == term
-    # add_term declares WRITE explicitly: the sandbox ASK still fires on the
-    # certified ACTION (the old auto-classifier defaulted it to READ).
-    assert res.approvals and res.approvals[0]["name"] == "add_term"
+    # add_term declares WRITE explicitly; the chat surface's standing grant covers it,
+    # so the certified ACTION runs without an Allow/Deny frame.
+    assert res.approvals == []
     assert stack.port.steps == 0
 
 
@@ -98,7 +100,9 @@ CANONICAL_CREATE = "please make a folder named gamma"
 
 
 async def test_granted_write_skips_the_ask(monkeypatch):
-    stack = build_stack(monkeypatch, grant=[ToolPermission.WRITE])
+    # ``chat_permissions=()`` stands in for a surface without the chat standing grant,
+    # so this pins the SESSION-level WRITE grant (the pre-chat-grant behaviour).
+    stack = build_stack(monkeypatch, grant=[ToolPermission.WRITE], chat_permissions=())
 
     res = await sse_for(stack, CANONICAL_CREATE)
 
@@ -108,7 +112,9 @@ async def test_granted_write_skips_the_ask(monkeypatch):
 
 
 async def test_approval_timeout_is_terminal_without_side_effect(monkeypatch):
-    stack = build_stack(monkeypatch, broker_mode="timeout")
+    # Chat turns pre-grant their tools, so the ASK waterfall is only reachable from a
+    # surface without that grant — drive it with ``chat_permissions=()``.
+    stack = build_stack(monkeypatch, broker_mode="timeout", chat_permissions=())
 
     res = await sse_for(stack, CANONICAL_CREATE)
 
@@ -232,7 +238,9 @@ async def test_prose_wrapper_does_not_change_the_certified_action(monkeypatch):
 async def test_one_terminal_done_per_branch(monkeypatch, kind):
     kwargs: dict = {}
     if kind == "denied":
-        kwargs["broker_mode"] = "deny"
+        # A denial needs the ASK to surface at all; the chat surface pre-grants, so
+        # stand in for a kernel without the chat grant.
+        kwargs.update(broker_mode="deny", chat_permissions=())
     elif kind == "state_unknown":
         kwargs.update(broker_mode="allow", drive_mode="post-write",
                       grant=[ToolPermission.WRITE])

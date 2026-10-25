@@ -68,13 +68,20 @@ async def test_search_acquire_returns_the_verbatim_query(handler_cls):
     assert draft == {"query": "帮我搜一下注意力机制"}    # only surrounding spaces stripped
 
 
-@pytest.mark.parametrize("handler_cls", [AddTermHandler, CreateFolderHandler,
-                                         TranslateHandler])
+@pytest.mark.parametrize("handler_cls", [AddTermHandler, CreateFolderHandler])
 async def test_model_lane_acquire_returns_the_empty_draft_on_any_input(handler_cls):
     handler = handler_cls()
     # NO extraction rule runs: a rich sentence yields the SAME ``{}`` as a bare one.
     assert await handler.acquire(query='把 "keystone" 加入我的工程词汇库', facts=None) == {}
     assert await handler.acquire(query="帮我搜一下注意力机制", facts=None) == {}
+
+
+async def test_translate_acquire_copies_the_sentence_verbatim():
+    # cap-translate is RULE_CONTEXT: the sentence itself IS the payload; the tool's
+    # own decision call picks what to translate. No extraction rule, no empty draft.
+    handler = TranslateHandler()
+    message = '把 "keystone" 翻译成中文'
+    assert await handler.acquire(query=message, facts=None) == {"text": message}
 
 
 @pytest.mark.parametrize("handler_cls", [WebSearchHandler, RagSearchHandler,
@@ -139,22 +146,20 @@ async def test_create_folder_slot_plan_authorizes_name_only():
     assert plan.model_slots == ("name",) and plan.default_slots == ()
 
 
-async def test_translate_slot_plan_authorizes_text_and_target_language():
+def test_translate_has_no_slot_plan_because_the_tool_owns_the_decision():
     h = TranslateHandler()
-    draft = await _draft(h, "帮我翻译一下")
-    plan = h.slot_plan(query="帮我翻译一下", facts=None, draft=draft)
-    assert set(plan.model_slots) == {"text", "target_language"}
-    assert plan.default_slots == ()          # the English default is the EXECUTOR's
+    assert not hasattr(h, "slot_plan")
+    assert not getattr(h, "accepts_page_scope", False)
 
 
 def test_slot_planning_handlers_opt_in_pure_det_handlers_do_not():
-    # the six capabilities whose slots are semantic -> the model lane
+    # the five capabilities whose slots are semantic -> the model lane
     for h in (WebSearchHandler(), RagSearchHandler(), SocialSearchHandler(),
-              AddTermHandler(), CreateFolderHandler(), TranslateHandler()):
+              AddTermHandler(), CreateFolderHandler()):
         assert isinstance(h, SlotPlanningHandler)
-    # asset-anchored handlers carry no slot_plan -> the orchestrator calls no model.
+    # asset-anchored and content handlers carry no slot_plan -> no shared model call.
     for h in (VisionHandler(), ReadDocumentHandler(), ReadFileHandler(),
-              PdfExtractTextHandler(), PdfTableToTextHandler()):
+              PdfExtractTextHandler(), PdfTableToTextHandler(), TranslateHandler()):
         assert not isinstance(h, SlotPlanningHandler)
 
 

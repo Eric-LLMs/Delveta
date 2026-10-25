@@ -45,9 +45,13 @@ async def test_post_write_failure_is_terminal_single_effect(monkeypatch):
 
 
 async def test_decided_denial_is_terminal_no_effect(monkeypatch):
-    """A denied approval ⇒ honest terminal denial, zero side effect."""
+    """A denied approval ⇒ honest terminal denial, zero side effect.
+
+    The chat surface pre-grants its tools, so a turn can only be denied through the
+    approval waterfall from a kernel without that grant (``chat_permissions=()``).
+    """
     cap = CAP_BY_ID["cap-create-folder"]
-    stack = build_stack(monkeypatch, broker_mode="deny")
+    stack = build_stack(monkeypatch, broker_mode="deny", chat_permissions=())
 
     res = await sse_for(stack, cap.message)
 

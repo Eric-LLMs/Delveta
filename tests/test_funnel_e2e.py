@@ -335,7 +335,8 @@ async def test_matcher_certified_turn_executes_through_sandbox(monkeypatch, capl
     assert port.steps == 0 and port.single_shot == 0            # zero Agent LLM on this lane
     assert selector.calls == 0                                  # a HIT is NEVER re-selected
     assert extractor.calls == 1 and extractor.seen == ["cap-folder"]  # one extraction
-    assert res.approvals                                        # 8: WRITE surfaced ASK, allowed
+    # 8: WRITE runs under the chat surface's standing grant — no Allow/Deny frame.
+    assert res.approvals == []
     trace = _trace(caplog)
     assert _field(trace, "matcher") == "HIT:cap-folder"
     assert _field(trace, "tool_intent") == "-"                  # no selection verdict on this lane

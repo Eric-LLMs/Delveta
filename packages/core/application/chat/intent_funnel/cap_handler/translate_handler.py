@@ -1,55 +1,82 @@
 """TranslateHandler — argument acquisition for ``cap-translate``.
 
-Owns the two ``cap-translate`` schema slots, ``text`` (required) and
-``target_language`` (optional). ``cap-translate`` (tool binding ``translate``)
-translates a payload INTO a target language; the executor defaults an absent
-``target_language`` to **English** (the confirmed contract — the former
-always-Chinese behavior is retired, not preserved).
+``cap-translate`` (tool binding ``translate``) does NOT run the shared Qwen
+extractor. The handler certifies exactly ONE deterministic slot:
 
-Per the acquisition contract, BOTH slots are MODEL-owned natural-language slots
-and this handler runs NO extraction rule (no delimiters, quotes, code-block or
-colon pre-parsing — that was implementation with no requirement basis):
+* ``text`` — the user's sentence, copied VERBATIM (strip only). It satisfies the
+  Registry-required slot and is the instruction the ``translate`` tool reads;
+  the tool then decides what to translate (that sentence, a previous chat
+  message, the open document page, or the current video) from the turn material
+  and returns ONLY the translation.
 
-* ``text`` — the payload to translate; the MODEL extracts it from the sentence
-  (never the instruction frame). A payload neither the model resolves honestly
-  lands MISSING for the Binder gate.
-* ``target_language`` — a semantic slot the model fills ONLY when the sentence
-  names a target and OMITS otherwise (never invents one). The deterministic
-  English default is the EXECUTOR's own constant, not a model output — so a
-  model-unavailable / omitted reply simply leaves the slot absent and the
-  executor renders into English.
+No ``slot_plan`` exists, so the orchestrator never reaches the extractor on this
+capability. The target language is also NOT extracted: the tool's decision call
+reads it from the user's sentence (default English).
 
-This handler is the pure MODEL lane: ``acquire()`` returns the EMPTY ``{}`` draft
-(never ``None`` unless the query is blank) and ``slot_plan()`` authorizes both
-slots to the unified extractor. The returned draft goes through the SAME Binder /
-ActionExecutor / ToolRuntime handoff every other capability uses.
+VIDEO: the translate tool cannot read a video file, so the current frame must
+come from the PC client's playhead. ``capture_for`` reuses the SAME deferred
+capture lane vision owns (SSE ``capture-request`` -> ``resume_plan``); the
+already-decided ``text`` rides ``DeferredCapture.args`` across the pause, and
+``resume_plan`` injects only the uploaded frame's ``asset_id``. Every other
+viewer kind needs no capture: a cloud document is read server-side by the tool.
 """
 from __future__ import annotations
 
-from .slot_plan import SlotPlan
+from .deferred_capture import DeferredCapture
+
+_EXPLICIT_ASSET_FIELDS = ("attachment_asset_id", "path_asset_id")
+
+
+def _explicit_asset(facts) -> str:
+    """An attached / drive-path asset already in context, else ``""``.
+
+    ``viewer_asset_id`` is deliberately NOT consulted: a VIDEO viewer carries the
+    video's own asset, which the translate tool cannot read as a picture — the
+    playhead frame must still come from the client (the same rule ``vision`` uses).
+    """
+    if facts is None:
+        return ""
+    for field in _EXPLICIT_ASSET_FIELDS:
+        value = str(getattr(facts, field, "") or "").strip()
+        if value:
+            return value
+    return ""
 
 
 class TranslateHandler:
-    """``cap-translate`` parameter handler (stateless).
-
-    ``facts`` is accepted for the common handler contract but unused: the payload
-    lives ONLY in the sentence.
-    """
+    """``cap-translate`` parameter handler (stateless)."""
 
     capability_id = "cap-translate"
 
     async def acquire(self, *, query: str, facts) -> dict[str, object] | None:
-        """Return the EMPTY ``{}`` draft (never a rule-extracted payload) so the
-        model is authorized to extract ``text`` / ``target_language``. Only a
-        blank query returns ``None`` (no input at all)."""
+        """Return the verbatim sentence as ``text``; only a blank query abstains."""
         message = str(query or "")
         if not message.strip():
             return None
-        return {}
+        return {"text": message}
 
-    def slot_plan(self, *, query: str, facts, draft: dict) -> SlotPlan:
-        """Authorize both MODEL-owned slots. ``target_language`` is filled only
-        when a target is named; ``text`` is the payload the model extracts. The
-        English default for an absent ``target_language`` is the executor's, not
-        a model slot."""
-        return SlotPlan(model_slots=("text", "target_language"))
+    def capture_for(self, *, query: str, facts) -> DeferredCapture | None:
+        """The video frame this turn needs, or ``None`` when no capture applies.
+
+        Only a VIDEO viewer needs a client capture (the tool cannot read a video
+        file). An attachment / drive-path asset is already a readable source, so
+        it never triggers a capture. The timestamp is optional: the client
+        answers with its live playhead.
+        """
+        if facts is None or not facts.has_viewer:
+            return None
+        if _explicit_asset(facts):
+            return None
+        if str(getattr(facts, "viewer_kind", "") or "").lower() != "video":
+            return None
+        message = str(query or "").strip()
+        if not message:
+            return None
+        t_ms = getattr(facts, "viewer_t_ms", None)
+        return DeferredCapture(
+            kind="frame",
+            name=str(getattr(facts, "viewer_name", "") or ""),
+            t_ms=int(t_ms) if isinstance(t_ms, (int, float)) else None,
+            duration_ms=getattr(facts, "viewer_duration_ms", None),
+            args={"text": message},
+        )

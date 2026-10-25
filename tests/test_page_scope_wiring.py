@@ -262,30 +262,30 @@ async def test_hop_hands_the_seam_to_the_vision_page_axis():
     assert capture["page_scope"]["pages"] == "3"
 
 
-async def test_hop_summary_conversation_survives_an_unknown_page_scope():
+async def test_hop_summary_never_consults_the_page_scope_seam():
     entry = _entry("cap-summary", "summary_gen", {
         "asset_id": {"type": "string", "required": False},
         "pages": {"type": "string", "required": False},
         "context": {"type": "string", "required": False},
         "output_dir": {"type": "string", "required": False},
+        "auto": {"type": "string", "required": False},
     })
     history = [{"role": "user", "content": "什么是 RRF？"},
                {"role": "assistant", "content": "RRF 是倒数排名融合。"}]
 
+    async def _boom(**kwargs):
+        raise AssertionError("cap-summary has no page-scope seam")
+
     out, _, capture = await _hop(
         entry, query="总结一下我们刚才聊的", facts=_facts(),
-        resolver=_resolver(_scope(target=psr.TARGET_CONVERSATION,
-                                  page_scope=psr.SCOPE_UNKNOWN)),
-        history=history)
+        resolver=_boom, history=history)
 
-    # A conversation has no page axis: ``page_scope=unknown`` must not turn the
-    # turn into a document read or an Agent hand-off. The Binder still settles
-    # the asset_id context slot from the facts, and ``summary_gen``'s context
-    # branch ignores it — exactly as before this change.
+    # The summary tool's FIRST call decides the target, the readiness and the save
+    # intent. No page-scope model runs on this lane, so a broken resolver cannot
+    # turn the turn into a document read or an Agent hand-off.
     assert out.requested_action["tool"] == "summary_gen"
-    assert "context" in out.requested_action["args"]
-    assert "RRF 是倒数排名融合" in out.requested_action["args"]["context"]
-    assert "pages" not in out.requested_action["args"]
+    assert out.requested_action["args"] == {"auto": "1", "asset_id": "asset-123"}
+    assert "page_scope" not in capture
 
 
 # ── the acquisition lane is its OWN stage for the wall-clock budget ─────────────

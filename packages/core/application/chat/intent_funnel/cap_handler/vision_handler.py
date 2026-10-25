@@ -42,8 +42,6 @@ re-resolves ``asset_id`` from the same facts, so its value is identical here.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 from core.infrastructure.pdf_pages import parse_pages_spec
 
 from ..argument_acquisition.page_scope_settlement import (
@@ -57,6 +55,7 @@ from .acquisition_failure import (
     AcquisitionFailure,
     turn_context,
 )
+from .deferred_capture import DeferredCapture
 
 # Mirrors binder._CONTEXT_SLOT_SOURCES["asset_id"] exactly: attachment first,
 # then the drive path, then the on-screen viewer. Keeping the two in lockstep
@@ -72,35 +71,6 @@ _CAPTURE_DOC_KINDS = frozenset({"pdf"})
 # so a 1-based page cannot be named or read for these targets. ``office`` is
 # included because the desktop viewer exposes no page image for it either.
 _NON_PAGINATED_VIEWER_KINDS = frozenset({"image", "video", "text", "markdown", "office"})
-
-
-@dataclass(frozen=True)
-class DeferredCapture:
-    """A picture the turn still owes: the client must capture it before execution.
-
-    Emitted ONLY after the funnel has already decided ``vision`` is this turn's tool
-    (the handler never fabricates a capture request for an ordinary chat turn). The
-    orchestrator pauses the stream, the PC client captures/uploads, and the SAME
-    certified turn resumes with ``asset_id`` filled in — no second funnel run.
-    """
-
-    kind: str                       # "page" | "frame" | "image"
-    name: str = ""
-    page: int | None = None
-    t_ms: int | None = None
-    duration_ms: int | None = None
-    question: str = ""
-
-    def request(self) -> dict:
-        """Wire shape of the ``capture-request`` SSE frame (client-facing spec)."""
-        return {
-            "kind": self.kind,
-            "name": self.name,
-            "page": self.page,
-            "t_ms": self.t_ms,
-            "duration_ms": self.duration_ms,
-            "question": self.question,
-        }
 
 
 def _resolve_asset_id(facts) -> str:

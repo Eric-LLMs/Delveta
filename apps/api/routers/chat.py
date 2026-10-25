@@ -303,7 +303,13 @@ async def _run_tool(tool: str, args: dict, ctx) -> dict:
     # Bind a turn context so the sandbox guards see this dispatch exactly like an
     # agent turn: the turn's SOURCE POLICY fence (and any handoff context) applies
     # unchanged; approvals flow through the ApprovalStore the stream pump bound.
-    token = _TURN_CTX.set(AgentTurn(user_msg=ctx.user_text, context=dict(ctx.agent_context or {})))
+    # ``history`` is load-bearing for content tools: translate reads the previous two
+    # chat rows and summary_gen the whole session, and the ACTION lane never re-reads
+    # the transcript from SQL.
+    token = _TURN_CTX.set(AgentTurn(
+        user_msg=ctx.user_text,
+        history=list(getattr(ctx, "history", None) or []),
+        context=dict(getattr(ctx, "agent_context", None) or {})))
     try:
         # ``agent=`` is load-bearing: the sandbox guard and the ASK listener resolve the
         # tool definition via ``exec.agent.runtime`` — without it they would see no tool

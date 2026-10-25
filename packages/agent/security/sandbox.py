@@ -47,17 +47,23 @@ class Sandbox:
     def _effective_permissions(self) -> set[ToolPermission]:
         """The granted permission classes for this turn.
 
-        The base set is the session default (READ). A turn that carries a research handoff
-        (a session driving a Research OS task) additionally grants WRITE + NETWORK, so the
-        agent can advance the task's state machine, write scratch artifacts, and run its
-        search tools (``web_search`` / ``search_social``) without a human approval for every
-        call. The handoff is sunk into ``current_turn().context`` by the chat router and is
-        durable: it is re-synthesized for a session already bound to a task, so turns after
-        the first keep the grant.
+        The base set is the session default (READ). Two turn-carried grants widen it,
+        both sunk into ``current_turn().context`` and both scoped to that turn:
+
+        * ``tool_permissions`` — the surface that received the request runs the user's
+          own tools without a per-call prompt (the chat workbench: read/write/network);
+        * a research ``handoff`` — a session driving a Research OS task grants WRITE +
+          NETWORK so the agent can advance the task's state machine, write scratch
+          artifacts and run its search tools (``web_search`` / ``search_social``). It
+          is durable: re-synthesized for a session already bound to a task, so turns
+          after the first keep the grant.
+
+        Neither grant overrides a DENY fence (see :meth:`_turn_denied`).
         """
         perms: set[ToolPermission] = set(self._permissions)
         turn = current_turn()
         if turn is not None:
+            perms.update(self._turn_granted())
             handoff = (turn.context or {}).get("handoff") or {}
             if handoff.get("kind") == "research":
                 perms.update((ToolPermission.WRITE, ToolPermission.NETWORK))
@@ -66,6 +72,27 @@ class Sandbox:
     def session_permissions(self) -> set[ToolPermission]:
         """The permission classes the current session has been granted."""
         return self._effective_permissions()
+
+    def _turn_granted(self) -> set[ToolPermission]:
+        """Permission classes THIS turn's surface grants on the user's behalf.
+
+        The chat workbench sinks ``context["tool_permissions"]`` (read/write/network):
+        it runs tools the user selected directly and its client only offers a binary
+        Allow/Deny prompt, so an ASK per call merely interrupts the turn. This is a
+        GRANT — the DENY fences from ``_turn_denied`` are still decided first, and a
+        turn without the marker (worker / research kernels) keeps the READ default.
+        Unknown names are ignored rather than widened into a permission.
+        """
+        turn = current_turn()
+        if turn is None:
+            return set()
+        granted: set[ToolPermission] = set()
+        for name in (turn.context or {}).get("tool_permissions") or ():
+            try:
+                granted.add(ToolPermission(str(name).lower()))
+            except ValueError:
+                continue
+        return granted
 
     def grant(self, permission: ToolPermission) -> None:
         self._permissions.add(permission)

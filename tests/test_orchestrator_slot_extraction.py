@@ -9,14 +9,18 @@ model" from ``slot not in draft``:
 * the search trio keeps the turn's sentence VERBATIM as a lossless fallback the
   model may clean (the ``query`` slot); the count (``top_k`` / ``limit``) is NOT a
   model slot — an unstated one stays the tool's default and a stated one is dropped;
-* the three MODEL-lane capabilities (add-term / create-folder / translate) run NO
+* the two MODEL-lane capabilities (add-term / create-folder) run NO
   extraction rule: their ``acquire()`` is the EMPTY ``{}`` and the model fills
   every slot;
+* ``cap-translate`` is RULE_CONTEXT: the sentence itself is the payload, so the
+  handler copies it VERBATIM and the shared extractor is never called. The
+  translate tool's own decision call owns the target language and the source;
 * an EMPTY / INVALID / UNAVAILABLE reply leaves the handler draft intact — the
   original request is never lost, and the SAME Binder remains the final gate (a
   required slot no one filled still lands MISSING -> the Agent);
 * a handler WITHOUT ``slot_plan`` (the asset-anchored handlers: vision / read /
-  pdf) calls no model — the pure-deterministic flow is byte-identical to before.
+  pdf, and the content handlers translate / summary) calls no model — the
+  pure-deterministic flow is byte-identical to before.
 
 The extractor here is a MOCK seam: the real Docker Qwen call is exercised by the
 integration tests at the bottom, which SKIP when the endpoint is not deployed
@@ -38,6 +42,7 @@ from core.application.chat.intent_funnel.argument_acquisition.extractor import (
 )
 from core.application.chat.intent_funnel.cap_handler import roster
 from core.application.chat.intent_funnel.contract import (
+    REASON_ACQUISITION_MISSING,
     REASON_ACQUISITION_POLICY_CONFLICT,
     REASON_BIND_INVALID,
     REASON_BIND_MISSING,
@@ -113,6 +118,8 @@ def _translate_entry() -> CapabilityEntry:
         # no max_len on either side, exactly like the runtime tool schema
         "target_language": {"type": "string", "required": False,
                             "description": "lang"},
+        "asset_id": {"type": "string", "required": False,
+                     "description": "captured video frame"},
     })
 
 
@@ -352,61 +359,41 @@ async def test_create_folder_model_still_missing_name_exits_bind_missing():
     assert trace["fallback"] == REASON_BIND_MISSING
 
 
-# ── translate: text + the semantic target_language both ride the plan ─────────────
+# ── translate: the sentence rides VERBATIM; the shared extractor never runs ──────
 
 
-async def test_translate_text_and_target_language_come_from_the_model():
+async def test_translate_sentence_is_certified_verbatim_without_the_model():
     msg = '把 "machine translation" 翻译成中文'
-    seen: dict = {}
-    out, trace, capture = await _hop(
-        _translate_entry(), query=msg,
-        extractor=_mock({"text": "machine translation", "target_language": "Chinese"},
-                        seen=seen))
 
-    assert set(seen["slots"]) == {"text", "target_language"}
-    assert seen["prompt"] == SYSTEM_EXTRACT
-    assert out.requested_action["args"] == {"text": "machine translation",
-                                            "target_language": "Chinese"}
+    async def _must_not_run(**kw):
+        raise AssertionError("cap-translate must never call the shared extractor")
 
+    out, trace, capture = await _hop(_translate_entry(), query=msg,
+                                     extractor=_must_not_run)
 
-async def test_translate_target_language_unstated_omits_the_slot_for_the_default():
-    msg = "translate 你好，世界"
-    out, trace, capture = await _hop(
-        _translate_entry(), query=msg,
-        extractor=_mock({"text": "你好，世界"}))        # model OMITS an unstated target
-
-    args = out.requested_action["args"]
-    assert args == {"text": "你好，世界"}              # no invented target_language;
-    assert "target_language" not in args               # the EXECUTOR owns the EN default
+    assert out is not None
+    assert out.requested_action["args"] == {"text": msg}
+    assert trace["acquisition_policy"] == "RULE_CONTEXT"
+    assert "extractor" not in capture["acquisition"]
 
 
-async def test_translate_zh_en_mixed_sentence_extracts_text_and_target():
+async def test_translate_ignores_a_wired_extractor_entirely():
     msg = "注意力机制的架构用英语怎么表达"
     seen: dict = {}
-    out, trace, capture = await _hop(
+    out, _trace, _capture = await _hop(
         _translate_entry(), query=msg,
         extractor=_mock({"text": "注意力机制的架构", "target_language": "English"},
                         seen=seen))
 
-    assert set(seen["slots"]) == {"text", "target_language"}
-    assert out.requested_action["args"] == {"text": "注意力机制的架构",
-                                            "target_language": "English"}
+    assert seen == {}                                  # never invoked
+    assert out.requested_action["args"] == {"text": msg}
 
 
-async def test_translate_model_unavailable_exits_bind_missing():
-    msg = '把 "hello world" 翻译成中文'                # no DET text survives now
-    out, trace, capture = await _hop(_translate_entry(), query=msg,
-                                     extractor=_mock(boom=True))
-    assert out is None                                 # required text: nobody filled it
-    assert trace["fallback"] == REASON_BIND_MISSING
-
-
-async def test_translate_no_payload_and_no_model_value_exits_bind_missing():
-    msg = "帮我翻译一下"
-    out, trace, capture = await _hop(_translate_entry(), query=msg,
-                                     extractor=_mock({}))
+async def test_translate_blank_sentence_fails_closed():
+    out, trace, _capture = await _hop(_translate_entry(), query="   ",
+                                      extractor=_mock({}))
     assert out is None
-    assert trace["fallback"] == REASON_BIND_MISSING    # required text: nobody filled it
+    assert trace["fallback"] == REASON_ACQUISITION_MISSING
 
 
 # ── the REAL Docker Qwen call (skips unless the endpoint is deployed) ─────────────
@@ -453,26 +440,3 @@ async def test_real_qwen_search_query_is_never_lost():
     assert seen["prompt"] == SYSTEM_EXTRACT
     assert set(seen["slots"]) == {"query"}
     assert capture["acquisition"]["extractor"] == "Qwen"
-
-
-@pytest.mark.skipif(not _extractor_endpoint_reachable(),
-                    reason="local Qwen extractor endpoint not deployed")
-async def test_real_qwen_translate_payload_is_never_lost():
-    """REAL model call: both translate slots are handed to the model; the payload
-    is never dropped (``text`` is required, so a model miss exits to the Agent)."""
-    from core.application.chat.intent_funnel.argument_acquisition.extractor import extract
-
-    seen: dict = {}
-
-    async def real(*, query, entry, model_slots, bundle, prompt):
-        seen["prompt"] = prompt
-        seen["slots"] = tuple(model_slots)
-        return await extract(query=query, entry=entry, model_slots=model_slots,
-                             bundle=bundle, prompt=prompt)
-
-    msg = '把 "machine translation" 翻译成中文'
-    out, trace, capture = await _hop(_translate_entry(), query=msg, extractor=real)
-    assert seen["prompt"] == SYSTEM_EXTRACT
-    assert set(seen["slots"]) == {"text", "target_language"}
-    if out is not None:                                    # model resolved a payload
-        assert out.requested_action["args"]["text"]

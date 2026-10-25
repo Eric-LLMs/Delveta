@@ -1,28 +1,20 @@
 """cap_handler — TranslateHandler + its wiring into ``_acquisition_hop``.
 
-Layers pinned here:
+The business contract pinned here:
 
-* the HANDLER contract (unit): ``cap-translate``'s payload slot ``text`` and the
-  optional ``target_language`` are BOTH MODEL-owned natural-language slots. Per
-  the acquisition contract the handler runs NO extraction rule — the quote /
-  code-block / instruction-colon delimiter pre-parsing had no requirement basis
-  and is removed. ``acquire()`` returns the EMPTY ``{}`` draft for ANY non-blank
-  sentence and ``None`` only for a blank one; ``slot_plan()`` authorizes the model
-  for both slots. The deterministic English default for an absent
-  ``target_language`` is the EXECUTOR's constant, not a model output, so a model
-  that omits an unnamed target simply leaves the slot absent.
-* the FUNNEL wiring: ``handler_for("cap-translate")`` owns the draft and short-
-  circuits the generic chain; the empty draft is completed by the shared extractor
-  (``deps.argument_extractor``) and only the authorized slots are folded, then the
-  SAME ``_certify`` -> Binder -> ``tool_intent`` gate runs. With the extractor seam
-  ABSENT the required ``text`` stays unfilled and the Binder exits ``BIND_MISSING``.
-* the model-assisted round-trip lives in ``test_orchestrator_slot_extraction``.
+* ``cap-translate`` runs NO Qwen extraction. The handler sends the user's
+  sentence VERBATIM as the Registry-required ``text`` slot; the ``translate``
+  tool's own decision call reads the target language and decides what to
+  translate (sentence / previous chat / document page / video).
+* there is NO ``slot_plan`` and NO ``accepts_page_scope``: the orchestrator's
+  RULE_CONTEXT branch stops at the handler draft and never reaches the shared
+  extractor.
+* a VIDEO viewer defers to the existing client capture lane; the already-decided
+  ``text`` rides ``DeferredCapture.args`` and the resume injects only the
+  uploaded frame's ``asset_id``.
 
-The ``cap-translate`` cases of the frozen Formal-500 argument benchmark
-(``logs/_argbench/dataset_formal500.jsonl``) are reused as a REPRESENTATIVE
-corpus: every one must now yield the EMPTY handler draft. The gold is unchanged
-(it recorded only the ``text`` slot; ``target_language`` is a later, confirmed
-optional slot).
+The ``cap-translate`` cases of the frozen Formal-500 argument benchmark are
+reused as a representative corpus: every one must yield the verbatim draft.
 """
 from __future__ import annotations
 
@@ -34,7 +26,6 @@ from pathlib import Path
 import pytest
 from core.application.chat.intent_funnel import matcher as matcher_mod
 from core.application.chat.intent_funnel import cap_router as cap_router_mod
-from core.application.chat.intent_funnel.argument_acquisition import AcquisitionInputs
 from core.application.chat.intent_funnel.cap_handler import (
     HANDLERS,
     TranslateHandler,
@@ -43,7 +34,6 @@ from core.application.chat.intent_funnel.cap_handler import (
 from core.application.chat.intent_funnel.contract import (
     MATCH_HIT,
     REASON_ACQUISITION_MISSING,
-    REASON_BIND_MISSING,
     MatchResult,
 )
 from core.application.chat.intent_funnel.registry import content_fingerprint
@@ -80,14 +70,14 @@ def _gold_messages() -> list[str]:
 GOLD_MESSAGES = _gold_messages()
 
 
-# ── Layer 0: the handler runs NO rule — the empty draft for every gold case ───────
+# ── Layer 0: the handler copies the sentence for every gold case ────────────────
 
 
 @pytest.mark.skipif(not _GOLD_PRESENT, reason="benchmark not present")
 @pytest.mark.parametrize("message", GOLD_MESSAGES)
-async def test_handler_yields_the_empty_draft_for_every_gold_case(message):
+async def test_handler_copies_the_sentence_for_every_gold_case(message):
     handler = TranslateHandler()
-    assert await handler.acquire(query=message, facts=None) == {}
+    assert await handler.acquire(query=message, facts=None) == {"text": message}
 
 
 @pytest.mark.skipif(not _GOLD_PRESENT, reason="benchmark not present")
@@ -95,19 +85,19 @@ def test_the_representative_corpus_is_the_30_gold_cases():
     assert len(GOLD_MESSAGES) == 30
 
 
-# ── Layer 1: the handler contract (empty draft on any input; None on blank) ───────
+# ── Layer 1: the handler contract ───────────────────────────────────────────────
 
 
 @pytest.mark.parametrize("message", [
-    '把 "hello world" 翻译成中文',                 # quoted — no rule
-    "翻译这句话：Stay hungry, stay foolish",        # instruction colon — no rule
-    "翻译 https://example.com/a",                  # URL — no rule
-    "帮我翻译一下",                                 # pure instruction
+    '把 "hello world" 翻译成中文',
+    "翻译这句话：Stay hungry, stay foolish",
+    "翻译 https://example.com/a",
+    "帮我翻译一下",
     "翻译：好记性不如烂笔头。",
 ])
-async def test_acquire_always_returns_the_empty_draft(message):
+async def test_acquire_returns_the_verbatim_sentence(message):
     handler = TranslateHandler()
-    assert await handler.acquire(query=message, facts=None) == {}
+    assert await handler.acquire(query=message, facts=None) == {"text": message}
 
 
 @pytest.mark.parametrize("blank", ["", "   ", "\n\t", None])
@@ -116,13 +106,11 @@ async def test_blank_query_fails_closed(blank):
     assert await handler.acquire(query=blank, facts=None) is None
 
 
-async def test_slot_plan_authorizes_text_and_target_language():
+def test_no_slot_plan_and_no_page_scope():
+    """Neither seam exists: the RULE_CONTEXT branch can never reach the extractor."""
     handler = TranslateHandler()
-    msg = "帮我翻译一下"
-    draft = await handler.acquire(query=msg, facts=None)
-    plan = handler.slot_plan(query=msg, facts=None, draft=draft)
-    assert set(plan.model_slots) == {"text", "target_language"}
-    assert plan.default_slots == ()          # the English default is the EXECUTOR's
+    assert not hasattr(handler, "slot_plan")
+    assert not getattr(handler, "accepts_page_scope", False)
 
 
 # ── Layer 2: the roster wiring ───────────────────────────────────────────────────
@@ -144,9 +132,9 @@ def test_cap_translate_is_no_longer_on_the_generic_chain():
 # ── Layer 3: the funnel wiring (real cascade, faked Matcher HIT) ─────────────────
 
 
-def _ctx(message: str):
+def _ctx(message: str, *, viewer=None):
     return types.SimpleNamespace(
-        body=types.SimpleNamespace(message=message, attach=None, viewer=None),
+        body=types.SimpleNamespace(message=message, attach=None, viewer=viewer),
         owned_asset_id=None, path_asset_id=None, research_turn=False,
         effective_handoff=None, session_id="s1", history=[],
     )
@@ -161,9 +149,11 @@ def _translate_entry() -> CapabilityEntry:
                                       language=derive_language(q)),),
         parameters={
             "text": {"type": "string", "required": True,
-                     "description": "the text to translate, copied from the sentence"},
+                     "description": "the user's request sentence"},
             "target_language": {"type": "string", "required": False,
-                                "description": "the target language, when the sentence names one"},
+                                "description": "the target language, when named"},
+            "asset_id": {"type": "string", "required": False,
+                         "description": "captured video-frame asset id"},
         },
     )
 
@@ -184,6 +174,17 @@ class _NoSelect:
         raise AssertionError("the selector must never run on a HIT lane")
 
 
+class _ExplodingExtractor:
+    """Any call proves Qwen extraction was re-entered — the test must fail."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def __call__(self, **kwargs):
+        self.calls += 1
+        raise AssertionError("cap-translate must never call the shared extractor")
+
+
 def _wire(monkeypatch, entry: CapabilityEntry):
     view = RegistryLiveView(fingerprint=content_fingerprint([entry]), entries=(entry,))
     rec = _Rec()
@@ -198,7 +199,6 @@ def _wire(monkeypatch, entry: CapabilityEntry):
     monkeypatch.setattr(
         "core.application.chat.intent_funnel.registry.active_view", fake_active)
     monkeypatch.setattr(matcher_mod, "match", fake_match)
-    # A HIT is already decided: the ONE selector must never be consulted.
     monkeypatch.setattr(cap_router_mod, "default_selector", lambda: _NoSelect(rec))
     return rec, view
 
@@ -209,22 +209,15 @@ def _deps(provider, extractor=None):
         acquisition_inputs=provider, argument_extractor=extractor)
 
 
-def _mock_extractor(returned):
-    async def _extract(*, query, entry, model_slots, bundle, prompt):
-        return returned, bundle.source
-    return _extract
-
-
 async def _route(ctx, deps, req):
     from core.application.chat.intent_funnel import funnel
     return await funnel.route(ctx, deps=deps, requirements=req)
 
 
-async def test_translate_turn_certifies_the_model_payload(monkeypatch, caplog):
-    caplog.set_level(logging.INFO, logger=FUNNEL_LOGGER)
+async def test_translate_turn_certifies_the_verbatim_sentence(monkeypatch):
     entry = _translate_entry()
     rec, view = _wire(monkeypatch, entry)
-    extractor = _mock_extractor({"text": "hello world", "target_language": "Chinese"})
+    extractor = _ExplodingExtractor()
     req = TurnRequirements()
     out = await _route(_ctx(MESSAGE), _deps(None, extractor), req)
 
@@ -232,64 +225,23 @@ async def test_translate_turn_certifies_the_model_payload(monkeypatch, caplog):
     act = out.requested_action
     assert act["tool"] == "translate"
     assert act["capability_id"] == "cap-translate"
-    assert act["args"] == {"text": "hello world", "target_language": "Chinese"}
-    assert act["funnel_stage"] == "tool_intent"        # the EXISTING handoff shape
+    assert act["args"] == {"text": MESSAGE}
+    assert act["funnel_stage"] == "tool_intent"
     assert act["funnel_registry_version"] == view.fingerprint
-    assert not rec.legacy                              # no legacy hop
-
-
-async def test_translate_turn_without_a_payload_exits_bind_missing(monkeypatch, caplog):
-    """The empty draft is completed by the extractor; a payload no source filled
-    leaves the required ``text`` MISSING, so the SAME Binder gate exits BIND_MISSING."""
-    caplog.set_level(logging.INFO, logger=FUNNEL_LOGGER)
-    entry = _translate_entry()
-    rec, _view = _wire(monkeypatch, entry)
-    req = TurnRequirements()
-    out = await _route(_ctx("帮我翻译一下"), _deps(None, _mock_extractor({})), req)
-
-    assert out is req
-    lines = [r.getMessage() for r in caplog.records
-             if r.name == FUNNEL_LOGGER and "funnel_trace" in r.getMessage()]
-    assert len(lines) == 1, lines
-    assert re.search(r"fallback_reason=(\S+)", lines[0]).group(1) == REASON_BIND_MISSING
-    assert not rec.legacy                              # no legacy extraction
-
-
-async def test_unnamed_target_language_leaves_the_slot_for_the_executor_default(monkeypatch):
-    """The model names no target: only ``text`` is certified; the executor's own
-    English default owns the absent optional slot."""
-    entry = _translate_entry()
-    rec, _view = _wire(monkeypatch, entry)
-    req = TurnRequirements()
-    out = await _route(_ctx('把 "hello world" 翻译一下'),
-                       _deps(None, _mock_extractor({"text": "hello world"})), req)
-
-    assert out is not req
-    args = out.requested_action["args"]
-    assert args == {"text": "hello world"}
-    assert "target_language" not in args
-
-
-async def test_handler_bypasses_a_forged_generic_chain(monkeypatch, caplog):
-    """A forged MODEL value in the generic chain never reaches the draft."""
-    caplog.set_level(logging.INFO, logger=FUNNEL_LOGGER)
-    entry = _translate_entry()
-    rec, _view = _wire(monkeypatch, entry)
-    poisoned = {"cap-translate": AcquisitionInputs(
-        model_values={"text": "HALLUCINATED-INSTRUCTION-ECHO"})}
-    req = TurnRequirements()
-    out = await _route(_ctx(MESSAGE),
-                       _deps(lambda cid: poisoned.get(cid),
-                             _mock_extractor({"text": "hello world"})), req)
-
-    assert out is not req
-    assert out.requested_action["args"] == {"text": "hello world"}
+    assert extractor.calls == 0
     assert not rec.legacy
 
 
+async def test_an_absent_extractor_changes_nothing(monkeypatch):
+    entry = _translate_entry()
+    _wire(monkeypatch, entry)
+    out = await _route(_ctx(MESSAGE), _deps(None, None), TurnRequirements())
+    assert out is not None
+    assert out.requested_action["args"] == {"text": MESSAGE}
+
+
 async def test_handler_returning_none_is_acquisition_missing(monkeypatch):
-    """The orchestrator branch: a handler with no legal draft (``None``) exits
-    the turn to the Agent with ``ACQUISITION_MISSING`` — fail-closed."""
+    """A handler with no legal draft (``None``) exits to the Agent — fail-closed."""
     from core.application.chat.intent_funnel import orchestrator as orch
     from core.application.chat.intent_funnel.cap_handler import roster
 
@@ -309,3 +261,57 @@ async def test_handler_returning_none_is_acquisition_missing(monkeypatch):
 
     assert out is None
     assert trace["fallback"] == REASON_ACQUISITION_MISSING
+
+
+# ── Layer 4: the video deferred-capture lane ────────────────────────────────────
+
+
+def _facts(**overrides):
+    from core.application.chat.intent_funnel.contract import TurnFacts
+
+    base = dict(has_viewer=True, viewer_kind="video", viewer_name="lecture.mp4",
+                viewer_t_ms=12_500, viewer_duration_ms=600_000,
+                viewer_provenance="local")
+    base.update(overrides)
+    return TurnFacts(**base)
+
+
+def test_video_turn_defers_to_the_client_frame():
+    handler = TranslateHandler()
+    capture = handler.capture_for(query="这段视频英文怎么说", facts=_facts())
+    assert capture is not None
+    assert capture.kind == "frame"
+    assert capture.name == "lecture.mp4"
+    assert capture.t_ms == 12_500
+    assert capture.args == {"text": "这段视频英文怎么说"}
+    assert "asset_id" not in capture.args        # the resume injects the upload
+    assert capture.request()["question"] == ""
+
+
+def test_an_explicit_attachment_wins_over_the_capture():
+    handler = TranslateHandler()
+    assert handler.capture_for(
+        query="翻译这份资料", facts=_facts(attachment_asset_id="a1")) is None
+
+
+def test_a_cloud_video_still_defers_to_the_client_frame():
+    """A video viewer's OWN asset is the video file, never a readable picture:
+    it must not short-circuit the capture the way an attachment does."""
+    handler = TranslateHandler()
+    capture = handler.capture_for(
+        query="这段视频英文怎么说",
+        facts=_facts(viewer_asset_id="video-asset-9", viewer_provenance="cloud"))
+    assert capture is not None
+    assert capture.args == {"text": "这段视频英文怎么说"}
+    assert "asset_id" not in capture.args
+
+
+@pytest.mark.parametrize("kind", ["pdf", "office", "text", "markdown", "image"])
+def test_non_video_viewers_never_ask_for_a_capture(kind):
+    handler = TranslateHandler()
+    assert handler.capture_for(query="翻译这一页", facts=_facts(viewer_kind=kind)) is None
+
+
+def test_no_viewer_never_asks_for_a_capture():
+    handler = TranslateHandler()
+    assert handler.capture_for(query="翻译这句话", facts=_facts(has_viewer=False)) is None
