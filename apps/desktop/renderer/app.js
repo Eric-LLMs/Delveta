@@ -11,7 +11,6 @@
   // block further down for the behaviour; these are only element handles.
   const wsSession = document.getElementById("ws-session");
   const wsSessionTrigger = document.getElementById("ws-session-trigger");
-  const wsSessionName = document.getElementById("ws-session-name");
   const wsSessionNew = document.getElementById("ws-session-new");
   const wsSessionMenu = document.getElementById("ws-session-menu");
   const wsSessionList = document.getElementById("ws-session-list");
@@ -2364,14 +2363,13 @@
     }
   }
 
-  // The chat header shows the session name two ways depending on mode: the plain title
-  // (Chats/Research) or the WorkSpace picker trigger (Files). Keep both in lockstep so a
-  // rename or a first-turn provisional title never leaves one of them stale. An empty
-  // text is the WorkSpace "no session selected" state: the trigger then names itself
-  // ("Sessions"), matching its static markup; Chat callers always pass an explicit label.
+  // The chat header title, shown in Chats/Research (hidden in Files). The WorkSpace picker
+  // trigger is a fixed "Sessions" label BY DESIGN: the open conversation is identified
+  // inside the dropdown (row title + active marker) and by the scope strip, never on the
+  // button — a first-message-derived provisional title must not crowd out the New Session
+  // / Minimize / Dock controls in a narrow panel.
   function setSessionHeading(text) {
     chatTitle.textContent = text;
-    if (wsSessionName) wsSessionName.textContent = text || "Sessions";
   }
 
   // New chat: drop the active session reference and clear the pane.
@@ -2387,8 +2385,8 @@
     chatLog.innerHTML = "";
     if (state.mode === "files") {
       // A blank conversation is an explicit choice: it also forgets the remembered
-      // WorkSpace conversation so a reload opens the picker label instead of resurrecting
-      // the old one. No active title → the trigger reads "Sessions".
+      // WorkSpace conversation so a reload opens a clean picker instead of resurrecting
+      // the old one. The trigger label is static; only the (hidden) chat title resets.
       setWsPointer(null);
       state.wsScope = {};
       renderWsScope();
@@ -2507,7 +2505,7 @@
         if (next !== (s.title || "")) {
           try {
             const saved = await renameSession(s.id, next);
-            if (state.sessionId === s.id) setSessionHeading(saved || next || (state.mode === "files" ? "" : "New chat"));
+            if (state.sessionId === s.id) setSessionHeading(saved || next || "New chat");
           } catch (err) {
             Viewer.toast(`Rename failed: ${err.message}`);
           }
@@ -7364,10 +7362,7 @@
       chatLog.innerHTML = "";
       state.renderedMsgIds = new Set(); // every row below is now on screen; live refresh dedupes against it
       for (const m of data.messages) appendMsgRow(m);
-      const heading = data.title || (data.messages[0] ? data.messages[0].content.slice(0, 30) : "");
-      // A WorkSpace session with nothing to name falls back to the picker label, never to
-      // the Chat vocabulary (an empty heading renders "Sessions" on the trigger).
-      setSessionHeading(heading || (state.mode === "files" ? "" : "Chat"));
+      setSessionHeading(data.title || (data.messages[0] ? data.messages[0].content.slice(0, 30) : "Chat"));
       // WorkSpace: the session's recorded scope comes back with the detail payload, and
       // opening a session re-arms the reload pointer.
       if (state.mode === "files") {
@@ -7645,7 +7640,6 @@
     // Clear immediately: the previous conversation must never linger under the new name.
     chatLog.innerHTML = "";
     state.renderedMsgIds = new Set();
-    wsSessionName.textContent = "Loading…";
     // A picker switch is a conversation transition just like a mode switch: take part in
     // the epoch guard so two rapid switches cannot interleave their restores.
     const ok = await resumeSession(id, { silent: true, modeSeq: ++state.modeSeq });

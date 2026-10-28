@@ -230,11 +230,12 @@
             <div id="chat-topbar" class="chat-topbar">
               <span id="chat-panel-label" class="chat-panel-label hidden">Assistant</span>
               <span id="chat-title">Chat</span>
-              <!-- WorkSpace assistant session picker (Files mode only): the current session
-                   name (or "Sessions" when none is open) + a New Session button. The dropdown
-                   lists this user's WorkSpace sessions (kind=workspace); each row carries the
-                   same ⋯ menu as the Chat sidebar (Pin / Rename / Import / Generate / Delete),
-                   so a WorkSpace conversation is a first-class object, not implicit panel state. -->
+              <!-- WorkSpace assistant session picker (Files mode only): a fixed "Sessions"
+                   trigger — the open conversation is never shown on the button, only inside
+                   the dropdown (row title + active marker). The dropdown lists this user's
+                   WorkSpace sessions (kind=workspace); each row carries the same ⋯ menu as
+                   the Chat sidebar (Pin / Rename / Import / Generate / Delete), so a
+                   WorkSpace conversation is a first-class object, not implicit panel state. -->
               <div id="ws-session" class="ws-session">
                 <button id="ws-session-trigger" type="button" class="ws-session-trigger" title="Workspace sessions — click to view, switch, rename or delete" aria-haspopup="true" aria-expanded="false">
                   <span id="ws-session-name" class="ws-session-name">Sessions</span>
