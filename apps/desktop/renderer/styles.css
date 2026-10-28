@@ -567,24 +567,43 @@ body {
   border-radius: 2px;
   padding: 0 1px;
 }
-/* Gemini-style ⋯ row menu button: revealed on hover, three vertical dots. */
-.session-item .session-more {
-  flex-shrink: 0;
+/* Session row menu trigger — one shared look for the Chat sidebar and the WorkSpace
+   picker: a 36×36 chip with clear vertical dots, ALWAYS visible (no hover-reveal),
+   pinned to the right end of the row and vertically centred. The title flexes and
+   ellipsizes into the remaining width, so a long name can never squeeze the chip.
+   fg-mix backgrounds stay readable on plain, hovered and accent-tinted rows; hover
+   deepens the chip, press adds a 1px sink for explicit click feedback.
+   The ws selector carries the #chat-header id because the generic
+   `#chat-header button` pill rule (padding / 999px radius / border) would otherwise win. */
+.session-item .session-more,
+#chat-header .ws-session-more {
+  flex: none;
+  align-self: center;
+  width: 36px;
+  height: 36px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: none;
+  padding: 0;
   border: none;
-  cursor: pointer;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--fg) 9%, transparent);
   color: var(--fg-dim);
-  padding: 4px 5px;
-  border-radius: 4px;
-  opacity: 0;
-  transition: opacity 0.12s;
+  cursor: pointer;
+  transition: background-color var(--dur) var(--ease), color var(--dur) var(--ease), transform 0.06s;
 }
-.session-item:hover .session-more,
-.session-item .session-more:focus-visible { opacity: 1; }
-.session-item .session-more:hover { color: var(--fg); background: var(--bg-soft-2); }
+.session-item .session-more:hover,
+#chat-header .ws-session-more:hover {
+  background: color-mix(in srgb, var(--fg) 16%, transparent);
+  color: var(--fg);
+}
+.session-item .session-more:active,
+#chat-header .ws-session-more:active {
+  background: color-mix(in srgb, var(--fg) 24%, transparent);
+  transform: translateY(1px);
+}
+.session-item .session-more svg,
+#chat-header .ws-session-more svg { width: 18px; height: 18px; }
 .session-item .session-pinned {
   flex-shrink: 0;
   display: inline-flex;
@@ -593,7 +612,7 @@ body {
 /* A session with a running import job: locked + dimmed, status under the title. */
 .session-item.session-importing { opacity: 0.75; cursor: default; }
 .session-item.session-importing .session-summary { color: var(--fg-dim); }
-.session-item.session-importing .session-more { opacity: 0; pointer-events: none; }
+.session-item.session-importing .session-more { opacity: 0.35; pointer-events: none; }
 .session-item .session-import-status {
   font-size: 11px;
   color: var(--accent);
@@ -1885,25 +1904,14 @@ sup.viewer-cite:hover { text-decoration: underline; }
   line-height: 1.35;
   color: var(--fg-dim);
 }
-/* Hover-revealed like the Chat sidebar's ⋯; stays hidden on locked (busy) rows. */
-.ws-session-more {
-  flex: none;
-  align-self: center;
-  width: 24px;
-  justify-content: center;
-  color: var(--fg-dim);
-  opacity: 0;
-  transition: opacity 0.12s;
-}
-.ws-session-item:hover .ws-session-more,
-.ws-session-item .ws-session-more:focus-visible { opacity: 1; }
+/* Row layout for the WorkSpace picker: main text flexes (title ellipsizes), the shared
+   ⋮ chip (see the .session-more block) sits right-aligned, vertically centred. */
 .ws-session-item.session-importing,
 .ws-session-item.session-generating { opacity: 0.75; }
 .ws-session-item.session-importing .ws-session-main,
 .ws-session-item.session-generating .ws-session-main { cursor: default; }
 .ws-session-item.session-importing .ws-session-more,
-.ws-session-item.session-generating .ws-session-more { opacity: 0; pointer-events: none; }
-.ws-session-more svg { width: 14px; height: 14px; }
+.ws-session-item.session-generating .ws-session-more { opacity: 0.35; pointer-events: none; }
 .ws-session-empty { padding: 8px; font-size: 11.5px; color: var(--fg-dim); }
 .ws-session-menu-note {
   margin: 0 6px 2px;
@@ -2114,7 +2122,7 @@ body.resizing-ew { cursor: ew-resize; }
    runs; the rest of the app stays interactive. */
 .session-item.session-generating { opacity: 0.75; cursor: default; }
 .session-item.session-generating .session-summary { color: var(--fg-dim); }
-.session-item.session-generating .session-more { opacity: 0; pointer-events: none; }
+.session-item.session-generating .session-more { opacity: 0.35; pointer-events: none; }
 .session-item .session-gen-status {
   display: inline-flex; align-items: center; gap: 6px;
   font-size: 11px; color: var(--accent); font-weight: 600;
@@ -3470,7 +3478,9 @@ body.resizing-ew { cursor: ew-resize; }
 #sessions-list .session-summary,
 #cd-list .cd-name,
 #research .research-row-main { flex: 1 1 auto; min-width: 0; }
-#sessions-list .session-summary,
+/* Session titles ellipsize inside the row (see .session-summary above): the ⋮ chip must
+   stay at the visible right edge and must never be pushed off by a long name. The other
+   lists keep the older max-content behaviour. */
 #cd-list .cd-name,
 #research .research-row-title,
 #research .research-row-sub {
