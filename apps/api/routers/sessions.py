@@ -95,18 +95,24 @@ async def _backfill_imported_rag(session_factory, user_id: UUID, session_id: UUI
 async def get_sessions(
     user: AuthUser = Depends(require_user),
     q: str | None = None,
+    kind: str = "chat",
 ) -> dict:
-    """List the authenticated user's chat sessions (newest first).
+    """List the authenticated user's sessions (newest first) for one surface.
 
-    ``?q=`` filters by title / summary / message content (case-insensitive substring).
-    Research sessions are excluded: a research session is a different kind (one per research
-    task) tracked in the Research monitor, so the chat sidebar never shows it.
+    ``?kind=chat`` (default) lists ordinary chats; ``?kind=workspace`` lists WorkSpace
+    assistant sessions. The two lanes are disjoint: the chat sidebar never shows a
+    WorkSpace conversation and vice versa. Research sessions (type 1) belong to their
+    task and are listed by neither lane. ``?q=`` filters by title / summary / message
+    content (case-insensitive substring).
     """
+    if kind not in ("chat", "workspace"):
+        raise HTTPException(status_code=400, detail="kind must be 'chat' or 'workspace'")
     q = (q or "").strip()
-    sessions = await list_sessions(SessionLocal, user.user_id, q or None)
-    # Research task sessions (type 1) are a different kind than chats: they are opened from
-    # the Research monitor, never listed in the chat sidebar.
-    return {"sessions": [s for s in sessions if s.get("type") != 1]}
+    sessions = await list_sessions(SessionLocal, user.user_id, q or None, kind=kind)
+    # The lane filter already ran in SQL; re-assert it at the route boundary so a session of
+    # another kind can never leak into this list (research-session isolation contract).
+    lane_type = 0 if kind == "chat" else 2
+    return {"sessions": [s for s in sessions if s.get("type") == lane_type]}
 
 
 @router.post("/sessions/attachments")
@@ -207,6 +213,9 @@ async def get_session_messages(session_id: UUID, user: AuthUser = Depends(requir
     return {
         "session_id": str(session_id),
         "title": detail["title"],
+        "type": sess.type,
+        # Descriptive scope (WorkSpace sessions); ``{}`` for chat/research sessions.
+        "meta": sess.meta or {},
         "compaction": detail["compaction"],
         "messages": detail["messages"],
     }
@@ -216,17 +225,28 @@ async def get_session_messages(session_id: UUID, user: AuthUser = Depends(requir
 async def rename_session(
     session_id: UUID, body: SessionRenameRequest, user: AuthUser = Depends(require_user)
 ):
-    """Rename a session. An empty title resets it to ``NULL`` so auto-naming kicks in again."""
+    """Rename a session and/or refresh its descriptive scope metadata.
+
+    An empty title resets it to ``NULL`` so auto-naming kicks in again. ``meta`` is merged
+    key-by-key into ``sessions.meta`` — a key sent as ``null`` is stored as ``null`` (e.g.
+    "this session is no longer pinned to a folder"), omitted keys are left untouched.
+    """
     async with SessionLocal() as session:
         sess = (
             await session.execute(select(SessionModel).where(SessionModel.id == session_id))
         ).scalar_one_or_none()
         if sess is None or sess.user_id != user.user_id:
             raise HTTPException(status_code=404, detail="session not found")
-        title = (body.title or "").strip()
-        sess.title = title or None
+        # ``null`` title keeps its historical meaning ("reset to auto-naming"); only a
+        # payload that omits ``title`` leaves the current name alone.
+        if "title" in body.model_fields_set:
+            title = (body.title or "").strip()
+            sess.title = title or None
+        if body.meta is not None:
+            # Reassign (not in-place mutate) so SQLAlchemy sees a dirty JSONB value.
+            sess.meta = {**(sess.meta or {}), **body.meta}
         await session.commit()
-        return {"title": sess.title}
+        return {"title": sess.title, "meta": sess.meta or {}}
 
 
 @router.delete("/sessions/{session_id}")

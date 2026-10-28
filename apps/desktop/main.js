@@ -540,11 +540,18 @@ function registerIpcHandlers() {
     writePrefs({ [key]: value });
   });
 
-  // Reflect the open workspace's folder name in the File menu label ("" resets it).
-  ipcMain.on("update-workspace-label", (_event, name) => {
-    if (openWorkspaceMenuItem) {
-      openWorkspaceMenuItem.label = name ? `Open Workspace: ${name}` : "Open Workspace…";
-    }
+  // Settings → Application. The native View menu was removed; these keep Reload,
+  // Full screen and Developer Tools reachable from the in-app settings modal.
+  ipcMain.on("app-reload", (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (win) win.reload();
+  });
+  ipcMain.on("app-toggle-fullscreen", (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (win) win.setFullScreen(!win.isFullScreen());
+  });
+  ipcMain.on("app-toggle-devtools", (event) => {
+    if (event.sender && !event.sender.isDestroyed()) event.sender.toggleDevTools();
   });
 
   // Check for a newer release on GitHub by comparing the latest tag to the
@@ -822,83 +829,6 @@ function registerIpcHandlers() {
   });
 }
 
-let openWorkspaceMenuItem = null;
-
-function setupMenu() {
-  const menu = Menu.buildFromTemplate([
-    {
-      label: "File",
-      submenu: [
-        {
-          id: "open-workspace",
-          label: "Open Workspace…",
-          click: () => {
-            const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
-            if (win) win.webContents.send("menu-open-workspace");
-          },
-        },
-        {
-          label: "Add File to Workspace",
-          click: () => {
-            const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
-            if (win) win.webContents.send("menu-add-file");
-          },
-        },
-      ],
-    },
-    {
-      label: "Edit",
-      submenu: [
-        { role: "undo" }, { role: "redo" }, { type: "separator" },
-        { role: "cut" }, { role: "copy" }, { role: "paste" }, { role: "selectAll" },
-      ],
-    },
-    {
-      label: "View",
-      submenu: [
-        { role: "reload" }, { type: "separator" },
-        { role: "resetZoom" }, { role: "zoomIn" }, { role: "zoomOut" }, { type: "separator" },
-        {
-          label: "Font Size…",
-          click: () => {
-            const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
-            if (win) win.webContents.send("menu-settings", "window");
-          },
-        },
-        { type: "separator" },
-        { role: "togglefullscreen" },
-        { role: "toggleDevTools" },
-      ],
-    },
-    {
-      label: "Help",
-      submenu: [
-        {
-          label: "Help & Feedback",
-          click: () => {
-            const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
-            if (win) win.webContents.send("menu-settings", "help");
-          },
-        },
-        {
-          label: "About",
-          click: () => {
-            const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
-            if (win) win.webContents.send("menu-settings", "about");
-          },
-        },
-        { type: "separator" },
-        {
-          label: "Delveta on GitHub",
-          click: () => shell.openExternal("https://github.com/Eric-LLMs/Delveta"),
-        },
-      ],
-    },
-  ]);
-  Menu.setApplicationMenu(menu);
-  openWorkspaceMenuItem = menu.getMenuItemById("open-workspace");
-}
-
 function createWindow() {
   const saved = readPrefs().window || {};
   const remember = saved.rememberBounds !== false;
@@ -983,7 +913,8 @@ app.whenReady().then(() => {
     return grant;
   });
   registerIpcHandlers();
-  setupMenu();
+  // The workbench owns its navigation; no native application menu on any platform.
+  Menu.setApplicationMenu(null);
   createWindow();
 
   app.on("activate", () => {

@@ -3,60 +3,152 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Delveta Workbench</title>
+    <title>Delveta</title>
     <link rel="stylesheet" href="styles.css" />
     <!-- KaTeX (vendored; fonts resolve relative to vendor/fonts/) -->
     <link rel="stylesheet" href="vendor/katex.min.css" />
   </head>
   <body>
-    <div id="app">
+    <!-- Inline icon sprite: one 24×24 stroke set shared by the shell, the renderer modules
+         (via window.dvIconHTML) and the static markup. No icon-library dependency. -->
+    <svg id="dv-icon-sprite" class="icon-sprite" aria-hidden="true" focusable="false">
+      <symbol id="i-chat" viewBox="0 0 24 24"><path d="M20.5 11.6a8.5 8.5 0 0 1-8.5 8.4 8.8 8.8 0 0 1-3.9-.9L3.5 20.5l1.2-4.3A8.4 8.4 0 1 1 20.5 11.6z"/><path d="M8.2 10.8h7.6M8.2 14.2h4.8"/></symbol>
+      <symbol id="i-workspace" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M9.2 4v16M12.8 9.5h5M12.8 13.5h3.4"/></symbol>
+      <symbol id="i-research" viewBox="0 0 24 24"><path d="M9.5 3h5"/><path d="M10.5 3v5.2l-4.1 7.8a2.6 2.6 0 0 0 2.3 3.9h6.6a2.6 2.6 0 0 0 2.3-3.9l-4.1-7.8V3"/><path d="M7.6 14.5h8.8"/></symbol>
+      <symbol id="i-settings" viewBox="0 0 24 24"><path d="M21.16 10.39 21.16 13.61 18.76 13.81 18.06 15.50 19.62 17.33 17.33 19.62 15.50 18.06 13.81 18.76 13.61 21.16 10.39 21.16 10.19 18.76 8.50 18.06 6.67 19.62 4.38 17.33 5.94 15.50 5.24 13.81 2.84 13.61 2.84 10.39 5.24 10.19 5.94 8.50 4.38 6.67 6.67 4.38 8.50 5.94 10.19 5.24 10.39 2.84 13.61 2.84 13.81 5.24 15.50 5.94 17.33 4.38 19.62 6.67 18.06 8.50 18.76 10.19Z"/><circle cx="12" cy="12" r="3.1"/></symbol>
+      <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4.5 21a7.5 7.5 0 0 1 15 0"/></symbol>
+      <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3.5 7.5A2.5 2.5 0 0 1 6 5h3.2l2 2.6H18a2.5 2.5 0 0 1 2.5 2.5v8.4A2.5 2.5 0 0 1 18 21H6a2.5 2.5 0 0 1-2.5-2.5z"/></symbol>
+      <symbol id="i-folder-plus" viewBox="0 0 24 24"><path d="M3.5 7.5A2.5 2.5 0 0 1 6 5h3.2l2 2.6H18a2.5 2.5 0 0 1 2.5 2.5v8.4A2.5 2.5 0 0 1 18 21H6a2.5 2.5 0 0 1-2.5-2.5z"/><path d="M12 12v5M9.5 14.5h5"/></symbol>
+      <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H7a2.5 2.5 0 0 0-2.5 2.5v13A2.5 2.5 0 0 0 7 21h10a2.5 2.5 0 0 0 2.5-2.5V8.5z"/><path d="M14 3v5.5h5.5"/></symbol>
+      <symbol id="i-file-text" viewBox="0 0 24 24"><path d="M14 3H7a2.5 2.5 0 0 0-2.5 2.5v13A2.5 2.5 0 0 0 7 21h10a2.5 2.5 0 0 0 2.5-2.5V8.5z"/><path d="M14 3v5.5h5.5"/><path d="M8.5 13h7M8.5 16.5h4.5"/></symbol>
+      <symbol id="i-file-image" viewBox="0 0 24 24"><path d="M14 3H7a2.5 2.5 0 0 0-2.5 2.5v13A2.5 2.5 0 0 0 7 21h10a2.5 2.5 0 0 0 2.5-2.5V8.5z"/><path d="M14 3v5.5h5.5"/><circle cx="10" cy="13" r="1.2"/><path d="M8.5 17.5l2.5-2.4 1.7 1.7 1.4-1.3 1.4 1.4"/></symbol>
+      <symbol id="i-file-audio" viewBox="0 0 24 24"><path d="M14 3H7a2.5 2.5 0 0 0-2.5 2.5v13A2.5 2.5 0 0 0 7 21h10a2.5 2.5 0 0 0 2.5-2.5V8.5z"/><path d="M14 3v5.5h5.5"/><path d="M8.5 15.5v-4M11 17v-7M13.5 15.5v-4M16 16.5v-5"/></symbol>
+      <symbol id="i-file-slides" viewBox="0 0 24 24"><path d="M14 3H7a2.5 2.5 0 0 0-2.5 2.5v13A2.5 2.5 0 0 0 7 21h10a2.5 2.5 0 0 0 2.5-2.5V8.5z"/><path d="M14 3v5.5h5.5"/><rect x="8.5" y="12" width="7" height="4.6" rx="0.8"/><path d="M12 16.6v1.2"/></symbol>
+      <symbol id="i-file-sheet" viewBox="0 0 24 24"><path d="M14 3H7a2.5 2.5 0 0 0-2.5 2.5v13A2.5 2.5 0 0 0 7 21h10a2.5 2.5 0 0 0 2.5-2.5V8.5z"/><path d="M14 3v5.5h5.5"/><rect x="8.5" y="12.5" width="7" height="5" rx="0.8"/><path d="M8.5 15h7M12 12.5v5"/></symbol>
+      <symbol id="i-archive" viewBox="0 0 24 24"><rect x="3.5" y="4" width="17" height="5" rx="1.5"/><path d="M5 9v9.5A2.5 2.5 0 0 0 7.5 21h9a2.5 2.5 0 0 0 2.5-2.5V9"/><path d="M10 13h4"/></symbol>
+      <symbol id="i-cloud" viewBox="0 0 24 24"><path d="M17.5 19H7.2A4.2 4.2 0 0 1 6.6 10.7 6 6 0 0 1 18.2 9.5 4.6 4.6 0 0 1 17.5 19z"/></symbol>
+      <symbol id="i-monitor" viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="12" rx="2"/><path d="M9 20h6M12 16.5V20"/></symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+      <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+      <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.2 4.2"/></symbol>
+      <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 11.5a8 8 0 1 1-2.4-5.7"/><path d="M20 4v5h-5"/></symbol>
+      <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3.5 6.5h17"/><path d="M18.5 6.5V19a2 2 0 0 1-2 2h-9a2 2 0 0 1-2-2V6.5M8.5 6.5V4.5a1.5 1.5 0 0 1 1.5-1.5h4a1.5 1.5 0 0 1 1.5 1.5v2"/><path d="M10 10.5v6M14 10.5v6"/></symbol>
+      <symbol id="i-chevron-right" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></symbol>
+      <symbol id="i-chevron-down" viewBox="0 0 24 24"><path d="M5 9l7 7 7-7"/></symbol>
+      <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="19" cy="12" r="1.4"/></symbol>
+      <symbol id="i-pin" viewBox="0 0 24 24"><path d="M12 17v5"/><path d="M9 10.8a2 2 0 0 1-1.1 1.8l-1.8.9A2 2 0 0 0 5 15.2V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.8a2 2 0 0 0-1.1-1.8l-1.8-.9A2 2 0 0 1 15 10.8V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1z"/></symbol>
+      <symbol id="i-edit" viewBox="0 0 24 24"><path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"/><path d="M14 6l4 4"/></symbol>
+      <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="11.5" height="11.5" rx="2"/><path d="M5.5 15V5.5a2 2 0 0 1 2-2H15"/></symbol>
+      <symbol id="i-volume" viewBox="0 0 24 24"><path d="M11 5 6.5 9H3v6h3.5L11 19z"/><path d="M15 9.5a4 4 0 0 1 0 5M17.5 7a7 7 0 0 1 0 10"/></symbol>
+      <symbol id="i-import" viewBox="0 0 24 24"><path d="M12 3.5v10M8 10l4 3.5 4-3.5"/><path d="M4.5 16.5v2A2.5 2.5 0 0 0 7 21h10a2.5 2.5 0 0 0 2.5-2.5v-2"/></symbol>
+      <symbol id="i-thumbs-up" viewBox="0 0 24 24"><path d="M7.5 10.5v9.5H4.5v-9.5z"/><path d="M7.5 10.5 11.7 3a1.8 1.8 0 0 1 1.8 1.8v4.2h4.3a2 2 0 0 1 2 2.4l-1.5 6a2 2 0 0 1-2 1.6H7.5"/></symbol>
+      <symbol id="i-thumbs-down" viewBox="0 0 24 24"><path d="M7.5 13.5V4H4.5v9.5z"/><path d="M7.5 13.5 11.7 21a1.8 1.8 0 0 0 1.8-1.8v-4.2h4.3a2 2 0 0 0 2-2.4l-1.5-6a2 2 0 0 0-2-1.6H7.5"/></symbol>
+      <symbol id="i-mindmap" viewBox="0 0 24 24"><path d="M12 3v5M12 8l4 4M12 8l-4 4"/><circle cx="6" cy="16" r="2"/><circle cx="12" cy="16" r="2"/><circle cx="18" cy="16" r="2"/></symbol>
+      <symbol id="i-slides" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="11.5" rx="2"/><path d="M12 15.5V20M8.5 20h7M7.5 12l2.5-2.5 2 2 3-3.5"/></symbol>
+      <symbol id="i-sparkles" viewBox="0 0 24 24"><path d="M12 3.5l1.7 4.6 4.6 1.7-4.6 1.7L12 16.1l-1.7-4.6L5.7 9.8l4.6-1.7z"/><path d="M18.5 15.5l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z"/></symbol>
+      <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.5 3.8 5.6 3.8 9S14.5 18.5 12 21c-2.5-2.5-3.8-5.6-3.8-9S9.5 5.5 12 3z"/></symbol>
+      <symbol id="i-book" viewBox="0 0 24 24"><path d="M2.5 3.5h6a3.5 3.5 0 0 1 3.5 3.5v14a3 3 0 0 0-3-3H2.5z"/><path d="M21.5 3.5h-6A3.5 3.5 0 0 0 12 7v14a3 3 0 0 1 3-3h6.5z"/></symbol>
+      <symbol id="i-paperclip" viewBox="0 0 24 24"><path d="M20 11.5 11.5 20a5 5 0 0 1-7-7l9-9a3.5 3.5 0 0 1 5 5l-9 9a2 2 0 0 1-3-3l8-8"/></symbol>
+      <symbol id="i-camera" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h3.5l2-3h5l2 3H20a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></symbol>
+      <symbol id="i-check" viewBox="0 0 24 24"><path d="M4.5 12.5l5 5 10-11"/></symbol>
+      <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3.5 2.5 20h19z"/><path d="M12 9.5v5M12 17.5v.2"/></symbol>
+      <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4.5 19 12 7 19.5z"/></symbol>
+      <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="1.5"/></symbol>
+      <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3 4 6v5c0 5 3.5 8.5 8 10 4.5-1.5 8-5 8-10V6z"/></symbol>
+      <symbol id="i-log-out" viewBox="0 0 24 24"><path d="M9 4H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4"/><path d="M16 8l4 4-4 4M20 12H9"/></symbol>
+      <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/></symbol>
+      <symbol id="i-eye-off" viewBox="0 0 24 24"><path d="M3 3l18 18"/><path d="M10.6 6.1A9.7 9.7 0 0 1 12 6c6 0 9.5 6 9.5 6a16.6 16.6 0 0 1-3.4 4"/><path d="M6.2 7.7A16.8 16.8 0 0 0 2.5 12S6 18 12 18a9.8 9.8 0 0 0 4.3-1"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></symbol>
+      <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 13.5a5 5 0 0 0 7.1 0l1.9-1.9a5 5 0 0 0-7.1-7.1L10.8 5.6"/><path d="M14 10.5a5 5 0 0 0-7.1 0l-1.9 1.9a5 5 0 0 0 7.1 7.1l1.1-1.1"/></symbol>
+      <symbol id="i-activity" viewBox="0 0 24 24"><path d="M3 12h4l2.5-6 4 12 2.5-6h5"/></symbol>
+      <symbol id="i-layers" viewBox="0 0 24 24"><path d="M12 3.5 4 7.5l8 4 8-4z"/><path d="M4 12l8 4 8-4"/><path d="M4 16.5l8 4 8-4"/></symbol>
+      <symbol id="i-code" viewBox="0 0 24 24"><path d="M8 7 3.5 12 8 17M16 7l4.5 5L16 17M13.5 4l-3 16"/></symbol>
+    </svg>
+    <div id="app" data-mode="chats" class="chat-fills">
+      <header id="workbench-bar">
+        <div class="wb-topline">
+          <div class="wb-left">
+            <button id="sidebar-toggle" type="button" title="Collapse / expand the navigation panel" aria-label="Collapse / expand the navigation panel"><svg class="icon" aria-hidden="true"><use href="#i-chevron-right"></use></svg></button>
+            <div class="wb-brand">
+              <span class="wb-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5 4 7.5l8 4 8-4z"/><path d="M4 12l8 4 8-4"/><path d="M4 16.5l8 4 8-4"/></svg></span>
+              <span class="wb-title">Delveta</span>
+            </div>
+          </div>
+          <div class="wb-right">
+            <button id="user-menu-trigger" type="button" title="Account menu">
+              <span id="user-avatar" class="user-avatar guest"><svg class="icon" aria-hidden="true"><use href="#i-user"></use></svg></span>
+              <span id="user-name" class="user-name">Sign in</span>
+            </button>
+            <button id="top-cloud-drive" type="button" class="wb-action hidden" data-top-action="cloud-drive" title="Open Cloud Drive" aria-label="Open Cloud Drive">
+              <span class="wb-action-icon"><svg class="icon" aria-hidden="true"><use href="#i-cloud"></use></svg></span><span class="wb-action-label">Cloud Drive</span>
+            </button>
+            <button id="top-web-console" type="button" class="wb-action hidden" data-top-action="web-console" title="Open Web Console" aria-label="Open Web Console">
+              <span class="wb-action-icon"><svg class="icon" aria-hidden="true"><use href="#i-globe"></use></svg></span><span class="wb-action-label">Web Console</span>
+            </button>
+            <span id="top-sep-products" class="wb-sep hidden" aria-hidden="true"></span>
+            <button id="top-admin-console" type="button" class="wb-action hidden" data-top-action="admin-console" title="Open Admin Console" aria-label="Open Admin Console">
+              <span class="wb-action-icon"><svg class="icon" aria-hidden="true"><use href="#i-shield"></use></svg></span><span class="wb-action-label">Admin Console</span>
+            </button>
+            <button id="top-settings" type="button" class="wb-action" title="Settings">
+              <span class="wb-action-icon"><svg class="icon" aria-hidden="true"><use href="#i-settings"></use></svg></span><span class="wb-action-label">Settings</span>
+            </button>
+          </div>
+        </div>
+        <nav id="mode-nav" role="tablist" aria-label="Primary">
+          <button id="nav-chats" type="button" class="mode-tab active" data-mode="chats" role="tab" aria-selected="true">
+            <span class="mode-tab-icon"><svg class="icon" aria-hidden="true"><use href="#i-chat"></use></svg></span><span class="mode-tab-label">Chat</span>
+          </button>
+          <button id="nav-files" type="button" class="mode-tab" data-mode="files" role="tab" aria-selected="false">
+            <span class="mode-tab-icon"><svg class="icon" aria-hidden="true"><use href="#i-workspace"></use></svg></span><span class="mode-tab-label">WorkSpace</span>
+          </button>
+          <button id="nav-research" type="button" class="mode-tab" data-mode="research" role="tab" aria-selected="false">
+            <span class="mode-tab-icon"><svg class="icon" aria-hidden="true"><use href="#i-research"></use></svg></span><span class="mode-tab-label">Research</span>
+          </button>
+        </nav>
+      </header>
+      <div id="workbench-body">
       <aside id="sidebar">
-        <div id="sidebar-toolbar">
-          <button id="sidebar-toggle" type="button" title="Collapse / Expand">«</button>
+        <div id="sidebar-toolbar" class="hidden">
+          <button id="open-workspace" type="button" title="Open a workspace folder" aria-label="Open a workspace folder"><svg class="icon" aria-hidden="true"><use href="#i-folder"></use></svg></button>
           <select id="workspace-source" class="workspace-source" title="Workspace source">
-            <option value="local">💻 Local</option>
-            <option value="cloud">☁️ Cloud</option>
+            <option value="local">Local</option>
+            <option value="cloud">Cloud</option>
           </select>
-          <span id="local-create" class="local-create">
-            <button id="local-new-folder" type="button" title="New folder" aria-label="New folder">📁</button>
-            <button id="local-new-text" type="button" title="New text file" aria-label="New text file">📝</button>
+          <span id="local-create" class="local-create" style="display:none">
+            <button id="local-add-file" type="button" title="Add a file to the workspace" aria-label="Add a file to the workspace"><svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg></button>
+            <button id="local-new-folder" type="button" title="New folder" aria-label="New folder"><svg class="icon" aria-hidden="true"><use href="#i-folder-plus"></use></svg></button>
+            <button id="local-new-text" type="button" title="New text file" aria-label="New text file"><svg class="icon" aria-hidden="true"><use href="#i-file-text"></use></svg></button>
           </span>
         </div>
-        <div id="sidebar-tabs">
-          <button id="tab-files" class="active" type="button">Files</button>
-          <button id="tab-sessions" type="button">Chats</button>
-          <button id="tab-research" type="button" title="Research OS tasks">🔬 Research</button>
-        </div>
         <div class="search-wrap">
-          <input id="file-search" type="text" class="sidebar-search" placeholder="Search files…" autocomplete="off" />
-          <button id="file-search-clear" type="button" class="search-clear" title="Clear search" aria-label="Clear search">✕</button>
+          <input id="file-search" type="text" class="sidebar-search" placeholder="Search files…" autocomplete="off" style="display:none" />
+          <button id="file-search-clear" type="button" class="search-clear" title="Clear search" aria-label="Clear search"><svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg></button>
           <div id="file-search-suggest" class="cd-suggest hidden"></div>
         </div>
-        <div id="tree" class="tree"></div>
+        <div id="tree" class="tree" style="display:none"></div>
         <div id="clouddrive" class="clouddrive hidden">
           <div class="clouddrive-toolbar">
-            <span id="cd-path" class="cd-path">☁️ My Drive</span>
+            <span id="cd-path" class="cd-path"><svg class="icon" aria-hidden="true"><use href="#i-cloud"></use></svg><span class="cd-path-text">My Drive</span></span>
             <span class="spacer"></span>
-            <button id="cd-refresh" type="button" title="Refresh (reload files, folders, trash)" aria-label="Refresh">⟳</button>
-            <button id="cd-new-workspace" type="button" title="New workspace" aria-label="New workspace">＋ Workspace</button>
-            <button id="cd-new-folder" type="button" title="New folder" aria-label="New folder">📁</button>
-            <button id="cd-new-text" type="button" title="New text file" aria-label="New text file">📝</button>
+            <button id="cd-refresh" type="button" title="Refresh (reload files, folders, trash)" aria-label="Refresh"><svg class="icon" aria-hidden="true"><use href="#i-refresh"></use></svg></button>
+            <button id="cd-new-workspace" type="button" title="New workspace" aria-label="New workspace"><svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg><span>Workspace</span></button>
+            <button id="cd-new-folder" type="button" title="New folder" aria-label="New folder"><svg class="icon" aria-hidden="true"><use href="#i-folder-plus"></use></svg></button>
+            <button id="cd-new-text" type="button" title="New text file" aria-label="New text file"><svg class="icon" aria-hidden="true"><use href="#i-file-text"></use></svg></button>
           </div>
           <div class="search-wrap">
             <input id="cd-search" type="text" class="sidebar-search" placeholder="Search files & folders…" autocomplete="off" />
-            <button id="cd-search-clear" type="button" class="search-clear" title="Clear search" aria-label="Clear search">✕</button>
+            <button id="cd-search-clear" type="button" class="search-clear" title="Clear search" aria-label="Clear search"><svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg></button>
             <div id="cd-suggest" class="cd-suggest hidden"></div>
           </div>
           <div id="cd-list" class="cd-list"></div>
           <div id="cd-status" class="cd-status"></div>
         </div>
-        <div id="sessions" class="sessions hidden">
+        <div id="sessions" class="sessions">
           <div class="search-wrap">
             <input id="session-search" type="text" class="sidebar-search" placeholder="Search sessions…" autocomplete="off" />
-            <button id="session-search-clear" type="button" class="search-clear" title="Clear search" aria-label="Clear search">✕</button>
+            <button id="session-search-clear" type="button" class="search-clear" title="Clear search" aria-label="Clear search"><svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg></button>
           </div>
           <div class="sessions-toolbar">
-            <button id="new-chat" type="button" title="Start a new chat session">＋ New chat</button>
+            <button id="new-chat" type="button" title="Start a new chat session"><svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg><span>New chat</span></button>
           </div>
           <div id="sessions-list"></div>
         </div>
@@ -64,7 +156,7 @@
           <div id="research-tasks" class="research-section research-tasks">
             <div class="research-section-title">Tasks</div>
             <div class="research-tasks-toolbar">
-              <button id="research-new" type="button" title="Start a new research task">＋ New Research</button>
+              <button id="research-new" type="button" title="Start a new research task"><svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg><span>New Research</span></button>
             </div>
             <div id="research-tasks-list"></div>
           </div>
@@ -74,14 +166,6 @@
               <div class="research-status-empty">Select a task to see its progress.</div>
             </div>
           </div>
-        </div>
-        <div id="sidebar-footer">
-          <button id="user-menu-trigger" type="button" title="Account menu">
-            <span id="user-avatar" class="user-avatar">👤</span>
-            <span id="user-name" class="user-name">Sign in</span>
-            <span class="user-menu-icon">⚙</span>
-            <span class="user-menu-label">menu</span>
-          </button>
         </div>
       </aside>
       <div id="splitter" class="splitter"></div>
@@ -143,12 +227,29 @@
                  point for a fresh conversation. The session title is hidden in Research mode;
                  the sub bar below carries the full task context instead. -->
             <div id="chat-topbar" class="chat-topbar">
+              <span id="chat-panel-label" class="chat-panel-label hidden">Assistant</span>
               <span id="chat-title">Chat</span>
+              <!-- WorkSpace assistant session picker (Files mode only): the current session
+                   name + a New button. The dropdown lists this user's WorkSpace sessions
+                   (kind=workspace) with rename/delete, so a WorkSpace conversation is a
+                   first-class object instead of an implicit panel state. -->
+              <div id="ws-session" class="ws-session">
+                <button id="ws-session-trigger" type="button" class="ws-session-trigger" title="WorkSpace session — click to switch, rename or delete" aria-haspopup="true" aria-expanded="false">
+                  <span id="ws-session-name" class="ws-session-name">New session</span>
+                  <svg class="icon ws-session-caret" aria-hidden="true"><use href="#i-chevron-down"></use></svg>
+                </button>
+                <button id="ws-session-new" type="button" class="ws-session-new" title="New WorkSpace session" aria-label="New WorkSpace session"><svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg></button>
+                <div id="ws-session-menu" class="ws-session-menu hidden" role="menu" aria-label="WorkSpace sessions">
+                  <div class="ws-session-menu-head"><span>WorkSpace sessions</span></div>
+                  <div id="ws-session-list" class="ws-session-list"></div>
+                  <p class="ws-session-menu-note">Every session here shares this workspace's material. The folder recorded on a session is descriptive only — retrieval is not limited to it yet.</p>
+                </div>
+              </div>
               <div class="chat-header-actions">
-                <button id="chat-new-research" type="button" title="New Research — create a research task the agent drives in this chat">＋ Research</button>
+                <button id="chat-new-research" type="button" title="New Research — create a research task the agent drives in this chat"><svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg><span>Research</span></button>
                 <button id="chat-hide" type="button" title="Hide chat (restore from the Delveta logo)"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
                 <button id="chat-float" type="button" title="Float the chat window"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg></button>
-                <button id="chat-dock" type="button" title="Move chat to the right column">Dock right</button>
+                <button id="chat-dock" type="button" title="Dock the chat at the bottom" aria-label="Dock the chat at the bottom">Dock bottom</button>
               </div>
             </div>
             <!-- Sub bar: current-session context, shown only while a Research task session is
@@ -160,14 +261,22 @@
               <span class="crc-mode hidden"></span>
               <span class="crc-desc hidden"></span>
             </div>
+            <!-- WorkSpace context scope (Files mode only): the workspace/folder this session
+                 was started in. Descriptive — it records where the conversation began; the
+                 retrieval filter is not wired to it yet, so the note says so. -->
+            <div id="ws-scope-bar" class="ws-scope-bar hidden">
+              <span id="ws-scope-workspace" class="ws-scope-chip ws-scope-workspace"></span>
+              <span id="ws-scope-folder" class="ws-scope-chip hidden"></span>
+              <span id="ws-scope-note" class="ws-scope-note"></span>
+            </div>
           </div>
           <div id="chat-toolbar" class="chat-toolbar" title="Generate from this conversation or workspace files">
             <span class="chat-toolbar-label">Generate:</span>
-            <button id="chat-gen-mindmap" type="button" class="chat-tool-btn" title="Generate a mind map from this conversation or workspace files">🧠 Mind Map</button>
-            <button id="chat-gen-slides" type="button" class="chat-tool-btn" title="Generate slides from this conversation or workspace files">🎞 Slides</button>
-            <button id="chat-gen-summary" type="button" class="chat-tool-btn" title="Generate a summary from this conversation or workspace files">📝 Summary</button>
+            <button id="chat-gen-mindmap" type="button" class="chat-tool-btn" title="Generate a mind map from this conversation or workspace files"><svg class="icon" aria-hidden="true"><use href="#i-mindmap"></use></svg><span>Mind Map</span></button>
+            <button id="chat-gen-slides" type="button" class="chat-tool-btn" title="Generate slides from this conversation or workspace files"><svg class="icon" aria-hidden="true"><use href="#i-slides"></use></svg><span>Slides</span></button>
+            <button id="chat-gen-summary" type="button" class="chat-tool-btn" title="Generate a summary from this conversation or workspace files"><svg class="icon" aria-hidden="true"><use href="#i-file-text"></use></svg><span>Summary</span></button>
             <span id="chat-gen-more-wrap" class="tools-wrap">
-              <button id="chat-gen-more" type="button" class="chat-tool-btn" title="More generation tools (coming soon)">⋯</button>
+              <button id="chat-gen-more" type="button" class="chat-tool-btn" title="More generation tools (coming soon)"><svg class="icon" aria-hidden="true"><use href="#i-more"></use></svg></button>
               <div id="chat-gen-more-menu" class="tools-menu hidden">
                 <button type="button" disabled title="More generation tools are on the way">More tools coming soon</button>
               </div>
@@ -179,10 +288,10 @@
             <div class="chat-input-box">
               <textarea id="chat-input" rows="1" placeholder="Ask about the current material, or just chat…" autocomplete="off"></textarea>
               <div class="chat-input-actions">
-                <button id="chat-attach-pick" type="button" class="chat-input-btn" title="Attach a file">＋</button>
+                <button id="chat-attach-pick" type="button" class="chat-input-btn" title="Attach a file" aria-label="Attach a file"><svg class="icon" aria-hidden="true"><use href="#i-paperclip"></use></svg></button>
                 <button id="chat-mic" type="button" class="chat-input-btn" title="Voice input (talk to the assistant)"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg></button>
                 <button id="chat-speak" type="button" class="chat-input-btn" title="Voice call (hands-free chat, like a phone call)"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><rect x="3.5" y="10" width="3" height="6" rx="1.5"/><rect x="9" y="4" width="3" height="18" rx="1.5"/><rect x="14.5" y="7" width="3" height="12" rx="1.5"/><rect x="20" y="9.5" width="3" height="7" rx="1.5"/></svg></button>
-                <button id="chat-shot" type="button" class="chat-input-btn" title="Screenshot (capture the window, drag a region, attach it)"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg></button>
+                <button id="chat-shot" type="button" class="chat-input-btn" title="Screenshot (capture the window, drag a region, attach it)" aria-label="Screenshot"><svg class="icon" aria-hidden="true"><use href="#i-camera"></use></svg></button>
                 <button id="chat-send" type="submit">Send</button>
               </div>
             </div>
@@ -193,9 +302,10 @@
         <div id="call-overlay" class="call-overlay hidden">
           <canvas id="call-wave" width="260" height="64"></canvas>
           <div id="call-phase" class="call-phase">Listening…</div>
-          <button id="call-hangup" type="button" class="call-hangup" title="Hang up (or click 🌊 again)">Hang up</button>
+          <button id="call-hangup" type="button" class="call-hangup" title="Hang up (or click the waveform button again)">Hang up</button>
         </div>
       </main>
+      </div>
 
       <!-- Floating mini-icon shown while the chat is hidden; clicking it restores the chat. -->
       <button id="chat-mini" type="button" class="chat-mini hidden" title="Restore chat" aria-label="Restore chat"></button>
@@ -206,35 +316,14 @@
       <div class="user-menu-group">
         <div class="user-menu-group-label">Account</div>
         <button type="button" class="user-menu-item" data-action="profile">
-          <span class="user-menu-item-label">👤 Profile</span>
+          <span class="user-menu-item-label"><svg class="icon" aria-hidden="true"><use href="#i-user"></use></svg>Profile</span>
           <span id="profile-menu-value" class="user-menu-item-value"></span>
-        </button>
-      </div>
-      <div class="user-menu-group">
-        <div class="user-menu-group-label">Cloud &amp; Web Services</div>
-        <button type="button" class="user-menu-item" data-action="cloud-drive">
-          <span class="user-menu-item-label">☁️ Cloud Drive</span>
-        </button>
-        <button type="button" class="user-menu-item" data-action="web-console">
-          <span class="user-menu-item-label">🌐 Web Console</span>
-        </button>
-      </div>
-      <div id="user-menu-admin-group" class="user-menu-group hidden">
-        <div class="user-menu-group-label">System</div>
-        <button type="button" class="user-menu-item" data-action="admin-console">
-          <span class="user-menu-item-label">🛠️ Admin Console</span>
-        </button>
-      </div>
-      <div class="user-menu-group">
-        <div class="user-menu-group-label">App &amp; Support</div>
-        <button type="button" class="user-menu-item" data-action="settings">
-          <span class="user-menu-item-label">⚙️ Settings</span>
         </button>
       </div>
       <div id="user-menu-signout-group" class="user-menu-group hidden">
         <div class="user-menu-group-label">Session</div>
         <button type="button" class="user-menu-item signout" data-action="signout">
-          <span class="user-menu-item-label">↩ Sign Out</span>
+          <span class="user-menu-item-label"><svg class="icon" aria-hidden="true"><use href="#i-log-out"></use></svg>Sign Out</span>
         </button>
       </div>
     </div>
@@ -310,6 +399,12 @@
                 </select>
               </div>
               <div class="settings-section">
+                <div class="settings-section-title">Application</div>
+                <button id="pref-reload" type="button" class="settings-row"><span class="settings-row-label">Reload window</span></button>
+                <button id="pref-fullscreen" type="button" class="settings-row"><span class="settings-row-label">Toggle full screen</span></button>
+                <button id="pref-devtools" type="button" class="settings-row"><span class="settings-row-label">Open developer tools</span></button>
+              </div>
+              <div class="settings-section">
                 <div class="settings-section-title">Window</div>
                 <button type="button" class="settings-row option-row" data-pref="rememberBounds"><span class="settings-row-label">Remember window size &amp; position</span><span class="option-check">✓</span></button>
                 <button type="button" class="settings-row disabled" disabled><span class="settings-row-label">Minimize to tray</span><span class="soon">Soon</span></button>
@@ -321,7 +416,7 @@
             <section id="settings-tab-updates" class="settings-tab-body hidden">
               <div class="settings-section">
                 <div class="settings-section-title">Version</div>
-                <div class="settings-detail-note">Delveta Workbench <span id="updates-version">…</span></div>
+                <div class="settings-detail-note">Delveta <span id="updates-version">…</span></div>
               </div>
               <div class="settings-section">
                 <div class="settings-section-title">Distribution Channel</div>
@@ -361,9 +456,9 @@
             <!-- About -->
             <section id="settings-tab-about" class="settings-tab-body hidden">
               <div class="about-head">
-                <div class="about-logo">🫧</div>
+                <div class="about-logo"><svg class="icon" aria-hidden="true"><use href="#i-layers"></use></svg></div>
                 <div>
-                  <div class="about-name">Delveta Workbench</div>
+                  <div class="about-name">Delveta</div>
                   <div class="about-version">Version <span id="about-version">…</span></div>
                 </div>
               </div>
@@ -391,7 +486,7 @@
           <label>Password
             <span class="pw-field">
               <input id="account-pass" type="password" autocomplete="current-password" />
-              <button type="button" class="pw-eye" data-target="account-pass" title="显示密码">👁</button>
+              <button type="button" class="pw-eye" data-target="account-pass" title="显示密码"><svg class="icon" aria-hidden="true"><use href="#i-eye"></use></svg></button>
             </span>
           </label>
           <label class="remember">
@@ -428,14 +523,14 @@
         <label>Password
           <span class="pw-field">
             <input id="reg-password" type="password" autocomplete="new-password" />
-            <button type="button" class="pw-eye" data-target="reg-password" title="显示密码">👁</button>
+            <button type="button" class="pw-eye" data-target="reg-password" title="显示密码"><svg class="icon" aria-hidden="true"><use href="#i-eye"></use></svg></button>
           </span>
         </label>
         <div class="pw-hint">At least 8 characters, with uppercase, lowercase, a digit and a special character</div>
         <label>Confirm password
           <span class="pw-field">
             <input id="reg-password2" type="password" autocomplete="new-password" />
-            <button type="button" class="pw-eye" data-target="reg-password2" title="显示密码">👁</button>
+            <button type="button" class="pw-eye" data-target="reg-password2" title="显示密码"><svg class="icon" aria-hidden="true"><use href="#i-eye"></use></svg></button>
           </span>
         </label>
         <div id="register-debug" class="register-debug hidden">
@@ -544,20 +639,20 @@
           <label>Current password
             <span class="pw-field">
               <input id="profile-field-curpass" type="password" autocomplete="current-password" />
-              <button type="button" class="pw-eye" data-target="profile-field-curpass" title="显示密码">👁</button>
+              <button type="button" class="pw-eye" data-target="profile-field-curpass" title="显示密码"><svg class="icon" aria-hidden="true"><use href="#i-eye"></use></svg></button>
             </span>
           </label>
           <label>New password
             <span class="pw-field">
               <input id="profile-field-newpass" type="password" autocomplete="new-password" />
-              <button type="button" class="pw-eye" data-target="profile-field-newpass" title="显示密码">👁</button>
+              <button type="button" class="pw-eye" data-target="profile-field-newpass" title="显示密码"><svg class="icon" aria-hidden="true"><use href="#i-eye"></use></svg></button>
             </span>
           </label>
           <div class="pw-hint">At least 8 characters, with uppercase, lowercase, a digit and a special character</div>
           <label>Confirm new password
             <span class="pw-field">
               <input id="profile-field-newpass2" type="password" autocomplete="new-password" />
-              <button type="button" class="pw-eye" data-target="profile-field-newpass2" title="显示密码">👁</button>
+              <button type="button" class="pw-eye" data-target="profile-field-newpass2" title="显示密码"><svg class="icon" aria-hidden="true"><use href="#i-eye"></use></svg></button>
             </span>
           </label>
           <div id="profile-edit-debug" class="register-debug hidden">
@@ -603,6 +698,7 @@
     <script src="vendor/xlsx.full.min.js"></script>
     <script src="pptxview.js"></script>
     <script src="page_content.js"></script>
+    <script src="icons.js"></script>
     <script src="viewer.js"></script>
     <script src="app.js"></script>
     <script src="clouddrive.js"></script>

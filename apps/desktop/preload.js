@@ -13,7 +13,7 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   // List a single folder's direct children [{ name, path, type, size }] (no depth limit).
   readDir: (dir) => ipcRenderer.invoke("read-dir", dir),
 
-  // Pick a single file (for the File menu's "Add File to Workspace").
+  // Pick a single file (Files toolbar → "Add file to workspace").
   pickFile: () => ipcRenderer.invoke("pick-file"),
 
   // Copy a file into the workspace folder (collision-safe): { ok, name, path } | { ok, error }.
@@ -49,17 +49,10 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   // Move a file/folder into another folder (drag-and-drop): { workspaceDir, srcPath, destDir }.
   movePath: (o) => ipcRenderer.invoke("move-path", o),
 
-  // File menu → renderer: "Add File to Workspace" was clicked.
-  onAddFileToWorkspace: (cb) => { ipcRenderer.on("menu-add-file", () => cb()); },
-
-  // Help menu → renderer: open a specific settings tab ("help" | "about").
-  onOpenSettings: (cb) => { ipcRenderer.on("menu-settings", (_e, tab) => cb(tab)); },
-
-  // File menu → renderer: "Open Workspace" was clicked.
-  onOpenWorkspace: (cb) => { ipcRenderer.on("menu-open-workspace", () => cb()); },
-
-  // Tell the main process the open workspace's folder name (shown in the File menu).
-  setWorkspaceLabel: (name) => ipcRenderer.send("update-workspace-label", name),
+  // Settings → Application controls (the native View menu is gone).
+  reloadApp: () => ipcRenderer.send("app-reload"),
+  toggleFullscreen: () => ipcRenderer.send("app-toggle-fullscreen"),
+  toggleDevTools: () => ipcRenderer.send("app-toggle-devtools"),
 
   // Open a path with the OS default application.
   openExternal: (path) => ipcRenderer.invoke("open-external", path),

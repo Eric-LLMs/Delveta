@@ -735,9 +735,14 @@ class SessionModel(Base):
     summary: Mapped[str | None] = mapped_column(Text)
     # Short auto-generated title (LLM from the first user message); None until finalized.
     title: Mapped[str | None] = mapped_column(Text)
-    # 0 = ordinary chat, 1 = research task session: type 1 is hidden from the chat sidebar
-    # and cascade-deleted with its task (canonical schema). Old rows default to 0.
+    # 0 = ordinary chat, 1 = research task session (hidden from the chat sidebar, cascade
+    # deleted with its task), 2 = WorkSpace assistant session (only listed by the WorkSpace
+    # picker). Old rows default to 0.
     type: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    # Descriptive per-session metadata: the workspace / folder scope a WorkSpace session
+    # was started in. Written by the client through PATCH /sessions/{id}. Retrieval does
+    # not read this column yet — it is not an enforcement boundary.
+    meta: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     # Durable compaction checkpoint (sessions.compaction JSONB):
     # { revision, through_message_id, through_created_at, summary, summary_chars,
     #   last_compaction_at, fold_count }. ``summary`` fully covers every model-facing

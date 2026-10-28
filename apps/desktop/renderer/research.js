@@ -424,30 +424,42 @@
       );
       return;
     }
-    for (const t of tasks) {
-      const row = el("div", "research-row");
-      row.classList.toggle("selected", selectedTask && selectedTask.task_id === t.task_id);
-      const main = el("div", "research-row-main");
-      main.appendChild(el("div", "research-row-title", t.name || t.task_id));
-      main.appendChild(el("div", "research-row-sub", `Stage ${t.stage} · ${t.status}${t.is_running ? " · RUNNING" : ""}${t.is_running && t.run_stale ? " · STALE" : ""}${timeAgo(t.updated_at) ? ` · ${timeAgo(t.updated_at)}` : ""}`));
-      row.appendChild(main);
-      const del = el("button", "research-row-del", "🗑");
-      del.title = "Delete task";
-      del.addEventListener("click", (e) => {
-        e.stopPropagation();
-        deleteTask(t);
-      });
-      row.appendChild(del);
-      // Selecting a task is side-effect free: the chat opens the task's dedicated session
-      // (loadStatus → openResearchSession) but nothing is sent — the model stays silent until
-      // the user types a run instruction.
-      row.addEventListener("click", () => {
-        selectedTask = { task_id: t.task_id, name: t.name || t.task_id };
-        loadTasks(); // re-render to move the selection highlight
-        loadStatus(t.task_id); // opens the bound session in the chat + refreshes the status
-        renderTaskView(); // main pane switches to this task's working directory
-      });
-      tasksList.appendChild(row);
+    // Two groups, matching the workbench's task-centric layout: unfinished tasks first,
+    // finished editions (PUBLISH) below. Order inside each group is the API's (newest
+    // activity first).
+    const groups = [
+      { label: "In progress", tasks: tasks.filter((t) => t.stage !== "PUBLISH") },
+      { label: "Completed", tasks: tasks.filter((t) => t.stage === "PUBLISH") },
+    ];
+    for (const group of groups) {
+      if (!group.tasks.length) continue;
+      tasksList.appendChild(el("div", "research-group-title", group.label));
+      for (const t of group.tasks) {
+        const row = el("div", "research-row");
+        row.classList.toggle("selected", selectedTask && selectedTask.task_id === t.task_id);
+        const main = el("div", "research-row-main");
+        main.appendChild(el("div", "research-row-title", t.name || t.task_id));
+        main.appendChild(el("div", "research-row-sub", `Stage ${t.stage} · ${t.status}${t.is_running ? " · RUNNING" : ""}${t.is_running && t.run_stale ? " · STALE" : ""}${timeAgo(t.updated_at) ? ` · ${timeAgo(t.updated_at)}` : ""}`));
+        row.appendChild(main);
+        const del = el("button", "research-row-del");
+        del.innerHTML = dvIconHTML("trash");
+        del.title = "Delete task";
+        del.addEventListener("click", (e) => {
+          e.stopPropagation();
+          deleteTask(t);
+        });
+        row.appendChild(del);
+        // Selecting a task is side-effect free: the chat opens the task's dedicated session
+        // (loadStatus → openResearchSession) but nothing is sent — the model stays silent until
+        // the user types a run instruction.
+        row.addEventListener("click", () => {
+          selectedTask = { task_id: t.task_id, name: t.name || t.task_id };
+          loadTasks(); // re-render to move the selection highlight
+          loadStatus(t.task_id); // opens the bound session in the chat + refreshes the status
+          renderTaskView(); // main pane switches to this task's working directory
+        });
+        tasksList.appendChild(row);
+      }
     }
   }
 
@@ -582,7 +594,11 @@
       pill.appendChild(el("span", "research-stage-mark", state === "done" ? "✓" : (state === "current" ? "●" : "○")));
       pill.appendChild(el("span", "research-stage-label", s));
       step.appendChild(pill);
-      if (i < STAGES.length - 1) step.appendChild(el("span", "research-stage-arrow", "➔"));
+      if (i < STAGES.length - 1) {
+        const arrow = el("span", "research-stage-arrow");
+        arrow.innerHTML = dvIconHTML("chevron-right");
+        step.appendChild(arrow);
+      }
       bar.appendChild(step);
     });
     box.appendChild(bar);
@@ -1018,7 +1034,9 @@
     stopBtn.title = "Stop the running research (finishes the current step first)";
     stopBtn.addEventListener("click", () => requestStop(detail.task_id));
     actions.appendChild(stopBtn);
-    const delBtn = el("button", "ghost rtv-del run-ctl", "🗑 Delete task");
+    const delBtn = el("button", "ghost rtv-del run-ctl");
+    delBtn.innerHTML = dvIconHTML("trash");
+    delBtn.appendChild(document.createTextNode("Delete task"));
     delBtn.addEventListener("click", () => deleteTask({ task_id: detail.task_id, name: detail.name || detail.task_id }));
     actions.appendChild(delBtn);
     head.appendChild(actions);
@@ -1066,7 +1084,9 @@
     }
     const meta = el("div", "rtv-meta");
     const wd = el("div", "rtv-meta-item");
-    wd.appendChild(el("span", "", "📁"));
+    const wdIcon = el("span", "");
+    wdIcon.innerHTML = dvIconHTML("folder");
+    wd.appendChild(wdIcon);
     wd.appendChild(el("span", "path", detail.cloud_folder_path || "(no cloud folder)"));
     meta.appendChild(wd);
     meta.appendChild(el("div", "rtv-meta-item", `Updated ${timeAgo(detail.updated_at)}`));
@@ -1252,9 +1272,9 @@
         : dir.slice(dir.lastIndexOf("/") + 1);
       const items = [];
       if (f) {
-        items.push({ label: "📤 Export file…", fn: () => { if (window.exportCloudFile) window.exportCloudFile(f); } });
+        items.push({ icon: "import", label: "Export file…", fn: () => { if (window.exportCloudFile) window.exportCloudFile(f); } });
       } else {
-        items.push({ label: "📤 Export folder…", fn: () => { if (window.exportCloudFolder) window.exportCloudFolder(folderExportEntries(dir), folderName); } });
+        items.push({ icon: "import", label: "Export folder…", fn: () => { if (window.exportCloudFolder) window.exportCloudFolder(folderExportEntries(dir), folderName); } });
       }
       window.cloudCtxMenu(e.clientX, e.clientY, items);    }
 
@@ -1266,7 +1286,9 @@
         row.classList.add("selected");
       }
       row.appendChild(el("span", "cd-tw"));
-      row.appendChild(el("span", "cd-icon", fileTypeIcon(f)));
+      const fileIcon = el("span", "cd-icon");
+      fileIcon.innerHTML = dvIconHTML(fileTypeIcon(f));
+      row.appendChild(fileIcon);
       const name = el("span", "cd-name", f.name);
       row.appendChild(name);
       row.appendChild(el("span", "cd-meta", formatBytes(f.size)));
@@ -1288,9 +1310,12 @@
       const isOpen = open.has(dir);
       const label = dir === "" ? (cloudPath || "Task folder") : dir.slice(dir.lastIndexOf("/") + 1);
       const row = el("div", "cd-row cd-folder rtv-folder-row");
-      const tw = el("span", "cd-tw", hasKids ? (isOpen ? "▾" : "▸") : "");
+      const tw = el("span", "cd-tw");
+      if (hasKids) tw.innerHTML = dvIconHTML(isOpen ? "chevron-down" : "chevron-right");
       row.appendChild(tw);
-      row.appendChild(el("span", "cd-icon", dir === "" ? "🗂" : "📁"));
+      const dirIcon = el("span", "cd-icon");
+      dirIcon.innerHTML = dvIconHTML(dir === "" ? "layers" : "folder");
+      row.appendChild(dirIcon);
       row.appendChild(el("span", "cd-name", label));
       row.appendChild(el("span", "rtv-count", `(${fileCountBelow.get(dir) || 0})`));
       if (!files.length && !kids.length) row.appendChild(el("span", "rtv-empty-tag", "(empty)"));
@@ -1338,18 +1363,18 @@
   // glance; falls back to a generic document.
   function fileTypeIcon(f) {
     const mime = f.mime_type || "";
-    if (mime.startsWith("image/")) return "🖼";
-    if (mime.startsWith("video/")) return "🎞";
-    if (mime.startsWith("audio/")) return "🎵";
-    if (mime.includes("pdf")) return "📕";
-    if (mime.includes("spreadsheet") || mime.includes("csv")) return "📊";
+    if (mime.startsWith("image/")) return "file-image";
+    if (mime.startsWith("video/")) return "slides";
+    if (mime.startsWith("audio/")) return "file-audio";
+    if (mime.includes("pdf")) return "file-text";
+    if (mime.includes("spreadsheet") || mime.includes("csv")) return "file-sheet";
     const ext = (f.name || "").split(".").pop().toLowerCase();
-    if (["md", "markdown"].includes(ext)) return "📝";
-    if (["py", "js", "ts", "go", "rs", "java", "c", "cpp", "sql"].includes(ext)) return "⌨";
-    if (["csv", "xlsx", "xls"].includes(ext)) return "📊";
-    if (["json", "yaml", "yml", "toml"].includes(ext)) return "⚙";
-    if (["pdf"].includes(ext)) return "📕";
-    return "📄";
+    if (["md", "markdown"].includes(ext)) return "file-text";
+    if (["py", "js", "ts", "go", "rs", "java", "c", "cpp", "sql"].includes(ext)) return "code";
+    if (["csv", "xlsx", "xls"].includes(ext)) return "file-sheet";
+    if (["json", "yaml", "yml", "toml"].includes(ext)) return "settings";
+    if (["pdf"].includes(ext)) return "file-text";
+    return "file";
   }
 
   // ── workbench file preview (right column of the top area) ────────────────

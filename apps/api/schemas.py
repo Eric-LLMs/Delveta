@@ -92,6 +92,9 @@ class TTSRequest(BaseModel):
 
 class SessionRenameRequest(BaseModel):
     title: str | None = None
+    # Descriptive per-session scope, merged into ``sessions.meta`` (keys absent from the
+    # payload are left untouched). Only WorkSpace sessions carry anything today.
+    meta: dict | None = None
 
 
 class GenerateDefinitionRequest(BaseModel):
@@ -298,9 +301,15 @@ class ChatRequest(BaseModel):
                                      #   in. Sunk into the turn context as ``drive_cwd`` so WRITE
                                      #   tools default their destination to it. Never a read
                                      #   scope: browsing a folder asks for nothing to be opened.
+    surface: str | None = None       # optional: which assistant surface is talking. ``"chat"``
+                                     #   (default) and ``"research"`` share the chat lane;
+                                     #   ``"workspace"`` creates the session as WorkSpace-type (2)
+                                     #   so it is listed only by the WorkSpace picker.
 
     @model_validator(mode="after")
     def _guard_v2_payload(self) -> "ChatRequest":
+        if self.surface not in (None, "chat", "research", "workspace"):
+            raise ValueError("surface must be one of: chat, research, workspace")
         if self.context_state is None:
             return self  # legacy client: the router loads SQL in recovery mode
         # §8.3: a v2 client with a real watermark may NOT send an empty tail —

@@ -1,24 +1,63 @@
+/* ── Design tokens ────────────────────────────────────────────────────────────
+   Three depth levels, in order: --bg (app shell) → --bg-soft (panels) →
+   --bg-soft-2 (raised rows / controls). --bg-elev is for floating layers and
+   --bg-inset for wells that sit *below* the panel (inputs, nav track). Surfaces
+   are separated by a low-contrast border first and a shadow second, so the UI
+   keeps depth without a shadow on every component. */
 :root {
-  --bg: #1e1e2e;
-  --bg-soft: #27273a;
-  --bg-soft-2: #2f2f45;
-  --fg: #e4e4ef;
-  --fg-dim: #9a9ab0;
+  /* Native widgets (scrollbar arrows, select popups, date pickers) follow the theme. */
+  color-scheme: dark;
+  --bg: #16161f;
+  --bg-soft: #1c1c28;
+  --bg-soft-2: #262635;
+  --bg-hover: #2f2f42;
+  --bg-elev: #21212f;
+  --bg-inset: #12121a;
+  --fg: #e6e6f0;
+  --fg-dim: #9b9bb0;
+  --fg-mute: #6f6f86;
   --accent: #5b8cff;
-  --border: #34344a;
+  --accent-soft: color-mix(in srgb, var(--accent) 16%, transparent);
+  --accent-line: color-mix(in srgb, var(--accent) 42%, transparent);
+  --border: #2c2c3d;
+  --border-soft: #242433;
+  --border-strong: #3a3a52;
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, .28);
+  --shadow-2: 0 6px 18px -8px rgba(0, 0, 0, .55);
+  --shadow-3: 0 18px 44px -16px rgba(0, 0, 0, .7);
+  --r-xs: 6px;
+  --r-sm: 8px;
+  --r-md: 10px;
+  --r-lg: 14px;
+  --r-pill: 999px;
+  --dur: 140ms;
+  --ease: cubic-bezier(.2, .6, .3, 1);
   --mono: ui-monospace, "Cascadia Code", Consolas, monospace;
 }
 
-[data-theme="light"] {
-  --bg: #f5f5f7;
+/* Scoped to <html>: the settings modal's option buttons also carry data-theme="light",
+   and a bare [data-theme="light"] would repaint them with the light palette. */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #e9ebf1;
   --bg-soft: #ffffff;
-  --bg-soft-2: #e8e8ee;
-  --fg: #1e1e28;
-  --fg-dim: #6a6a78;
+  --bg-soft-2: #f2f3f8;
+  --bg-hover: #e7e9f2;
+  --bg-elev: #ffffff;
+  --bg-inset: #f5f6fa;
+  --fg: #1d1d27;
+  --fg-dim: #62626f;
+  --fg-mute: #8b8b99;
   --accent: #3b6fe0;
-  --border: #d5d5de;
+  --accent-soft: color-mix(in srgb, var(--accent) 12%, transparent);
+  --accent-line: color-mix(in srgb, var(--accent) 36%, transparent);
+  --border: #dcdee6;
+  --border-soft: #e8eaf0;
+  --border-strong: #c9ccd8;
+  --shadow-1: 0 1px 2px rgba(24, 28, 44, .06);
+  --shadow-2: 0 6px 18px -8px rgba(24, 28, 44, .18);
+  --shadow-3: 0 18px 44px -16px rgba(24, 28, 44, .24);
 }
-[data-theme="light"] #viewer { background: #ececf2; }
 [data-theme="light"] .msg.error { background: #fde8e8; color: #b3261e; }
 [data-theme="light"] .msg.notice { background: #fff7e0; color: #7a5b00; }
 
@@ -45,7 +84,211 @@ body {
    window's bottom edge instead of being clipped by the zoom overflow. */
 #app {
   display: flex;
+  flex-direction: column;
   height: calc((100vh - 12px) / var(--ui-zoom, 1));
+  overflow: hidden;
+}
+
+/* ── Shared icon layer ───────────────────────────────────────────────────────
+   Every glyph comes from the inline sprite in index.html (no icon dependency).
+   Sizing lives here so a module only ever picks a semantic name. */
+.icon {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vertical-align: -0.15em;
+}
+.icon-sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
+
+/* ── Workbench header ──
+   Two rows so the primary navigation never shares a line with Settings/Account:
+   row 1 is the brand + utility controls, row 2 is the left-aligned mode tabs.
+   Each tab is its own raised surface (individual depth) rather than one shared
+   segmented track; the selected tab adds an accent underline so state never
+   depends on colour alone. */
+#workbench-bar {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+  padding: 0;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--fg) 3%, transparent), transparent 72%),
+    var(--bg-soft);
+  border-bottom: 1px solid var(--border);
+  box-shadow: 0 1px 0 var(--border-soft), 0 4px 16px -12px rgba(0, 0, 0, .6);
+  position: relative;
+  z-index: 30;
+}
+.wb-topline {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 44px;
+  padding: 0 14px;
+  min-width: 0;
+}
+.wb-left { display: flex; align-items: center; gap: 8px; min-width: 0; flex: none; }
+.wb-brand { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.wb-mark {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  color: #fff;
+  background:
+    linear-gradient(155deg,
+      color-mix(in srgb, var(--accent) 58%, #fff),
+      var(--accent) 52%,
+      color-mix(in srgb, var(--accent) 62%, #000));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, .38),
+    inset 0 -1px 0 rgba(0, 0, 0, .18),
+    0 4px 12px -5px color-mix(in srgb, var(--accent) 75%, transparent);
+}
+.wb-mark svg { width: 15px; height: 15px; display: block; }
+.wb-title {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: .01em;
+  color: var(--fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Second row: the three mode tabs, left-aligned. Each is a standalone raised
+   surface with its own border, inner highlight and drop shadow. */
+#mode-nav {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  flex: none;
+  align-self: flex-start;
+  padding: 6px 14px 10px;
+}
+.mode-tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-width: 118px;
+  padding: 7px 15px;
+  background:
+    linear-gradient(180deg,
+      color-mix(in srgb, var(--fg) 5%, var(--bg-soft-2)),
+      var(--bg-soft-2));
+  color: var(--fg-dim);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--fg) 8%, transparent),
+    0 1px 0 rgba(0, 0, 0, .18),
+    var(--shadow-1);
+  transition:
+    background-color var(--dur) var(--ease),
+    border-color var(--dur) var(--ease),
+    color var(--dur) var(--ease),
+    box-shadow var(--dur) var(--ease),
+    transform var(--dur) var(--ease);
+}
+.mode-tab .icon { width: 15px; height: 15px; }
+.mode-tab:hover {
+  color: var(--fg);
+  background:
+    linear-gradient(180deg,
+      color-mix(in srgb, var(--fg) 8%, var(--bg-hover)),
+      var(--bg-hover));
+  border-color: var(--border-strong);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--fg) 10%, transparent),
+    var(--shadow-2);
+  transform: translateY(-1px);
+}
+.mode-tab:active { transform: translateY(0); box-shadow: var(--shadow-1); }
+.mode-tab.active {
+  color: var(--fg);
+  font-weight: 600;
+  background:
+    linear-gradient(180deg,
+      color-mix(in srgb, var(--accent) 20%, var(--bg-soft-2)),
+      color-mix(in srgb, var(--accent) 8%, var(--bg-soft-2)));
+  border-color: var(--accent-line);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--fg) 12%, transparent),
+    inset 0 0 0 1px color-mix(in srgb, var(--accent) 12%, transparent),
+    0 2px 10px -4px color-mix(in srgb, var(--accent) 55%, transparent);
+}
+/* Accent underline: a second, non-colour cue for the selected tab. */
+.mode-tab.active::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: 4px;
+  width: 22px;
+  height: 2px;
+  margin-left: -11px;
+  border-radius: var(--r-pill);
+  background: var(--accent);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--accent) 70%, transparent);
+}
+.mode-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.mode-tab-icon { display: inline-flex; }
+.wb-right { display: flex; align-items: center; gap: 6px; margin-left: auto; min-width: 0; flex: none; }
+.wb-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: transparent;
+  color: var(--fg-dim);
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  font-size: 13px;
+  white-space: nowrap;
+  transition: background-color var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.wb-action:hover { background: var(--bg-soft-2); color: var(--fg); }
+.wb-action:active { background: var(--bg-hover); }
+.wb-action .icon { width: 15px; height: 15px; }
+.wb-action-icon { display: inline-flex; }
+/* Product shortcuts sit in one group: Settings | Cloud Drive · Web Console · Admin | Account.
+   .wb-action sets display:inline-flex, so the generic .hidden utility needs the extra
+   specificity to keep the admin-only entry out of the row. */
+.wb-topline .wb-action.hidden { display: none; }
+.wb-sep {
+  flex: none;
+  width: 1px;
+  height: 18px;
+  background: var(--border);
+  margin: 0 2px;
+}
+#workbench-bar #user-menu-trigger {
+  flex: 0 1 auto;
+  max-width: 190px;
+  padding: 4px 8px;
+}
+@media (max-width: 1040px) {
+  .mode-tab { padding-left: 12px; padding-right: 12px; }
+}
+#workbench-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
   overflow: hidden;
 }
 
@@ -61,66 +304,80 @@ body {
   transition: width 0.2s ease, min-width 0.2s ease;
 }
 
-#sidebar-toolbar { padding: 10px; border-bottom: 1px solid var(--border); display: flex; gap: 6px; }
+#sidebar-toolbar { padding: 7px 8px; border-bottom: 1px solid var(--border-soft); display: flex; gap: 5px; align-items: center; }
+/* ID specificity beats the generic `.hidden` utility. */
+#sidebar-toolbar.hidden { display: none; }
 
 #sidebar-toggle {
-  padding: 8px 10px;
-  background: var(--bg-soft-2);
-  color: var(--fg);
-  border: 1px solid var(--border);
-  border-radius: 6px;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  color: var(--fg-dim);
+  border: 1px solid transparent;
+  border-radius: var(--r-xs);
   cursor: pointer;
-  font-size: 13px;
   line-height: 1;
+  transition: background-color var(--dur) var(--ease), color var(--dur) var(--ease);
 }
-#sidebar-toggle:hover { background: #3a3a55; }
+#sidebar-toggle:hover { background: var(--bg-soft-2); border-color: var(--border); color: var(--fg); }
+#sidebar-toggle .icon { width: 15px; height: 15px; transform: rotate(180deg); transition: transform var(--dur) var(--ease); }
+#sidebar-toggle.flipped .icon { transform: rotate(0deg); }
+#open-workspace,
+#local-add-file,
+.local-create button {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  color: var(--fg-dim);
+  border: 1px solid transparent;
+  border-radius: var(--r-xs);
+  cursor: pointer;
+  line-height: 1;
+  transition: background-color var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+#open-workspace:hover,
+#local-add-file:hover,
+.local-create button:hover { background: var(--bg-soft-2); border-color: var(--border); color: var(--fg); }
 
-/* Collapsed sidebar: narrow strip keeps only the toggle button visible. */
-#app.collapsed #sidebar { width: 44px; min-width: 44px; }
-#app.collapsed #sidebar-toolbar { padding: 10px 6px; }
+/* Collapsed sidebar: the top-bar toggle brings it back. Collapsing removes the
+   navigation column entirely so a narrow window gives the work area the space. */
+#app.collapsed #sidebar { width: 0; min-width: 0; border-right: 0; overflow: hidden; }
+#app.collapsed #splitter { display: none; }
+#app.collapsed #sidebar-toolbar,
 #app.collapsed #workspace-source,
 #app.collapsed #local-create,
 #app.collapsed #tree,
-#app.collapsed #sidebar-tabs,
 #app.collapsed #sessions,
-#app.collapsed #sidebar-footer,
+#app.collapsed #research,
 #app.collapsed .search-wrap,
 #app.collapsed #clouddrive { display: none; }
 
 .workspace-source {
   flex: 1;
   min-width: 0;
-  padding: 7px 8px;
+  padding: 5px 8px;
   background: var(--bg-soft-2);
   color: var(--fg);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--r-xs);
   cursor: pointer;
-  font-size: 13px;
+  font-size: 12px;
+  transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
 }
-.workspace-source:focus { outline: none; border-color: var(--accent); }
-.local-create { display: flex; gap: 4px; }
-.local-create button {
-  background: var(--bg-soft-2);
-  color: var(--fg);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  cursor: pointer;
-  padding: 3px 7px;
-  font-size: 13px;
-  line-height: 1;
-}
-.local-create button:hover { background: #3a3a55; }
+.workspace-source:focus { outline: none; border-color: var(--accent-line); box-shadow: 0 0 0 3px var(--accent-soft); }
+.local-create { display: flex; gap: 2px; }
 
-#sidebar-footer {
-  padding: 8px;
-  border-top: 1px solid var(--border);
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-/* Bottom-bar user trigger: initial-letter avatar + name, opens the user menu. */
+/* Top-bar account trigger: initial-letter avatar + name, opens the user menu. */
 #user-menu-trigger {
   display: flex;
   align-items: center;
@@ -137,18 +394,6 @@ body {
   overflow: hidden;
 }
 #user-menu-trigger:hover { background: var(--bg-soft-2); border-color: var(--border); }
-.user-menu-icon {
-  flex: none;
-  font-size: 16px;
-  line-height: 1;
-  color: var(--fg-dim);
-}
-.user-menu-label {
-  flex: none;
-  font-style: italic;
-  font-size: 12px;
-  color: var(--fg-dim);
-}
 .user-avatar {
   flex: none;
   width: 26px; height: 26px;
@@ -174,101 +419,132 @@ body {
   text-overflow: ellipsis;
 }
 
-.tree { flex: 1; overflow: auto; padding: 6px; }
+.tree { flex: 1; overflow: auto; padding: 8px 7px; }
 
-.tree-node { padding: 3px 6px; border-radius: 4px; cursor: pointer; white-space: nowrap; }
+.tree-node {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 7px;
+  border-radius: var(--r-xs);
+  cursor: pointer;
+  white-space: nowrap;
+  font-size: 13px;
+  line-height: 1.35;
+  transition: background-color var(--dur) var(--ease), color var(--dur) var(--ease);
+}
 .tree-node:hover { background: var(--bg-soft-2); }
 .tree-node.dir { color: var(--fg-dim); }
 .tree-node.file { color: var(--fg); }
-.tree-children { padding-left: 14px; }
-.tree-toggle { display: inline-block; width: 14px; color: var(--fg-dim); }
-.tree-del { display: none; float: right; font-size: 11px; opacity: 0.6; cursor: pointer; padding: 0 2px; }
-.tree-del:hover { opacity: 1; }
-.tree-node.file:hover .tree-del { display: inline; }
-
-/* ── Sidebar tabs (Files / Sessions) ── */
-#sidebar-tabs { display: flex; border-bottom: 1px solid var(--border); }
-#sidebar-tabs button {
-  flex: 1;
-  padding: 6px 0;
-  background: transparent;
-  color: var(--fg-dim);
-  border: none;
-  border-bottom: 2px solid transparent;
-  cursor: pointer;
-  font-size: 12px;
+.tree-node.dragging { opacity: .55; }
+.tree-node .tree-icon { width: 15px; height: 15px; color: var(--fg-mute); }
+.tree-node.dir .tree-icon { color: var(--fg-dim); }
+.tree-children { padding-left: 13px; margin-left: 7px; border-left: 1px solid var(--border-soft); }
+.tree-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  flex: none;
+  color: var(--fg-mute);
 }
-#sidebar-tabs button.active { color: var(--fg); border-bottom-color: var(--accent); }
+.tree-toggle .icon { width: 12px; height: 12px; }
+.tree-del {
+  display: none;
+  align-items: center;
+  margin-left: auto;
+  padding: 2px;
+  border-radius: var(--r-xs);
+  color: var(--fg-mute);
+  cursor: pointer;
+  transition: color var(--dur) var(--ease), background-color var(--dur) var(--ease);
+}
+.tree-del .icon { width: 13px; height: 13px; }
+.tree-del:hover { color: #ff7a7a; background: rgba(255, 80, 80, .12); }
+.tree-node.file:hover .tree-del { display: inline-flex; }
 
-/* Sidebar search box (first row of the Files / Sessions tabs). */
+/* Sidebar search box (Files / Chats / Research panels). */
 .search-wrap {
   position: relative;
   flex-shrink: 0;
-  margin: 6px 6px 0;
+  margin: 8px 7px 0;
 }
 .sidebar-search {
   width: 100%;
   box-sizing: border-box;
-  padding: 6px 26px 6px 8px;
-  background: var(--bg-soft-2);
+  padding: 7px 28px 7px 10px;
+  background: var(--bg-inset);
   color: var(--fg);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--r-sm);
   font-size: 12px;
+  transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
 }
-.sidebar-search::placeholder { color: var(--fg-dim); }
-.sidebar-search:focus { outline: none; border-color: var(--accent); }
+.sidebar-search::placeholder { color: var(--fg-mute); }
+.sidebar-search:focus { outline: none; border-color: var(--accent-line); box-shadow: 0 0 0 3px var(--accent-soft); }
 .search-clear {
   position: absolute;
   top: 50%;
-  right: 7px;
+  right: 6px;
   transform: translateY(-50%);
   display: none;
-  width: 16px;
-  height: 16px;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
   padding: 0;
   line-height: 1;
   background: none;
   border: none;
   border-radius: 50%;
   color: var(--fg-dim);
-  font-size: 12px;
   cursor: pointer;
 }
+.search-clear .icon { width: 12px; height: 12px; }
 .search-clear:hover { color: var(--fg); background: var(--bg-soft-2); }
-.search-clear.visible { display: block; }
+.search-clear.visible { display: inline-flex; }
 
-.sessions { flex: 1; display: flex; flex-direction: column; overflow: hidden; padding: 6px; }
+.sessions { flex: 1; display: flex; flex-direction: column; overflow: hidden; padding: 8px 7px; }
 .sessions.hidden { display: none; }
-.sessions-toolbar { flex-shrink: 0; padding: 0 2px 6px; }
+.sessions-toolbar { flex-shrink: 0; padding: 0 1px 8px; }
 .sessions-toolbar button {
   width: 100%;
-  padding: 6px 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 7px 10px;
   background: var(--bg-soft-2);
   color: var(--fg);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--r-sm);
   cursor: pointer;
   font-size: 12px;
+  font-weight: 500;
+  transition: background-color var(--dur) var(--ease), border-color var(--dur) var(--ease), color var(--dur) var(--ease);
 }
-.sessions-toolbar button:hover { border-color: var(--accent); color: var(--accent); }
-#sessions-list { flex: 1; overflow: auto; display: flex; flex-direction: column; gap: 4px; }
+.sessions-toolbar button .icon { width: 14px; height: 14px; }
+.sessions-toolbar button:hover { border-color: var(--border-strong); color: var(--fg); background: var(--bg-hover); }
+#sessions-list { flex: 1; overflow: auto; display: flex; flex-direction: column; gap: 2px; }
 .session-item {
   padding: 8px 10px;
-  border-radius: 6px;
+  border-radius: var(--r-sm);
+  border: 1px solid transparent;
   cursor: pointer;
   display: flex;
   flex-direction: column;
   gap: 2px;
   position: relative;
+  transition: background-color var(--dur) var(--ease), border-color var(--dur) var(--ease);
 }
 .session-item:hover { background: var(--bg-soft-2); }
 /* The session currently open in the chat: accent-tinted so the active conversation is
    easy to spot. A brand-new chat appears here (highlighted) once its first message lands,
    because a blank unsent chat has no session row yet. */
-.session-item.active { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.session-item.active { background: var(--accent-soft); border-color: var(--accent-line); }
 .session-item.active:hover { background: color-mix(in srgb, var(--accent) 22%, transparent); }
-.session-item.active .session-summary { color: var(--fg); }
+.session-item.active .session-summary { color: var(--fg); font-weight: 500; }
 .session-item .session-row { display: flex; align-items: center; gap: 6px; }
 .session-item .session-summary {
   font-size: 12px;
@@ -339,11 +615,11 @@ body {
   position: fixed;
   z-index: 90;
   min-width: 200px;
-  padding: 4px;
-  background: var(--bg-soft);
+  padding: 5px;
+  background: var(--bg-elev);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-3);
   display: none;
 }
 .session-menu.open { display: block; }
@@ -382,7 +658,7 @@ body {
   flex-direction: column;
   align-items: stretch;
   justify-content: flex-start;
-  background: #14141f;
+  background: var(--bg-inset);
   overflow: hidden;
   position: relative;
 }
@@ -408,11 +684,12 @@ body {
   background: var(--bg-soft-2);
   color: var(--fg);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--r-xs);
   cursor: pointer;
   font-size: 12px;
+  transition: background-color var(--dur) var(--ease), border-color var(--dur) var(--ease);
 }
-.viewer-toolbar button:hover { background: #3a3a55; }
+.viewer-toolbar button:hover { background: var(--bg-hover); border-color: var(--border-strong); }
 .viewer-toolbar button.shot-btn { display: inline-flex; align-items: center; gap: 6px; }
 /* PDF clean mode: annotation + zoom tools collapse behind "✏ Edit" / right-click. */
 .viewer-toolbar.pdf-clean .pdf-tool,
@@ -446,14 +723,15 @@ body {
   left: 0;
   margin-top: 4px;
   min-width: 160px;
-  background: var(--bg-soft);
+  background: var(--bg-elev);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   padding: 4px;
   z-index: 10;
   display: flex;
   flex-direction: column;
   gap: 2px;
+  box-shadow: var(--shadow-2);
 }
 .tools-menu.hidden { display: none; }
 .tools-menu button {
@@ -745,19 +1023,19 @@ pre.text-viewer {
 /* Hidden chat: collapses to the floating Delveta logo mini-icon (#chat-mini). */
 #chat.minimized { display: none; }
 
-#chat-log { flex: 1; min-height: 0; overflow: auto; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+#chat-log { flex: 1; min-height: 0; overflow: auto; padding: 16px 16px 12px; display: flex; flex-direction: column; gap: 10px; }
 
-.msg { max-width: 80%; display: flex; flex-direction: column; gap: 2px; position: relative; }
+.msg { max-width: min(80%, 760px); display: flex; flex-direction: column; gap: 2px; position: relative; }
 .msg.user { align-self: flex-end; align-items: flex-end; }
 .msg.assistant { align-self: flex-start; align-items: flex-start; }
-.msg.error { align-self: flex-start; max-width: 80%; background: #5a2a2a; color: #ffb3b3; border-radius: 10px; padding: 8px 12px; white-space: pre-wrap; word-break: break-word; }
-.msg.notice { align-self: center; max-width: 90%; background: #3a3320; color: #ffd966; font-size: 12px; text-align: center; border-radius: 10px; padding: 8px 12px; }
+.msg.error { align-self: flex-start; max-width: min(80%, 760px); background: #5a2a2a; color: #ffb3b3; border-radius: 10px; padding: 8px 12px; white-space: pre-wrap; word-break: break-word; }
+.msg.notice { align-self: center; max-width: min(90%, 860px); background: #3a3320; color: #ffd966; font-size: 12px; text-align: center; border-radius: 10px; padding: 8px 12px; }
 /* Deterministic system notes (e.g. research gate review explanations) — display-only,
    rendered via textContent as plain text so runtime bookkeeping never looks like model
    output. Left border in the accent color marks them as guidance, not a chat bubble. */
 .msg.system {
   align-self: flex-start;
-  max-width: 90%;
+  max-width: min(90%, 860px);
   border: 1px solid var(--border);
   border-left: 3px solid var(--accent);
   border-radius: 8px;
@@ -769,9 +1047,25 @@ pre.text-viewer {
   white-space: pre-line;
   word-break: break-word;
 }
-.msg-bubble { padding: 8px 12px 26px; border-radius: 10px; white-space: normal; word-break: break-word; max-width: 100%; }
-.msg.user .msg-bubble { background: var(--accent); color: #fff; }
-.msg.assistant .msg-bubble { background: var(--bg-soft-2); }
+.msg-bubble {
+  padding: 9px 13px 27px;
+  border-radius: var(--r-lg);
+  white-space: normal;
+  word-break: break-word;
+  max-width: 100%;
+  line-height: 1.55;
+}
+.msg.user .msg-bubble {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 90%, #fff), var(--accent));
+  color: #fff;
+  border-bottom-right-radius: var(--r-xs);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .18), var(--shadow-1);
+}
+.msg.assistant .msg-bubble {
+  background: var(--bg-soft-2);
+  border: 1px solid var(--border-soft);
+  border-bottom-left-radius: var(--r-xs);
+}
 /* Per-message actions pinned to the bubble's bottom-right corner; hidden until hover/focus.
    Icon-only chips (label is the tooltip) so the row stays small and never covers the text
    or grows past the bubble on a narrow window. A button in a stateful label ("Importing…",
@@ -790,17 +1084,18 @@ pre.text-viewer {
 .msg-actions button {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
-  background: var(--bg-soft);
+  gap: 4px;
+  background: var(--bg-elev);
   border: 1px solid var(--border);
   cursor: pointer;
   font-size: 12px;
   line-height: 1;
-  padding: 3px 5px;
-  border-radius: 8px;
+  padding: 4px 6px;
+  border-radius: var(--r-xs);
   color: var(--fg-dim);
-  transition: color .12s, background .12s, border-color .12s;
+  transition: color var(--dur) var(--ease), background-color var(--dur) var(--ease), border-color var(--dur) var(--ease);
 }
+.msg-actions button .icon { width: 13px; height: 13px; }
 .msg-actions button .lbl { display: none; }
 .msg-actions button[data-state] .lbl { display: inline; font-size: 11px; }
 .msg-actions button:hover { color: var(--accent); background: var(--bg-soft-2); border-color: var(--accent); }
@@ -921,11 +1216,15 @@ pre.text-viewer {
 .msg-prepared { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
 .msg-prepared-card {
   flex-basis: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: 12px;
-  padding: 3px 8px;
-  border-radius: 6px;
+  padding: 4px 8px;
+  border-radius: var(--r-xs);
   background: rgba(127, 127, 127, 0.16);
 }
+.msg-prepared-card .icon { width: 13px; height: 13px; opacity: .85; }
 .msg.user .msg-prepared-card { background: rgba(255, 255, 255, 0.2); }
 .msg-prepared-text {
   flex-basis: 100%;
@@ -1008,20 +1307,27 @@ pre.text-viewer {
 
 .msg-thinking {
   align-self: flex-start;
-  max-width: 80%;
+  max-width: min(80%, 760px);
   font-size: 12px;
-  border-left: 3px solid var(--accent);
-  background: var(--bg-soft);
-  border-radius: 8px;
-  padding: 6px 10px;
+  border: 1px solid var(--border-soft);
+  border-left: 2px solid var(--accent);
+  background: var(--bg-soft-2);
+  border-radius: var(--r-md);
+  padding: 7px 11px;
 }
 .msg-thinking summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   cursor: pointer;
   color: var(--accent);
   font-weight: 600;
   user-select: none;
   outline: none;
 }
+.status-icon { display: inline-flex; align-items: center; }
+.status-icon .icon { width: 13px; height: 13px; }
+.status-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .msg-thinking .thinking-text {
   margin-top: 4px;
   white-space: pre-wrap;
@@ -1034,9 +1340,10 @@ pre.text-viewer {
   flex-shrink: 0;   /* never let the Generate area + input box compress or get pushed out */
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 10px;
-  border-top: 1px solid var(--border);
+  gap: 7px;
+  padding: 10px 12px 12px;
+  border-top: 1px solid var(--border-soft);
+  background: linear-gradient(180deg, transparent, color-mix(in srgb, var(--fg) 1.5%, transparent));
 }
 
 /* Gemini/ChatGPT-style input: the textarea spans the full width, with the attach ＋ /
@@ -1049,12 +1356,16 @@ pre.text-viewer {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding: 6px;
-  background: var(--bg-soft);
+  padding: 7px;
+  background: var(--bg-inset);
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: var(--r-lg);
+  transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
 }
-.chat-input-box:focus-within { border-color: var(--accent); }
+.chat-input-box:focus-within {
+  border-color: var(--accent-line);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
 
 .chat-input-actions {
   display: flex;
@@ -1108,14 +1419,15 @@ pre.text-viewer {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 6px 9px;
+  padding: 6px 8px;
   background: transparent;
   color: var(--fg-dim);
-  border: none;
-  border-radius: 8px;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
   cursor: pointer;
   font-size: 14px;
   line-height: 1;
+  transition: background-color var(--dur) var(--ease), color var(--dur) var(--ease);
 }
 .chat-input-btn svg { display: block; }
 
@@ -1193,16 +1505,20 @@ pre.text-viewer {
 #chat-send {
   flex: none;
   margin-left: auto;   /* keep Send anchored to the right edge of the actions row */
-  padding: 7px 14px;
+  padding: 7px 16px;
   background: var(--accent);
   color: #fff;
   border: none;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   cursor: pointer;
   font-size: 13px;
+  font-weight: 600;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .2), var(--shadow-1);
+  transition: filter var(--dur) var(--ease), transform var(--dur) var(--ease);
 }
-
-#chat-send:disabled { opacity: 0.5; cursor: default; }
+#chat-send:hover { filter: brightness(1.08); }
+#chat-send:active { transform: translateY(.5px); }
+#chat-send:disabled { opacity: 0.5; cursor: default; filter: none; }
 
 /* Pending-attachment bar: shows what will ride along on the next send. */
 .chat-attach-bar { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -1210,21 +1526,28 @@ pre.text-viewer {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 3px 8px;
-  background: var(--bg-soft);
+  padding: 3px 9px;
+  background: var(--bg-soft-2);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--r-pill);
   font-size: 12px;
   color: var(--fg);
 }
+.chat-attach-chip .icon { width: 13px; height: 13px; color: var(--fg-dim); }
 .chat-attach-chip button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border: none;
   background: none;
   color: var(--fg-dim);
   cursor: pointer;
   font-size: 12px;
   padding: 0;
+  border-radius: 50%;
 }
+.chat-attach-chip button .icon { width: 12px; height: 12px; }
+.chat-attach-chip button:hover { color: var(--fg); }
 /* Viewer focus chip: same anatomy, quieter — it reflects ambient state, not a staged file. */
 .viewer-focus-chip { opacity: 0.85; }
 
@@ -1262,9 +1585,9 @@ sup.viewer-cite:hover { text-decoration: underline; }
   gap: 4px;
   flex-shrink: 0;
   padding: 6px 10px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--border-soft);
 }
-.chat-toolbar-label { font-size: 11px; color: var(--fg-dim); margin-right: 2px; }
+.chat-toolbar-label { font-size: 11px; color: var(--fg-mute); margin-right: 2px; }
 /* When the chat is docked as a wide bottom bar the toolbar sits in the header, right
    after the "Chat" title (.has-tools is toggled by syncDock): inline, no border, with
    the window-control actions pushed to the far right. */
@@ -1279,15 +1602,20 @@ sup.viewer-cite:hover { text-decoration: underline; }
 .chat-topbar.has-tools .chat-header-actions { margin-left: auto; }
 .chat-tool-btn {
   flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   padding: 3px 9px;
-  background: var(--bg-soft);
-  color: var(--fg);
+  background: transparent;
+  color: var(--fg-dim);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--r-pill);
   cursor: pointer;
   font-size: 11px;
+  transition: background-color var(--dur) var(--ease), color var(--dur) var(--ease), border-color var(--dur) var(--ease);
 }
-.chat-tool-btn:hover { background: var(--bg-soft-2); border-color: var(--accent); }
+.chat-tool-btn .icon { width: 13px; height: 13px; }
+.chat-tool-btn:hover { background: var(--accent-soft); border-color: var(--accent-line); color: var(--fg); }
 /* Toolbar button while that tool's generation job runs (queued/in-progress): no border or
    glow — the running state is conveyed only by the hourglass icon swapped in by
    updateToolbarGenState(), so the button keeps its normal resting look. */
@@ -1300,21 +1628,44 @@ sup.viewer-cite:hover { text-decoration: underline; }
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--border-soft);
   font-size: 12px;
   color: var(--fg-dim);
 }
 .chat-topbar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  padding: 6px 10px;
+  gap: 4px 6px;
+  padding: 6px 8px;
   min-width: 0;
+}
+/* Which agent owns this panel: the Files assistant, the Chats conversation itself, or
+   the selected research task's agent. */
+.chat-panel-label {
+  flex: none;
+  padding-right: 6px;
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.chat-panel-label.hidden { display: none; }
+/* The chat column is narrow by design and the dock toggle shares the top bar with it.
+   Measure the panel itself (window media queries cannot see it) and drop the label only
+   when the column is dragged below the width that still fits the title and controls. */
+#chat { container-type: inline-size; }
+@container (max-width: 280px) {
+  .chat-panel-label { display: none; }
 }
 #chat-title {
   flex: 1;
-  min-width: 0;
+  /* Keep a readable slice of the session name; when the column cannot fit that beside
+     the controls, the actions wrap to a second line instead of crushing the title. */
+  min-width: 90px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1328,7 +1679,8 @@ sup.viewer-cite:hover { text-decoration: underline; }
    the top bar is redundant — hide it (the chat stays functional; it is that task's session).
    With the title gone the top bar holds only the actions, so push them back to the right
    edge (otherwise justify-content: space-between left-aligns the only remaining child). */
-#chat-header.research-mode #chat-title { display: none; }
+#chat-header.research-mode #chat-title,
+#app[data-mode="research"] #chat-title { display: none; }
 #chat-header.research-mode .chat-header-actions { margin-left: auto; }
 /* Research context sub bar: a full-width accent strip under the top bar. Clicking it jumps
    to the task's working-directory view. */
@@ -1407,6 +1759,155 @@ sup.viewer-cite:hover { text-decoration: underline; }
 #chat-research-bar .crc-mode.hidden { display: none; }
 #chat-research-bar:hover { background: rgba(124, 130, 255, 0.16); }
 #chat-research-bar.hidden { display: none; }
+
+/* ── WorkSpace assistant session picker (Files mode only) ──
+   In Files the header names the assistant's own session and offers a New button; Chats and
+   Research keep their plain title (Chats is a history browser, Research is task-bound). */
+#app[data-mode="files"] #chat-title { display: none; }
+.ws-session { display: none; }
+#app[data-mode="files"] .ws-session {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  /* Like the plain title, keep a readable slice of the session name; the header actions
+     wrap to a second line instead of crushing it. */
+  min-width: 96px;
+}
+.ws-session-trigger { flex: 1; min-width: 0; max-width: 100%; justify-content: space-between; }
+.ws-session-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+.ws-session-caret { flex: none; width: 11px; height: 11px; opacity: 0.7; }
+.ws-session-new { flex: none; }
+/* The dropdown is viewport-positioned by app.js (fixed + clamped), like the ⋯ session menu,
+   so it can never spill outside a narrow right-docked chat column. */
+.ws-session-menu {
+  position: fixed;
+  z-index: 95;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: min(340px, calc(100vw - 16px));
+  padding: 6px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-3);
+  text-align: left;
+}
+.ws-session-menu.hidden { display: none; }
+/* The menu lives inside #chat-header, whose pill rule would otherwise style every row. */
+.ws-session-menu button {
+  display: flex;
+  padding: 6px 8px;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--fg);
+  font-size: 12px;
+  white-space: normal;
+  text-align: left;
+}
+.ws-session-menu button:hover { background: var(--bg-soft-2); border-color: transparent; }
+.ws-session-menu-head {
+  padding: 4px 6px 0;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+}
+.ws-session-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: min(46vh, 320px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.ws-session-item {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+}
+.ws-session-item:hover { background: var(--bg-soft-2); }
+.ws-session-item.active { border-color: var(--accent); background: var(--bg-soft-2); }
+.ws-session-main {
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+.ws-session-row-title {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ws-session-row-meta {
+  display: flex;
+  gap: 8px;
+  font-size: 10.5px;
+  color: var(--fg-dim);
+}
+.ws-session-preview {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--fg-dim);
+}
+.ws-session-more {
+  flex: none;
+  align-self: center;
+  width: 24px;
+  justify-content: center;
+  color: var(--fg-dim);
+}
+.ws-session-more svg { width: 14px; height: 14px; }
+.ws-session-empty { padding: 8px; font-size: 11.5px; color: var(--fg-dim); }
+.ws-session-menu-note {
+  margin: 0 6px 2px;
+  font-size: 10.5px;
+  line-height: 1.45;
+  color: var(--fg-dim);
+}
+/* Context scope strip: what workspace (and folder, when one was open) this session was
+   started in. Descriptive only — the note states that retrieval is not limited by it. */
+.ws-scope-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  font-size: 11px;
+  border-top: 1px solid var(--border-soft);
+}
+.ws-scope-bar.hidden { display: none; }
+.ws-scope-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 1px 7px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: var(--bg-soft-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  color: var(--fg-dim);
+}
+.ws-scope-chip.hidden { display: none; }
+.ws-scope-workspace { color: var(--fg); }
+.ws-scope-note { color: var(--fg-dim); }
 .chat-title-input {
   flex: 1;
   min-width: 0;
@@ -1418,21 +1919,36 @@ sup.viewer-cite:hover { text-decoration: underline; }
   border-radius: 4px;
 }
 #chat-header button {
-  padding: 3px 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
   background: var(--bg-soft-2);
-  color: var(--fg);
+  color: var(--fg-dim);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--r-pill);
   cursor: pointer;
-  font-size: 12px;
+  font-size: 11px;
+  white-space: nowrap;
+  transition: background-color var(--dur) var(--ease), color var(--dur) var(--ease), border-color var(--dur) var(--ease);
 }
-#chat-header button:hover { background: #3a3a55; }
+#chat-header button .icon { width: 13px; height: 13px; }
+#chat-header button:hover { background: var(--bg-hover); color: var(--fg); border-color: var(--border-strong); }
 #chat-header button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
 /* "＋ Research" is the header's only create button — outlined in the accent so it reads as
    a create-new action (a dialog, not a mode toggle). Normal new chats live in the sidebar. */
 #chat-new-research { border-color: var(--accent); color: var(--accent); }
 #chat-new-research:hover { background: var(--accent); color: #fff; }
-.chat-header-actions { display: flex; gap: 4px; align-items: center; flex-shrink: 0; }
+.chat-header-actions { display: flex; gap: 4px; align-items: center; flex-shrink: 0; margin-left: auto; }
+/* Dock side stays user-controlled in Files/Research (right column ↔ bottom bar); Chats
+   is the conversation itself, so the panel-shape controls are hidden there. Floating
+   stays retired; the chat can still be collapsed to the mini icon. */
+/* Two IDs so this beats the `#chat-header button { display: inline-flex }` rule. */
+#chat-header #chat-float { display: none; }
+#app[data-mode="chats"] #chat-hide,
+#app[data-mode="chats"] #chat-dock { display: none; }
+#app[data-mode="chats"] #chat-panel-label { display: none; }
+#app[data-mode="chats"] #chat { border-top: 0; }
 
 /* Floating chat window (draggable overlay, resizable via the bottom-right corner).
    ``resize: both`` needs ``overflow`` other than ``visible``; the message list scrolls
@@ -1467,7 +1983,7 @@ sup.viewer-cite:hover { text-decoration: underline; }
   border-top: 0;
 }
 
-/* Chats tab: the chat fills the entire main pane. switchTab hides the file/document window
+/* Chats mode: the chat fills the entire main pane. setMode hides the file/document window
    (#viewer, #note-editor) on this tab, so the chat column alone stretches across the whole
    area; this overrides any global bottom/right dock sizing while the Chats tab is active.
    The !important beats the INLINE width/height that dock-edge resizing writes onto #chat —
@@ -1485,6 +2001,13 @@ sup.viewer-cite:hover { text-decoration: underline; }
 /* Edge-resizing is meaningless here (the pane is pinned to the full width/height), and the
    handle would just write inline sizes that lie about the actual layout. */
 #app.chat-fills #chat-resize { display: none; }
+/* On a wide window the conversation keeps a readable column instead of stretching edge to
+   edge; the header and toolbar still span the pane. */
+#app.chat-fills #chat-log,
+#app.chat-fills #chat-form {
+  padding-left: max(16px, calc((100% - 880px) / 2));
+  padding-right: max(16px, calc((100% - 880px) / 2));
+}
 
 /* Docked chat edge-resize handle: a thin strip straddling the chat boundary. Drag it to
    resize — bottom-docked changes height (top edge), right-docked changes width (left edge).
@@ -1536,8 +2059,8 @@ sup.viewer-cite:hover { text-decoration: underline; }
   width: 4px;
   flex-shrink: 0;
   cursor: col-resize;
-  background: var(--border);
-  transition: background 0.1s ease;
+  background: var(--border-soft);
+  transition: background var(--dur) var(--ease);
 }
 .splitter:hover, body.resizing .splitter { background: var(--accent); }
 body.resizing { user-select: none; cursor: col-resize; }
@@ -1578,13 +2101,14 @@ body.resizing-ew { cursor: ew-resize; }
 .modal {
   width: 420px;
   max-width: 92vw;
-  background: var(--bg-soft);
+  background: var(--bg-elev);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--r-lg);
   padding: 20px;
   display: flex;
   flex-direction: column;
   gap: 12px;
+  box-shadow: var(--shadow-3);
 }
 .modal-header { display: flex; justify-content: space-between; align-items: center; }
 .modal-header h3 { margin: 0; }
@@ -1701,36 +2225,39 @@ body.resizing-ew { cursor: ew-resize; }
 }
 .tier.vip { color: var(--accent); border-color: var(--accent); }
 
-/* ── User menu (grouped, upward from the bottom bar) ── */
+/* ── User menu (grouped, below the top-bar account button) ── */
 .user-menu {
   position: fixed;
-  left: 12px;
-  bottom: 52px;
+  right: 12px;
+  top: 60px;
   width: 260px;
   max-height: 72vh;
   overflow: auto;
-  background: var(--bg-soft);
+  background: var(--bg-elev);
   border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 8px;
+  border-radius: var(--r-md);
+  padding: 6px;
   z-index: 100;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--shadow-3);
 }
 .user-menu.hidden { display: none; }
 .user-menu-group { display: flex; flex-direction: column; gap: 2px; }
 .user-menu-group.hidden { display: none; }
-.user-menu-group + .user-menu-group { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
+.user-menu-group + .user-menu-group { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border-soft); }
 .user-menu-group-label {
   padding: 2px 10px; font-size: 10px; text-transform: uppercase;
   letter-spacing: 0.06em; color: var(--fg-dim);
 }
 .user-menu-item {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  width: 100%; padding: 8px 10px; border-radius: 6px;
+  width: 100%; padding: 8px 10px; border-radius: var(--r-sm);
   background: none; border: none; color: var(--fg);
   font-size: 13px; cursor: pointer; text-align: left;
+  transition: background-color var(--dur) var(--ease);
 }
 .user-menu-item:hover { background: var(--bg-soft-2); }
+.user-menu-item-label { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.user-menu-item-label .icon { width: 15px; height: 15px; color: var(--fg-dim); }
 .user-menu-item.disabled { opacity: 0.45; cursor: not-allowed; }
 .user-menu-item.disabled:hover { background: none; }
 .user-menu-item.signout { color: #ff9a9a; }
@@ -1782,10 +2309,16 @@ body.resizing-ew { cursor: ew-resize; }
 
 .about-head { display: flex; align-items: center; gap: 12px; }
 .about-logo {
-  width: 48px; height: 48px; border-radius: 12px;
+  width: 48px; height: 48px; border-radius: var(--r-lg);
   display: flex; align-items: center; justify-content: center;
-  font-size: 24px; background: var(--bg-soft-2); border: 1px solid var(--border);
+  color: #fff;
+  background: linear-gradient(150deg,
+    color-mix(in srgb, var(--accent) 58%, #fff),
+    var(--accent) 55%,
+    color-mix(in srgb, var(--accent) 62%, #000));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .35), var(--shadow-1);
 }
+.about-logo .icon { width: 24px; height: 24px; }
 .about-name { font-size: 15px; font-weight: 700; }
 .about-version { font-size: 12px; color: var(--fg-dim); }
 
@@ -1874,7 +2407,7 @@ body.resizing-ew { cursor: ew-resize; }
   border-radius: 6px;
   cursor: pointer;
 }
-.provider-head button:hover { background: #3a3a55; }
+.provider-head button:hover { background: var(--bg-hover); }
 
 .cfg-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--fg-dim); }
 .cfg-field input, .cfg-field select {
@@ -1899,7 +2432,7 @@ body.resizing-ew { cursor: ew-resize; }
   cursor: pointer;
   white-space: nowrap;
 }
-.cfg-model-row button:hover { background: #3a3a55; }
+.cfg-model-row button:hover { background: var(--bg-hover); }
 
 #cfg-add-provider {
   padding: 7px 12px;
@@ -1910,20 +2443,25 @@ body.resizing-ew { cursor: ew-resize; }
   cursor: pointer;
   width: 100%;
 }
-#cfg-add-provider:hover { background: #3a3a55; }
+#cfg-add-provider:hover { background: var(--bg-hover); }
 
 /* ── Cloud drive panel (sidebar) ── */
 .clouddrive { flex: 1; overflow: auto; display: flex; flex-direction: column; }
 .clouddrive.hidden { display: none; }
 .clouddrive-toolbar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 4px;
   padding: 6px 8px;
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
-.cd-path { flex: 1; min-width: 0; display: flex; align-items: center; gap: 2px; overflow: hidden; white-space: nowrap; font-size: 12px; color: var(--fg-dim); }
+/* The breadcrumb owns a full row; the action buttons sit below it, so a narrow
+   sidebar never squeezes the current folder down to one character. */
+.cd-path { flex: 1 1 100%; min-width: 0; display: flex; align-items: center; gap: 5px; overflow: hidden; white-space: nowrap; font-size: 12px; color: var(--fg-dim); }
+.cd-path > .icon { width: 14px; height: 14px; color: var(--fg-mute); }
+.cd-path-text { overflow: hidden; text-overflow: ellipsis; }
 .cd-crumb {
   background: none;
   border: none;
@@ -1939,45 +2477,57 @@ body.resizing-ew { cursor: ew-resize; }
 .cd-crumb:hover { background: var(--bg-soft-2); color: var(--fg); }
 .cd-crumb.current { color: var(--fg); }
 .cd-crumb-sep { color: var(--fg-dim); opacity: 0.6; }
-.clouddrive-toolbar .spacer { flex: 1; }
+.clouddrive-toolbar .spacer { display: none; }
 .clouddrive-toolbar button {
-  background: var(--bg-soft-2);
-  color: var(--fg);
-  border: 1px solid var(--border);
-  border-radius: 6px;
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  color: var(--fg-dim);
+  border: 1px solid transparent;
+  border-radius: var(--r-xs);
   cursor: pointer;
-  padding: 3px 7px;
-  font-size: 13px;
+  padding: 0;
   line-height: 1;
+  transition: background-color var(--dur) var(--ease), color var(--dur) var(--ease);
 }
-.clouddrive-toolbar button:hover { background: #3a3a55; }
+.clouddrive-toolbar button .icon { width: 15px; height: 15px; }
+.clouddrive-toolbar button:hover { background: var(--bg-soft-2); border-color: var(--border); color: var(--fg); }
+/* Labelled create button keeps its text width. */
+.clouddrive-toolbar #cd-new-workspace { width: auto; padding: 0 9px; gap: 5px; font-size: 12px; }
 .cd-list { flex: 1; overflow: auto; padding: 6px; }
 .cd-row {
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 5px 8px;
-  border-radius: 6px;
+  border-radius: var(--r-xs);
   cursor: pointer;
   white-space: nowrap;
+  transition: background-color var(--dur) var(--ease);
 }
 .cd-row:hover { background: var(--bg-soft-2); }
-.cd-icon { flex: none; }
+.cd-icon { flex: none; display: inline-flex; color: var(--fg-mute); }
+.cd-icon .icon { width: 15px; height: 15px; }
+.cd-row.cd-folder .cd-icon { color: var(--fg-dim); }
 .cd-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--fg); }
 .cd-folder .cd-name { color: var(--fg-dim); }
 .cd-meta { flex: none; font-size: 11px; color: var(--fg-dim); }
-.cd-empty { padding: 20px 12px; color: var(--fg-dim); font-size: 12px; text-align: center; }
+.cd-empty { padding: 20px 12px; color: var(--fg-mute); font-size: 12px; text-align: center; }
 .cd-status {
   padding: 6px 10px;
   font-size: 12px;
   color: var(--fg-dim);
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--border-soft);
   flex-shrink: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.cd-tw { flex: none; width: 14px; color: var(--fg-dim); font-size: 11px; text-align: center; }
+.cd-tw { flex: none; width: 14px; display: inline-flex; align-items: center; justify-content: center; color: var(--fg-mute); }
+.cd-tw .icon { width: 12px; height: 12px; }
 .cd-kids { display: contents; }
 
 /* Folder-browse view (main area): breadcrumb bar + scrolling content list. Rows and
@@ -2057,27 +2607,31 @@ body.resizing-ew { cursor: ew-resize; }
 .drive-ctxmenu {
   position: fixed;
   z-index: 80;
-  min-width: 180px;
-  background: var(--bg-soft);
+  min-width: 186px;
+  background: var(--bg-elev);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
-  padding: 6px;
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-3);
+  padding: 5px;
   display: flex;
   flex-direction: column;
 }
 .drive-ctxmenu button {
+  display: flex;
+  align-items: center;
+  gap: 9px;
   text-align: left;
   background: transparent;
   border: none;
   color: var(--fg);
-  padding: 8px 10px;
-  border-radius: 6px;
+  padding: 7px 9px;
+  border-radius: var(--r-xs);
   font-size: 13px;
   cursor: pointer;
 }
+.drive-ctxmenu button .icon { width: 15px; height: 15px; color: var(--fg-dim); }
 .drive-ctxmenu button:hover { background: var(--bg-soft-2); }
-.drive-ctxmenu-sep { height: 1px; margin: 4px 4px; background: var(--border); }
+.drive-ctxmenu-sep { height: 1px; margin: 4px; background: var(--border-soft); }
 
 /* ── Cloud note editor (takes the Files document area, above/beside the docked chat) ──
    An in-flow flex panel, NOT an overlay: when a cloud .md/.txt note is open, #viewer is
@@ -2123,7 +2677,7 @@ body.resizing-ew { cursor: ew-resize; }
   padding: 4px 10px;
   font-size: 12px;
 }
-.note-editor-toolbar button:hover { background: #3a3a55; }
+.note-editor-toolbar button:hover { background: var(--bg-hover); }
 .note-editor-toolbar button:disabled { opacity: 0.5; cursor: default; }
 .note-editor-toolbar .note-icon-btn {
   display: inline-flex;
@@ -2235,7 +2789,7 @@ body.resizing-ew { cursor: ew-resize; }
   font-size: 12px;
   white-space: nowrap;
 }
-.cdt-toolbar button:hover:not(:disabled) { background: #3a3a55; }
+.cdt-toolbar button:hover:not(:disabled) { background: var(--bg-hover); }
 .cdt-toolbar button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 .cdt-toolbar button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 .cdt-toolbar button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
@@ -2286,7 +2840,7 @@ body.resizing-ew { cursor: ew-resize; }
   cursor: pointer;
   font-size: 12px;
 }
-.cdt-batchbar button:hover:not(:disabled) { background: #3a3a55; }
+.cdt-batchbar button:hover:not(:disabled) { background: var(--bg-hover); }
 .cdt-batchbar button.danger { color: #ff7a7a; }
 .cdt-batchbar button.danger:hover:not(:disabled) { background: #dc2626; border-color: #dc2626; color: #fff; }
 .cdt-batchbar button:disabled { opacity: 0.5; cursor: default; }
@@ -2364,7 +2918,7 @@ body.resizing-ew { cursor: ew-resize; }
   cursor: pointer;
   font-size: 12px;
 }
-.cdt-btn:hover:not(:disabled) { background: #3a3a55; }
+.cdt-btn:hover:not(:disabled) { background: var(--bg-hover); }
 .cdt-btn:disabled { opacity: 0.55; cursor: default; }
 .cdt-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 .cdt-btn.cdt-danger { color: #ff7a7a; }
@@ -2790,7 +3344,6 @@ body.resizing-ew { cursor: ew-resize; }
 .cdt-log-action { margin-top: 2px; font-size: 12px; color: var(--fg-dim); }
 
 /* ── Research OS console (two-layer read-only monitor) ── */
-#tab-research { padding: 6px 10px; }
 #research {
   flex: 1;
   min-height: 0;
@@ -2811,44 +3364,66 @@ body.resizing-ew { cursor: ew-resize; }
   padding-top: 6px;
 }
 .research-section-title { font-size: 11px; color: var(--fg-dim); text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 4px; }
+.research-group-title {
+  margin: 8px 0 4px;
+  padding: 0 2px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--fg-dim);
+}
+.research-group-title:first-child { margin-top: 0; }
 .research-section { margin-bottom: 12px; }
 .research-tasks-toolbar { padding: 0 0 6px; }
 .research-tasks-toolbar button {
   width: 100%;
-  padding: 5px 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 8px;
   background: var(--bg-soft-2);
   color: var(--fg);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--r-sm);
   cursor: pointer;
   font-size: 12px;
+  font-weight: 500;
+  transition: background-color var(--dur) var(--ease), border-color var(--dur) var(--ease);
 }
-.research-tasks-toolbar button:hover { border-color: var(--accent); color: var(--accent); }
+.research-tasks-toolbar button .icon { width: 14px; height: 14px; }
+.research-tasks-toolbar button:hover { border-color: var(--border-strong); background: var(--bg-hover); }
 .research-row {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 8px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  margin-bottom: 4px;
-  background: var(--bg-soft);
+  padding: 7px 9px;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  margin-bottom: 2px;
+  background: transparent;
   cursor: pointer;
+  transition: background-color var(--dur) var(--ease), border-color var(--dur) var(--ease);
 }
-.research-row.selected { border-color: var(--accent); background: rgba(124, 108, 255, 0.08); }
+.research-row:hover { background: var(--bg-soft-2); }
+.research-row.selected { border-color: var(--accent-line); background: var(--accent-soft); }
 .research-row-main { flex: 1; min-width: 0; }
 .research-row-del {
   flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border: none;
   background: transparent;
-  color: var(--fg-dim);
-  font-size: 13px;
+  color: var(--fg-mute);
   line-height: 1;
   cursor: pointer;
-  padding: 2px 4px;
-  border-radius: 4px;
-  opacity: 0.55;
+  padding: 3px;
+  border-radius: var(--r-xs);
+  opacity: 0.65;
 }
+.research-row-del .icon { width: 13px; height: 13px; }
 .research-row-del:hover { color: #ff6b6b; background: rgba(255, 107, 107, 0.12); opacity: 1; }
 .research-row-title { font-size: 12px; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .research-row-sub { font-size: 11px; color: var(--fg-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -2878,17 +3453,28 @@ body.resizing-ew { cursor: ew-resize; }
 /* The session snippet preview (only shown while searching) must not widen the row to its
    full text; keep it wrapping inside whatever width the title line set. */
 #sessions-list .session-snippet { contain: inline-size; }
+/* Research rows are cards with a trailing delete action: widening them pushes that action
+   out of the panel, so they stay inside the column and ellipsize instead. */
+#research .research-row { width: auto; min-width: 0; }
+#research .research-row-title,
+#research .research-row-sub { overflow: hidden; text-overflow: ellipsis; }
 .research-mini-btn {
-  padding: 3px 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
   font-size: 11px;
   background: var(--bg-soft-2);
-  color: var(--fg);
+  color: var(--fg-dim);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--r-pill);
   cursor: pointer;
   white-space: nowrap;
+  transition: background-color var(--dur) var(--ease), color var(--dur) var(--ease);
 }
-.research-mini-btn:hover { background: #3a3a55; }
+.research-mini-btn .icon { width: 12px; height: 12px; }
+.research-mini-btn:hover { background: var(--bg-hover); color: var(--fg); }
+.research-mini-btn:hover { background: var(--bg-hover); }
 
 /* Status head (task name + state). */
 .research-status-head { margin-bottom: 10px; display: flex; flex-direction: column; gap: 4px; }
@@ -2902,7 +3488,8 @@ body.resizing-ew { cursor: ew-resize; }
    Row-gap keeps wrapped lines from colliding; no stage is ever dropped for space. */
 .research-stage-bar { display: flex; flex-wrap: wrap; align-items: center; column-gap: 1px; row-gap: 6px; }
 .research-stage-step { display: inline-flex; align-items: center; }
-.research-stage-arrow { font-size: 10px; color: var(--fg-dim); margin: 0 2px; }
+.research-stage-arrow { display: inline-flex; align-items: center; color: var(--fg-mute); margin: 0 3px; }
+.research-stage-arrow .icon { width: 11px; height: 11px; }
 .research-stage-pill {
   display: inline-flex;
   align-items: center;
@@ -3010,7 +3597,7 @@ body.resizing-ew { cursor: ew-resize; }
   padding: 14px 16px 12px;
   width: 100%;
 }
-/* Tab exclusivity: switchTab toggles .hidden on the research panes. Because this block sets
+/* Mode exclusivity: setMode toggles .hidden on the research panes. Because this block sets
    display:flex at equal specificity, a plain .hidden { display:none } is defeated here — the
    companion rule below is what actually hides the workbench when the Files / Sessions tab is
    active (mutual exclusion: only one main view is rendered at a time). */
@@ -3417,3 +4004,82 @@ textarea.rtv-desc-edit::placeholder { color: var(--fg-dim); opacity: 0.7; }
 .msg-rate .rate-opt { font-size: 12px; padding: 4px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-soft); color: var(--fg); cursor: pointer; }
 .msg-rate .rate-opt:hover { border-color: var(--accent); color: var(--accent); }
 .msg-rate .rate-done { font-size: 12px; color: var(--fg-dim); }
+
+/* ── Responsive workbench ──────────────────────────────────────────────────
+   The window chrome is fixed; the three-pane layout gives space back in this
+   order: brand text, mode labels, sidebar width, then the right-hand panel. */
+@media (max-width: 1100px) {
+  .mode-tab { padding: 7px 12px; }
+  #sidebar { width: 240px; }
+  #app.chat-right #chat { width: 300px; }
+}
+@media (max-width: 860px) {
+  .wb-topline { gap: 8px; padding: 0 10px; }
+  #mode-nav { gap: 6px; padding: 6px 10px 8px; }
+  /* Icon-only header actions (each keeps its title/aria-label); the separators
+     would divide a row of icons into noise, so they go with the labels. */
+  .wb-action-label { display: none; }
+  .wb-sep { display: none; }
+  #sidebar { width: 210px; min-width: 170px; }
+  #app.chat-right #chat { width: 270px; min-width: 220px; }
+  .research-tasks-toolbar button { font-size: 11px; }
+}
+@media (max-width: 720px) {
+  .wb-title { display: none; }
+  .mode-tab { min-width: 0; padding: 7px 11px; }
+  #workbench-bar #user-menu-trigger .user-name { display: none; }
+  #sidebar { width: 180px; min-width: 150px; }
+  #app.chat-right #chat { width: 250px; min-width: 200px; }
+  #open-workspace { display: none; }
+}
+/* Last resort: icon-only tabs once even the labels no longer fit. */
+@media (max-width: 560px) {
+  .mode-tab-label { display: none; }
+  .mode-tab { min-width: 52px; padding: 7px 12px; }
+}
+
+/* ── Global finishing pass ─────────────────────────────────────────────────
+   Scrollbars and selection are part of the visual system too: thin, low-
+   contrast thumbs that only brighten on hover keep the panels calm. */
+/* The webkit pseudo-elements below are the ones that actually draw the scrollbars:
+   setting the standard `scrollbar-width` / `scrollbar-color` would make Chromium
+   ignore them and fall back to the native control (arrows, square thumb). */
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--fg) 16%, transparent);
+  border: 3px solid transparent;
+  background-clip: padding-box;
+  border-radius: var(--r-pill);
+}
+*::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--fg) 26%, transparent); background-clip: padding-box; }
+*::-webkit-scrollbar-corner { background: transparent; }
+
+::selection { background: color-mix(in srgb, var(--accent) 34%, transparent); }
+
+/* Toast shares the elevated surface treatment instead of sitting flat on the viewer. */
+#toast {
+  box-shadow: var(--shadow-2);
+  animation: dv-toast-in 160ms var(--ease);
+}
+@keyframes dv-toast-in {
+  from { opacity: 0; transform: translate(-50%, 4px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+
+/* One global focus treatment for keyboard users; mouse clicks stay quiet. */
+:where(button, select, [role="button"], a):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--r-xs);
+}
+
+/* Respect the OS reduced-motion setting: no easing, no pulses, no slide-ins. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .001ms !important;
+    scroll-behavior: auto !important;
+  }
+}

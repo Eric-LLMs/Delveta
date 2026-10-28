@@ -7,6 +7,18 @@
   const chatSend = document.getElementById("chat-send");
   const chatTitle = document.getElementById("chat-title");
   const newChatBtn = document.getElementById("new-chat");
+  // WorkSpace assistant session picker (Files mode). See the "WorkSpace assistant sessions"
+  // block further down for the behaviour; these are only element handles.
+  const wsSession = document.getElementById("ws-session");
+  const wsSessionTrigger = document.getElementById("ws-session-trigger");
+  const wsSessionName = document.getElementById("ws-session-name");
+  const wsSessionNew = document.getElementById("ws-session-new");
+  const wsSessionMenu = document.getElementById("ws-session-menu");
+  const wsSessionList = document.getElementById("ws-session-list");
+  const wsScopeBar = document.getElementById("ws-scope-bar");
+  const wsScopeWorkspace = document.getElementById("ws-scope-workspace");
+  const wsScopeFolder = document.getElementById("ws-scope-folder");
+  const wsScopeNote = document.getElementById("ws-scope-note");
 
   const state = {
     sessionId: null,
@@ -28,12 +40,28 @@
     importedByMsgId: new Map(),  // message id → true when its content is in the query repo (active session)
     sessionImported: false,    // true when every current user message of the session is covered
     sessionImportedLegacy: false, // legacy pre-coverage whole-session import (no per-message data)
+    // Active top-level workbench mode. Each mode owns its whole layout (left navigation,
+    // central pane, chat panel); switching must never let a hidden mode's file context
+    // ride on a request (see sendChat) or stay visible.
+    mode: "files",
+    // Per-mode chat session. Files has its own AI Assistant conversation; Chats is the
+    // conversation-history mode. Research sessions belong to the selected task instead.
+    modeSessions: { files: null, chats: null },
+    // WorkSpace (Files-mode) session bookkeeping. ``wsSessions`` is the server list for the
+    // workspace lane (kind=workspace, type 2) and ``wsScope`` is the active session's recorded
+    // context scope from sessions.meta. Both are descriptive: scope never gates retrieval yet.
+    wsSessions: null,
+    wsListFailed: false,
+    wsScope: {},
+    // Per-mode composer draft + staged attachment, swapped on every mode switch so one
+    // mode's unsent text never appears (or gets sent) in another.
+    modeDrafts: { files: "", chats: "", research: "" },
+    modeAttach: { files: null, chats: null, research: null },
+    modeSeq: 0,                // guards async session restores against a newer switch
     // Research session state machine (T4): every task owns exactly one chat session (bound at
     // creation), opened silently on selection. ``activeResearch`` is the task whose session the
-    // chat is currently in (session_id may be null before the first typed message binds it);
-    // ``neutralSessionId`` is the normal chat session restored when the user leaves Research.
+    // chat is currently in (session_id may be null before the first typed message binds it).
     activeResearch: null,      // { task_id, name, session_id } | null
-    neutralSessionId: null,    // normal session id to restore on leaving the Research tab
     // True while the Research tab shows its blank "new research chat" (no task selected).
     // Guards against re-clicking the Research tab wiping a chat already started there;
     // cleared when a task's session takes the pane over or another tab is switched to.
@@ -108,7 +136,8 @@
     if (node.type === "file") {
       const row = document.createElement("div");
       row.className = "tree-node file";
-      row.textContent = node.name;
+      row.innerHTML = dvIconHTML("file", "tree-icon");
+      row.appendChild(document.createTextNode(node.name));
       row.title = node.path;
       row.dataset.path = node.path;
       row.draggable = true;
@@ -120,7 +149,7 @@
       row.addEventListener("dragend", () => row.classList.remove("dragging"));
       const del = document.createElement("span");
       del.className = "tree-del";
-      del.textContent = "🗑";
+      del.innerHTML = dvIconHTML("trash");
       del.title = "Delete from workspace";
       del.addEventListener("click", (e) => {
         e.stopPropagation();
@@ -144,8 +173,9 @@
     const shouldOpen = open || (expandPaths && expandPaths.has(node.path));
     const toggle = document.createElement("span");
     toggle.className = "tree-toggle";
-    toggle.textContent = shouldOpen ? "▾" : "▸";
+    toggle.innerHTML = dvIconHTML(shouldOpen ? "chevron-down" : "chevron-right");
     row.appendChild(toggle);
+    row.insertAdjacentHTML("beforeend", dvIconHTML("folder", "tree-icon"));
     row.appendChild(document.createTextNode(node.name));
     wrapper.appendChild(row);
 
@@ -155,7 +185,7 @@
     if (shouldOpen) {
       for (const child of node.children || []) children.appendChild(buildNode(child, open, expandPaths));
     }
-    // ▸/▾ toggle keeps the inline expand/collapse behaviour.
+    // The caret keeps the inline expand/collapse behaviour.
     toggle.addEventListener("click", (e) => {
       e.stopPropagation();
       if (children.style.display === "none") {
@@ -163,10 +193,10 @@
           for (const child of node.children || []) children.appendChild(buildNode(child));
         }
         children.style.display = "block";
-        toggle.textContent = "▾";
+        toggle.innerHTML = dvIconHTML("chevron-down");
       } else {
         children.style.display = "none";
-        toggle.textContent = "▸";
+        toggle.innerHTML = dvIconHTML("chevron-right");
       }
     });
     // Clicking the folder row browses its contents in the main viewing area.
@@ -268,7 +298,7 @@
       row.className = "cd-suggest-item";
       const icon = document.createElement("span");
       icon.className = "cd-suggest-icon";
-      icon.textContent = n.type === "dir" ? "📁" : "📄";
+      icon.innerHTML = dvIconHTML(n.type === "dir" ? "folder" : "file-text");
       const name = document.createElement("span");
       name.className = "cd-suggest-name";
       name.textContent = n.name;
@@ -383,7 +413,7 @@
     reflectWorkspaceName();
   }
 
-  // Show the open workspace's folder name in the sidebar button + the File menu label.
+  // Show the open workspace's folder name in the source dropdown.
   function workspaceDisplayName(dir) {
     if (!dir) return "";
     const parts = dir.replace(/\\/g, "/").split("/").filter(Boolean);
@@ -395,10 +425,9 @@
     const src = document.getElementById("workspace-source");
     if (src) {
       const localOpt = src.querySelector('option[value="local"]');
-      if (localOpt) localOpt.textContent = name ? `💻 ${name}` : "💻 Local";
+      if (localOpt) localOpt.textContent = name || "Local";
       src.title = state.workspaceDir || "Workspace source";
     }
-    if (window.desktopAPI.setWorkspaceLabel) window.desktopAPI.setWorkspaceLabel(name);
   }
 
   // ── Input modals ──
@@ -486,7 +515,7 @@
   // then refresh the tree so it shows up immediately.
   async function addFileToWorkspace() {
     if (!state.workspaceDir) {
-      Viewer.toast("Pick a workspace folder first (💻 Local in the sidebar).");
+      Viewer.toast("Pick a workspace folder first (Local in the sidebar).");
       return;
     }
     const src = await window.desktopAPI.pickFile();
@@ -542,23 +571,24 @@
     closeLocalCtxMenu();
     localCtxEl = document.createElement("div");
     localCtxEl.className = "drive-ctxmenu";
-    const mk = (label, fn) => {
+    const mk = (icon, label, fn) => {
       const b = document.createElement("button");
       b.type = "button";
-      b.textContent = label;
+      b.innerHTML = dvIconHTML(icon);
+      b.appendChild(document.createTextNode(label));
       b.addEventListener("click", () => { closeLocalCtxMenu(); fn(); });
       return b;
     };
-    localCtxEl.appendChild(mk("📄 New text file", () => createLocalTextFile(ctx.parentDir)));
-    localCtxEl.appendChild(mk("📁 New folder", () => createLocalFolder(ctx.parentDir)));
+    localCtxEl.appendChild(mk("file-text", "New text file", () => createLocalTextFile(ctx.parentDir)));
+    localCtxEl.appendChild(mk("folder-plus", "New folder", () => createLocalFolder(ctx.parentDir)));
     if (ctx.targetPath) {
       const sep = document.createElement("div");
       sep.className = "drive-ctxmenu-sep";
       localCtxEl.appendChild(sep);
       if (ctx.isDir) {
-        localCtxEl.appendChild(mk("🗑 Delete folder", () => deleteLocalFolder(ctx.targetPath)));
+        localCtxEl.appendChild(mk("trash", "Delete folder", () => deleteLocalFolder(ctx.targetPath)));
       } else {
-        localCtxEl.appendChild(mk("🗑 Delete file", () => deleteFileFromWorkspace(ctx.targetPath)));
+        localCtxEl.appendChild(mk("trash", "Delete file", () => deleteFileFromWorkspace(ctx.targetPath)));
       }
     }
     localCtxEl.style.left = `${Math.min(x, window.innerWidth - 200)}px`;
@@ -592,7 +622,7 @@
   }
   treeEl.addEventListener("contextmenu", (e) => {
     e.preventDefault();
-    if (!state.workspaceDir) { Viewer.toast("Pick a workspace folder first (💻 Local in the sidebar)."); return; }
+    if (!state.workspaceDir) { Viewer.toast("Pick a workspace folder first (Local in the sidebar)."); return; }
     // Right-click a folder → create inside it / delete it; a file → create in its
     // folder / delete it; empty area → create at the workspace root.
     const nodeRow = e.target.closest(".tree-node");
@@ -609,11 +639,11 @@
   const localNewFolder = document.getElementById("local-new-folder");
   const localNewText = document.getElementById("local-new-text");
   if (localNewFolder) localNewFolder.addEventListener("click", () => {
-    if (!state.workspaceDir) { Viewer.toast("Pick a workspace folder first (💻 Local in the sidebar)."); return; }
+    if (!state.workspaceDir) { Viewer.toast("Pick a workspace folder first (Local in the sidebar)."); return; }
     createLocalFolder(state.workspaceDir);
   });
   if (localNewText) localNewText.addEventListener("click", () => {
-    if (!state.workspaceDir) { Viewer.toast("Pick a workspace folder first (💻 Local in the sidebar)."); return; }
+    if (!state.workspaceDir) { Viewer.toast("Pick a workspace folder first (Local in the sidebar)."); return; }
     createLocalTextFile(state.workspaceDir);
   });
 
@@ -822,10 +852,10 @@
     const actions = document.createElement("div");
     actions.className = "msg-actions";
     const items = [];
-    if (role === "user") items.push(["edit", "✏️", () => startEdit(div)]);
+    if (role === "user") items.push(["edit", "edit", () => startEdit(div)]);
     items.push(
-      ["copy", "📋", () => copyText(getText())],
-      ["speak", "🔊", () => speakMessage(getText())],
+      ["copy", "copy", () => copyText(getText())],
+      ["speak", "volume", () => speakMessage(getText())],
     );
     // Bind a reply to its question and push the Q&A pair into the query repository.
     // The button is born disabled + "✓ Imported" when this pair (or the whole session)
@@ -838,19 +868,19 @@
       // whole-session imports (no per-message data) stay a blanket ✓.
       const done = state.importedByMsgId.get(div.dataset.id) === true || state.sessionImportedLegacy;
       console.log("[imported] render msg", div.dataset.id, "done", done, "legacy", state.sessionImportedLegacy);
-      items.push(["import", "📥", (b) => importPair(div, b), done]);
+      items.push(["import", "import", (b) => importPair(div, b), done]);
       // Rate-retrieval chip: only when this message's turn actually ran rag_search
       // (hits snapshot persisted on the row / carried by the live done frame).
       if (state.retrievalByMsg && state.retrievalByMsg[div.dataset.id]) {
-        items.push(["rate", "👍", () => openRetrievalRate(div), false]);
+        items.push(["rate", "thumbs-up", () => openRetrievalRate(div), false]);
       }
     }
-    items.push(["delete", "🗑", () => startDeleteSelection(div)]);
+    items.push(["delete", "trash", () => startDeleteSelection(div)]);
     for (const [a, glyph, fn, done] of items) {
       const b = document.createElement("button");
       b.type = "button";
       b.dataset.a = a;
-      b.innerHTML = `<span class="glyph">${glyph}</span><span class="lbl"></span>`;
+      b.innerHTML = `${dvIconHTML(glyph, "glyph")}<span class="lbl"></span>`;
       b.title = ACTION_LABELS[a];
       b.querySelector(".lbl").textContent = ACTION_LABELS[a];
       if (a === "import" && done) {
@@ -901,23 +931,24 @@
     if (retrieval.rated) {
       const ok = document.createElement("span");
       ok.className = "rate-done";
-      ok.textContent = retrieval.rated === "up" ? "👍 Rated relevant" : "👎 Rated off-target";
+      ok.textContent = retrieval.rated === "up" ? "Rated relevant" : "Rated off-target";
       panel.appendChild(ok);
       return;
     }
     const reason = document.createElement("input");
     reason.className = "rate-reason";
     reason.placeholder = "Why? (optional)";
-    const up = rateBtn("👍 Relevant", () => postRagFeedback(div, retrieval, true));
-    const down = rateBtn("👎 Off-target", () => postRagFeedback(div, retrieval, false));
+    const up = rateBtn("thumbs-up", "Relevant", () => postRagFeedback(div, retrieval, true));
+    const down = rateBtn("thumbs-down", "Off-target", () => postRagFeedback(div, retrieval, false));
     panel.append(reason, up, down);
   }
 
-  function rateBtn(label, fn) {
+  function rateBtn(icon, label, fn) {
     const b = document.createElement("button");
     b.type = "button";
     b.className = "rate-opt";
-    b.textContent = label;
+    b.innerHTML = dvIconHTML(icon);
+    b.appendChild(document.createTextNode(label));
     b.addEventListener("click", (e) => { e.stopPropagation(); fn(); });
     return b;
   }
@@ -944,7 +975,7 @@
     const b = document.createElement("button");
     b.type = "button";
     b.dataset.a = "rate";
-    b.innerHTML = `<span class="glyph">👍</span><span class="lbl"></span>`;
+    b.innerHTML = `${dvIconHTML("thumbs-up", "glyph")}<span class="lbl"></span>`;
     b.title = ACTION_LABELS.rate;
     b.querySelector(".lbl").textContent = ACTION_LABELS.rate;
     b.addEventListener("click", (e) => { e.stopPropagation(); openRetrievalRate(div); });
@@ -1024,7 +1055,7 @@
       // stays ✓ even if the question it binds to later changes (delete / regroup).
       state.importedByMsgId.set(asstId, true);
       if (userEl && userEl.dataset.id) state.importedByMsgId.set(userEl.dataset.id, true);
-      Viewer.toast(`✅ Imported ${data.chunks} chunk${data.chunks === 1 ? "" : "s"} into the query repo.`);
+      Viewer.toast(`Imported ${data.chunks} chunk${data.chunks === 1 ? "" : "s"} into the query repo.`);
     } catch (err) {
       if (btn) {
         btn.disabled = false; // keep the button clickable so the user can retry
@@ -1129,7 +1160,7 @@
           await refreshImportedState();
         }
         finishImporting(sessionId);
-        Viewer.toast(`✅ Imported ${n} chunks into the query repo.`);
+        Viewer.toast(`Imported ${n} chunks into the query repo.`);
         return;
       }
       if (st.status === "failed") {
@@ -1281,7 +1312,8 @@
       wrap.innerHTML = "";
       const c = document.createElement("span");
       c.className = "msg-attach-chip";
-      c.textContent = `📎 ${name}`;
+      c.innerHTML = dvIconHTML("paperclip");
+      c.appendChild(document.createTextNode(name));
       wrap.appendChild(c);
     };
     if (!looksImage) { chip(); return wrap; }
@@ -1344,9 +1376,13 @@
       let label = name || `document ${viewer.asset_id || ""}`;
       if (page != null) label += ` · p.${page}`;
       if (tMs != null) label += ` · ${fmtClock(tMs)}`;
-      const prov = viewer.provenance === "cloud" ? "☁ server"
-        : viewer.provenance ? "💻 local" : "";
-      card.textContent = `📄 ${label}${prov ? ` · ${prov}` : ""}`;
+      const prov = viewer.provenance === "cloud" ? "cloud"
+        : viewer.provenance ? "local" : "";
+      card.innerHTML = dvIconHTML("file-text");
+      if (viewer.provenance) {
+        card.insertAdjacentHTML("beforeend", dvIconHTML(viewer.provenance === "cloud" ? "cloud" : "monitor"));
+      }
+      card.appendChild(document.createTextNode(`${label}${prov ? ` · ${prov}` : ""}`));
       if (isStub) card.title = "The server read this document during the turn (read_document).";
       wrap.appendChild(card);
     }
@@ -1418,17 +1454,38 @@
   // starts, the summary settles on a static "思考过程" label, still collapsed, so the answer
   // is the main content below.
   const TOOL_LABELS = {
-    rag_search: "📚 Querying rag…",
-    web_search: "🔍 Searching web…",
-    translate: "🌐 Translating…",
-    summary_gen: "📝 Summarizing…",
-    mindmap_gen: "🧠 Generating mind map…",
-    slides_gen: "📽️ Generating slides…",
+    rag_search: "Querying rag…",
+    web_search: "Searching web…",
+    translate: "Translating…",
+    summary_gen: "Summarizing…",
+    mindmap_gen: "Generating mind map…",
+    slides_gen: "Generating slides…",
   };
+  // The phase line is the only always-visible status surface, so it carries one stable
+  // status glyph plus the text — the text alone still says what is happening.
+  function phaseIcon(txt) {
+    const t = String(txt).toLowerCase();
+    if (t.startsWith("thinking")) return "sparkles";
+    if (t.startsWith("searching")) return "search";
+    if (t.startsWith("querying")) return "book";
+    if (t.startsWith("translating")) return "globe";
+    if (t.startsWith("summarizing")) return "file-text";
+    if (t.includes("mind map")) return "mindmap";
+    if (t.includes("slides")) return "slides";
+    if (t.startsWith("reading")) return "file-text";
+    if (t.startsWith("capturing")) return "camera";
+    if (t.startsWith("waiting")) return "alert";
+    return "activity";
+  }
   function makeStatusBar() {
     const details = document.createElement("details");
     details.className = "msg-thinking";
     const sum = document.createElement("summary");
+    const sumIcon = document.createElement("span");
+    sumIcon.className = "status-icon";
+    const sumText = document.createElement("span");
+    sumText.className = "status-text";
+    sum.append(sumIcon, sumText);
     const box = document.createElement("div");
     box.className = "thinking-text";
     details.appendChild(sum);
@@ -1454,10 +1511,11 @@
       el: details,
       setPhase: (txt) => {
         phase = txt; phaseT0 = Date.now();
-        sum.textContent = txt;
+        sumIcon.innerHTML = dvIconHTML(phaseIcon(txt));
+        sumText.textContent = txt;
         if (!phaseTimer) phaseTimer = setInterval(() => {
           if (!sum.isConnected) { stopTicker(); return; }
-          sum.textContent = `${phase} · ${Math.floor((Date.now() - phaseT0) / 1000)}s`;
+          sumText.textContent = `${phase} · ${Math.floor((Date.now() - phaseT0) / 1000)}s`;
         }, 1000);
       },
       addThinking: (t) => { seen = true; box.textContent += t; scroll(); },
@@ -1468,7 +1526,8 @@
       done: () => {
         stopTicker();
         if (!seen) { details.remove(); return; }
-        sum.textContent = "💭 Thoughts";
+        sumIcon.innerHTML = dvIconHTML("sparkles");
+        sumText.textContent = "Thoughts";
         scroll();
       },
     };
@@ -1629,11 +1688,11 @@
     const okBtn = document.createElement("button");
     okBtn.type = "button";
     okBtn.className = "msg-delete-btn ok";
-    okBtn.textContent = "🗑 Delete selected";
+    okBtn.textContent = "Delete selected";
     const cancelBtn = document.createElement("button");
     cancelBtn.type = "button";
     cancelBtn.className = "msg-delete-btn cancel";
-    cancelBtn.textContent = "✕ Cancel";
+    cancelBtn.textContent = "Cancel";
     bar.append(hint, okBtn, cancelBtn);
     chatLog.insertBefore(bar, question || msgEl);
 
@@ -1727,11 +1786,11 @@
     const cancelBtn = document.createElement("button");
     cancelBtn.type = "button";
     cancelBtn.className = "msg-edit-btn cancel";
-    cancelBtn.textContent = "✕ Cancel";
+    cancelBtn.textContent = "Cancel";
     const sendBtn = document.createElement("button");
     sendBtn.type = "button";
     sendBtn.className = "msg-edit-btn send";
-    sendBtn.textContent = "✓ Send";
+    sendBtn.textContent = "Send";
     bar.append(cancelBtn, sendBtn);
     editor.append(ta, bar);
 
@@ -1817,7 +1876,6 @@
   // picker included, background Cloud Drive job). Allowing the agent tool instead would write
   // workspace files duplicating the cloud job, so it never happens.
   const GEN_TOOL_TO_DIALOG = { slides_gen: "slides", mindmap_gen: "mindmap" };
-  const GEN_CARD_ICON = { slides: "📽️", mindmap: "🧠" };
   // Mirrors the server default (settings.approval_timeout_seconds); the countdown is advisory
   // — expiry always resolves to a server-side deny, a late click POSTs into a 404 we ignore.
   const APPROVAL_TIMEOUT_S = 120;
@@ -1843,7 +1901,7 @@
     card.className = "research-gate-card";
     const title = document.createElement("div");
     title.className = "rga-title";
-    const baseTitle = gen ? `${GEN_CARD_ICON[dialogTool] || "⚙️"} Generate ${label}?` : `⚙️ Allow "${name}"?`;
+    const baseTitle = gen ? `Generate ${label}?` : `Allow "${name}"?`;
     title.textContent = `${baseTitle} · ${APPROVAL_TIMEOUT_S}s`;
     const reason = document.createElement("div");
     reason.className = "rga-reason";
@@ -1854,10 +1912,10 @@
     actions.className = "rga-actions";
     const okBtn = document.createElement("button");
     okBtn.className = "rga-btn approve";
-    okBtn.textContent = gen ? "✓ Continue" : "✓ Allow";
+    okBtn.textContent = gen ? "Continue" : "Allow";
     const noBtn = document.createElement("button");
     noBtn.className = "rga-btn reject";
-    noBtn.textContent = gen ? "✕ Cancel" : "✕ Deny";
+    noBtn.textContent = gen ? "Cancel" : "Deny";
     actions.append(okBtn, noBtn);
     card.append(title, reason, actions);
     chatLog.appendChild(card);
@@ -1918,14 +1976,21 @@
     // binds data to this turn (a successful capture appends it live in place).
     // ``liveFocus`` is also what the generation-approval dialog pre-fills — never the
     // minimal wire payload.
-    const liveFocus = Viewer.getFocus ? Viewer.getFocus() : null;
-    const viewerPayload = buildViewerPayload(liveFocus);
+    // File context is Files-mode-only: the Chats and Research panels have no file view,
+    // so a document left open in the hidden Files pane must not ride on their messages.
+    // Explicit attachments and (in Files) pinned selections are unaffected.
+    const filesMode = state.mode === "files";
+    const liveFocus = filesMode && Viewer.getFocus ? Viewer.getFocus() : null;
+    const viewerPayload = filesMode ? buildViewerPayload(liveFocus) : null;
     // The Cloud Drive working folder frozen for THIS turn (null in Local mode). It
     // travels with the message so the server's write tools default there; the user
     // may still name another destination inside the sentence, which wins for that
     // one operation only.
-    const driveContext = window.__getCloudDriveSelection
+    const driveContext = filesMode && window.__getCloudDriveSelection
       ? window.__getCloudDriveSelection() : null;
+    // WorkSpace scope frozen for the turn that might create the session. Recorded once, on
+    // the session's first message: browsing elsewhere later must not re-scope it.
+    const turnScope = filesMode ? workspaceScopeSnapshot() : null;
     const carried = viewerPayload && Array.isArray(viewerPayload.selections)
       && viewerPayload.selections.length
       ? { selections: viewerPayload.selections } : null;
@@ -1962,6 +2027,9 @@
       updateResearchChip();
     }
     const payload = { message, session_id: state.sessionId ?? undefined, ...extra };
+    // The server types a newly created session from this field: the WorkSpace assistant's
+    // conversations are their own lane (type 2) and never show up in the Chats history.
+    if (filesMode) payload.surface = "workspace";
     if (!state.token) payload.user_id = state.guestId ?? undefined;
     // Research-tab blank chat (no task selected): throwaway semantics — the session the
     // server creates for this turn is marked research-type (hidden from the Sessions list,
@@ -2021,7 +2089,7 @@
           break;
         case "thinking":
           if (!statusBar) statusBar = makeStatusBar();
-          statusBar.setPhase("💭 Thinking…");
+          statusBar.setPhase("Thinking…");
           statusBar.addThinking(evt.data);
           break;
         case "tool": {
@@ -2039,7 +2107,7 @@
             streamMsg.reset();
             stepChanged = false;
           }
-          const label = TOOL_LABELS[evt.data?.name] || `⚙️ ${evt.data?.name || "tool"}…`;
+          const label = TOOL_LABELS[evt.data?.name] || `${evt.data?.name || "tool"}…`;
           statusBar.setPhase(label);
           statusBar.addTool(label);
           break;
@@ -2070,9 +2138,9 @@
           if (!statusBar) statusBar = makeStatusBar();
           const c = evt.data || {};
           statusBar.setPhase(
-            c.kind === "frame" ? "📷 Capturing the video frame…"
-              : c.kind === "image" ? "📷 Capturing the image…"
-                : "📷 Capturing the page image…");
+            c.kind === "frame" ? "Capturing the video frame…"
+              : c.kind === "image" ? "Capturing the image…"
+                : "Capturing the page image…");
           performCapture(c, (info) => appendCapturedContext(userMsgEl, info));
           break;
         }
@@ -2086,7 +2154,7 @@
           // The question needs the WHOLE video; only now, after the server classified
           // that intent, does the client send the transcript it already parsed.
           if (!statusBar) statusBar = makeStatusBar();
-          statusBar.setPhase("📄 Reading the video transcript…");
+          statusBar.setPhase("Reading the video transcript…");
           provideTranscript(evt.data || {}, (info) => appendTranscriptContext(userMsgEl, info));
           break;
         }
@@ -2100,7 +2168,7 @@
           // forget keeps the SSE pump spinning while the confirm dialog is up; the agent
           // resumes with our deny/allow + feedback text as soon as the POST lands.
           if (!statusBar) statusBar = makeStatusBar();
-          statusBar.setPhase("⏳ Waiting for your confirmation…");
+          statusBar.setPhase("Waiting for your confirmation…");
           handleApprovalRequest(evt.data || {});
           break;
         }
@@ -2114,6 +2182,22 @@
             appendMsg("notice", "The screenshot could not be captured, so the question was not sent to the model. Send it again to retry.");
           }
           state.sessionId = evt.data.session_id ?? state.sessionId;
+          // A first message creates the session server-side; keep the owning mode's slot
+          // in sync so switching away and back restores this exact conversation.
+          if (state.sessionId && state.mode !== "research") {
+            state.modeSessions[state.mode] = state.sessionId;
+          }
+          // WorkSpace: remember the conversation across reloads, and record the scope this
+          // session started in on its first turn (descriptive only — see saveWorkspaceScope).
+          if (filesMode && state.sessionId) {
+            setWsPointer(state.sessionId);
+            if (!hadSession && turnScope) {
+              state.wsScope = turnScope;
+              renderWsScope();
+              saveWorkspaceScope(state.sessionId, turnScope);
+            }
+            loadWorkspaceSessions();
+          }
           // A research turn that just created/bound its session: record it so the session is
           // recognized as a task's dedicated chat (hidden from the sidebar, chip shown) and
           // remember it on the active research context for the next open. research.js also
@@ -2187,7 +2271,7 @@
           // LLM title lands; then refresh the list so the auto-named session shows up.
           if (!hadSession) {
             const cut = message.slice(0, 30);
-            chatTitle.textContent = cut + (message.length > 30 ? "…" : "");
+            setSessionHeading(cut + (message.length > 30 ? "…" : ""));
           }
           if (state.token) { loadSessions(); setTimeout(loadSessions, 3000); }
           break;
@@ -2231,7 +2315,7 @@
       // turn looked "dead" (no line at all). The placeholder reads ⋯ Working… and gets
       // overwritten by real 💭/🔍/📚 phases; a turn with zero activity drops it on done().
       statusBar = makeStatusBar();
-      statusBar.setPhase("⋯ Working…");
+      statusBar.setPhase("Working…");
 
       // Parse the SSE stream: each event is a JSON "data: {...}" block separated by blank lines.
       const reader = res.body.getReader();
@@ -2279,15 +2363,36 @@
     }
   }
 
+  // The chat header shows the session name two ways depending on mode: the plain title
+  // (Chats/Research) or the WorkSpace picker trigger (Files). Keep both in lockstep so a
+  // rename or a first-turn provisional title never leaves one of them stale.
+  function setSessionHeading(text) {
+    chatTitle.textContent = text;
+    if (wsSessionName) wsSessionName.textContent = text || "New session";
+  }
+
   // New chat: drop the active session reference and clear the pane.
   function newChat() {
     state.sessionId = null;
+    // A blank conversation replaces the mode's remembered session; switching away and
+    // back must not resurrect the previous conversation behind the blank pane.
+    if (state.mode === "files" || state.mode === "chats") state.modeSessions[state.mode] = null;
     state.importedByMsgId = new Map();
     state.renderedMsgIds = new Set();
     state.sessionImported = false;
     state.sessionImportedLegacy = false;
     chatLog.innerHTML = "";
-    chatTitle.textContent = "New chat";
+    if (state.mode === "files") {
+      // "New session" is an explicit choice: it also forgets the remembered WorkSpace
+      // conversation so a reload opens blank instead of resurrecting the old one.
+      setWsPointer(null);
+      state.wsScope = {};
+      renderWsScope();
+      renderWsMenu();
+      setSessionHeading("New session");
+    } else {
+      setSessionHeading("New chat");
+    }
     if (state.token) loadSessions();
   }
 
@@ -2300,8 +2405,13 @@
       });
       if (res.status === 401) { openAccount(); throw new Error("Session expired — sign in again."); }
       if (!res.ok) throw new Error(`${res.status}`);
+      for (const m of ["files", "chats"]) {
+        if (state.modeSessions[m] === id) state.modeSessions[m] = null;
+      }
+      if (getWsPointer() === String(id)) setWsPointer(null);
       if (state.sessionId === id) newChat();
       loadSessions();
+      loadWorkspaceSessions();
     } catch (err) {
       Viewer.toast(`Delete session failed: ${err.message}`);
     }
@@ -2339,21 +2449,22 @@
         if (next !== current) {
           try {
             const saved = await renameSession(state.sessionId, next);
-            chatTitle.textContent = saved || next || "New chat";
+            setSessionHeading(saved || next || "New chat");
             // Keep the 🔬 sub-bar in sync when this session belongs to a research task.
             if (state.activeResearch && state.activeResearch.session_id === state.sessionId) {
               state.activeResearch.display_title = saved || next || "";
               updateResearchChip();
             }
             loadSessions();
+            loadWorkspaceSessions();
           } catch (err) {
-            chatTitle.textContent = current;
+            setSessionHeading(current);
             appendMsg("error", `Rename failed: ${err.message}`);
           }
           return;
         }
       }
-      chatTitle.textContent = current;
+      setSessionHeading(current);
     };
     input.addEventListener("keydown", (e) => {
       if (e.key === "Enter") finish(true);
@@ -2383,7 +2494,7 @@
         if (next !== (s.title || "")) {
           try {
             const saved = await renameSession(s.id, next);
-            if (state.sessionId === s.id) chatTitle.textContent = saved || next || "New chat";
+            if (state.sessionId === s.id) setSessionHeading(saved || next || "New chat");
           } catch (err) {
             Viewer.toast(`Rename failed: ${err.message}`);
           }
@@ -2589,11 +2700,7 @@
   // side-effect free: it only opens that session's history in the chat (the model stays
   // silent); running the task is the user typing an instruction in the session. Switching
   // between tasks swaps the chat to each task's own session — never a forked one — and
-  // leaving the Research tab restores the last normal chat.
-
-  function isResearchSession(sessionId) {
-    return !!sessionId && !!window.researchSessions && window.researchSessions.has(sessionId);
-  }
+  // leaving Research restores that mode's own conversation.
 
   // Research-mode chat header: a full-width sub bar (below the top control bar) carries the
   // task title + live stage while the active chat is a task's dedicated session, and the
@@ -2617,7 +2724,7 @@
     // display_title: session rename made from this bar or #chat-title; the task name otherwise.
     const shownTitle = info.display_title || info.name || info.task_id;
     if (title) {
-      title.textContent = `🔬 Research · ${shownTitle}`;
+      title.textContent = `Research · ${shownTitle}`;
       title.title = "Click to rename this task's chat title";
     }
     // The creation-time description, echoed read-only on its own line under the title; the
@@ -2662,7 +2769,7 @@
   if (researchBarEl) {
     researchBarEl.addEventListener("click", () => {
       if (!state.activeResearch) return;
-      switchTab("research");
+      setMode("research");
       if (window.selectResearchTask) {
         window.selectResearchTask(state.activeResearch.task_id, state.activeResearch.name);
       }
@@ -2920,14 +3027,14 @@
       actions.className = "rga-actions";
       const approveBtn = document.createElement("button");
       approveBtn.className = "rga-btn approve";
-      approveBtn.textContent = "✓ Approve";
+      approveBtn.textContent = "Approve";
       const rejectBtn = document.createElement("button");
       rejectBtn.className = "rga-btn reject";
-      rejectBtn.textContent = "✕ Reject";
+      rejectBtn.textContent = "Reject";
       const setBusy = (busy) => {
         approveBtn.disabled = rejectBtn.disabled = busy;
-        approveBtn.textContent = busy ? "Resolving…" : "✓ Approve";
-        rejectBtn.textContent = busy ? "…" : "✕ Reject";
+        approveBtn.textContent = busy ? "Resolving…" : "Approve";
+        rejectBtn.textContent = busy ? "…" : "Reject";
       };
       approveBtn.addEventListener("click", async () => {
         setBusy(true);
@@ -2955,21 +3062,14 @@
     }
   };
 
-  // Restore the neutral (non-research) chat after leaving the Research tab.
-  function openNeutralSession() {
-    const sid = state.neutralSessionId;
-    if (sid) {
-      if (state.sessionId !== sid) resumeSession(sid);
-    } else {
-      newChat();
-    }
-  }
-
   // Open a research task's dedicated session in the chat — silent, no message is sent. This
   // is the only way the chat enters a research session, and it always reuses the task's bound
   // session_id, so repeated opens never fork a new session. The 🔬 chip turns on; the user
   // drives the task by typing a run instruction (sendChat attaches the research handoff).
   window.openResearchSession = async (taskId, name, sessionId, description) => {
+    // A status fetch started before the user left Research can resolve afterwards; never
+    // reopen (or start polling for) a task session while another mode owns the workbench.
+    if (state.mode !== "research") return;
     // Carried-forward view state for the same task (sub-bar description + any session rename).
     const prev = state.activeResearch && state.activeResearch.task_id === taskId ? state.activeResearch : null;
     const desc = description || (prev && prev.description) || "";
@@ -3042,7 +3142,7 @@
         </div>
         <label>Working directory
           <div class="rq-workdir">
-            <button type="button" class="ghost" id="rq-pick-dir">📁 Choose folder…</button>
+            <button type="button" class="ghost" id="rq-pick-dir"><svg class="icon" aria-hidden="true"><use href="#i-folder"></use></svg>Choose folder…</button>
             <span class="rq-workdir-path" id="rq-workdir-path">Cloud Drive (root)</span>
           </div>
         </label>
@@ -3110,7 +3210,8 @@
         row.className = "rq-file";
         const name = document.createElement("span");
         name.className = "rq-file-name";
-        name.textContent = `📎 ${c.name}`;
+        name.innerHTML = dvIconHTML("paperclip");
+        name.appendChild(document.createTextNode(c.name));
         name.title = c.name;
         const rm = document.createElement("button");
         rm.type = "button";
@@ -3163,7 +3264,7 @@
         // Jump to the Research monitor so the new task is highlighted, then open its
         // dedicated session in the chat. Opening is side-effect free: the model stays silent
         // until the user types a run instruction — creating a task never auto-starts it.
-        switchTab("research");
+        await setMode("research");
         // (selectResearchTask renders list + status + working-directory; a separate
         // loadResearch here would double-render. openSession:false — the ONE session open
         // happens right below with the authoritative session id from this POST response, so
@@ -3300,7 +3401,7 @@
     overlay.className = "overlay";
     const rows = assets.map((a) => {
       const where = a.folder_path ? `in ${a.folder_path}` : "in your Cloud Drive root";
-      return `<div style="margin:6px 0"><div class="cd-asset-row">📄 ${escapeHtml(a.name)}</div><div class="cd-hint" style="color:var(--fg-dim);font-size:12px">${escapeHtml(where)}</div></div>`;
+      return `<div style="margin:6px 0"><div class="cd-asset-row"><svg class="icon" aria-hidden="true"><use href="#i-file-text"></use></svg>${escapeHtml(a.name)}</div><div class="cd-hint" style="color:var(--fg-dim);font-size:12px">${escapeHtml(where)}</div></div>`;
     }).join("");
     overlay.innerHTML = `
       <div class="modal cd-prompt-modal">
@@ -3355,8 +3456,7 @@
     const src = document.getElementById("workspace-source");
     if (src && src.value !== "cloud") src.value = "cloud";
     setCloudMode(true);
-    const tabFiles = document.getElementById("tab-files");
-    if (tabFiles && !tabFiles.classList.contains("active")) tabFiles.click();
+    setMode("files");
     if (window.openCloudFolder) window.openCloudFolder(folderPath || "");
   }
 
@@ -3399,13 +3499,13 @@
     sessionBtn.type = "button";
     sessionBtn.className = "cd-src-option";
     sessionBtn.innerHTML = hasSession
-      ? "<b>💬 This conversation</b><span>Generate a " + label + " from the current chat</span>"
-      : "<b>💬 This conversation</b><span>Send a message first, then come back</span>";
+      ? "<b><svg class=\"icon\" aria-hidden=\"true\"><use href=\"#i-chat\"></use></svg>This conversation</b><span>Generate a " + label + " from the current chat</span>"
+      : "<b><svg class=\"icon\" aria-hidden=\"true\"><use href=\"#i-chat\"></use></svg>This conversation</b><span>Send a message first, then come back</span>";
     sessionBtn.disabled = !hasSession;
     const filesBtn = document.createElement("button");
     filesBtn.type = "button";
     filesBtn.className = "cd-src-option";
-    filesBtn.innerHTML = "<b>☁️ Cloud files</b><span>Generate from files in your Cloud Drive</span>";
+    filesBtn.innerHTML = "<b><svg class=\"icon\" aria-hidden=\"true\"><use href=\"#i-cloud\"></use></svg>Cloud files</b><span>Generate from files in your Cloud Drive</span>";
     srcRow.append(sessionBtn, filesBtn);
     body.append(srcLabel, srcRow);
 
@@ -3560,14 +3660,14 @@
       sizeWarn.classList.toggle("hidden", over.length === 0);
       if (over.length) {
         const maxMb = Math.round(maxBytes / (1024 * 1024));
-        sizeWarn.innerHTML = `⚠️ Too large for generation (max ${maxMb}MB): ${over.map((f) => escapeHtml(f.name)).join(", ")} — remove ${over.length > 1 ? "them" : "it"} to continue.`;
+        sizeWarn.innerHTML = `Too large for generation (max ${maxMb}MB): ${over.map((f) => escapeHtml(f.name)).join(", ")} — remove ${over.length > 1 ? "them" : "it"} to continue.`;
       }
       fileSection.classList.toggle("hidden", src !== "files");
       sessionBtn.classList.toggle("cd-active", src === "session");
       filesBtn.classList.toggle("cd-active", src === "files");
       dirVal.textContent = folderPath
-        ? `☁️ My Drive / ${folderPath.split("/").join(" / ")}`
-        : "☁️ Cloud Drive (root)";
+        ? `My Drive / ${folderPath.split("/").join(" / ")}`
+        : "Cloud Drive (root)";
       const pending = (() => {
         const l = toolkitJobs[tool];
         return l && (l.status === "queued" || l.status === "running");
@@ -3599,7 +3699,7 @@
         statusBox.className = "cd-gen-status cd-gen-status-ok";
         if (assets.length) {
           const rows = assets.map((a) =>
-            `📄 ${escapeHtml(a.name)} <span class="cd-gen-status-where">${escapeHtml(a.folder_path ? "in " + a.folder_path : "in Cloud Drive root")}</span> <a href="#" class="cd-gen-open" data-folder="${escapeHtml(a.folder_path || "")}">view output</a>`
+            `<svg class=\"icon\" aria-hidden=\"true\"><use href=\"#i-file-text\"></use></svg>${escapeHtml(a.name)} <span class="cd-gen-status-where">${escapeHtml(a.folder_path ? "in " + a.folder_path : "in Cloud Drive root")}</span> <a href="#" class="cd-gen-open" data-folder="${escapeHtml(a.folder_path || "")}">view output</a>`
           ).join("<br>");
           statusBox.innerHTML = `✓ ${label} generated:<br>${rows}`;
         } else {
@@ -3757,8 +3857,12 @@
   const userAvatar = document.getElementById("user-avatar");
   const userName = document.getElementById("user-name");
   const profileMenuValue = document.getElementById("profile-menu-value");
-  const userMenuAdminGroup = document.getElementById("user-menu-admin-group");
   const userMenuSignoutGroup = document.getElementById("user-menu-signout-group");
+  const topAdminConsole = document.getElementById("top-admin-console");
+  const topCloudDrive = document.getElementById("top-cloud-drive");
+  const topWebConsole = document.getElementById("top-web-console");
+  const topSepProducts = document.getElementById("top-sep-products");
+  const topActionButtons = document.querySelectorAll("[data-top-action]");
   const accountOverlay = document.getElementById("account-overlay");
   const profileOverlay = document.getElementById("profile-overlay");
   const profileAvatar = document.getElementById("profile-avatar");
@@ -3928,7 +4032,7 @@
   // No avatar field exists on the backend; use an initial-letter circle.
   function avatarLetter() {
     const name = state.displayName || state.username || "";
-    return name ? name.trim().charAt(0).toUpperCase() : "👤";
+    return name ? name.trim().charAt(0).toUpperCase() : "?";
   }
 
   function closeUserMenu() {
@@ -3966,16 +4070,37 @@
   }
 
   function toggleUserMenu() {
-    userMenu.classList.toggle("hidden");
+    if (!userMenu.classList.contains("hidden")) {
+      userMenu.classList.add("hidden");
+      return;
+    }
+    // Anchor below the whole header (brand row + mode row) instead of a fixed
+    // offset, which no longer matched once the navigation moved to a second row.
+    const bar = document.getElementById("workbench-bar");
+    userMenu.style.top = `${Math.round(bar.getBoundingClientRect().bottom + 6)}px`;
+    userMenu.classList.remove("hidden");
   }
 
-  // Refresh the bottom-bar trigger, menu Profile value, and per-role group visibility.
+  // Refresh the top-bar trigger, menu Profile value, and the admin-only top entry.
   function renderUserMenu() {
     const loggedIn = !!state.token;
-    userAvatar.textContent = loggedIn ? avatarLetter() : "👤";
+    if (loggedIn) {
+      userAvatar.classList.remove("guest");
+      userAvatar.textContent = avatarLetter();
+    } else {
+      userAvatar.classList.add("guest");
+      userAvatar.innerHTML = dvIconHTML("user");
+    }
     userName.textContent = loggedIn ? (state.displayName || state.username || "Signed in") : "Sign in";
     profileMenuValue.textContent = loggedIn ? (state.displayName || state.username || "") : "Sign in";
-    userMenuAdminGroup.classList.toggle("hidden", !(loggedIn && state.roleId === "admin"));
+    // Cloud Drive and the web console both require a signed-in session, so their
+    // header entries only exist once there is a token; the server still enforces auth.
+    if (topCloudDrive) topCloudDrive.classList.toggle("hidden", !loggedIn);
+    if (topWebConsole) topWebConsole.classList.toggle("hidden", !loggedIn);
+    if (topSepProducts) topSepProducts.classList.toggle("hidden", !loggedIn);
+    // Admin Console is admin-only. Hiding the entry is presentation only: the console
+    // page and every /admin API already reject non-admin tokens server-side.
+    if (topAdminConsole) topAdminConsole.classList.toggle("hidden", !(loggedIn && state.roleId === "admin"));
     userMenuSignoutGroup.classList.toggle("hidden", !loggedIn);
   }
 
@@ -4203,9 +4328,6 @@
       case "admin-console":
         closeUserMenu();
         if (state.roleId === "admin") openUrl("http://localhost:8300/admin");
-        break;
-      case "settings":
-        openSettingsModal();
         break;
       case "signout":
         closeUserMenu();
@@ -4499,6 +4621,28 @@
       handleUserAction(item.dataset.action);
     });
   });
+  const topSettingsBtn = document.getElementById("top-settings");
+  if (topSettingsBtn) {
+    topSettingsBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openSettingsModal();
+    });
+  }
+  // Product shortcuts in the header share the account menu's actions, so the admin
+  // role check in handleUserAction stays the one gate in front of the console.
+  topActionButtons.forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      handleUserAction(btn.dataset.topAction);
+    });
+  });
+  // Application controls that used to live in the native View menu.
+  const prefReload = document.getElementById("pref-reload");
+  if (prefReload) prefReload.addEventListener("click", () => window.desktopAPI?.reloadApp?.());
+  const prefFullscreen = document.getElementById("pref-fullscreen");
+  if (prefFullscreen) prefFullscreen.addEventListener("click", () => window.desktopAPI?.toggleFullscreen?.());
+  const prefDevtools = document.getElementById("pref-devtools");
+  if (prefDevtools) prefDevtools.addEventListener("click", () => window.desktopAPI?.toggleDevTools?.());
   document.getElementById("settings-close").addEventListener("click", closeSettingsModal);
   settingsOverlay.addEventListener("click", (e) => { if (e.target === settingsOverlay) closeSettingsModal(); });
   document.getElementById("profile-close").addEventListener("click", closeProfile);
@@ -4528,7 +4672,7 @@
     if (!input) return;
     const show = input.type === "password";
     input.type = show ? "text" : "password";
-    eye.textContent = show ? "🙈" : "👁";
+    eye.innerHTML = dvIconHTML(show ? "eye-off" : "eye");
     eye.title = show ? "隐藏密码" : "显示密码";
     input.focus();
   });
@@ -4582,13 +4726,15 @@
     window.__cloudDriveActive = active;
     treeEl.style.display = active ? "none" : "";
     // Resolve the search box here (not the later const) so the startup restore of a
-    // saved cloud source works before the sidebar-tabs block declares fileSearch.
+    // saved cloud source works before the mode-controller block declares fileSearch.
     const search = document.getElementById("file-search");
     if (search) search.style.display = active ? "none" : "";
     const cloudEl = document.getElementById("clouddrive");
     if (cloudEl) cloudEl.classList.toggle("hidden", !active);
     const localCreate = document.getElementById("local-create");
     if (localCreate) localCreate.style.display = active ? "none" : "";
+    const openWs = document.getElementById("open-workspace");
+    if (openWs) openWs.style.display = active ? "none" : "";
     if (active && window.loadCloudDrive) window.loadCloudDrive();
   }
   const workspaceSource = document.getElementById("workspace-source");
@@ -4608,24 +4754,15 @@
       // Local drops it. (Startup restore happens before the chat bar exists, and
       // has no chips to refresh.)
       renderAttachBar();
-      // Pull the sidebar back to the Files tab so the chosen source is what's shown.
-      const tabFiles = document.getElementById("tab-files");
-      if (tabFiles && !tabFiles.classList.contains("active")) tabFiles.click();
+      // Pull the workbench back to Files so the chosen source is what's shown.
+      setMode("files");
     });
   }
-  if (window.desktopAPI.onOpenWorkspace) {
-    window.desktopAPI.onOpenWorkspace(pickFolder);
-  }
-  if (window.desktopAPI.onAddFileToWorkspace) {
-    window.desktopAPI.onAddFileToWorkspace(addFileToWorkspace);
-  }
-  // Help menu quick entries jump straight to the matching settings tab.
-  if (window.desktopAPI.onOpenSettings) {
-    window.desktopAPI.onOpenSettings((tab) => {
-      openSettingsModal();
-      showSettingsTab(tab);
-    });
-  }
+  // Files toolbar: the two native File-menu actions now live here.
+  const openWorkspaceBtn = document.getElementById("open-workspace");
+  if (openWorkspaceBtn) openWorkspaceBtn.addEventListener("click", () => pickFolder());
+  const localAddFileBtn = document.getElementById("local-add-file");
+  if (localAddFileBtn) localAddFileBtn.addEventListener("click", () => addFileToWorkspace());
 
   // Restore the last workspace folder so the file tree isn't empty on launch.
   try {
@@ -4651,7 +4788,8 @@
   let sidebarDragWidth = null;
   sidebarToggle.addEventListener("click", () => {
     const collapsed = document.getElementById("app").classList.toggle("collapsed");
-    sidebarToggle.textContent = collapsed ? "»" : "«";
+    // The caret points toward where the panel will go: left when expanded, right when tucked away.
+    sidebarToggle.classList.toggle("flipped", collapsed);
     if (collapsed) {
       if (sidebarEl.style.width) sidebarDragWidth = sidebarEl.style.width;
       sidebarEl.style.width = "";
@@ -4694,7 +4832,12 @@
   function syncDock() {
     const right = appEl.classList.contains("chat-right");
     const fills = appEl.classList.contains("chat-fills");
+    // Name the destination, not the current side: the button is the action you are about
+    // to take. The top bar wraps its actions instead of squeezing this label away.
     chatDock.textContent = right ? "Dock bottom" : "Dock right";
+    chatDock.title = right ? "Dock the chat at the bottom" : "Dock the chat on the right";
+    chatDock.setAttribute(
+      "aria-label", right ? "Dock the chat at the bottom" : "Dock the chat on the right");
     // Match the input to the docked shape: a wide bottom bar gets a compact 1-line input;
     // the narrow right column (and the full-pane Chats tab) gets a taller 4-line one so
     // long prompts have room. Chats pins 4 rows regardless of the saved dock side.
@@ -4710,7 +4853,8 @@
       header.after(toolbar);
       topbar.classList.remove("has-tools");
     } else {
-      chatTitle.after(toolbar);
+      // The WorkSpace picker sits where a plain title would be, so the toolbar follows it.
+      (state.mode === "files" && wsSession ? wsSession : chatTitle).after(toolbar);
       topbar.classList.add("has-tools");
     }
   }
@@ -4727,9 +4871,11 @@
       localStorage.setItem("delveta_chat_right", appEl.classList.contains("chat-right") ? "1" : "0");
     } catch { /* ignore */ }
   });
-  try {
-    if (localStorage.getItem("delveta_chat_right") === "1") appEl.classList.add("chat-right");
-  } catch { /* ignore */ }
+  // Restore the saved dock side — right column by default, bottom bar when the user last
+  // chose it. Chats mode ignores the choice because the conversation fills the page.
+  let dockRight = true;
+  try { dockRight = localStorage.getItem("delveta_chat_right") !== "0"; } catch { /* ignore */ }
+  appEl.classList.toggle("chat-right", dockRight);
   syncDock();
 
   // ── Floating chat window (draggable overlay) ──
@@ -4875,10 +5021,10 @@
     }[p] || CALL_IDLE_TITLE;
     if (callPhaseEl) {
       callPhaseEl.textContent = {
-        listening: "🎙️ Listening — just speak",
-        transcribing: "📝 Transcribing…",
-        thinking: "🤔 Thinking…",
-        speaking: "🔊 Speaking — talk to interrupt",
+        listening: "Listening — just speak",
+        transcribing: "Transcribing…",
+        thinking: "Thinking…",
+        speaking: "Speaking — talk to interrupt",
       }[p] || "In call";
     }
   }
@@ -5060,7 +5206,7 @@
     callResumeListening();
     if (callOverlay) callOverlay.classList.remove("hidden");
     callRaf = requestAnimationFrame(callPaint);
-    Viewer.toast("Call started — just speak. Click 🌊 again to hang up.");
+    Viewer.toast("Call started — just speak. Use the wave button again to hang up.");
     callTimer = setInterval(callTick, CALL_VAD.frameMs);
   });
 
@@ -5144,7 +5290,7 @@
 
   chatMic.addEventListener("click", async () => {
     if (micTranscribing) return; // one upload at a time; ignore clicks while pending
-    if (callActive) { Viewer.toast("In a call already — just speak, 🎤 isn't needed."); return; }
+    if (callActive) { Viewer.toast("In a call already — just speak, the mic button is not needed."); return; }
     if (micRecorder && micRecorder.state !== "inactive") {
       micRecorder.stop(); // onstop performs the upload and resets the button
       return;
@@ -5192,21 +5338,27 @@
 
   function renderAttachBar() {
     chatAttachBar.innerHTML = "";
-    const driveChip = buildDriveChip();
-    const focusChip = buildFocusChip();
+    // The working folder and viewer focus exist only in Files mode. Their pinned
+    // selections are kept (hidden) in the other modes so returning to Files restores
+    // them, but they never travel with a Chats/Research message.
+    const filesMode = state.mode === "files";
+    const driveChip = filesMode ? buildDriveChip() : null;
+    const focusChip = filesMode ? buildFocusChip() : null;
+    const pins = filesMode ? pendingSelections : [];
     chatAttachBar.classList.toggle(
-      "hidden", !pendingAttach && !driveChip && !focusChip && !pendingSelections.length);
+      "hidden", !pendingAttach && !driveChip && !focusChip && !pins.length);
     if (driveChip) chatAttachBar.appendChild(driveChip);
     if (focusChip) chatAttachBar.appendChild(focusChip);
     // Pinned P0 selections first: they survive the ✕ chip (only viewport sharing stops).
-    pendingSelections.forEach((sel, idx) => {
+    pins.forEach((sel, idx) => {
       const chip = document.createElement("span");
       chip.className = "chat-attach-chip";
       const txt = document.createElement("span");
-      txt.textContent = selectionLabel(sel);
+      txt.innerHTML = dvIconHTML(sel.kind === "text" ? "pin" : sel.kind === "frame" ? "slides" : "camera");
+      txt.appendChild(document.createTextNode(selectionLabel(sel)));
       txt.title = "Pinned context: ships with the next message regardless of the viewer chip.";
       const rm = document.createElement("button");
-      rm.textContent = "✕";
+      rm.innerHTML = dvIconHTML("x");
       rm.title = "Remove this selection";
       rm.addEventListener("click", () => { pendingSelections.splice(idx, 1); renderAttachBar(); });
       chip.append(txt, rm);
@@ -5216,9 +5368,10 @@
     const chip = document.createElement("span");
     chip.className = "chat-attach-chip";
     const label = document.createElement("span");
-    label.textContent = `🔗 ${pendingAttach.name || "attached file"}`;
+    label.innerHTML = dvIconHTML("paperclip");
+    label.appendChild(document.createTextNode(pendingAttach.name || "attached file"));
     const rm = document.createElement("button");
-    rm.textContent = "✕";
+    rm.innerHTML = dvIconHTML("x");
     rm.title = "Remove attachment";
     rm.addEventListener("click", () => setPendingAttach(null));
     chip.appendChild(label);
@@ -5249,10 +5402,10 @@
   function selectionLabel(sel) {
     if (sel.kind === "text") {
       const t = String(sel.text || "").replace(/\s+/g, " ").trim();
-      return `📌 ${t.length > 28 ? t.slice(0, 28) + "…" : t}`;
+      return t.length > 28 ? t.slice(0, 28) + "…" : t;
     }
-    if (sel.kind === "frame") return `🎞 frame @ ${fmtClock((sel.locator && sel.locator.t_ms) || 0)}`;
-    return `✂ region${sel.locator && sel.locator.page ? ` p.${sel.locator.page}` : ""}`;
+    if (sel.kind === "frame") return `frame @ ${fmtClock((sel.locator && sel.locator.t_ms) || 0)}`;
+    return `region${sel.locator && sel.locator.page ? ` p.${sel.locator.page}` : ""}`;
   }
 
   function fmtClock(ms) {
@@ -5273,7 +5426,8 @@
     const chip = document.createElement("span");
     chip.className = "chat-attach-chip drive-cwd-chip";
     const txt = document.createElement("span");
-    txt.textContent = `📁 ${sel.label || "My Drive"}`;
+    txt.innerHTML = dvIconHTML("folder");
+    txt.appendChild(document.createTextNode(sel.label || "My Drive"));
     txt.title = "Cloud Drive working folder: new folders/files and saved summaries go here unless you name another folder.";
     chip.appendChild(txt);
     return chip;
@@ -5282,7 +5436,9 @@
   // navigation (folder/workspace/root/up-one-level) and a background refresh that
   // demotes a deleted folder to its scope root. Opening or closing a document is
   // NOT a folder change — that path goes through the viewer's focus event.
-  window.__cloudDriveSelectionChanged = () => renderAttachBar();
+  // Navigation inside Cloud Drive updates the composer chips and, for a blank WorkSpace
+  // session, the scope strip's "will be recorded in" workspace hint.
+  window.__cloudDriveSelectionChanged = () => { renderAttachBar(); renderWsScope(); };
 
   function buildFocusChip() {
     if (!viewerFollow) return null;
@@ -5290,14 +5446,15 @@
     if (!f) return null;
     const chip = document.createElement("span");
     chip.className = "chat-attach-chip viewer-focus-chip";
-    let label = `👁 ${f.name}`;
+    let label = f.name;
     if (f.page) label += ` · p.${f.page}`;
     if (f.kind === "video" && f.t_ms != null) label += ` · ${fmtClock(f.t_ms)}`;
     const txt = document.createElement("span");
-    txt.textContent = label;
-    txt.title = "Chat can discuss what the viewer is showing (current page / subtitles around the playhead). Click ✕ to stop sharing.";
+    txt.innerHTML = dvIconHTML("eye");
+    txt.appendChild(document.createTextNode(label));
+    txt.title = "Chat can discuss what the viewer is showing (current page / subtitles around the playhead). Click the ✕ to stop sharing.";
     const rm = document.createElement("button");
-    rm.textContent = "✕";
+    rm.innerHTML = dvIconHTML("x");
     rm.title = "Stop sharing viewer content";
     rm.addEventListener("click", () => { viewerFollow = false; renderAttachBar(); });
     chip.append(txt, rm);
@@ -5396,7 +5553,7 @@
   // ── P0 text selection: explicit 「加入对话」 button, never auto-collected ──
   const viewerPinBtn = document.createElement("button");
   viewerPinBtn.id = "viewer-pin-btn";
-  viewerPinBtn.textContent = "📌 加入对话";
+  viewerPinBtn.innerHTML = dvIconHTML("pin") + " 加入对话";
   viewerPinBtn.className = "hidden";
   document.body.appendChild(viewerPinBtn);
 
@@ -5862,7 +6019,8 @@
       : (info.page != null ? `page ${info.page}` : "page image");
     const card = document.createElement("div");
     card.className = "msg-prepared-card capture-live";
-    card.textContent = `📷 captured ${where}${info.name ? ` from “${info.name}”` : ""}`;
+    card.appendChild(dvIcon("camera"));
+    card.appendChild(document.createTextNode(` captured ${where}${info.name ? ` from “${info.name}”` : ""}`));
     wrap.appendChild(card);
     if (info.text) {
       const t = document.createElement("div");
@@ -5897,8 +6055,9 @@
     wrap.querySelectorAll(".transcript-live").forEach((n) => n.remove());
     const card = document.createElement("div");
     card.className = "msg-prepared-card transcript-live";
-    card.textContent = `📄 full transcript · ${info.chars.toLocaleString()} chars`
-      + (info.name ? ` from “${info.name}”` : "");
+    card.innerHTML = dvIconHTML("file-text");
+    card.appendChild(document.createTextNode(`full transcript · ${info.chars.toLocaleString()} chars`
+      + (info.name ? ` from “${info.name}”` : "")));
     wrap.appendChild(card);
     chatLog.scrollTop = chatLog.scrollHeight;
   }
@@ -5961,7 +6120,7 @@
     } catch { /* best-effort duplicate check — proceed */ }
     try {
       const asset = await readLocalToAsset(path, name, folderPath);
-      Viewer.toast(`✅ "${asset.name}" uploaded to your Cloud Drive${folderPath ? ` (${folderPath})` : ""}.`);
+      Viewer.toast(`"${asset.name}" uploaded to your Cloud Drive${folderPath ? ` (${folderPath})` : ""}.`);
       if (window.loadCloudDrive) { try { window.loadCloudDrive(); } catch { /* best-effort */ } }
     } catch (err) {
       Viewer.toast(`Upload failed: ${err.message}`);
@@ -6052,7 +6211,7 @@
     const srcCard = document.createElement("button");
     srcCard.type = "button";
     srcCard.className = "cd-src-option cd-active";
-    srcCard.innerHTML = `<b>📄 ${escapeHtml(asset.name)}</b><span>${escapeHtml(sourceLabel || "The currently open file")}</span>`;
+    srcCard.innerHTML = `<b><svg class=\"icon\" aria-hidden=\"true\"><use href=\"#i-file-text\"></use></svg>${escapeHtml(asset.name)}</b><span>${escapeHtml(sourceLabel || "The currently open file")}</span>`;
     srcRow.append(srcCard);
     body.append(srcLabel, srcRow);
 
@@ -6112,8 +6271,8 @@
 
     function refresh() {
       dirVal.textContent = folderPath
-        ? `☁️ My Drive / ${folderPath.split("/").join(" / ")}`
-        : "☁️ Cloud Drive (root)";
+        ? `My Drive / ${folderPath.split("/").join(" / ")}`
+        : "Cloud Drive (root)";
       const typed = nameInput.value.trim();
       const baseTitle = typed || stem;
       const names = defaultArtifactNames(tool, baseTitle || "source");
@@ -6219,7 +6378,8 @@
     const header = document.createElement("div");
     header.className = "modal-header";
     const h = document.createElement("h3");
-    h.textContent = "📖 Customize Slide Deck";
+    h.appendChild(dvIcon("book"));
+    h.appendChild(document.createTextNode(" Customize Slide Deck"));
     const close = document.createElement("button");
     close.type = "button"; close.className = "modal-close"; close.innerHTML = "&times;"; close.title = "Cancel";
     header.append(h, close);
@@ -6415,8 +6575,8 @@
     };
     const refreshOutput = () => {
       dirVal.textContent = folderPath
-        ? `☁️ My Drive / ${folderPath.split("/").join(" / ")}`
-        : "☁️ Cloud Drive (root)";
+        ? `My Drive / ${folderPath.split("/").join(" / ")}`
+        : "Cloud Drive (root)";
       const typed = nameInput.value.trim();
       const base = sanitizeLike(typed || stemOfAsset(asset.name));
       nameHint.textContent = (typed ? "Will create: " : "Default: ")
@@ -6622,10 +6782,18 @@
     }
   });
 
-  // ── Sidebar tabs (Files / Sessions / Research) ──
-  const tabFiles = document.getElementById("tab-files");
-  const tabSessions = document.getElementById("tab-sessions");
-  const tabResearch = document.getElementById("tab-research");
+  // ── Workbench modes (Files / Chats / Research) ──
+  // A mode owns the WHOLE work area: its left navigation, its central pane and its chat
+  // panel. The controller below swaps all three together; no hidden mode's context may
+  // stay visible or ride on a request (sendChat/renderAttachBar gate that separately).
+  // Display names only: the internal mode keys (files/chats/research) are the app's stable
+  // identifiers and must not leak into the UI wording or follow a rename.
+  const MODE_LABELS = { files: "WorkSpace", chats: "Chat", research: "Research" };
+  const navButtons = {
+    files: document.getElementById("nav-files"),
+    chats: document.getElementById("nav-chats"),
+    research: document.getElementById("nav-research"),
+  };
   const sessionsEl = document.getElementById("sessions");
   const sessionsList = document.getElementById("sessions-list");
   const researchEl = document.getElementById("research");
@@ -6633,12 +6801,13 @@
   const sessionSearch = document.getElementById("session-search");
   const fileSearchClear = document.getElementById("file-search-clear");
   const sessionSearchClear = document.getElementById("session-search-clear");
+  const sidebarToolbar = document.getElementById("sidebar-toolbar");
+  const chatPanelLabel = document.getElementById("chat-panel-label");
   let sessionSearchTimer = null;
-  // Sidebar "＋ New chat" — the single entry point for a fresh conversation (the chat-header
-  // duplicate was removed). It leaves any research context, activates/highlights the Chats
-  // tab, resets the right pane to a blank conversation, refreshes the left session list, and
-  // focuses the composer. A blank unsent chat has no session row yet, so it becomes a
-  // selectable (highlighted) row in the list once its first message persists a session.
+
+  // Sidebar "＋ New chat" — the single entry point for a fresh Chats conversation. It
+  // leaves any research context, switches to Chats, clears that mode's remembered
+  // session/draft, and focuses the composer.
   newChatBtn.addEventListener("click", startNewChat);
 
   function startNewChat() {
@@ -6654,18 +6823,23 @@
       chatEl.classList.remove("minimized");
       chatMini.classList.add("hidden");
     }
-    // Leave research mode: drop the 🔬 badge and any pending research handoff.
-    state.activeResearch = null;
-    updateResearchChip();
-    stopResearchChipPoll();
-    newChat();                 // drop the active session ref and clear the pane
-    switchTab("sessions");     // activate/highlight the Chats tab + refresh its list
-    chatInput.focus();         // land the cursor in the bottom-right composer
+    // A fresh conversation replaces the Chats mode slot, not the Files assistant's one.
+    state.modeSessions.chats = null;
+    state.modeDrafts.chats = "";
+    state.modeAttach.chats = null;
+    if (state.mode === "chats") {
+      newChat();
+      chatInput.value = "";
+      pendingAttach = null;
+    } else {
+      setMode("chats");
+    }
+    chatInput.focus();
   }
 
-  // The Research tab's empty-state chat: blank pane + guidance line, plain-chat semantics.
-  // Reached on tab entry with no selected task (switchTab) and after the selected task is
-  // deleted (window hook below), so the chat never keeps showing a dead task's session.
+  // The Research mode's empty-state chat: blank pane + guidance line, plain-chat semantics.
+  // Reached on mode entry with no selected task and after the selected task is deleted
+  // (window hook below), so the chat never keeps showing a dead task's session.
   function showResearchBlankChat() {
     newChat();
     chatTitle.textContent = "New research chat";
@@ -6673,7 +6847,7 @@
     state.researchBlankChat = true;
   }
   window.showResearchBlankChat = () => {
-    if (!tabResearch || !tabResearch.classList.contains("active")) return; // only on the Research tab
+    if (state.mode !== "research") return; // only in Research mode
     if (chatSend.disabled) return; // never wipe mid-stream
     state.activeResearch = null;
     updateResearchChip();
@@ -6682,89 +6856,129 @@
     showResearchBlankChat();
   };
 
-  function switchTab(name) {
-    const isSessions = name === "sessions";
-    const isResearch = name === "research";
-    // Session state machine (T4): entering Research remembers the normal chat and (via
-    // research.js loadResearch) reopens the selected task's dedicated session; leaving
-    // Research drops the research mode and restores the neutral chat. Each task's session is
-    // 1:1 and reused on every open, so switching tabs/tasks never forks a new session.
-    // The blank-chat visit counts as research mode too: leaving it must restore the
-    // neutral chat (which clears the log), otherwise the "No research task selected…"
-    // guidance line stays on screen under the Files/Chats tabs.
-    const wasResearch = !!state.activeResearch || state.researchBlankChat;
-    if (isResearch) {
-      if (!wasResearch) {
-        state.neutralSessionId = isResearchSession(state.sessionId) ? null : state.sessionId;
-        // Research tab with no task selected → the chat pane starts blank ("New research
-        // chat"), never carrying over the previous tab's conversation. Messages typed
-        // here are plain chats (no research handoff); selecting a task takes the pane
-        // over via openResearchSession. If a task IS selected, loadResearch (below)
-        // reopens its bound session, so skip the blank then; the flag stops a tab
-        // re-click from wiping a chat already started in this blank visit.
-        if (!window.currentResearchTask && !state.researchBlankChat && !chatSend.disabled) {
-          showResearchBlankChat();
-        }
-      }
-    } else {
-      state.researchBlankChat = false;
-      if (wasResearch) {
-        state.activeResearch = null;
-        updateResearchChip();
-        stopResearchChipPoll();
-        // A research turn streaming in the chat can't be yanked out from under the run — the
-        // neutral chat restores on the next successful switch once the turn finishes.
-        if (!chatSend.disabled) openNeutralSession();
-      }
+  // Switch the whole workbench to another mode. The outgoing mode's session, draft and
+  // staged attachment are remembered; the incoming mode's are restored. Research does not
+  // use a slot — its chat is always the selected task's bound session, reopened by
+  // research.js — so leaving it simply drops the research handoff.
+  async function setMode(next) {
+    if (!MODE_LABELS[next] || state.mode === next) return;
+    if (chatSend.disabled) {
+      Viewer.toast("Wait for the current message to finish before switching modes.");
+      return;
     }
-    tabFiles.classList.toggle("active", !isSessions && !isResearch);
-    tabSessions.classList.toggle("active", isSessions);
-    if (tabResearch) tabResearch.classList.toggle("active", isResearch);
-    // The Files tab shows either the local tree or the cloud drive, depending on the
-    // workspace-source dropdown (clouddrive.js writes window.__cloudDriveActive). The
-    // cloud panel must also be hidden on the Sessions/Research tabs, like tree + search.
+    const prev = state.mode;
+    const seq = ++state.modeSeq;
+    // Swap per-mode composer state.
+    state.modeDrafts[prev] = chatInput.value;
+    state.modeAttach[prev] = pendingAttach;
+    pendingAttach = state.modeAttach[next] || null;
+    chatInput.value = state.modeDrafts[next] || "";
+    if (prev === "files" || prev === "chats") state.modeSessions[prev] = state.sessionId;
+    if (prev === "research") {
+      // Research context never follows the user into another mode; the selected task
+      // stays in research.js and its session reopens when Research is entered again.
+      state.activeResearch = null;
+      state.researchBlankChat = false;
+      updateResearchChip();
+      stopResearchChipPoll();
+    }
+    state.mode = next;
+    appEl.dataset.mode = next;
+    for (const [name, btn] of Object.entries(navButtons)) {
+      if (!btn) continue;
+      const active = name === next;
+      btn.classList.toggle("active", active);
+      btn.setAttribute("aria-selected", active ? "true" : "false");
+    }
+    // The window title stays the bare brand; the active mode is shown by the nav, not
+    // repeated in the OS title bar.
+
+    // Left navigation: file tools only in Files, chat list only in Chats, task list only
+    // in Research. The workspace-source / tree / cloud panel are Files-only.
+    if (sidebarToolbar) sidebarToolbar.classList.toggle("hidden", next !== "files");
     const cloudActive = window.__cloudDriveActive === true;
-    const showLocal = !isSessions && !isResearch && !cloudActive;
+    const showLocal = next === "files" && !cloudActive;
     treeEl.style.display = showLocal ? "" : "none";
     if (fileSearch) fileSearch.style.display = showLocal ? "" : "none";
     if (!showLocal) hideLocalSuggest();
     const cloudEl = document.getElementById("clouddrive");
-    if (cloudEl) cloudEl.classList.toggle("hidden", isSessions || isResearch || !cloudActive);
+    if (cloudEl) cloudEl.classList.toggle("hidden", next !== "files" || !cloudActive);
     const localCreate = document.getElementById("local-create");
     if (localCreate) localCreate.style.display = showLocal ? "" : "none";
-    sessionsEl.classList.toggle("hidden", !isSessions);
-    if (researchEl) researchEl.classList.toggle("hidden", !isResearch);
-    if (isSessions) loadSessions();
-    if (isResearch) window.loadResearch?.();
-    // On the Research tab the main pane shows the selected task's working-directory view
-    // (research.js fills it), or the read-only guide card when no task is selected; the
-    // document viewer is hidden so it never keeps showing a file from another tab.
+    const openWs = document.getElementById("open-workspace");
+    if (openWs) openWs.style.display = next === "files" && !cloudActive ? "" : "none";
+    sessionsEl.classList.toggle("hidden", next !== "chats");
+    if (researchEl) researchEl.classList.toggle("hidden", next !== "research");
+    if (next === "chats") loadSessions();
+    if (next === "research") window.loadResearch?.();
+
+    // Central pane: Research shows the selected task's working directory (or the guide);
+    // Files shows the document/note; Chats has no document pane at all.
     const guideEl = document.getElementById("research-guide");
     const taskViewEl = document.getElementById("research-task-view");
-    const hasTask = !!window.currentResearchTask;
-    if (guideEl) guideEl.classList.toggle("hidden", !isResearch || hasTask);
-    if (taskViewEl) taskViewEl.classList.toggle("hidden", !isResearch || !hasTask);
-    // Main-pane exclusivity is centralized in syncMainPanes(): #viewer is the Files document
-    // area unless a cloud note is open (then the note editor fills it), and both are hidden on
-    // the Chats/Research tabs. #viewer keeps its DOM state, so returning to Files restores it.
+    const hasTask = next === "research" && !!window.currentResearchTask;
+    if (guideEl) guideEl.classList.toggle("hidden", next !== "research" || hasTask);
+    if (taskViewEl) taskViewEl.classList.toggle("hidden", next !== "research" || !hasTask);
     syncMainPanes();
-    // Chats tab: the chat column stretches across the whole main pane, ignoring whatever
-    // bottom/right dock preference applies on the other tabs.
-    appEl.classList.toggle("chat-fills", isSessions);
-    syncDock(); // re-apply composer rows — Chats keeps a fixed 4 lines regardless of dock side
-    if (isSessions && chatEl.classList.contains("minimized")) {
+
+    // Chat panel shape: Chats is the conversation itself and fills the whole area (there is
+    // no second chat panel there). Files/Research keep the user's chosen dock side —
+    // right column or bottom bar — so a dock choice survives mode switches.
+    appEl.classList.toggle("chat-fills", next === "chats");
+    chatEl.classList.remove("floating");
+    if (chatFloat) chatFloat.classList.remove("active");
+    if (chatPanelLabel) {
+      chatPanelLabel.textContent = next === "research" ? "Research Agent" : "Assistant";
+      chatPanelLabel.classList.toggle("hidden", next === "chats");
+    }
+    renderAttachBar();
+    syncDock();
+    if (next === "chats" && chatEl.classList.contains("minimized")) {
       // A chat hidden to the mini Delveta icon would leave the Chats pane blank.
       chatEl.classList.remove("minimized");
       if (chatMini) chatMini.classList.add("hidden");
     }
+
+    // Restore the incoming mode's conversation. Files/Chats each keep their own session;
+    // Research reopens the selected task's session via loadResearch() above, or starts a
+    // blank research chat when no task is selected.
+    if (next === "files" || next === "chats") {
+      // Files also has a durable pointer (localStorage): the panel's conversation survives a
+      // window reload, while Chats is a history browser that always opens blank/new.
+      let target = state.modeSessions[next];
+      if (!target && next === "files") target = getWsPointer();
+      if (target) {
+        // Clear the outgoing conversation immediately; the old mode's messages must never
+        // be visible (even for one frame) under the incoming mode's label.
+        chatLog.innerHTML = "";
+        state.renderedMsgIds = new Set();
+        setSessionHeading("Loading…");
+        const ok = await resumeSession(target, { modeSeq: seq });
+        if (!ok && seq === state.modeSeq && next === "files") {
+          // The remembered session was deleted elsewhere (another window/user): drop the
+          // stale pointer and open a blank WorkSpace conversation instead of an error.
+          setWsPointer(null);
+          state.modeSessions.files = null;
+          newChat();
+        }
+      } else if (seq === state.modeSeq) {
+        newChat();
+      }
+      if (next === "files") loadWorkspaceSessions();
+    } else {
+      chatLog.innerHTML = "";
+      state.renderedMsgIds = new Set();
+      if (!window.currentResearchTask && !state.researchBlankChat) showResearchBlankChat();
+    }
+    renderWsScope();
   }
 
   // Central rule for which document surface fills the main pane. Exposed on window so
   // clouddrive.js can flip the open-note flag (openNote/closeNote) and re-sync immediately,
-  // without needing a tab switch. A note opened on Files stays "open" across a tab
-  // round-trip — other tabs simply hide it.
+  // without needing a mode switch. A note opened on Files stays "open" across a mode
+  // round-trip — other modes simply hide it.
   function syncMainPanes() {
-    const filesActive = !!tabFiles && tabFiles.classList.contains("active");
+    const filesActive = state.mode === "files";
     const noteOpen = !!window.__cloudNoteOpen;
     const vEl = document.getElementById("viewer");
     if (vEl) vEl.style.display = filesActive && !noteOpen ? "" : "none";
@@ -6772,9 +6986,10 @@
     if (nEl) nEl.classList.toggle("hidden", !filesActive || !noteOpen);
   }
   window.__syncMainPanes = syncMainPanes;
-  tabFiles.addEventListener("click", () => switchTab("files"));
-  tabSessions.addEventListener("click", () => switchTab("sessions"));
-  if (tabResearch) tabResearch.addEventListener("click", () => switchTab("research"));
+  Object.values(navButtons).forEach((btn) => {
+    if (btn) btn.addEventListener("click", () => setMode(btn.dataset.mode));
+  });
+  window.setWorkbenchMode = setMode;
   // "＋ Research" in the chat header: create a research task atomically, then the dialog
   // opens a fresh chat that drives it via the deep_research skill.
   const researchNewBtn = document.getElementById("chat-new-research");
@@ -7099,12 +7314,19 @@
     }
   }
 
-  async function resumeSession(id) {
+  // Load a session into the pane. Returns true when it was painted, false when the fetch
+  // failed or a newer mode switch superseded it — callers that restore a remembered pointer
+  // use that to fall back to a blank conversation instead of a dead panel.
+  async function resumeSession(id, opts = {}) {
     try {
       const res = await fetch(`/api/sessions/${id}`, { headers: authHeaders() });
       if (!res.ok) throw new Error(`${res.status}`);
       const data = await res.json();
+      // A mode switch issued during the fetch wins: drop this stale restore instead of
+      // painting the previous mode's conversation into the newly selected one.
+      if (opts.modeSeq != null && opts.modeSeq !== state.modeSeq) return false;
       state.sessionId = id;
+      if (state.mode === "files" || state.mode === "chats") state.modeSessions[state.mode] = id;
       // Per-message import state comes straight from the rows returned by GET /sessions/{id}:
       // the backend flips imported_rag on import, so a reopened session shows "✓ Imported"
       // without any re-derivation. Rebuild the map before rendering.
@@ -7118,7 +7340,16 @@
       chatLog.innerHTML = "";
       state.renderedMsgIds = new Set(); // every row below is now on screen; live refresh dedupes against it
       for (const m of data.messages) appendMsgRow(m);
-      chatTitle.textContent = data.title || (data.messages[0] ? data.messages[0].content.slice(0, 30) : "Chat");
+      setSessionHeading(
+        data.title || (data.messages[0] ? data.messages[0].content.slice(0, 30) : "Chat"));
+      // WorkSpace: the session's recorded scope comes back with the detail payload, and
+      // opening a session re-arms the reload pointer.
+      if (state.mode === "files") {
+        state.wsScope = data.meta || {};
+        setWsPointer(id);
+        renderWsScope();
+        renderWsMenu();
+      }
       // Research sessions: the server-side session title is authoritative for the 🔬 sub-bar
       // too (a rename made there survives re-opens and repeat runs).
       if (state.activeResearch && state.activeResearch.session_id === id) {
@@ -7129,10 +7360,344 @@
       // pair already in the repo can never show as importable even if a message was
       // rendered without its bound question id.
       applyImportedStateToDom();
+      return true;
     } catch (err) {
-      appendMsg("error", `Failed to load session: ${err.message}`);
+      if (opts.modeSeq != null && opts.modeSeq !== state.modeSeq) return false;
+      if (opts.silent) console.warn("Session restore failed:", err.message);
+      else appendMsg("error", `Failed to load session: ${err.message}`);
+      return false;
     }
   }
+
+  // ── WorkSpace assistant sessions (Files mode) ──
+  // A WorkSpace conversation is a real server session tagged type=2, listed only by
+  // GET /sessions?kind=workspace. One panel pointer is remembered in localStorage so the
+  // conversation survives a window reload; the session's own context scope lives in
+  // sessions.meta and is written once, on its first turn.
+  const WS_POINTER_KEY = "delveta_workspace_session";
+
+  function getWsPointer() {
+    try { return localStorage.getItem(WS_POINTER_KEY) || null; } catch { return null; }
+  }
+  function setWsPointer(id) {
+    try {
+      if (id) localStorage.setItem(WS_POINTER_KEY, String(id));
+      else localStorage.removeItem(WS_POINTER_KEY);
+    } catch { /* storage is a convenience; the session itself lives server-side */ }
+  }
+
+  // The scope a WorkSpace session is started in: the cloud workspace/folder the user is
+  // working inside, else the local folder picked in the sidebar. This is a snapshot of
+  // the user's *current* location, used to describe where the conversation began — it does
+  // not narrow retrieval (see the scope note in the UI and migrations/0031).
+  function workspaceScopeSnapshot() {
+    const cloudActive = window.__cloudDriveActive === true;
+    const cloud = cloudActive && typeof window.__getCloudDriveSelection === "function"
+      ? window.__getCloudDriveSelection() : null;
+    if (cloud) {
+      const label = String(cloud.label || "My Drive");
+      const path = cloud.path || null;
+      return {
+        workspace_id: cloud.workspace_id || null,
+        workspace_name: label.split(" / ")[0],
+        folder_path: path,
+        folder_name: path ? path.split("/").filter(Boolean).pop() : null,
+      };
+    }
+    // Cloud Drive is the source of truth while it is active: a null selection means Trash,
+    // which has no workspace to record — never fall back to a stale local folder there.
+    if (cloudActive) return null;
+    if (state.workspaceDir) {
+      return {
+        workspace_id: null,
+        workspace_name: workspaceDisplayName(state.workspaceDir),
+        folder_path: null,
+        folder_name: null,
+      };
+    }
+    return null;
+  }
+
+  // Persist the scope recorded at session creation. Best-effort: a failed PATCH leaves the
+  // session perfectly usable, it only loses the descriptive chip after a reload.
+  async function saveWorkspaceScope(id, meta) {
+    try {
+      const res = await fetch(`/api/sessions/${id}`, {
+        method: "PATCH",
+        headers: authHeaders(),
+        body: JSON.stringify({ meta }),
+      });
+      if (!res.ok) throw new Error(`${res.status}`);
+      const data = await res.json();
+      if (state.sessionId === id) {
+        state.wsScope = data.meta || meta;
+        renderWsScope();
+      }
+      loadWorkspaceSessions();
+    } catch (err) {
+      console.warn("WorkSpace session scope was not saved:", err.message);
+    }
+  }
+
+  // Scope strip under the WorkSpace header: the recorded workspace/folder for a live
+  // session, or the location a blank session will be recorded in. The note states plainly
+  // that retrieval is not limited by it yet.
+  function renderWsScope() {
+    if (!wsScopeBar) return;
+    const on = state.mode === "files";
+    if (!on) {
+      wsScopeBar.classList.add("hidden");
+      return;
+    }
+    const meta = state.wsScope || {};
+    const live = meta.workspace_name ? null : workspaceScopeSnapshot();
+    const name = meta.workspace_name || (live && live.workspace_name) || "";
+    const folder = meta.folder_name || "";
+    if (!name) {
+      wsScopeBar.classList.add("hidden");
+      return;
+    }
+    wsScopeBar.classList.remove("hidden");
+    wsScopeWorkspace.textContent = name;
+    wsScopeWorkspace.title = state.sessionId
+      ? "Workspace this session was started in"
+      : "Workspace this session will be recorded in on its first message";
+    wsScopeFolder.textContent = folder ? `Folder: ${folder}` : "";
+    wsScopeFolder.classList.toggle("hidden", !folder);
+    wsScopeFolder.title = "Folder open when this session started. Retrieval is not limited to it yet.";
+    wsScopeNote.textContent = state.sessionId
+      ? "Scope recorded — retrieval still covers everything you can access."
+      : "";
+    wsScopeNote.classList.toggle("hidden", !state.sessionId);
+  }
+
+  let wsListSeq = 0;
+  async function loadWorkspaceSessions() {
+    if (!state.token) {
+      state.wsSessions = [];
+      state.wsListFailed = false;
+      renderWsMenu();
+      return;
+    }
+    const seq = ++wsListSeq;
+    try {
+      const res = await fetch("/api/sessions?kind=workspace", { headers: authHeaders() });
+      if (!res.ok) throw new Error(`${res.status}`);
+      const data = await res.json();
+      if (seq !== wsListSeq) return;
+      state.wsSessions = data.sessions || [];
+      state.wsListFailed = false;
+    } catch {
+      if (seq !== wsListSeq) return;
+      state.wsSessions = [];
+      state.wsListFailed = true;
+    }
+    renderWsMenu();
+  }
+
+  function wsMenuMessage(text) {
+    const el = document.createElement("div");
+    el.className = "ws-session-empty";
+    el.textContent = text;
+    wsSessionList.appendChild(el);
+  }
+
+  function renderWsMenu() {
+    if (!wsSessionList) return;
+    wsSessionList.innerHTML = "";
+    if (!state.token) {
+      wsMenuMessage("Sign in to keep WorkSpace sessions across reloads.");
+      return;
+    }
+    if (state.wsSessions === null) {
+      wsMenuMessage("Loading…");
+      return;
+    }
+    if (state.wsListFailed) {
+      wsMenuMessage("Could not load WorkSpace sessions.");
+      return;
+    }
+    if (!state.wsSessions.length) {
+      wsMenuMessage("No WorkSpace sessions yet. Send a message to start one.");
+      return;
+    }
+    for (const s of state.wsSessions) {
+      const item = document.createElement("div");
+      item.className = "ws-session-item";
+      if (String(s.id) === String(state.sessionId)) item.classList.add("active");
+      const main = document.createElement("button");
+      main.type = "button";
+      main.className = "ws-session-main";
+      const title = document.createElement("span");
+      title.className = "ws-session-row-title";
+      title.textContent = s.title || s.summary || s.id.slice(0, 8);
+      const metaRow = document.createElement("span");
+      metaRow.className = "ws-session-row-meta";
+      // Last update + where the session was started (folder wins over workspace: it is the
+      // narrower, more useful hint when a user has several sessions in one workspace).
+      const metaBits = [];
+      if (s.created_at) metaBits.push(new Date(s.created_at).toLocaleString());
+      const scopeName = s.meta && (s.meta.folder_name || s.meta.workspace_name);
+      if (scopeName) metaBits.push(scopeName);
+      metaRow.textContent = metaBits.join(" · ");
+      main.append(title, metaRow);
+      const preview = String(s.summary || "").trim();
+      if (preview && preview !== String(s.title || "")) {
+        const p = document.createElement("span");
+        p.className = "ws-session-preview";
+        p.textContent = preview;
+        main.append(p);
+      }
+      main.addEventListener("click", () => switchWorkspaceSession(s.id));
+      const more = document.createElement("button");
+      more.type = "button";
+      more.className = "ws-session-more";
+      more.title = "Session actions";
+      more.innerHTML = SESSION_ICONS.more;
+      more.addEventListener("click", (e) => {
+        e.stopPropagation();
+        openSessionMenu(more, [
+          {
+            iconSvg: SESSION_ICONS.pencil,
+            label: "Rename",
+            action: () => startWsRename(s, title),
+          },
+          {
+            iconSvg: SESSION_ICONS.trash,
+            label: "Delete",
+            danger: true,
+            action: () => confirmDeleteSession(s),
+          },
+        ]);
+      });
+      item.append(main, more);
+      wsSessionList.appendChild(item);
+    }
+  }
+
+  // Rename inline in the picker row (the header title editor only exists in Chats mode).
+  function startWsRename(s, titleEl) {
+    const current = s.title || s.summary || "";
+    const input = document.createElement("input");
+    input.type = "text";
+    input.value = current;
+    input.className = "session-rename-input";
+    input.maxLength = 80;
+    let done = false;
+    const finish = async (commit) => {
+      if (done) return;
+      done = true;
+      input.remove();
+      if (commit) {
+        const next = input.value.trim();
+        if (next !== current) {
+          try {
+            const saved = await renameSession(s.id, next);
+            s.title = saved || next;
+            if (state.sessionId === s.id) setSessionHeading(s.title || "New session");
+          } catch (err) {
+            Viewer.toast(`Rename failed: ${err.message}`);
+          }
+        }
+      }
+      renderWsMenu();
+      loadWorkspaceSessions();
+    };
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") finish(true);
+      else if (e.key === "Escape") finish(false);
+    });
+    input.addEventListener("blur", () => finish(true));
+    titleEl.replaceWith(input);
+    input.focus();
+    input.select();
+  }
+
+  async function switchWorkspaceSession(id) {
+    if (chatSend.disabled) {
+      Viewer.toast("Wait for the current message to finish before switching sessions.");
+      return;
+    }
+    if (String(id) === String(state.sessionId)) {
+      closeWsMenu();
+      return;
+    }
+    closeWsMenu();
+    // Clear immediately: the previous conversation must never linger under the new name.
+    chatLog.innerHTML = "";
+    state.renderedMsgIds = new Set();
+    wsSessionName.textContent = "Loading…";
+    const ok = await resumeSession(id, { silent: true });
+    if (!ok) {
+      setWsPointer(null);
+      state.modeSessions.files = null;
+      newChat();
+      Viewer.toast("That WorkSpace session could not be opened.");
+    }
+  }
+
+  function positionWsMenu() {
+    if (!wsSessionTrigger || !wsSessionMenu) return;
+    const r = wsSessionTrigger.getBoundingClientRect();
+    const mw = wsSessionMenu.offsetWidth || 340;
+    const mh = wsSessionMenu.offsetHeight || 320;
+    let left = r.left;
+    if (left + mw > window.innerWidth - 8) left = window.innerWidth - mw - 8;
+    if (left < 8) left = 8;
+    let top = r.bottom + 6;
+    if (top + mh > window.innerHeight - 8) top = Math.max(8, r.top - mh - 6);
+    // #chat declares `container-type: inline-size`, whose layout containment makes it the
+    // containing block for this fixed-position menu. Express the viewport-clamped point in
+    // that block's coordinate space or the menu lands off-screen by the panel's offset.
+    const block = wsSessionTrigger.offsetParent;
+    const br = block ? block.getBoundingClientRect() : { left: 0, top: 0 };
+    wsSessionMenu.style.left = `${left - br.left}px`;
+    wsSessionMenu.style.top = `${top - br.top}px`;
+  }
+
+  function openWsMenu() {
+    if (!wsSessionMenu) return;
+    wsSessionMenu.classList.remove("hidden");
+    wsSessionTrigger.setAttribute("aria-expanded", "true");
+    renderWsMenu();
+    positionWsMenu();
+    loadWorkspaceSessions();
+  }
+  function closeWsMenu() {
+    if (!wsSessionMenu) return;
+    wsSessionMenu.classList.add("hidden");
+    if (wsSessionTrigger) wsSessionTrigger.setAttribute("aria-expanded", "false");
+  }
+
+  if (wsSessionTrigger) {
+    wsSessionTrigger.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (wsSessionMenu.classList.contains("hidden")) openWsMenu();
+      else closeWsMenu();
+    });
+  }
+  if (wsSessionNew) {
+    wsSessionNew.addEventListener("click", (e) => {
+      e.stopPropagation();
+      closeWsMenu();
+      if (state.mode !== "files") return;
+      if (chatSend.disabled) {
+        Viewer.toast("Wait for the current message to finish before starting a new session.");
+        return;
+      }
+      newChat();
+      chatInput.focus();
+    });
+  }
+  document.addEventListener("click", (e) => {
+    if (!wsSessionMenu || wsSessionMenu.classList.contains("hidden")) return;
+    if (wsSessionMenu.contains(e.target) || wsSessionTrigger.contains(e.target)) return;
+    closeWsMenu();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") closeWsMenu();
+  });
+  window.addEventListener("resize", closeWsMenu);
 
   chatForm.addEventListener("submit", (e) => {
     e.preventDefault();
@@ -7174,4 +7739,10 @@
     document.addEventListener("click", () => genMoreMenu.classList.add("hidden"));
   }
   updateToolbarGenState();
+
+  // Chat is the launch mode. Run the same switch users get from the nav so the initial
+  // layout, per-mode session slot and composer state go through one code path (and no
+  // other mode's session can be restored behind the Chat tab). The call is synchronous
+  // up to its first await, so it lands before the first paint.
+  setMode("chats");
 })();

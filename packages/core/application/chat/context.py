@@ -756,9 +756,20 @@ async def build_turn_context(
         # model call — the route short-circuits on this payload.
         return ctx
 
+    # Session lane at creation: a research-tab throwaway is type 1 (opened only from the
+    # Research monitor), a WorkSpace assistant turn is type 2 (opened only from the
+    # WorkSpace picker), everything else is an ordinary chat (type 0). The lane is fixed
+    # at creation — resuming a ``session_id`` never re-types the row.
+    surface = getattr(body, "surface", None)
+    if stream and body.ephemeral:
+        new_session_type = 1
+    elif surface == "workspace":
+        new_session_type = 2
+    else:
+        new_session_type = 0
     ctx.session_id = body.session_id or await create_session(
         deps.session_factory, user_id, title=body.message,
-        type=1 if (stream and body.ephemeral) else 0,
+        type=new_session_type,
     )
     if log_tag:
         # Tag every log line this turn emits (research run, mirror, RAG recall) with the

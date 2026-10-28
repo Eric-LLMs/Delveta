@@ -15,6 +15,7 @@
 
   const cloudEl = document.getElementById("clouddrive");
   const cdPathEl = document.getElementById("cd-path");
+  const cdPathTextEl = cdPathEl ? cdPathEl.querySelector(".cd-path-text") : null;
   const cdListEl = document.getElementById("cd-list");
   const cdStatusEl = document.getElementById("cd-status");
   const cdNewFolder = document.getElementById("cd-new-folder");
@@ -643,12 +644,12 @@
         out.push({ key: `box:${key}`, type: "box", children: entriesSpec(ws, "", 1) });
       }
     };
-    top("☁️", "My Drive", null, "", false);
-    for (const w of drive.workspaces) top("📁", w.name, w.id, "", false);
-    top("🗑", "Trash", null, "", true);
+    top("cloud", "My Drive", null, "", false);
+    for (const w of drive.workspaces) top("folder", w.name, w.id, "", false);
+    top("trash", "Trash", null, "", true);
     const rootKids = childrenOf(null, "");
     if (!drive.workspaces.length && !rootKids.folderKids.length && !rootKids.fileKids.length && !drive.trash.length) {
-      out.push({ key: "empty", type: "empty", text: "My Drive is empty. Right-click or use 📝 / 📁 to add files.", pad: null });
+      out.push({ key: "empty", type: "empty", text: "My Drive is empty. Right-click to add files or folders.", pad: null });
     }
     return out;
   }
@@ -719,8 +720,8 @@
         el2.classList.toggle("cd-current", isCurrentLoc(en.ws, en.path, en.trash));
         el2.dataset.path = en.path;
         el2.dataset.ws = en.trash ? "__trash__" : (en.ws || "");
-        el2.querySelector(".cd-tw").textContent = en.trash ? "·" : en.hasKids ? (en.open ? "▾" : "▸") : "·";
-        el2.querySelector(".cd-icon").textContent = en.icon;
+        el2.querySelector(".cd-tw").innerHTML = en.trash || !en.hasKids ? "" : dvIconHTML(en.open ? "chevron-down" : "chevron-right");
+        el2.querySelector(".cd-icon").innerHTML = dvIconHTML(en.icon);
         el2.querySelector(".cd-name").textContent = en.name;
         const meta = el2.querySelector(".cd-meta");
         meta.textContent = en.trash
@@ -735,10 +736,10 @@
         el2.dataset.ws = en.ws || "";
         el2.dataset.id = en.id || "";
         el2.style.paddingLeft = `${6 + en.depth * 16}px`;
-        el2.querySelector(".cd-tw").textContent = en.hasKids ? (en.open ? "▾" : "▸") : "·";
-        el2.querySelector(".cd-icon").textContent = "📁";
+        el2.querySelector(".cd-tw").innerHTML = en.hasKids ? dvIconHTML(en.open ? "chevron-down" : "chevron-right") : "";
+        el2.querySelector(".cd-icon").innerHTML = dvIconHTML("folder");
         el2.querySelector(".cd-name").textContent = en.name;
-        el2.title = `Browse folder ${en.name} (▸ expands in place)`;
+        el2.title = `Browse folder ${en.name}`;
         el2.draggable = true;
         break;
       }
@@ -749,7 +750,7 @@
         el2.dataset.ws = en.ws || "";
         el2.dataset.id = f.id;
         el2.style.paddingLeft = `${6 + en.depth * 16}px`;
-        el2.querySelector(".cd-icon").textContent = isText ? "📄" : "📦";
+        el2.querySelector(".cd-icon").innerHTML = dvIconHTML(isText ? "file-text" : "archive");
         el2.querySelector(".cd-name").textContent = f.name;
         el2.querySelector(".cd-meta").textContent = fmtSize(f.size);
         el2.title = isText ? "Open note" : "Open in viewer";
@@ -814,7 +815,8 @@
         cdListEl.scrollTop = scrollTop0 + nt - anchor.off;
       }
     }
-    cdPathEl.textContent = locLabel(drive.loc);
+    if (cdPathTextEl) cdPathTextEl.textContent = locLabel(drive.loc);
+    else cdPathEl.textContent = locLabel(drive.loc);
     cdPathEl.title = drive.loc.kind === "trash" ? "Trash" : `Browse ${locLabel(drive.loc)}`;
   }
 
@@ -893,17 +895,18 @@
     const { ws, path, file, folder } = ctx;
     ctxMenuEl = document.createElement("div");
     ctxMenuEl.className = "drive-ctxmenu";
-    const mk = (label, fn) => {
+    const mk = (icon, label, fn) => {
       const b = document.createElement("button");
       b.type = "button";
-      b.textContent = label;
+      b.innerHTML = dvIconHTML(icon);
+      b.appendChild(document.createTextNode(label));
       b.addEventListener("click", () => { closeCtxMenu(); fn(); });
       return b;
     };
     const folderLoc = { kind: "folder", ws, path };
-    ctxMenuEl.appendChild(mk("📄 New text file", () => createTextFile(folderLoc)));
-    ctxMenuEl.appendChild(mk("📁 New folder", () => createFolder(folderLoc)));
-    ctxMenuEl.appendChild(mk("📤 Upload files", () => uploadFile(folderLoc)));
+    ctxMenuEl.appendChild(mk("file-text", "New text file", () => createTextFile(folderLoc)));
+    ctxMenuEl.appendChild(mk("folder-plus", "New folder", () => createFolder(folderLoc)));
+    ctxMenuEl.appendChild(mk("import", "Upload files", () => uploadFile(folderLoc)));
     if (file) {
       const sep = document.createElement("div");
       sep.className = "drive-ctxmenu-sep";
@@ -914,20 +917,20 @@
         const t = drive.selected.has(file.id)
           ? selectedFilesArr().map((f) => ({ kind: "file", id: f.id, name: f.name }))
           : [{ kind: "file", id: file.id, name: file.name }];
-        ctxMenuEl.appendChild(mk("⧉ Copy", () => openCopyMoveModal(t, "copy")));
-        ctxMenuEl.appendChild(mk("⇄ Move to…", () => openCopyMoveModal(t, "move")));
+        ctxMenuEl.appendChild(mk("copy", "Copy", () => openCopyMoveModal(t, "copy")));
+        ctxMenuEl.appendChild(mk("chevron-right", "Move to…", () => openCopyMoveModal(t, "move")));
       }
-      ctxMenuEl.appendChild(mk("🗑 Delete file", () => deleteFile(file)));
+      ctxMenuEl.appendChild(mk("trash", "Delete file", () => deleteFile(file)));
     } else if (folder) {
       const sep = document.createElement("div");
       sep.className = "drive-ctxmenu-sep";
       ctxMenuEl.appendChild(sep);
       if (!ctx.trash) {
         const name = folder.name || (path ? path.split("/").pop() : "");
-        ctxMenuEl.appendChild(mk("⇄ Move to…", () => openCopyMoveModal(
+        ctxMenuEl.appendChild(mk("chevron-right", "Move to…", () => openCopyMoveModal(
           [{ kind: "folder", id: folder.id || null, path, ws, name }], "move")));
       }
-      ctxMenuEl.appendChild(mk("🗑 Delete folder", () => deleteFolder(folder)));
+      ctxMenuEl.appendChild(mk("trash", "Delete folder", () => deleteFolder(folder)));
     }
     // Export the clicked entity to local disk (right-click a file or a folder). Trash is
     // skipped: trashed files are not part of the browseable folder tree.
@@ -935,13 +938,13 @@
       const sep = document.createElement("div");
       sep.className = "drive-ctxmenu-sep";
       ctxMenuEl.appendChild(sep);
-      ctxMenuEl.appendChild(mk("📤 Export file…", () => exportCloudFile(file)));
+      ctxMenuEl.appendChild(mk("import", "Export file…", () => exportCloudFile(file)));
     } else if (folder && !ctx.trash) {
       const sep = document.createElement("div");
       sep.className = "drive-ctxmenu-sep";
       ctxMenuEl.appendChild(sep);
       const topName = folder.name || (ws ? wsName(ws) : "My Drive");
-      ctxMenuEl.appendChild(mk("📤 Export folder…", () =>
+      ctxMenuEl.appendChild(mk("import", "Export folder…", () =>
         exportCloudFolder(driveFolderExportList(ws, path, topName), topName)));
     }
     ctxMenuEl.style.left = `${Math.min(x, window.innerWidth - 200)}px`;
@@ -972,7 +975,8 @@
       } else {
         const b = document.createElement("button");
         b.type = "button";
-        b.textContent = it.label;
+        if (it.icon) b.innerHTML = dvIconHTML(it.icon);
+        b.appendChild(document.createTextNode(it.label));
         b.addEventListener("click", () => { closeCtxMenu(); it.fn(); });
         ctxMenuEl.appendChild(b);
       }
@@ -1848,7 +1852,7 @@
     h3.textContent = title;
     const closeBtn = document.createElement("button");
     closeBtn.className = "modal-close";
-    closeBtn.textContent = "✕";
+    closeBtn.innerHTML = dvIconHTML("x");
     closeBtn.title = "Close";
     closeBtn.onclick = () => overlay.remove();
     header.append(h3, closeBtn);
@@ -1957,7 +1961,7 @@
             row.className = "cdt-share-row";
             const name = document.createElement("span");
             name.className = "cdt-share-name";
-            name.textContent = s.grantee_user_id ? `👤 ${s.grantee_user_id}` : "🌍 Public";
+            name.textContent = s.grantee_user_id || "Public";
             row.appendChild(name);
             const perm = document.createElement("span");
             perm.className = "cdt-share-perm";
@@ -2044,7 +2048,7 @@
     const canManageMembers = isOwner || w.role === "admin";
     const ownerName = w.owner_display_name || w.owner_username || w.owner_id;
 
-    const { close } = openModal(`⚙ ${w.name}`, () => {
+    const { close } = openModal(`Settings · ${w.name}`, () => {
       const body = document.createElement("div");
       body.className = "cdt-manage-body";
 
@@ -2391,7 +2395,7 @@
       row.className = "cd-suggest-item";
       const icon = document.createElement("span");
       icon.className = "cd-suggest-icon";
-      icon.textContent = it.kind === "file" ? (isTextFile(it.f) ? "📄" : "📦") : "📁";
+      icon.innerHTML = dvIconHTML(it.kind === "file" ? (isTextFile(it.f) ? "file-text" : "archive") : "folder");
       const name = document.createElement("span");
       name.className = "cd-suggest-name";
       name.textContent = it.name;
@@ -2610,7 +2614,8 @@
     }
 
     function refreshTarget() {
-      target.textContent = `☁️ ${label()}`;
+      target.innerHTML = dvIconHTML("cloud");
+      target.appendChild(document.createTextNode(label()));
       tree.querySelectorAll(".cd-row.cd-folder").forEach((row) => {
         row.classList.toggle("cd-current", row.dataset.path === (selected || ""));
       });
@@ -2626,11 +2631,11 @@
       row.style.paddingLeft = `${6 + depth * 16}px`;
       const tw = document.createElement("span");
       tw.className = "cd-tw";
-      tw.textContent = kids.length ? (open ? "▾" : "▸") : "·";
+      tw.innerHTML = kids.length ? dvIconHTML(open ? "chevron-down" : "chevron-right") : "";
       row.appendChild(tw);
       const icon = document.createElement("span");
       icon.className = "cd-icon";
-      icon.textContent = path === "" ? "☁️" : "📁";
+      icon.innerHTML = dvIconHTML(path === "" ? "cloud" : "folder");
       row.appendChild(icon);
       const nm = document.createElement("span");
       nm.className = "cd-name";
@@ -2802,7 +2807,7 @@
       box.disabled = blocked;
       const icon = document.createElement("span");
       icon.className = "cd-icon";
-      icon.textContent = "📄";
+      icon.innerHTML = dvIconHTML("file-text");
       const nm = document.createElement("span");
       nm.className = "cd-name";
       nm.textContent = f.name;
@@ -2844,10 +2849,10 @@
       const tw = document.createElement("span");
       tw.className = "cd-tw";
       const hasKids = childrenOf(scope, path).folderKids.length > 0;
-      tw.textContent = hasKids ? (open ? "▾" : "▸") : "·";
+      tw.innerHTML = hasKids ? dvIconHTML(open ? "chevron-down" : "chevron-right") : "";
       const icon = document.createElement("span");
       icon.className = "cd-icon";
-      icon.textContent = path === "" ? "☁️" : "📁";
+      icon.innerHTML = dvIconHTML(path === "" ? "cloud" : "folder");
       const nm = document.createElement("span");
       nm.className = "cd-name";
       nm.textContent = path === "" ? "My Drive" : path.split("/").pop();
@@ -2886,10 +2891,10 @@
         const tw = document.createElement("span");
         tw.className = "cd-tw";
         const hasKids = childrenOf(scope, "").folderKids.length > 0;
-        tw.textContent = hasKids ? (open ? "▾" : "▸") : "·";
+        tw.innerHTML = hasKids ? dvIconHTML(open ? "chevron-down" : "chevron-right") : "";
         const icon = document.createElement("span");
         icon.className = "cd-icon";
-        icon.textContent = scope == null ? "☁️" : "🗂";
+        icon.innerHTML = dvIconHTML(scope == null ? "cloud" : "folder");
         const nm = document.createElement("span");
         nm.className = "cd-name";
         nm.textContent = scope == null ? "My Drive" : wsName(scope);

@@ -3053,13 +3053,18 @@ schema and skill doc alone proved insufficient to stop a retail read/verify loop
 
 **Session isolation.** Every task binds a single dedicated chat session (1:1, `bind_session`).
 The kind lives in the DB — `sessions.type` (0 = chat,
-1 = research): the task's session row is created **marked `type=1`**, and when an ordinary chat's
-first message binds it to a task the chat route marks it type 1 too (`set_session_type`,
-best-effort — a marking failure never breaks the turn). `GET /sessions` filters by `type != 1`, so
-the chat sidebar never shows research sessions; the `_session_index.json` routing map stays purely
-the session→task dispatch index, no longer the isolation mechanism. Opening a task's session is
-side-effect free — navigation never creates an execution, opening never starts a run; only a typed
-message drives the task (the first one auto-resumes the `deep_research` skill).
+1 = research, 2 = WorkSpace assistant): the task's session row is created **marked `type=1`**, and
+when an ordinary chat's first message binds it to a task the chat route marks it type 1 too
+(`set_session_type`, best-effort — a marking failure never breaks the turn). `GET /sessions?kind=`
+lists one lane at a time (`chat` = type 0, `workspace` = type 2), so the chat sidebar never shows
+research sessions or WorkSpace conversations and the WorkSpace picker never shows either of the
+others. A WorkSpace session's start scope (`workspace_id` / `workspace_name` / `folder_path` /
+`folder_name`) is stored descriptively in `sessions.meta`; retrieval is still filtered by user
+visibility only, so the recorded folder does not narrow recall. The `_session_index.json`
+routing map stays purely the session→task dispatch index, no longer the isolation mechanism.
+Opening a task's session is side-effect free — navigation never creates an execution, opening
+never starts a run; only a typed message drives the task (the first one auto-resumes the
+`deep_research` skill).
 
 **Run mechanics live on the generic Workflow Core** — lease contest, crash recovery, retry
 bisect, loop-cap grading and the definition fingerprint are domain-free machinery in

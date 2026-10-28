@@ -967,16 +967,36 @@ async def append_messages_batch(
     ]
 
 
-async def list_sessions(session_factory, user_id: UUID, q: str | None = None) -> list[dict]:
-    """Return a user's sessions (newest first) as ``[{id, created_at, summary, title}]``.
+# Session ``type`` tags and the listing lane each one belongs to. Chat and WorkSpace
+# sessions are separate surfaces: a WorkSpace conversation must never appear in the chat
+# sidebar, and vice versa. Research sessions (type 1) are owned by the task they belong
+# to and are not listed by either lane.
+_SESSION_KIND_TYPES: dict[str, int] = {"chat": 0, "workspace": 2}
+
+
+async def list_sessions(
+    session_factory,
+    user_id: UUID,
+    q: str | None = None,
+    kind: str = "chat",
+) -> list[dict]:
+    """Return a user's sessions (newest first) as ``[{id, created_at, summary, title, type, meta}]``.
+
+    ``kind`` picks the listing lane: ``"chat"`` (type 0) or ``"workspace"`` (type 2). The
+    lanes are disjoint, and research sessions (type 1) belong to neither.
 
     ``q`` filters to sessions whose title, summary, or any message text contains the
     case-insensitive substring. When ``q`` is set each result also carries ``snippet`` —
     the earliest matching message's text (truncated) — so the client can show where the
     match landed even when it is not in the title.
     """
+    if kind not in _SESSION_KIND_TYPES:
+        raise ValueError(f"unknown session kind: {kind!r}")
     async with session_factory() as session:
-        stmt = select(SessionModel).where(SessionModel.user_id == user_id)
+        stmt = select(SessionModel).where(
+            SessionModel.user_id == user_id,
+            SessionModel.type == _SESSION_KIND_TYPES[kind],
+        )
         if q:
             like = f"%{q}%"
             stmt = (
@@ -999,8 +1019,10 @@ async def list_sessions(session_factory, user_id: UUID, q: str | None = None) ->
                 "created_at": s.created_at.isoformat() if s.created_at else None,
                 "summary": s.summary,
                 "title": s.title,
-                # 0 = chat, 1 = research task session — the sidebar filter drops type 1.
+                # 0 = chat, 1 = research task session, 2 = WorkSpace assistant session.
                 "type": s.type,
+                # Descriptive scope for WorkSpace sessions; ``{}`` for everything else.
+                "meta": s.meta or {},
             }
             for s in rows
         ]
@@ -1226,7 +1248,8 @@ async def create_session(
     """Create a session row and return its id.
 
     ``type``: 0 = ordinary chat (default), 1 = research task session (hidden from the chat
-    sidebar, deleted together with its task).
+    sidebar, deleted together with its task), 2 = WorkSpace assistant session (listed only
+    by the WorkSpace picker).
 
     A fresh session is titled after the first user message (ChatGPT/Gemini style) so the
     sidebar shows a readable name immediately instead of the raw id while the deferred

@@ -109,7 +109,6 @@
       .btn.sm { padding: 4px 9px; font-size: 12px; }
       .icon-btn { background: transparent; border: none; color: var(--muted); cursor: pointer; font-size: 15px; padding: 4px 6px; border-radius: 5px; }
       .icon-btn:hover { color: var(--text); background: var(--panel); }
-      .icon-btn .icon-label { font-size: 12px; margin-left: 2px; vertical-align: middle; }
       .row-actions { display: flex; gap: 6px; align-items: center; }
 
       /* ── tabs (raised 3D buttons) ── */
@@ -419,33 +418,6 @@
       [data-theme="light"] .toast { box-shadow: 0 6px 20px rgba(20, 25, 35, 0.12); }
       [data-theme="light"] .badge.gold { background: rgba(184, 134, 11, 0.10); }
       [data-theme="light"] .badge.warn { background: rgba(184, 134, 11, 0.10); }
-      [data-theme="light"] .settings-pop { box-shadow: 0 10px 30px rgba(20, 25, 35, 0.12); }
-
-      /* ── settings popover ── */
-      .settings-wrap { position: relative; }
-      .settings-backdrop { position: fixed; inset: 0; z-index: 55; }
-      .settings-pop {
-        position: absolute; top: 44px; right: 0; width: 236px; background: var(--panel);
-        border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
-        padding: 8px; z-index: 60;
-      }
-      .settings-title {
-        font-size: 11px; color: var(--muted); padding: 6px 10px 4px;
-        text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600;
-      }
-      button.settings-row {
-        display: flex; align-items: center; justify-content: space-between; width: 100%;
-        background: transparent; border: none; color: var(--text); font-size: 13px; padding: 7px 10px;
-        border-radius: 6px; cursor: pointer; text-align: left; font-family: inherit;
-      }
-      button.settings-row:hover { background: var(--panel2); }
-      button.settings-row.on { color: var(--accent); font-weight: 600; }
-      button.settings-row .check { visibility: hidden; }
-      button.settings-row.on .check { visibility: visible; }
-      .settings-select {
-        width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text);
-        padding: 7px 10px; border-radius: 6px; font-size: 13px;
-      }
     </style>
   </head>
   <body>
@@ -469,26 +441,6 @@
             <span>Delveta Admin</span>
           </div>
           <div class="right">
-            <div class="settings-wrap">
-              <button id="settings-btn" class="icon-btn" title="Theme & font size" type="button">⚙ <span class="icon-label">Settings</span></button>
-              <div class="settings-backdrop hidden" id="settings-backdrop"></div>
-              <div class="settings-pop hidden" id="settings-pop">
-                <div class="settings-title">Theme</div>
-                <button class="settings-row" type="button" data-theme-opt="dark"><span>Dark</span><span class="check">✓</span></button>
-                <button class="settings-row" type="button" data-theme-opt="light"><span>Light</span><span class="check">✓</span></button>
-                <button class="settings-row" type="button" data-theme-opt="system"><span>Follow System</span><span class="check">✓</span></button>
-                <div class="settings-title">Font size</div>
-                <select id="settings-font" class="settings-select">
-                  <option value="12">12 px</option>
-                  <option value="13">13 px</option>
-                  <option value="14">14 px</option>
-                  <option value="15">15 px</option>
-                  <option value="16">16 px</option>
-                  <option value="17">17 px</option>
-                  <option value="18">18 px</option>
-                </select>
-              </div>
-            </div>
             <button id="refresh-btn" class="icon-btn" title="Refresh page">⟳</button>
             <div class="admin-chip">
               <span class="avatar" id="admin-avatar">A</span>
@@ -532,9 +484,6 @@
         function readPref(key, fallback) {
           try { return localStorage.getItem(key) || fallback; } catch { return fallback; }
         }
-        function writePref(key, val) {
-          try { localStorage.setItem(key, val); } catch { /* ignore */ }
-        }
         function effectiveTheme(t) {
           if (t !== "system") return t;
           try { return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"; }
@@ -542,9 +491,6 @@
         }
         function applyTheme(t) {
           document.documentElement.dataset.theme = effectiveTheme(t);
-          document.querySelectorAll("[data-theme-opt]").forEach((b) => {
-            b.classList.toggle("on", b.dataset.themeOpt === t);
-          });
         }
         function applyFontSize(px) {
           document.documentElement.style.setProperty("zoom", String(px / 14));
@@ -555,8 +501,6 @@
         try {
           applyTheme(theme);
           applyFontSize(fontSize);
-          const sel = document.getElementById("settings-font");
-          if (sel) sel.value = String(fontSize);
         } catch { /* ignore */ }
 
         // ───────────────────────── dom helpers ─────────────────────────
@@ -2918,37 +2862,8 @@
         });
         window.addEventListener("hashchange", navigate);
 
-        // appearance wiring
-        const settingsBtn = document.getElementById("settings-btn");
-        const settingsBackdrop = document.getElementById("settings-backdrop");
-        const settingsPop = document.getElementById("settings-pop");
-        const settingsFont = document.getElementById("settings-font");
-
-        function openSettings(open) {
-          settingsPop.classList.toggle("hidden", !open);
-          settingsBackdrop.classList.toggle("hidden", !open);
-        }
-        settingsBtn.addEventListener("click", (e) => {
-          e.stopPropagation();
-          openSettings(settingsPop.classList.contains("hidden"));
-        });
-        settingsBackdrop.addEventListener("click", () => openSettings(false));
-        document.querySelectorAll("[data-theme-opt]").forEach((b) => {
-          b.addEventListener("click", () => {
-            theme = b.dataset.themeOpt;
-            writePref(THEME_KEY, theme);
-            applyTheme(theme);
-            openSettings(false);
-          });
-        });
-        settingsFont.addEventListener("change", () => {
-          fontSize = parseInt(settingsFont.value, 10) || 14;
-          writePref(FONT_KEY, String(fontSize));
-          applyFontSize(fontSize);
-        });
-        document.addEventListener("keydown", (e) => {
-          if (e.key === "Escape" && !settingsPop.classList.contains("hidden")) openSettings(false);
-        });
+        // Appearance follows the system preference for "system" and any previously
+        // stored choice; the appearance entry itself now lives in the desktop app.
         if (window.matchMedia) {
           try {
             window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
