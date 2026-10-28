@@ -36,6 +36,7 @@
       <symbol id="i-chevron-right" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></symbol>
       <symbol id="i-chevron-down" viewBox="0 0 24 24"><path d="M5 9l7 7 7-7"/></symbol>
       <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="19" cy="12" r="1.4"/></symbol>
+      <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
       <symbol id="i-pin" viewBox="0 0 24 24"><path d="M12 17v5"/><path d="M9 10.8a2 2 0 0 1-1.1 1.8l-1.8.9A2 2 0 0 0 5 15.2V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.8a2 2 0 0 0-1.1-1.8l-1.8-.9A2 2 0 0 1 15 10.8V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1z"/></symbol>
       <symbol id="i-edit" viewBox="0 0 24 24"><path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"/><path d="M14 6l4 4"/></symbol>
       <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="11.5" height="11.5" rx="2"/><path d="M5.5 15V5.5a2 2 0 0 1 2-2H15"/></symbol>
@@ -181,7 +182,7 @@
           <div class="research-guide-card">
             <h2 class="research-guide-title">Investigate questions with your AI agent</h2>
             <p class="research-guide-sub">
-              Click <b>＋ Research</b> in the chat header to create a research task, or select a
+              Click <b>New Research</b> above the task list to create a research task, or select a
               task on the left to watch its progress. The agent drives each task through
               <b>DISCOVER → … → PUBLISH</b> in the chat.
             </p>
@@ -222,7 +223,7 @@
         <section id="chat">
           <div id="chat-resize"></div>
           <div id="chat-header">
-            <!-- Top bar: global controls only (session title, ＋ Research, window controls).
+            <!-- Top bar: global controls only (session title / picker, window controls).
                  New chats are started from the Chats list in the sidebar — the single entry
                  point for a fresh conversation. The session title is hidden in Research mode;
                  the sub bar below carries the full task context instead. -->
@@ -230,15 +231,16 @@
               <span id="chat-panel-label" class="chat-panel-label hidden">Assistant</span>
               <span id="chat-title">Chat</span>
               <!-- WorkSpace assistant session picker (Files mode only): the current session
-                   name + a New button. The dropdown lists this user's WorkSpace sessions
-                   (kind=workspace) with rename/delete, so a WorkSpace conversation is a
-                   first-class object instead of an implicit panel state. -->
+                   name (or "Sessions" when none is open) + a New Session button. The dropdown
+                   lists this user's WorkSpace sessions (kind=workspace); each row carries the
+                   same ⋯ menu as the Chat sidebar (Pin / Rename / Import / Generate / Delete),
+                   so a WorkSpace conversation is a first-class object, not implicit panel state. -->
               <div id="ws-session" class="ws-session">
-                <button id="ws-session-trigger" type="button" class="ws-session-trigger" title="WorkSpace session — click to switch, rename or delete" aria-haspopup="true" aria-expanded="false">
-                  <span id="ws-session-name" class="ws-session-name">New session</span>
+                <button id="ws-session-trigger" type="button" class="ws-session-trigger" title="Workspace sessions — click to view, switch, rename or delete" aria-haspopup="true" aria-expanded="false">
+                  <span id="ws-session-name" class="ws-session-name">Sessions</span>
                   <svg class="icon ws-session-caret" aria-hidden="true"><use href="#i-chevron-down"></use></svg>
                 </button>
-                <button id="ws-session-new" type="button" class="ws-session-new" title="New WorkSpace session" aria-label="New WorkSpace session"><svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg></button>
+                <button id="ws-session-new" type="button" class="ws-session-new" title="New Session — start a fresh Workspace conversation"><svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg><span>New Session</span></button>
                 <div id="ws-session-menu" class="ws-session-menu hidden" role="menu" aria-label="WorkSpace sessions">
                   <div class="ws-session-menu-head"><span>WorkSpace sessions</span></div>
                   <div id="ws-session-list" class="ws-session-list"></div>
@@ -246,8 +248,7 @@
                 </div>
               </div>
               <div class="chat-header-actions">
-                <button id="chat-new-research" type="button" title="New Research — create a research task the agent drives in this chat"><svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg><span>Research</span></button>
-                <button id="chat-hide" type="button" title="Hide chat (restore from the Delveta logo)"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
+                <button id="chat-hide" type="button" title="Minimize the Assistant panel (restore it from the Delveta badge)"><svg class="icon" aria-hidden="true"><use href="#i-minus"></use></svg><span>Minimize</span></button>
                 <button id="chat-float" type="button" title="Float the chat window"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg></button>
                 <button id="chat-dock" type="button" title="Dock the chat at the bottom" aria-label="Dock the chat at the bottom">Dock bottom</button>
               </div>

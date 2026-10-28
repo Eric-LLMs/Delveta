@@ -42,8 +42,9 @@
     sessionImportedLegacy: false, // legacy pre-coverage whole-session import (no per-message data)
     // Active top-level workbench mode. Each mode owns its whole layout (left navigation,
     // central pane, chat panel); switching must never let a hidden mode's file context
-    // ride on a request (see sendChat) or stay visible.
-    mode: "files",
+    // ride on a request (see sendChat) or stay visible. null = not entered yet; boot
+    // picks the mode and runs the full switch so the remembered session is restored.
+    mode: null,
     // Per-mode chat session. Files has its own AI Assistant conversation; Chats is the
     // conversation-history mode. Research sessions belong to the selected task instead.
     modeSessions: { files: null, chats: null },
@@ -1080,7 +1081,7 @@
   const importingSessions = new Set();
   function finishImporting(sessionId) {
     importingSessions.delete(String(sessionId));
-    loadSessions();
+    refreshSessionLists();
   }
   async function importSessionFor(sessionId, btn) {
     if (!sessionId) {
@@ -1106,7 +1107,7 @@
     let jobId;
     try {
       importingSessions.add(String(sessionId));
-      loadSessions();
+      refreshSessionLists();
       const res = await fetch("/api/chat/import-session", {
         method: "POST",
         headers: authHeaders(),
@@ -2365,10 +2366,12 @@
 
   // The chat header shows the session name two ways depending on mode: the plain title
   // (Chats/Research) or the WorkSpace picker trigger (Files). Keep both in lockstep so a
-  // rename or a first-turn provisional title never leaves one of them stale.
+  // rename or a first-turn provisional title never leaves one of them stale. An empty
+  // text is the WorkSpace "no session selected" state: the trigger then names itself
+  // ("Sessions"), matching its static markup; Chat callers always pass an explicit label.
   function setSessionHeading(text) {
     chatTitle.textContent = text;
-    if (wsSessionName) wsSessionName.textContent = text || "New session";
+    if (wsSessionName) wsSessionName.textContent = text || "Sessions";
   }
 
   // New chat: drop the active session reference and clear the pane.
@@ -2383,21 +2386,31 @@
     state.sessionImportedLegacy = false;
     chatLog.innerHTML = "";
     if (state.mode === "files") {
-      // "New session" is an explicit choice: it also forgets the remembered WorkSpace
-      // conversation so a reload opens blank instead of resurrecting the old one.
+      // A blank conversation is an explicit choice: it also forgets the remembered
+      // WorkSpace conversation so a reload opens the picker label instead of resurrecting
+      // the old one. No active title → the trigger reads "Sessions".
       setWsPointer(null);
       state.wsScope = {};
       renderWsScope();
       renderWsMenu();
-      setSessionHeading("New session");
+      setSessionHeading("");
     } else {
       setSessionHeading("New chat");
     }
     if (state.token) loadSessions();
   }
 
-  // Delete a whole session from the sidebar list.
+  // Delete a whole session from the sidebar list. The backend cascades the session row and
+  // its messages, releases the session-owned attachment assets (ref-counted), and never
+  // follows Drive originals or assets another session still references.
   async function deleteSession(id) {
+    // Never delete while this session's own turn is streaming: the backend is still
+    // appending its messages, and dropping the row mid-turn strands a half-written
+    // conversation in the pane. Deleting other sessions stays allowed.
+    if (String(id) === String(state.sessionId) && chatSend.disabled) {
+      Viewer.toast("Wait for the current message to finish before deleting this session.");
+      return;
+    }
     try {
       const res = await fetch(`/api/sessions/${id}`, {
         method: "DELETE",
@@ -2494,13 +2507,13 @@
         if (next !== (s.title || "")) {
           try {
             const saved = await renameSession(s.id, next);
-            if (state.sessionId === s.id) setSessionHeading(saved || next || "New chat");
+            if (state.sessionId === s.id) setSessionHeading(saved || next || (state.mode === "files" ? "" : "New chat"));
           } catch (err) {
             Viewer.toast(`Rename failed: ${err.message}`);
           }
         }
       }
-      loadSessions();
+      refreshSessionLists();
     };
     input.addEventListener("keydown", (e) => {
       if (e.key === "Enter") finish(true);
@@ -2608,7 +2621,7 @@
   const generatingSessions = new Map();
   function finishGenerating(sessionId) {
     generatingSessions.delete(String(sessionId));
-    loadSessions();
+    refreshSessionLists();
   }
   // tool -> { jobId, status, result, error } for the LAST submitted toolkit job. Kept so the
   // generate dialog can show the previous submission's status + produced files when reopened,
@@ -2689,7 +2702,7 @@
     }
     // Job queued: mark the session row and poll in the background — the UI stays usable.
     generatingSessions.set(String(s.id), info.label);
-    loadSessions();
+    refreshSessionLists();
     const result = await pollSessionJob(jobId, tool);
     finishGenerating(s.id);
     if (result) showSessionArtifactResult(info, result);
@@ -6884,6 +6897,12 @@
     }
     state.mode = next;
     appEl.dataset.mode = next;
+    // Remember the workbench mode so a window reload lands where the user left it.
+    // Research is deliberately not persisted: its view depends on research.js's own
+    // task-selection state, not on a boot-time mode switch.
+    try {
+      if (next === "files" || next === "chats") localStorage.setItem(WS_MODE_KEY, next);
+    } catch { /* storage is a convenience; the session itself lives server-side */ }
     for (const [name, btn] of Object.entries(navButtons)) {
       if (!btn) continue;
       const active = name === next;
@@ -6990,11 +7009,9 @@
     if (btn) btn.addEventListener("click", () => setMode(btn.dataset.mode));
   });
   window.setWorkbenchMode = setMode;
-  // "＋ Research" in the chat header: create a research task atomically, then the dialog
-  // opens a fresh chat that drives it via the deep_research skill.
-  const researchNewBtn = document.getElementById("chat-new-research");
-  if (researchNewBtn) researchNewBtn.addEventListener("click", openResearchTaskDialog);
-  // "New Research" above the Research task list opens the same create-task dialog.
+  // "New Research" above the Research task list opens the create-task dialog. (The chat
+  // header used to duplicate this as "＋ Research"; the top-level Research tab is the
+  // entry point now.)
   const researchNewSidebarBtn = document.getElementById("research-new");
   if (researchNewSidebarBtn) researchNewSidebarBtn.addEventListener("click", openResearchTaskDialog);
   if (fileSearch) fileSearch.addEventListener("input", (e) => {
@@ -7181,7 +7198,7 @@
       {
         iconSvg: SESSION_ICONS.pin,
         label: pinned ? "Unpin" : "Pin",
-        action: () => { togglePin(s.id); loadSessions(); },
+        action: () => { togglePin(s.id); refreshSessionLists(); },
       },
       {
         iconSvg: SESSION_ICONS.pencil,
@@ -7217,11 +7234,14 @@
     ];
   }
 
-  // Gemini-style delete confirmation: Cancel / Delete.
+  // Gemini-style delete confirmation: Cancel / Delete. Names the session being removed so
+  // the same dialog is unambiguous whether it was opened from a Chat row or a WorkSpace
+  // row, and states plainly that Drive files are not swept up by a session delete.
   async function confirmDeleteSession(s) {
+    const label = s.title || s.summary || s.id.slice(0, 8);
     const ok = await window.confirmModal({
-      title: "Delete chat?",
-      message: "This will delete the prompts and responses in this chat session, plus any content you created.",
+      title: "Delete session?",
+      message: `"${label}" — its messages and the attachments uploaded for it will be deleted. Files in your Drive are not touched.`,
       okLabel: "Delete",
       okClass: "danger",
     });
@@ -7337,11 +7357,17 @@
       // Fetch legacy whole-session blanket state (pre-flag imports) BEFORE rendering so the
       // import buttons are born with their persistent state (disabled + "✓ Imported").
       await refreshImportedState();
+      // Second epoch check: refreshImportedState is another await point, so a newer
+      // switch/picker-click can have superseded this restore since the fetch above. The
+      // newest conversation always wins — a stale one must never paint into the log.
+      if (opts.modeSeq != null && opts.modeSeq !== state.modeSeq) return false;
       chatLog.innerHTML = "";
       state.renderedMsgIds = new Set(); // every row below is now on screen; live refresh dedupes against it
       for (const m of data.messages) appendMsgRow(m);
-      setSessionHeading(
-        data.title || (data.messages[0] ? data.messages[0].content.slice(0, 30) : "Chat"));
+      const heading = data.title || (data.messages[0] ? data.messages[0].content.slice(0, 30) : "");
+      // A WorkSpace session with nothing to name falls back to the picker label, never to
+      // the Chat vocabulary (an empty heading renders "Sessions" on the trigger).
+      setSessionHeading(heading || (state.mode === "files" ? "" : "Chat"));
       // WorkSpace: the session's recorded scope comes back with the detail payload, and
       // opening a session re-arms the reload pointer.
       if (state.mode === "files") {
@@ -7375,6 +7401,7 @@
   // conversation survives a window reload; the session's own context scope lives in
   // sessions.meta and is written once, on its first turn.
   const WS_POINTER_KEY = "delveta_workspace_session";
+  const WS_MODE_KEY = "delveta_workbench_mode";
 
   function getWsPointer() {
     try { return localStorage.getItem(WS_POINTER_KEY) || null; } catch { return null; }
@@ -7495,6 +7522,15 @@
     renderWsMenu();
   }
 
+  // Session-menu actions (Pin / Rename / Import to Knowledge / Generate) can be invoked
+  // from a Chat row or a WorkSpace row alike, and the two lists are separate server
+  // queries. Every menu-hook refresh therefore goes through here, so whichever lane
+  // started the job, both pickers pick up the new badge / lock / title state.
+  function refreshSessionLists() {
+    loadSessions();
+    loadWorkspaceSessions();
+  }
+
   function wsMenuMessage(text) {
     const el = document.createElement("div");
     el.className = "ws-session-empty";
@@ -7521,16 +7557,39 @@
       wsMenuMessage("No WorkSpace sessions yet. Send a message to start one.");
       return;
     }
-    for (const s of state.wsSessions) {
+    // Same presentation rules as the Chat sidebar rows: pinned first, a pin badge, and a
+    // row locked (no switch, no menu) while an import / generation job runs on it.
+    const pinnedIds = getPinned();
+    const sorted = [...state.wsSessions].sort((a, b) => {
+      const pa = pinnedIds.includes(String(a.id)) ? 0 : 1;
+      const pb = pinnedIds.includes(String(b.id)) ? 0 : 1;
+      return pa - pb;
+    });
+    for (const s of sorted) {
       const item = document.createElement("div");
       item.className = "ws-session-item";
       if (String(s.id) === String(state.sessionId)) item.classList.add("active");
-      const main = document.createElement("button");
-      main.type = "button";
+      const importing = importingSessions.has(String(s.id));
+      const genLabel = generatingSessions.get(String(s.id));
+      if (importing) item.classList.add("session-importing");
+      else if (genLabel) item.classList.add("session-generating");
+      // A div rather than a button: Rename swaps an <input> into the title slot, and a
+      // form control must not be nested inside a button. The row click performs the switch.
+      const main = document.createElement("div");
       main.className = "ws-session-main";
+      const head = document.createElement("span");
+      head.className = "ws-session-row-head";
+      if (isPinned(s.id)) {
+        const pin = document.createElement("span");
+        pin.className = "session-pinned";
+        pin.title = "Pinned";
+        pin.innerHTML = SESSION_ICONS.pin;
+        head.appendChild(pin);
+      }
       const title = document.createElement("span");
       title.className = "ws-session-row-title";
       title.textContent = s.title || s.summary || s.id.slice(0, 8);
+      head.appendChild(title);
       const metaRow = document.createElement("span");
       metaRow.className = "ws-session-row-meta";
       // Last update + where the session was started (folder wins over workspace: it is the
@@ -7539,78 +7598,38 @@
       if (s.created_at) metaBits.push(new Date(s.created_at).toLocaleString());
       const scopeName = s.meta && (s.meta.folder_name || s.meta.workspace_name);
       if (scopeName) metaBits.push(scopeName);
-      metaRow.textContent = metaBits.join(" · ");
-      main.append(title, metaRow);
+      if (importing) metaRow.textContent = "⏳ Importing…";
+      else if (genLabel) metaRow.textContent = `Generating ${genLabel}…`;
+      else metaRow.textContent = metaBits.join(" · ");
+      main.append(head, metaRow);
       const preview = String(s.summary || "").trim();
-      if (preview && preview !== String(s.title || "")) {
+      if (preview && preview !== String(s.title || "") && !importing && !genLabel) {
         const p = document.createElement("span");
         p.className = "ws-session-preview";
         p.textContent = preview;
         main.append(p);
       }
-      main.addEventListener("click", () => switchWorkspaceSession(s.id));
+      main.addEventListener("click", () => {
+        if (importing || genLabel) return; // locked while a job runs on this session
+        switchWorkspaceSession(s.id);
+      });
       const more = document.createElement("button");
       more.type = "button";
       more.className = "ws-session-more";
       more.title = "Session actions";
       more.innerHTML = SESSION_ICONS.more;
+      more.disabled = importing || genLabel;
       more.addEventListener("click", (e) => {
         e.stopPropagation();
-        openSessionMenu(more, [
-          {
-            iconSvg: SESSION_ICONS.pencil,
-            label: "Rename",
-            action: () => startWsRename(s, title),
-          },
-          {
-            iconSvg: SESSION_ICONS.trash,
-            label: "Delete",
-            danger: true,
-            action: () => confirmDeleteSession(s),
-          },
-        ]);
+        // Identical to the Chat row menu: same component (openSessionMenu), same entries
+        // (buildSessionMenu), same handlers — every action targets this row's session id
+        // only. A Workspace session is a full session, so Import / Mind Map / Slides /
+        // Summary all apply here exactly as they do in Chat.
+        openSessionMenu(more, buildSessionMenu(s, title));
       });
       item.append(main, more);
       wsSessionList.appendChild(item);
     }
-  }
-
-  // Rename inline in the picker row (the header title editor only exists in Chats mode).
-  function startWsRename(s, titleEl) {
-    const current = s.title || s.summary || "";
-    const input = document.createElement("input");
-    input.type = "text";
-    input.value = current;
-    input.className = "session-rename-input";
-    input.maxLength = 80;
-    let done = false;
-    const finish = async (commit) => {
-      if (done) return;
-      done = true;
-      input.remove();
-      if (commit) {
-        const next = input.value.trim();
-        if (next !== current) {
-          try {
-            const saved = await renameSession(s.id, next);
-            s.title = saved || next;
-            if (state.sessionId === s.id) setSessionHeading(s.title || "New session");
-          } catch (err) {
-            Viewer.toast(`Rename failed: ${err.message}`);
-          }
-        }
-      }
-      renderWsMenu();
-      loadWorkspaceSessions();
-    };
-    input.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") finish(true);
-      else if (e.key === "Escape") finish(false);
-    });
-    input.addEventListener("blur", () => finish(true));
-    titleEl.replaceWith(input);
-    input.focus();
-    input.select();
   }
 
   async function switchWorkspaceSession(id) {
@@ -7627,7 +7646,9 @@
     chatLog.innerHTML = "";
     state.renderedMsgIds = new Set();
     wsSessionName.textContent = "Loading…";
-    const ok = await resumeSession(id, { silent: true });
+    // A picker switch is a conversation transition just like a mode switch: take part in
+    // the epoch guard so two rapid switches cannot interleave their restores.
+    const ok = await resumeSession(id, { silent: true, modeSeq: ++state.modeSeq });
     if (!ok) {
       setWsPointer(null);
       state.modeSessions.files = null;
@@ -7740,9 +7761,13 @@
   }
   updateToolbarGenState();
 
-  // Chat is the launch mode. Run the same switch users get from the nav so the initial
-  // layout, per-mode session slot and composer state go through one code path (and no
-  // other mode's session can be restored behind the Chat tab). The call is synchronous
-  // up to its first await, so it lands before the first paint.
-  setMode("chats");
+  // The workbench reopens in the mode the user last left it in; WorkSpace additionally
+  // restores its remembered session (the localStorage pointer) inside setMode. Anything
+  // else falls back to Chat, the default launch mode. Run the same switch users get from
+  // the nav so the initial layout, per-mode session slot and composer state go through
+  // one code path (and no other mode's session can be restored behind the Chat tab).
+  // The call is synchronous up to its first await, so it lands before the first paint.
+  let bootMode = "chats";
+  try { if (localStorage.getItem(WS_MODE_KEY) === "files") bootMode = "files"; } catch { /* default */ }
+  setMode(bootMode);
 })();

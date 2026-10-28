@@ -610,10 +610,11 @@ body {
   border-radius: 4px;
 }
 
-/* Session ⋯ dropdown (Gemini-style action list). */
+/* Session ⋯ dropdown (Gemini-style action list).
+   Above the WorkSpace picker menu (z 95): its rows open this menu from inside that one. */
 .session-menu {
   position: fixed;
-  z-index: 90;
+  z-index: 97;
   min-width: 200px;
   padding: 5px;
   background: var(--bg-elev);
@@ -1837,14 +1838,34 @@ sup.viewer-cite:hover { text-decoration: underline; }
 }
 .ws-session-item:hover { background: var(--bg-soft-2); }
 .ws-session-item.active { border-color: var(--accent); background: var(--bg-soft-2); }
+/* The row body is a div (Rename swaps an <input> into the title slot, which a <button>
+   parent would not allow), so it carries the layout the menu-button rule gave it before,
+   plus the pointer affordance of a clickable row. */
 .ws-session-main {
+  display: flex;
   flex: 1;
   min-width: 0;
   flex-direction: column;
   gap: 2px;
+  padding: 6px 8px;
+  text-align: left;
+  cursor: pointer;
 }
+.ws-session-row-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.ws-session-item .session-pinned {
+  flex: none;
+  display: inline-flex;
+  color: var(--accent);
+}
+.ws-session-item .session-pinned svg { width: 12px; height: 12px; }
 .ws-session-row-title {
   font-weight: 500;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1864,13 +1885,24 @@ sup.viewer-cite:hover { text-decoration: underline; }
   line-height: 1.35;
   color: var(--fg-dim);
 }
+/* Hover-revealed like the Chat sidebar's ⋯; stays hidden on locked (busy) rows. */
 .ws-session-more {
   flex: none;
   align-self: center;
   width: 24px;
   justify-content: center;
   color: var(--fg-dim);
+  opacity: 0;
+  transition: opacity 0.12s;
 }
+.ws-session-item:hover .ws-session-more,
+.ws-session-item .ws-session-more:focus-visible { opacity: 1; }
+.ws-session-item.session-importing,
+.ws-session-item.session-generating { opacity: 0.75; }
+.ws-session-item.session-importing .ws-session-main,
+.ws-session-item.session-generating .ws-session-main { cursor: default; }
+.ws-session-item.session-importing .ws-session-more,
+.ws-session-item.session-generating .ws-session-more { opacity: 0; pointer-events: none; }
 .ws-session-more svg { width: 14px; height: 14px; }
 .ws-session-empty { padding: 8px; font-size: 11.5px; color: var(--fg-dim); }
 .ws-session-menu-note {
@@ -1935,10 +1967,6 @@ sup.viewer-cite:hover { text-decoration: underline; }
 #chat-header button .icon { width: 13px; height: 13px; }
 #chat-header button:hover { background: var(--bg-hover); color: var(--fg); border-color: var(--border-strong); }
 #chat-header button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
-/* "＋ Research" is the header's only create button — outlined in the accent so it reads as
-   a create-new action (a dialog, not a mode toggle). Normal new chats live in the sidebar. */
-#chat-new-research { border-color: var(--accent); color: var(--accent); }
-#chat-new-research:hover { background: var(--accent); color: #fff; }
 .chat-header-actions { display: flex; gap: 4px; align-items: center; flex-shrink: 0; margin-left: auto; }
 /* Dock side stays user-controlled in Files/Research (right column ↔ bottom bar); Chats
    is the conversation itself, so the panel-shape controls are hidden there. Floating
