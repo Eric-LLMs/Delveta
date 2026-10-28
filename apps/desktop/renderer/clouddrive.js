@@ -519,7 +519,7 @@
       rootName,
       path: pathForCrumbs,
       read: () => ({ entries: currentEntries(), localPath: null }),
-      open: (f) => (isTextFile(f) ? openNote(f) : openCloudFile(f)),
+      open: (f) => openDriveFile(f),
       localPath: null,
       onCrumb: (relPath) => {
         if (drive.loc.kind === "trash") return;
@@ -544,7 +544,7 @@
       onEnterFolder: (d) => navigate({ kind: "folder", ws: drive.loc.ws, path: d.path }),
       onOpenEntry: (f) => {
         if (drive.editMode) toggleOne(f.id);
-        else if (!isTrash) { if (isTextFile(f)) openNote(f); else openCloudFile(f); }
+        else if (!isTrash) openDriveFile(f);
       },
       onToggleOne: (id) => toggleOne(id),
       onToggleAll: (checked) => toggleAll(checked),
@@ -805,6 +805,9 @@
       case "file": {
         const f = en.file;
         const isText = isTextFile(f);
+        // A row whose upload never finished has no bytes to open — mark it so it does
+        // not masquerade as a normal document (clicking explains via toast).
+        const pending = !!f.file_status && f.file_status !== "READY";
         el2.dataset.folder = f.folder_path || "";
         el2.dataset.ws = en.ws || "";
         el2.dataset.id = f.id;
@@ -813,11 +816,16 @@
         // the 5s ingest poll keep the right row marked and never move it elsewhere.
         const open = noteCloudFile && window.__cloudNoteOpen ? noteCloudFile : viewerCloudFile;
         el2.classList.toggle("cd-open", !!open && open.id === f.id);
+        el2.classList.toggle("cd-pending", pending);
         el2.style.paddingLeft = `${6 + en.depth * 16}px`;
         el2.querySelector(".cd-icon").innerHTML = dvIconHTML(isText ? "file-text" : "archive");
         el2.querySelector(".cd-name").textContent = f.name;
-        el2.querySelector(".cd-meta").textContent = fmtSize(f.size);
-        el2.title = isText ? "Open note" : "Open in viewer";
+        el2.querySelector(".cd-meta").textContent = pending
+          ? (f.file_status === "UPLOADING" ? "Upload incomplete" : f.file_status.toLowerCase())
+          : fmtSize(f.size);
+        el2.title = pending
+          ? `"${f.name}" — upload did not finish; it cannot be opened yet`
+          : (isText ? "Open note" : "Open in viewer");
         el2.draggable = true;
         break;
       }
@@ -902,7 +910,7 @@
       if (row.classList.contains("cd-file")) {
         const f = drive.files.find((x) => x.id === row.dataset.id);
         if (!f) return;
-        if (isTextFile(f)) openNote(f); else openCloudFile(f);
+        openDriveFile(f);
         return;
       }
       // folder-ish row (plain folder or top-level scope)
@@ -1480,6 +1488,20 @@
     }
   }
 
+  // The ONE open path for drive files (tree row, central list, Enter/open-selected).
+  // A file whose upload never completed has no object bytes, so the content endpoint
+  // answers 409 "asset not ready" — that used to leave the click looking dead. Refuse
+  // it up front with a visible toast instead of round-tripping to that error.
+  function openDriveFile(f) {
+    if (!f) return;
+    if (f.file_status && f.file_status !== "READY") {
+      Viewer.toast(`"${f.name}" has not finished uploading yet, so it cannot be opened.`);
+      setStatus(`"${f.name}" — upload incomplete. Delete it and upload again.`);
+      return;
+    }
+    if (isTextFile(f)) openNote(f); else openCloudFile(f);
+  }
+
   // ── Open a binary cloud file in the in-window viewer ──
   // The viewer is path-based (it streams via the `local://` protocol and reads PDF
   // annotation sidecars), so the main process first caches the file from the server
@@ -1494,7 +1516,11 @@
     setStatus(`Opening "${f.name}"…`);
     try {
       const res = await window.desktopAPI.cloudCache(f.id, f.name, getToken());
-      if (!res.ok) { setStatus(`Failed to open "${f.name}": ${res.error}`); return; }
+      if (!res.ok) {
+        setStatus(`Failed to open "${f.name}": ${res.error}`);
+        Viewer.toast(`Could not open "${f.name}": ${res.error}`);
+        return;
+      }
       setStatus("");
       viewerCloudFile = f; // so "attach to chat" can reference this cloud asset
       // Opening a file points the working directory at the folder the file lives in
@@ -1506,6 +1532,7 @@
       refreshOpenHighlight();
     } catch (e) {
       setStatus(`Failed to open "${f.name}": ${e.message}`);
+      Viewer.toast(`Could not open "${f.name}": ${e.message}`);
     }
   }
 
@@ -1548,6 +1575,7 @@
       setStatus("");
     } catch (e) {
       setStatus(`Failed to open note: ${e.message}`);
+      Viewer.toast(`Could not open "${f.name}": ${e.message}`);
     }
   }
 
@@ -1824,7 +1852,7 @@
   async function openSelected() {
     const f = selectedFilesArr()[0];
     if (!f) return;
-    if (isTextFile(f)) openNote(f); else openCloudFile(f);
+    openDriveFile(f);
   }
   async function renameTarget() {
     const f = selectedFilesArr()[0];

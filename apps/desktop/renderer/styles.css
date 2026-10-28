@@ -3046,6 +3046,11 @@ body.resizing-ew { cursor: ew-resize; }
 .cd-open:hover { background: color-mix(in srgb, var(--accent) 22%, transparent); }
 .cd-open > .cd-name { color: var(--accent); font-weight: 600; }
 
+/* A file whose upload never completed: still listed (so it can be deleted or
+   retried), but visibly not an openable document — clicking explains why. */
+.cd-file.cd-pending { opacity: 0.55; }
+.cd-file.cd-pending > .cd-meta { font-style: italic; }
+
 /* Save-dialog-style folder picker (session → toolkit generation), reusing the drive
    tree's .cd-row / .cd-kids markup so it looks exactly like the upload panel. */
 .cd-picker-modal { width: 580px; max-width: 96vw; }
