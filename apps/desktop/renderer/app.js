@@ -1980,7 +1980,7 @@
     // so a document left open in the hidden Files pane must not ride on their messages.
     // Explicit attachments and (in Files) pinned selections are unaffected.
     const filesMode = state.mode === "files";
-    const liveFocus = filesMode && Viewer.getFocus ? Viewer.getFocus() : null;
+    const liveFocus = filesMode ? currentViewerFile() : null;
     const viewerPayload = filesMode ? buildViewerPayload(liveFocus) : null;
     // The Cloud Drive working folder frozen for THIS turn (null in Local mode). It
     // travels with the message so the server's write tools default there; the user
@@ -5425,39 +5425,83 @@
     return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
   }
 
-  // ── Cloud Drive working-folder chip ──
-  // The folder the user is browsing in the Cloud panel is also the turn's working
-  // directory: tools create folders/files and save summaries there unless the user
-  // names another destination. It is tracked SEPARATELY from the open file (👁 chip):
-  // opening a document inside the folder keeps both, and browsing away from a
-  // document clears only the document's chip.
+  // ── Cloud Drive working-directory control ──
+  // The folder the chat's write tools use by default (new folders/files, saved summaries
+  // — unless the user names another destination for one operation). It is ONE state,
+  // `drive.cwd` in clouddrive.js, written by three events in order of precedence:
+  // browsing a folder, opening a file (its parent), and this control's explicit pick.
+  // The chip is a button: clicking it opens the shared Cloud Drive folder picker (with
+  // workspace scopes enabled). Changing the directory never touches the open file, the
+  // chat history or attachments — those are separate concepts (👁 "Current file" chip).
   function buildDriveChip() {
     const sel = window.__getCloudDriveSelection ? window.__getCloudDriveSelection() : null;
     if (!sel) return null;
-    const chip = document.createElement("span");
+    const chip = document.createElement("button");
+    chip.type = "button";
     chip.className = "chat-attach-chip drive-cwd-chip";
+    const label = `Working directory: ${sel.label || "My Drive"}`;
+    chip.title = `${label}\nNew folders/files and saved summaries go here unless you name another folder. Click to change.`;
     const txt = document.createElement("span");
+    txt.className = "drive-cwd-path";
     txt.innerHTML = dvIconHTML("folder");
-    txt.appendChild(document.createTextNode(sel.label || "My Drive"));
-    txt.title = "Cloud Drive working folder: new folders/files and saved summaries go here unless you name another folder.";
-    chip.appendChild(txt);
+    txt.appendChild(document.createTextNode(label));
+    const chev = document.createElement("span");
+    chev.className = "drive-cwd-chev";
+    chev.innerHTML = dvIconHTML("chevron-down");
+    chip.append(txt, chev);
+    chip.addEventListener("click", async () => {
+      const picked = await window.pickDriveFolderModal("Choose working directory", {
+        prompt: false,
+        okLabel: "Set as working directory",
+        workspaces: true,
+        initial: window.__getCloudDriveCwdLoc ? window.__getCloudDriveCwdLoc() : null,
+      });
+      if (!picked) return; // cancel keeps the current working directory
+      const loc = picked.folderPath
+        ? { kind: "folder", ws: picked.workspace_id ?? null, path: picked.folderPath }
+        : (picked.workspace_id ? { kind: "workspace", ws: picked.workspace_id } : { kind: "root" });
+      if (window.__setCloudDriveCwd) window.__setCloudDriveCwd(loc);
+    });
     return chip;
   }
-  // The Cloud panel calls this whenever the working folder changes: ordinary
-  // navigation (folder/workspace/root/up-one-level) and a background refresh that
-  // demotes a deleted folder to its scope root. Opening or closing a document is
-  // NOT a folder change — that path goes through the viewer's focus event.
-  // Navigation inside Cloud Drive updates the composer chips and, for a blank WorkSpace
-  // session, the scope strip's "will be recorded in" workspace hint.
+  // The Cloud panel calls this whenever the working folder changes: ordinary navigation
+  // (folder/workspace/root/up-one-level), a background refresh that demotes a deleted
+  // folder to its scope root, a file open moving the directory to the file's parent, and
+  // an explicit pick from this chip. Opening or closing a VIEWER document is not a
+  // folder change — that path goes through the viewer's focus event (plus
+  // __cloudDriveActiveFileChanged for the note surface).
+  // Composer chips re-render, and for a blank WorkSpace session the scope strip's
+  // "will be recorded in" hint follows along.
   window.__cloudDriveSelectionChanged = () => { renderAttachBar(); renderWsScope(); };
+
+  // The ONE reader of "what file is the user looking at". It branches on the visible
+  // surface: the note editor (for .md / .txt) replaces the rendered viewer document, so
+  // while a note is open the NOTE is the current file; when the note closes, whatever
+  // the viewer renders (or nothing) takes over. The chat chip, the send-time viewer
+  // context, the focus-key tracking and the sidebar's cd-open highlight all go through
+  // this — no per-component copy of "current file" state can drift from it.
+  function currentViewerFile() {
+    const note = window.__getNoteCloudFile ? window.__getNoteCloudFile() : null;
+    if (note && window.__cloudNoteOpen) {
+      return {
+        name: note.name,
+        kind: Viewer.kindFor ? Viewer.kindFor(note.name) : "text",
+        provenance: "cloud",
+        asset_id: String(note.id),
+        page: null,
+        t_ms: null,
+      };
+    }
+    return Viewer.getFocus ? Viewer.getFocus() : null;
+  }
 
   function buildFocusChip() {
     if (!viewerFollow) return null;
-    const f = Viewer.getFocus ? Viewer.getFocus() : null;
+    const f = currentViewerFile();
     if (!f) return null;
     const chip = document.createElement("span");
     chip.className = "chat-attach-chip viewer-focus-chip";
-    let label = f.name;
+    let label = `Current file: ${f.name}`;
     if (f.page) label += ` · p.${f.page}`;
     if (f.kind === "video" && f.t_ms != null) label += ` · ${fmtClock(f.t_ms)}`;
     const txt = document.createElement("span");
@@ -5482,7 +5526,7 @@
   function buildViewerPayload(focus) {
     const f = focus !== undefined
       ? focus
-      : (Viewer.getFocus ? Viewer.getFocus() : null);
+      : currentViewerFile();
     if (f) lastFocus = f;
     const sels = pendingSelections.slice(0, 8);
     const p0Only = (src) => ({
@@ -5552,14 +5596,19 @@
     Viewer.navigateTo(cit.locator || {});
   }
 
-  Viewer.setOnFocusChanged(() => {
-    // A different document opening re-enables tracking automatically.
-    const f = Viewer.getFocus ? Viewer.getFocus() : null;
+  // One focus tracker for both document surfaces. Opening a DIFFERENT document
+  // re-enables viewport sharing automatically (a ✕-ed chip only stops the doc it was
+  // on); the note editor fires no viewer focus event, so clouddrive's open/close-note
+  // hook reaches this same function.
+  function syncFocusTracking() {
+    const f = currentViewerFile();
     const key = f ? `${f.provenance}:${f.asset_id || f.name}` : null;
     if (key && key !== lastFocusKey) viewerFollow = true;
     lastFocusKey = key;
     renderAttachBar();
-  });
+  }
+  Viewer.setOnFocusChanged(syncFocusTracking);
+  window.__cloudDriveActiveFileChanged = syncFocusTracking;
 
   // ── P0 text selection: explicit 「加入对话」 button, never auto-collected ──
   const viewerPinBtn = document.createElement("button");
@@ -7487,7 +7536,7 @@
       : "Workspace this session will be recorded in on its first message";
     wsScopeFolder.textContent = folder ? `Folder: ${folder}` : "";
     wsScopeFolder.classList.toggle("hidden", !folder);
-    wsScopeFolder.title = "Folder open when this session started. Retrieval is not limited to it yet.";
+    wsScopeFolder.title = "Working folder when this session started. Retrieval is not limited to it yet.";
     wsScopeNote.textContent = state.sessionId
       ? "Scope recorded — retrieval still covers everything you can access."
       : "";

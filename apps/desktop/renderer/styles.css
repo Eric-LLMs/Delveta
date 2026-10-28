@@ -1571,6 +1571,26 @@ pre.text-viewer {
 /* Viewer focus chip: same anatomy, quieter — it reflects ambient state, not a staged file. */
 .viewer-focus-chip { opacity: 0.85; }
 
+/* Working-directory chip: a real control (button.chat-attach-chip) — the pill look
+   comes from .chat-attach-chip, this adds affordance: pointer, hover deepening with
+   the accent border, press feedback. The path ellipsizes; the full path is in the
+   title tooltip. */
+button.chat-attach-chip.drive-cwd-chip {
+  max-width: 100%;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background-color var(--dur) var(--ease), border-color var(--dur) var(--ease), transform 0.06s;
+}
+button.chat-attach-chip.drive-cwd-chip:hover {
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg-soft-2));
+  border-color: var(--accent);
+}
+button.chat-attach-chip.drive-cwd-chip:active { transform: translateY(1px); }
+.drive-cwd-path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.drive-cwd-path .icon { vertical-align: -2px; }
+.drive-cwd-chev { flex: none; display: inline-flex; }
+
 /* Floating "pin selection to chat" button (P0) — appears next to a selection inside the viewer. */
 #viewer-pin-btn {
   position: fixed;
@@ -3017,6 +3037,14 @@ body.resizing-ew { cursor: ew-resize; }
 /* Current-location highlight in the cloud sidebar tree. */
 .cd-current { background: var(--bg-soft-2); }
 .cd-current > .cd-name { color: var(--accent); font-weight: 600; }
+
+/* The currently OPENED file (viewer doc or note) — deliberately a stronger accent
+   tint than the gray cd-current "you are browsing here" marker, so file selection
+   and location never look like the same thing. State-driven in updateEntry, so the
+   5s ingest poll re-renders keep it on the right row. */
+.cd-open { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.cd-open:hover { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+.cd-open > .cd-name { color: var(--accent); font-weight: 600; }
 
 /* Save-dialog-style folder picker (session → toolkit generation), reusing the drive
    tree's .cd-row / .cd-kids markup so it looks exactly like the upload panel. */

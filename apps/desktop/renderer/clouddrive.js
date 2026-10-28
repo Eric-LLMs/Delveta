@@ -49,7 +49,8 @@
     workspaces: [],
     trash: [],
     me: null,
-    loc: { kind: "root" },           // current main-area location
+    loc: { kind: "root" },           // current main-area location (browsing)
+    cwd: { kind: "root" },           // WORKING DIRECTORY for the chat's write tools
     viewMode: "list",                // "list" | "grid"
     query: "",                       // main-area search filter (current folder)
     editMode: false,
@@ -63,19 +64,28 @@
   // document the user is reading. When one is open we only re-render the sidebar tree.
   let refreshPending = false;
 
-  // The cloud asset (if any) currently open in the in-window viewer — used by the chat
-  // "attach current file" action. app.js reads it via window.__getViewerCloudFile().
+  // ── The currently OPENED file ──
+  // One concept, two surfaces: the viewer renders `viewerCloudFile`; the note editor
+  // overlays the viewer with `noteCloudFile` (the rendered doc stays underneath and
+  // comes back when the note closes). The chat chip, the send-time viewer context and
+  // the tree highlight all resolve the active file through these accessors — never a
+  // per-component copy of it.
   let viewerCloudFile = null;
+  let noteCloudFile = null;
   window.__getViewerCloudFile = () => viewerCloudFile;
   window.__setViewerCloudFile = (f) => { viewerCloudFile = f || null; };
+  window.__getNoteCloudFile = () => noteCloudFile;
 
-  // The folder the user is WORKING IN. The chat needs the real identity (workspace id
+  // The folder the chat WORKS IN. The chat needs the real identity (workspace id
   // + folder id + path), not just the label the panel draws, because its write tools
   // create folders/files and save summaries there. app.js reads this at send time.
-  // It is a WORKING DIRECTORY, not a read scope: browsing a folder never asks for its
-  // contents to be opened.
+  // It is a WORKING DIRECTORY, not a read scope: pointing at a folder never asks for
+  // its contents to be opened. drive.cwd follows three writers, last one wins:
+  //   browsing a folder (navigate), opening a file (its parent folder), and the
+  //   Assistant's "Working directory" control (explicit user pick). None of them
+  //   changes the file the user is looking at.
   function currentSelection() {
-    const loc = drive.loc || { kind: "root" };
+    const loc = drive.cwd || { kind: "root" };
     if (loc.kind === "trash") return null;
     const workspaceId = locKindWs(loc);
     const path = locFolderPath(loc) || "";
@@ -92,14 +102,42 @@
   window.__getCloudDriveSelection = () => (window.__cloudDriveActive ? currentSelection() : null);
 
   // Called when the working folder changes WITHOUT a re-render of the main area (a
-  // background refresh demoting a deleted folder to its scope root). app.js owns the
-  // chip and registers this hook; ordinary navigation already reaches it through the
-  // viewer's focus event.
+  // background refresh demoting a deleted folder to its scope root, a file open moving
+  // the working directory to the file's parent, or an explicit pick from the Assistant
+  // chip). app.js owns the chip and registers this hook; ordinary navigation already
+  // reaches it through the viewer's focus event.
   function notifySelectionChanged() {
     if (typeof window.__cloudDriveSelectionChanged === "function") {
       try { window.__cloudDriveSelectionChanged(); } catch { /* chip refresh is best-effort */ }
     }
   }
+
+  // Called when the currently OPENED file changes on a surface the viewer does not
+  // fire focus events for (note editor open/close). app.js re-syncs the composer's
+  // "Current file" chip through this hook.
+  function notifyActiveFileChanged() {
+    if (typeof window.__cloudDriveActiveFileChanged === "function") {
+      try { window.__cloudDriveActiveFileChanged(); } catch { /* chip refresh is best-effort */ }
+    }
+  }
+
+  // ── Working directory (drive.cwd) ──
+  // The parent folder a drive file lives in, as a loc — the directory the chat should
+  // write into after this file is opened.
+  function fileParentLoc(f) {
+    const ws = f.workspace_id ?? null;
+    const path = f.folder_path || "";
+    if (path) return { kind: "folder", ws, path };
+    return ws ? { kind: "workspace", ws } : { kind: "root" };
+  }
+  // The single writer for drive.cwd. Never touches drive.loc (browsing) and never
+  // re-renders the tree — the working directory is an Assistant-side fact.
+  function setWorkingFolder(loc) {
+    drive.cwd = loc;
+    notifySelectionChanged();
+  }
+  window.__setCloudDriveCwd = setWorkingFolder;
+  window.__getCloudDriveCwdLoc = () => drive.cwd;
 
   // ── Location model (mirrors apps/web/src/CloudDrive.tsx Loc) ──
   // A workspace is a top-level scope; a "folder" loc is a subfolder inside a
@@ -275,6 +313,12 @@
         drive.selected = new Set();
         notifySelectionChanged();
       }
+      // The working directory can sit where the user is not browsing (a file was
+      // opened from there earlier) — validate and demote it on its own.
+      if (!locStillValid(drive.cwd)) {
+        drive.cwd = scopeRoot(drive.cwd);
+        notifySelectionChanged();
+      }
       renderDrive();
       if (quiet) refreshMainQuiet();
       else refreshMain();
@@ -369,8 +413,13 @@
   // Central navigation: update the location, reset per-folder UI state, re-render.
   // User-initiated, so it always switches the main area (even over an open document) —
   // matching the local-tree behavior where clicking a folder replaces the viewer.
+  // Browsing also (re-)points the working directory at the folder being browsed, and
+  // the folder view replaces the rendered document — so the viewer-surface file clears.
+  // An open NOTE is not affected: it is a separate surface that survives browsing.
   function navigate(loc) {
     drive.loc = loc;
+    if (loc.kind !== "trash") drive.cwd = loc;
+    viewerCloudFile = null;
     drive.query = "";
     drive.editMode = false;
     drive.selected = new Set();
@@ -600,6 +649,16 @@
     }, 5000);
   }
 
+  // The same rule updateEntry applies at render time, patched directly onto the rows:
+  // opening/closing a file does not re-render the tree, so the highlight must follow
+  // without waiting for the next render. (Navigation needs no call — it re-renders.)
+  function refreshOpenHighlight() {
+    const open = noteCloudFile && window.__cloudNoteOpen ? noteCloudFile : viewerCloudFile;
+    for (const row of cdListEl.querySelectorAll(".cd-file")) {
+      row.classList.toggle("cd-open", !!open && row.dataset.id === open.id);
+    }
+  }
+
   // ── Sidebar tree (My Drive + workspaces + Trash) ──
   function isCurrentLoc(ws, path, trash) {
     const l = drive.loc;
@@ -749,6 +808,11 @@
         el2.dataset.folder = f.folder_path || "";
         el2.dataset.ws = en.ws || "";
         el2.dataset.id = f.id;
+        // Currently-opened-file highlight (accent), distinct from the folder row's
+        // cd-current (browsing location). State-driven, so incremental re-renders of
+        // the 5s ingest poll keep the right row marked and never move it elsewhere.
+        const open = noteCloudFile && window.__cloudNoteOpen ? noteCloudFile : viewerCloudFile;
+        el2.classList.toggle("cd-open", !!open && open.id === f.id);
         el2.style.paddingLeft = `${6 + en.depth * 16}px`;
         el2.querySelector(".cd-icon").innerHTML = dvIconHTML(isText ? "file-text" : "archive");
         el2.querySelector(".cd-name").textContent = f.name;
@@ -1433,7 +1497,13 @@
       if (!res.ok) { setStatus(`Failed to open "${f.name}": ${res.error}`); return; }
       setStatus("");
       viewerCloudFile = f; // so "attach to chat" can reference this cloud asset
+      // Opening a file points the working directory at the folder the file lives in
+      // (last-writer-wins with browsing / the Assistant's explicit pick). It does not
+      // navigate the tree and does not touch notes or attachments.
+      setWorkingFolder(fileParentLoc(f));
+      // Viewer.render fires the focus event, which refreshes the composer chips.
       Viewer.render(res.path, f.name);
+      refreshOpenHighlight();
     } catch (e) {
       setStatus(`Failed to open "${f.name}": ${e.message}`);
     }
@@ -1451,7 +1521,6 @@
     if (note.dirty && !(await window.confirmModal("Discard unsaved changes to the current note?"))) return;
     setStatus("Loading note…");
     try {
-      viewerCloudFile = null; // the note editor replaces the viewer as the active surface
       const res = await apiFetch(`/files/${f.id}/content`);
       note.asset = f;
       note.dirty = false;
@@ -1469,6 +1538,13 @@
       // viewer now and keeps visibility consistent across tabs.
       window.__cloudNoteOpen = true;
       if (window.__syncMainPanes) window.__syncMainPanes();
+      // The note editor IS the active document surface: it becomes the chat's current
+      // file (the viewer's rendered doc underneath stays intact for when the note
+      // closes) and its parent folder becomes the working directory.
+      noteCloudFile = f;
+      setWorkingFolder(fileParentLoc(f));
+      notifyActiveFileChanged();
+      refreshOpenHighlight();
       setStatus("");
     } catch (e) {
       setStatus(`Failed to open note: ${e.message}`);
@@ -1524,6 +1600,13 @@
     notePreviewPane.innerHTML = "";
     noteSaveBtn.disabled = false;
     noteBtn(noteSaveBtn, "Save");
+    // The note was the chat's current file; closing it hands the identity back to
+    // whatever the viewer still renders (nothing, if the doc was never re-opened).
+    if (noteCloudFile) {
+      noteCloudFile = null;
+      notifyActiveFileChanged();
+      refreshOpenHighlight();
+    }
   }
 
   // Markdown rendering, XSS-safe: html:false escapes raw HTML and the link validator
@@ -2542,15 +2625,20 @@
     }
   });
 
-  // ── "Choose a Cloud Drive folder" picker (used by session → toolkit generation and the
-  // generate dialog's output-folder picker) ──
+  // ── "Choose a Cloud Drive folder" picker (used by session → toolkit generation, the
+  // generate dialog's output-folder picker, the upload target, and the Assistant's
+  // working-directory control) ──
   // A save-dialog-style folder tree that reuses the sidebar's row/kids markup and the
-  // same expansion state, so it looks and behaves like the upload panel. Only My Drive
-  // (personal, workspace_id null) folders are offered — session artifacts always land in
-  // the caller's personal drive. Resolves with the chosen folder path (null = My Drive
-  // root) or undefined when cancelled. With ``prompt: false`` the prompt textarea is
-  // omitted (pure folder selection, ok label overridable via ``okLabel``).
-  window.pickDriveFolderModal = async (title, { defaultPrompt = "", prompt = true, okLabel = "Generate" } = {}) => {
+  // same expansion state, so it looks and behaves like the upload panel. By default only
+  // My Drive (personal, workspace_id null) folders are offered — session artifacts always
+  // land in the caller's personal drive. With ``workspaces: true`` every workspace scope
+  // joins the tree as well (the working directory may live anywhere the user can write;
+  // the server still enforces permissions). ``initial`` pre-selects a loc (drive.loc
+  // shape) and reveals it. Resolves ``{ folderPath, workspace_id, prompt }`` (folderPath
+  // null = the chosen scope's root) or undefined when cancelled. With ``prompt: false``
+  // the prompt textarea is omitted (pure folder selection, ok label overridable via
+  // ``okLabel``).
+  window.pickDriveFolderModal = async (title, { defaultPrompt = "", prompt = true, okLabel = "Generate", workspaces = false, initial = null } = {}) => {
     if (!getToken()) { Viewer.toast("Sign in to choose a cloud folder."); return undefined; }
     try { await loadDrive(); } catch { /* keep whatever folders we already have */ }
 
@@ -2599,7 +2687,12 @@
     modal.append(actions);
     overlay.appendChild(modal);
 
-    let selected = null; // folder path; null = My Drive root
+    // The selection lives in the sidebar's loc model so My Drive root, workspace roots
+    // and subfolders are one kind of thing everywhere. Legacy callers only ever read
+    // ``folderPath`` (personal drive); with ``workspaces: true`` they also get the scope.
+    const pickLoc = (ws, path) => (path ? { kind: "folder", ws, path } : ws ? { kind: "workspace", ws } : { kind: "root" });
+    let selected = initial ? { ...initial } : { kind: "root" };
+    if (selected.kind === "trash") selected = { kind: "root" }; // defensive
     let resolveVal;
     const promise = new Promise((res) => { resolveVal = res; });
 
@@ -2610,24 +2703,26 @@
     }
 
     function label() {
-      return selected ? `My Drive / ${selected.split("/").join(" / ")}` : "Cloud Drive (root)";
+      if (selected.kind === "root") return "Cloud Drive (root)";
+      return locLabel(selected);
     }
 
     function refreshTarget() {
       target.innerHTML = dvIconHTML("cloud");
       target.appendChild(document.createTextNode(label()));
       tree.querySelectorAll(".cd-row.cd-folder").forEach((row) => {
-        row.classList.toggle("cd-current", row.dataset.path === (selected || ""));
+        row.classList.toggle("cd-current", row.dataset.pkey === locKey(selected));
       });
     }
 
-    function makeRow(path, depth) {
-      const kids = childrenOf(null, path).folderKids;
-      const key = expKey(null, path);
+    function makeRow(ws, path, depth) {
+      const kids = childrenOf(ws, path).folderKids;
+      const key = expKey(ws, path);
       const open = drive.expanded.has(key);
+      const selLoc = pickLoc(ws, path);
       const row = document.createElement("div");
-      row.className = "cd-row cd-folder" + (path === (selected || "") ? " cd-current" : "");
-      row.dataset.path = path;
+      row.className = "cd-row cd-folder" + (locKey(selLoc) === locKey(selected) ? " cd-current" : "");
+      row.dataset.pkey = locKey(selLoc);
       row.style.paddingLeft = `${6 + depth * 16}px`;
       const tw = document.createElement("span");
       tw.className = "cd-tw";
@@ -2635,13 +2730,15 @@
       row.appendChild(tw);
       const icon = document.createElement("span");
       icon.className = "cd-icon";
-      icon.innerHTML = dvIconHTML(path === "" ? "cloud" : "folder");
+      icon.innerHTML = dvIconHTML(ws == null && path === "" ? "cloud" : "folder");
       row.appendChild(icon);
       const nm = document.createElement("span");
       nm.className = "cd-name";
-      nm.textContent = path === "" ? "My Drive" : path.split("/").pop();
+      nm.textContent = path === "" ? (ws == null ? "My Drive" : wsName(ws)) : path.split("/").pop();
       row.appendChild(nm);
-      row.title = path === "" ? "Cloud Drive root" : `Save to ${path}`;
+      row.title = path === ""
+        ? (ws == null ? "Cloud Drive root" : `Root of workspace ${wsName(ws)}`)
+        : `Choose ${locLabel(selLoc)}`;
       if (kids.length) {
         tw.addEventListener("click", (e) => {
           e.stopPropagation();
@@ -2651,7 +2748,7 @@
         });
       }
       row.addEventListener("click", () => {
-        selected = path === "" ? null : path;
+        selected = selLoc;
         if (kids.length) {
           if (drive.expanded.has(key)) drive.expanded.delete(key);
           else drive.expanded.add(key);
@@ -2661,8 +2758,8 @@
       return row;
     }
 
-    function renderKids(path, depth, container) {
-      const kids = childrenOf(null, path).folderKids;
+    function renderKids(ws, path, depth, container) {
+      const kids = childrenOf(ws, path).folderKids;
       if (!kids.length) {
         const empty = document.createElement("div");
         empty.className = "cd-empty";
@@ -2672,11 +2769,11 @@
         return;
       }
       for (const d of kids) {
-        container.appendChild(makeRow(d.path, depth));
-        if (drive.expanded.has(expKey(null, d.path))) {
+        container.appendChild(makeRow(ws, d.path, depth));
+        if (drive.expanded.has(expKey(ws, d.path))) {
           const box = document.createElement("div");
           box.className = "cd-kids";
-          renderKids(d.path, depth + 1, box);
+          renderKids(ws, d.path, depth + 1, box);
           container.appendChild(box);
         }
       }
@@ -2684,12 +2781,21 @@
 
     function renderTree() {
       tree.innerHTML = "";
-      tree.appendChild(makeRow("", 0));
+      tree.appendChild(makeRow(null, "", 0));
       if (drive.expanded.has(expKey(null, ""))) {
         const box = document.createElement("div");
         box.className = "cd-kids";
-        renderKids("", 1, box);
+        renderKids(null, "", 1, box);
         tree.appendChild(box);
+      }
+      for (const w of (workspaces ? drive.workspaces : [])) {
+        tree.appendChild(makeRow(w.id, "", 0));
+        if (drive.expanded.has(expKey(w.id, ""))) {
+          const box = document.createElement("div");
+          box.className = "cd-kids";
+          renderKids(w.id, "", 1, box);
+          tree.appendChild(box);
+        }
       }
       refreshTarget();
     }
@@ -2699,12 +2805,27 @@
     }
     cancelBtn.addEventListener("click", () => finish(undefined));
     okBtn.addEventListener("click", () =>
-      finish({ folderPath: selected, prompt: promptEl ? promptEl.value.trim() || null : null })
+      finish({
+        folderPath: locFolderPath(selected),
+        workspace_id: locKindWs(selected),
+        prompt: promptEl ? promptEl.value.trim() || null : null,
+      })
     );
     close.addEventListener("click", () => finish(undefined));
     overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) finish(undefined); });
     document.addEventListener("keydown", onEsc);
     document.body.appendChild(overlay);
+    // Reveal a preselected folder: expand its whole ancestor chain (shared with the
+    // sidebar's expansion state, same as clicking a chevron here would).
+    if (selected.kind === "folder") {
+      let acc = "";
+      for (const seg of selected.path.split("/")) {
+        acc = acc ? `${acc}/${seg}` : seg;
+        drive.expanded.add(expKey(selected.ws, acc));
+      }
+    } else if (selected.kind === "workspace") {
+      drive.expanded.add(expKey(selected.ws, ""));
+    }
     renderTree();
     return promise;
   };
