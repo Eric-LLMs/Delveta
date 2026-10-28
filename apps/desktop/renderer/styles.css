@@ -2057,13 +2057,6 @@ sup.viewer-cite:hover { text-decoration: underline; }
 /* Edge-resizing is meaningless here (the pane is pinned to the full width/height), and the
    handle would just write inline sizes that lie about the actual layout. */
 #app.chat-fills #chat-resize { display: none; }
-/* On a wide window the conversation keeps a readable column instead of stretching edge to
-   edge; the header and toolbar still span the pane. */
-#app.chat-fills #chat-log,
-#app.chat-fills #chat-form {
-  padding-left: max(16px, calc((100% - 880px) / 2));
-  padding-right: max(16px, calc((100% - 880px) / 2));
-}
 
 /* Docked chat edge-resize handle: a thin strip straddling the chat boundary. Drag it to
    resize — bottom-docked changes height (top edge), right-docked changes width (left edge).
