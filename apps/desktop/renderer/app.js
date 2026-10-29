@@ -3921,13 +3921,15 @@
   const userMenuTrigger = document.getElementById("user-menu-trigger");
   const userAvatar = document.getElementById("user-avatar");
   const userName = document.getElementById("user-name");
+  const userRole = document.getElementById("user-role");
   const profileMenuValue = document.getElementById("profile-menu-value");
   const userMenuSignoutGroup = document.getElementById("user-menu-signout-group");
-  const topAdminConsole = document.getElementById("top-admin-console");
-  const topCloudDrive = document.getElementById("top-cloud-drive");
-  const topWebConsole = document.getElementById("top-web-console");
-  const topSepProducts = document.getElementById("top-sep-products");
-  const topActionButtons = document.querySelectorAll("[data-top-action]");
+  const userMenuAdminGroup = document.getElementById("user-menu-admin-group");
+  const userMenuItems = document.querySelectorAll("#user-menu [data-action]");
+  // Home is a workbench mode like the others (one state machine, one pane controller);
+  // it simply has no nav tab — the brand is its entry point.
+  const homeView = document.getElementById("home-view");
+  const homeNav = document.getElementById("home-nav");
   const accountOverlay = document.getElementById("account-overlay");
   const profileOverlay = document.getElementById("profile-overlay");
   const profileAvatar = document.getElementById("profile-avatar");
@@ -3944,7 +3946,6 @@
   const accountStatus = document.getElementById("account-status");
   const accountRemember = document.getElementById("account-remember");
   const themeOptions = document.querySelectorAll("[data-theme]");
-  const userMenuItems = document.querySelectorAll("#user-menu [data-action]");
   const settingsOverlay = document.getElementById("settings-overlay");
   const settingsTabs = document.querySelectorAll("#settings-tabs .settings-tab");
   const settingsTabBodies = document.querySelectorAll(".settings-tab-body");
@@ -4208,18 +4209,13 @@
   }
 
   function toggleUserMenu() {
-    if (!userMenu.classList.contains("hidden")) {
-      userMenu.classList.add("hidden");
-      return;
-    }
-    // Anchor below the whole header (brand row + mode row) instead of a fixed
-    // offset, which no longer matched once the navigation moved to a second row.
-    const bar = document.getElementById("workbench-bar");
-    userMenu.style.top = `${Math.round(bar.getBoundingClientRect().bottom + 6)}px`;
-    userMenu.classList.remove("hidden");
+    // The menu is positioned by CSS above the sidebar account entry, so toggling is
+    // all this needs — it must not depend on the header's geometry any more.
+    userMenu.classList.toggle("hidden");
   }
 
-  // Refresh the top-bar trigger, menu Profile value, and the admin-only top entry.
+  // Refresh the sidebar account entry, the menu Profile value, and the admin-only
+  // entries (menu group + Home card).
   function renderUserMenu() {
     const loggedIn = !!state.token;
     if (loggedIn) {
@@ -4230,16 +4226,18 @@
       userAvatar.innerHTML = dvIconHTML("user");
     }
     userName.textContent = loggedIn ? (state.displayName || state.username || "Signed in") : "Sign in";
+    if (userRole) {
+      const roleLabel = loggedIn ? (state.roleName || (state.roleId === "admin" ? "Admin" : "Member")) : "";
+      userRole.textContent = roleLabel;
+      userRole.classList.toggle("hidden", !roleLabel);
+    }
     profileMenuValue.textContent = loggedIn ? (state.displayName || state.username || "") : "Sign in";
-    // Cloud Drive and the web console both require a signed-in session, so their
-    // header entries only exist once there is a token; the server still enforces auth.
-    if (topCloudDrive) topCloudDrive.classList.toggle("hidden", !loggedIn);
-    if (topWebConsole) topWebConsole.classList.toggle("hidden", !loggedIn);
-    if (topSepProducts) topSepProducts.classList.toggle("hidden", !loggedIn);
-    // Admin Console is admin-only. Hiding the entry is presentation only: the console
-    // page and every /admin API already reject non-admin tokens server-side.
-    if (topAdminConsole) topAdminConsole.classList.toggle("hidden", !(loggedIn && state.roleId === "admin"));
+    // Admin access is presentation-gated here only: the console page and every /admin
+    // API already reject non-admin tokens server-side.
+    const isAdmin = loggedIn && state.roleId === "admin";
+    if (userMenuAdminGroup) userMenuAdminGroup.classList.toggle("hidden", !isAdmin);
     userMenuSignoutGroup.classList.toggle("hidden", !loggedIn);
+    renderHomeState();
   }
 
   async function refreshProfile() {
@@ -4766,14 +4764,6 @@
       openSettingsModal();
     });
   }
-  // Product shortcuts in the header share the account menu's actions, so the admin
-  // role check in handleUserAction stays the one gate in front of the console.
-  topActionButtons.forEach((btn) => {
-    btn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      handleUserAction(btn.dataset.topAction);
-    });
-  });
   // Application controls that used to live in the native View menu.
   const prefReload = document.getElementById("pref-reload");
   if (prefReload) prefReload.addEventListener("click", () => window.desktopAPI?.reloadApp?.());
@@ -6961,31 +6951,43 @@
   const chatShot = document.getElementById("chat-shot");
   chatShot.addEventListener("click", () => attachCurrent("screenshot"));
 
-  // The chat input ＋ button: open an OS file picker, upload the chosen file to the
-  // cloud drive, and stage it as the pending attachment (rides on the next send).
-  const chatAttachPick = document.getElementById("chat-attach-pick");
-  chatAttachPick.addEventListener("click", async () => {
-    if (!state.token) { appendMsg("error", "Sign in to attach files to the chat."); openAccount(); return; }
+  // Shared attach picker: open an OS file picker, upload the chosen file to the cloud drive
+  // and return the pending-attachment descriptor. Both the chat ＋ button and the Home
+  // prompt box call this, so the upload/permission behaviour has a single implementation.
+  // The caller owns the surface the error is shown on (chat transcript vs Home toast).
+  async function pickChatAttachment() {
+    if (!state.token) { openAccount(); return { error: "Sign in to attach files to the chat." }; }
     const path = await window.desktopAPI.pickFile();
-    if (!path) return; // user canceled the dialog
+    if (!path) return {}; // user canceled the dialog
     const name = String(path).split(/[\\/]/).pop() || "attached.bin";
     try {
       const res = await window.desktopAPI.readFileBytes(path);
       if (!res.ok) throw new Error(res.error || "Cannot read the file");
       const created = await uploadBytesToCloud(res.data, name);
-      setPendingAttach({ kind: "asset", asset_id: created.id, name: created.name });
+      return { attach: { kind: "asset", asset_id: created.id, name: created.name } };
     } catch (err) {
-      appendMsg("error", `Attach failed: ${err.message || err}`);
+      return { error: `Attach failed: ${err.message || err}` };
     }
+  }
+
+  // The chat input ＋ button: stage the picked file as the pending attachment (rides on the
+  // next send).
+  const chatAttachPick = document.getElementById("chat-attach-pick");
+  chatAttachPick.addEventListener("click", async () => {
+    const picked = await pickChatAttachment();
+    if (picked.attach) setPendingAttach(picked.attach);
+    else if (picked.error) appendMsg("error", picked.error);
   });
 
-  // ── Workbench modes (Files / Chats / Research) ──
+  // ── Workbench modes (Home / Files / Chats / Research) ──
   // A mode owns the WHOLE work area: its left navigation, its central pane and its chat
   // panel. The controller below swaps all three together; no hidden mode's context may
   // stay visible or ride on a request (sendChat/renderAttachBar gate that separately).
-  // Display names only: the internal mode keys (files/chats/research) are the app's stable
-  // identifiers and must not leak into the UI wording or follow a rename.
-  const MODE_LABELS = { files: "WorkSpace", chats: "Chat", research: "Research" };
+  // Home is presentation-only: a full entry page with no chat panel, reachable from the
+  // brand. Leaving it restores the mode it was opened from, untouched.
+  // Display names only: the internal mode keys (home/files/chats/research) are the app's
+  // stable identifiers and must not leak into the UI wording or follow a rename.
+  const MODE_LABELS = { home: "Home", files: "WorkSpace", chats: "Chat", research: "Research" };
   const navButtons = {
     files: document.getElementById("nav-files"),
     chats: document.getElementById("nav-chats"),
@@ -7081,6 +7083,13 @@
     }
     state.mode = next;
     appEl.dataset.mode = next;
+    // Home replaces the whole work area with the entry page. The sidebar keeps only its
+    // Home section links and the account footer; every per-mode list is hidden below.
+    if (homeView) homeView.classList.toggle("hidden", next !== "home");
+    if (homeNav) homeNav.classList.toggle("hidden", next !== "home");
+    // The Home prompt only measures correctly while visible (placeholders and long drafts
+    // re-wrap with the pane width), so re-fit it on every entry.
+    if (next === "home") autoGrowHomeInput();
     // Remember the workbench mode so a window reload lands where the user left it.
     // Research is deliberately not persisted: its view depends on research.js's own
     // task-selection state, not on a boot-time mode switch.
@@ -8380,6 +8389,211 @@
     document.addEventListener("click", () => genMoreMenu.classList.add("hidden"));
   }
   updateToolbarGenState();
+
+  // ── Home entry page ──
+  // Home is a workbench mode, so opening it is the same switch the nav tabs use: it
+  // changes no conversation, no file and no account state. Every card below maps onto a
+  // feature that already exists — the mode tabs, the console launchers, the WorkSpace
+  // source dropdown, the toolkit generate dialogs and Settings. Cards that need an
+  // account fall back to the existing sign-in modal instead of failing silently.
+  function renderHomeState() {
+    const loggedIn = !!state.token;
+    document.querySelectorAll("#home-view [data-requires-auth]").forEach((el) => {
+      el.classList.toggle("is-locked", !loggedIn);
+    });
+    // Admin Console is admin-only. Presentation only: the console page and every /admin
+    // API already reject non-admin tokens server-side.
+    const adminCard = document.getElementById("home-card-admin");
+    if (adminCard) {
+      adminCard.classList.toggle("hidden", !(loggedIn && state.roleId === "admin"));
+    }
+  }
+
+  function requireSignIn() {
+    if (state.token) return true;
+    openAccount();
+    return false;
+  }
+
+  // Reuse the WorkSpace source dropdown's own change handler so Home behaves exactly like
+  // picking Local/Cloud in the sidebar (including the folder picker when none is set).
+  function selectWorkspaceSource(value) {
+    const src = document.getElementById("workspace-source");
+    if (!src) return;
+    src.value = value;
+    src.dispatchEvent(new Event("change"));
+  }
+
+  function runHomeAction(action) {
+    switch (action) {
+      case "mode:chats":
+      case "mode:files":
+      case "mode:research":
+        setMode(action.slice("mode:".length));
+        break;
+      case "web:drive":
+        if (requireSignIn()) handleUserAction("cloud-drive");
+        break;
+      case "web:home":
+        if (requireSignIn()) handleUserAction("web-console");
+        break;
+      case "admin":
+        handleUserAction("admin-console");
+        break;
+      case "settings":
+        openSettingsModal();
+        break;
+      case "workspace:cloud":
+        if (requireSignIn()) selectWorkspaceSource("cloud");
+        break;
+      case "workspace:local":
+        selectWorkspaceSource("local");
+        break;
+      case "gen:slides":
+      case "gen:mindmap":
+      case "gen:summary":
+        if (requireSignIn()) openGenerateDialog(action.slice("gen:".length));
+        break;
+      default:
+        break;
+    }
+  }
+
+  document.querySelectorAll("[data-home-action]").forEach((btn) => {
+    btn.addEventListener("click", () => runHomeAction(btn.dataset.homeAction));
+  });
+  // The sidebar Home section links scroll the entry page rather than navigating.
+  document.querySelectorAll("[data-home-jump]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      document.getElementById(btn.dataset.homeJump)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  });
+  document.getElementById("brand-home")?.addEventListener("click", () => setMode("home"));
+  renderHomeState();
+
+  // ── Home prompt box ──
+  // The Home box launches a Chat conversation; it is not a second send path. Submitting
+  // runs the existing "new chat" entry point (which clears the Chat lane and switches
+  // there) and then hands the text and any staged attachment to the existing composer
+  // form, so session creation, streaming and the model call stay in sendChat alone.
+  const homeForm = document.getElementById("home-form");
+  const homeInput = document.getElementById("home-input");
+  const homeSend = document.getElementById("home-send");
+  const homeAttachPick = document.getElementById("home-attach-pick");
+  const homeAttachChip = document.getElementById("home-attach-chip");
+  const homeAttachName = document.getElementById("home-attach-name");
+  const homeAttachClear = document.getElementById("home-attach-clear");
+  let homeAttach = null; // staged on Home only; handed to Chat on submit
+  // True from the moment the picker opens until its file is uploaded (or the pick cancels
+  // or fails). Send stays disabled throughout, so a message can never race past an
+  // in-flight upload without the attachment it was meant to carry.
+  let homeAttachBusy = false;
+
+  function renderHomeAttach() {
+    if (!homeAttachChip || !homeAttachName) return;
+    homeAttachChip.classList.toggle("hidden", !homeAttach);
+    homeAttachName.textContent = homeAttach ? (homeAttach.name || "attached file") : "";
+    homeAttachName.title = homeAttach ? homeAttach.name || "" : "";
+  }
+
+  function syncHomeSend() {
+    if (homeSend) homeSend.disabled = homeAttachBusy || !homeInput.value.trim();
+  }
+
+  // Grow with the text up to the CSS cap. A hidden Home view reports 0 for scrollHeight, so
+  // it keeps its last height and is re-measured when the mode is entered again.
+  function autoGrowHomeInput() {
+    const input = document.getElementById("home-input");
+    if (!input || input.offsetParent === null) return;
+    input.style.height = "auto";
+    const needed = input.scrollHeight;
+    input.style.height = Math.min(needed, 180) + "px";
+    input.style.overflowY = needed > 180 ? "auto" : "hidden";
+  }
+
+  function submitHomePrompt() {
+    if (homeAttachBusy) {
+      Viewer.toast("Wait for the attachment to finish uploading.");
+      return;
+    }
+    const message = homeInput.value.trim();
+    if (!message) return;
+    const staged = homeAttach;
+    startNewChat(); // existing entry point: clears the Chat slot and switches there
+    if (state.mode !== "chats") return; // refused: a message is still streaming
+    homeAttach = null;
+    renderHomeAttach();
+    homeInput.value = "";
+    autoGrowHomeInput();
+    syncHomeSend();
+    if (staged) setPendingAttach(staged);
+    chatInput.value = message;
+    chatForm.requestSubmit();
+  }
+
+  homeForm?.addEventListener("submit", (e) => {
+    e.preventDefault();
+    submitHomePrompt();
+  });
+  homeInput?.addEventListener("input", () => {
+    autoGrowHomeInput();
+    syncHomeSend();
+  });
+  homeInput?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+      e.preventDefault();
+      homeForm.requestSubmit();
+    }
+  });
+  homeAttachPick?.addEventListener("click", async () => {
+    if (homeAttachBusy) return;
+    homeAttachBusy = true;
+    syncHomeSend();
+    try {
+      const picked = await pickChatAttachment();
+      if (picked.attach) {
+        homeAttach = picked.attach;
+        renderHomeAttach();
+      } else if (picked.error) {
+        Viewer.toast(picked.error);
+      }
+    } finally {
+      homeAttachBusy = false;
+      syncHomeSend();
+    }
+  });
+  homeAttachClear?.addEventListener("click", () => {
+    homeAttach = null;
+    renderHomeAttach();
+  });
+  syncHomeSend();
+
+  // ── Window controls (desktop only) ──
+  // The desktop window is frameless, so the app draws minimize / maximize-restore / close.
+  // Every command goes through the preload bridge (no direct ipcRenderer access here);
+  // when that bridge is absent — a plain browser — the group is hidden and never called.
+  const windowControls = document.getElementById("window-controls");
+  const windowAPI = window.desktopAPI || {};
+  const winMaxBtn = document.getElementById("win-maximize");
+
+  function renderMaximized(maximized) {
+    if (!winMaxBtn) return;
+    winMaxBtn.innerHTML = `<svg class="icon" aria-hidden="true"><use href="#${maximized ? "i-restore" : "i-maximize"}"></use></svg>`;
+    const label = maximized ? "Restore" : "Maximize";
+    winMaxBtn.title = label;
+    winMaxBtn.setAttribute("aria-label", label);
+  }
+
+  if (!windowAPI.minimizeWindow || !windowAPI.toggleMaximizeWindow || !windowAPI.closeWindow) {
+    if (windowControls) windowControls.classList.add("hidden");
+    if (winMaxBtn) winMaxBtn.innerHTML = dvIconHTML("maximize");
+  } else {
+    document.getElementById("win-minimize")?.addEventListener("click", () => windowAPI.minimizeWindow());
+    winMaxBtn?.addEventListener("click", () => windowAPI.toggleMaximizeWindow());
+    document.getElementById("win-close")?.addEventListener("click", () => windowAPI.closeWindow());
+    windowAPI.isWindowMaximized?.().then(renderMaximized).catch(() => {});
+    windowAPI.onWindowMaximizedChange?.(renderMaximized);
+  }
 
   // The workbench reopens in the mode the user last left it in; WorkSpace additionally
   // restores its remembered session (the localStorage pointer) inside setMode. Anything

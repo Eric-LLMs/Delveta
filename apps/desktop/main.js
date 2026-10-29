@@ -554,6 +554,27 @@ function registerIpcHandlers() {
     if (event.sender && !event.sender.isDestroyed()) event.sender.toggleDevTools();
   });
 
+  // In-app title bar (the window is frameless). Every command resolves the window from
+  // the sender, so a renderer can only ever control its own window.
+  ipcMain.on("window-minimize", (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (win && !win.isDestroyed()) win.minimize();
+  });
+  ipcMain.on("window-toggle-maximize", (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win || win.isDestroyed()) return;
+    if (win.isMaximized()) win.unmaximize();
+    else win.maximize();
+  });
+  ipcMain.on("window-close", (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (win && !win.isDestroyed()) win.close();
+  });
+  ipcMain.handle("window-is-maximized", (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    return !!(win && !win.isDestroyed() && win.isMaximized());
+  });
+
   // Check for a newer release on GitHub by comparing the latest tag to the
   // packaged version (SemVer 2.0). The release page is opened by the renderer.
   ipcMain.handle("check-update", async () => {
@@ -854,11 +875,23 @@ function createWindow() {
     x,
     y,
     icon: path.join(__dirname, "delveta.ico"),
+    // The workbench draws its own title bar (brand + navigation + Settings + window
+    // controls), so the native frame is removed. thickFrame stays on, which keeps the
+    // Windows resize border, shadow and snap behaviour.
+    frame: false,
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
       preload: path.join(__dirname, "preload.js"),
     },
+  });
+  // Keep the in-app maximize/restore glyph in sync with the real window state (the user
+  // can also maximize from the taskbar / snap layout, not only from our button).
+  win.on("maximize", () => {
+    if (!win.isDestroyed()) win.webContents.send("window-maximized-changed", true);
+  });
+  win.on("unmaximize", () => {
+    if (!win.isDestroyed()) win.webContents.send("window-maximized-changed", false);
   });
   // Surface renderer console output / load failures in the main-process log, and
   // mirror the [imported] diagnostics to a file the dev can inspect after a run.

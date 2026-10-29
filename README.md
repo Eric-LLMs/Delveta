@@ -4,6 +4,13 @@
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPLv3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 
+**Delveta — Inspired by “delve,” meaning to explore deeply.**
+
+> **Delve deeper. Discover more.**  
+> An AI workspace for learning, research, and creation.
+
+The name draws on the English word *delve* — to explore, investigate, or study something deeply. Delveta is an independent brand built on that idea, with a character of its own; it reflects a naming direction rather than a literal construction from English grammar rules.
+
 Delveta is an **AI-native learning and research workspace** — a self-hosted environment for reading, watching, understanding, researching, and creating with your own materials, designed to keep your data and AI workloads within your own infrastructure and under your control. It combines a document and media workspace with AI chat, memory, RAG, agents, research workflows, and persistent knowledge, so your materials become an active part of the AI interaction rather than just file attachments.
 
 Delveta supports PDFs, Office documents, video, audio, and images directly in the workspace, with integrated file management and personal cloud storage. Select a passage, page, or video moment and ask in context — then research beyond your materials, save durable insights, and turn conversations into reusable knowledge and artifacts.

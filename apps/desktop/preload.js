@@ -54,6 +54,20 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   toggleFullscreen: () => ipcRenderer.send("app-toggle-fullscreen"),
   toggleDevTools: () => ipcRenderer.send("app-toggle-devtools"),
 
+  // Window controls for the in-app title bar (the window is frameless). Each one acts
+  // on this window only — the main process resolves it from the sender.
+  minimizeWindow: () => ipcRenderer.send("window-minimize"),
+  toggleMaximizeWindow: () => ipcRenderer.send("window-toggle-maximize"),
+  closeWindow: () => ipcRenderer.send("window-close"),
+  isWindowMaximized: () => ipcRenderer.invoke("window-is-maximized"),
+  // Subscribe to real maximize/restore changes; returns an unsubscribe function.
+  onWindowMaximizedChange: (callback) => {
+    if (typeof callback !== "function") return () => {};
+    const listener = (_event, maximized) => callback(maximized === true);
+    ipcRenderer.on("window-maximized-changed", listener);
+    return () => ipcRenderer.removeListener("window-maximized-changed", listener);
+  },
+
   // Open a path with the OS default application.
   openExternal: (path) => ipcRenderer.invoke("open-external", path),
 
