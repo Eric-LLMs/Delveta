@@ -2711,7 +2711,23 @@ profile, and the **My Drive cloud panel** need the FastAPI gateway on `localhost
     for non-image or unreadable assets (§18.2). Sessions are **renamed** inline (click the
     chat-header title or a sidebar row → `PATCH /sessions/{id}`; empty title resets
     auto-naming) or **deleted** from the sidebar (`DELETE /sessions/{id}`);
-    `GET /sessions/{id}/messages` reloads a session's bubbles.
+    `GET /sessions/{id}` reads history in pages — `limit` (default 50) plus a composite
+    `(created_at, turn_rank, id)` cursor — and returns `has_more` / `next_before`. The pane
+    opens on the newest page and prepends the next older page when the log is scrolled to the
+    top, keeping the reading position; when the newest page does not fill a tall window, further
+    pages load in the background until the log can scroll, so a page size never depends on
+    viewport height. The database applies the `LIMIT`, never the client.
+    The **session list** itself is paged the same way: `GET /sessions` takes `limit`
+    (default 50, max 200) and a `(created_at, id)` cursor, orders by `(created_at DESC, id DESC)`
+    and applies `LIMIT` in SQL, so entering Chats costs one bounded page regardless of how many
+    thousands of sessions the account holds. Reaching the end of the list appends the next page;
+    a refresh (new/search/lane switch, rename, delete) starts a new paging generation and drops
+    a stale response. Pinned sessions live in `localStorage` and are re-read with one bounded
+    `?ids=` batch (≤50, owner-scoped server-side), so a pin outside the current page still shows
+    and never duplicates a row from the page. The WorkSpace picker pages the same way, with a
+    "Load older sessions" row at the bottom of its menu. Deployment notes for the two supporting
+    indexes and for callers outside the desktop client are in
+    [release-notes.md](release-notes.md).
   - **Settings** — a modal with five tabs: **Appearance** (theme), **Window & Display** (font
     size), **Updates** (GitHub release check), **Help & Feedback**, and **About**.
 

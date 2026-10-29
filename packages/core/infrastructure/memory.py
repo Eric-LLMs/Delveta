@@ -43,11 +43,11 @@ import logging
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import func, insert, or_, select, tuple_, update
+from sqlalchemy import and_, case, func, insert, or_, select, tuple_, update
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +61,175 @@ from core.infrastructure.db import (
     UserModel,
 )
 from core.infrastructure.vector import TEIEmbedder
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Message order (history reads) + per-turn timestamps (writes)
+#
+# A turn's rows (user question + assistant reply) are written by ONE multi-row INSERT in
+# ONE transaction, and PostgreSQL's ``now()`` is the transaction start time — so both rows
+# carry the SAME ``created_at``. Ordering by ``(created_at, id)`` therefore fell back to
+# comparing random UUIDs, which can put the reply before the question and can differ
+# between reads. Within one timestamp a turn's real order is user → tool → assistant; the
+# id stays as the final deterministic fallback for same-role rows. New batches get
+# strictly increasing timestamps (see :func:`_batch_timestamps`), so this tie-break only
+# has to resolve history written before that change.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_TURN_ORDER = case(
+    (MessageModel.role == "user", 0),
+    (MessageModel.role == "tool", 1),
+    (MessageModel.role == "assistant", 2),
+    else_=3,
+)
+
+
+def message_order_by():
+    """Total, deterministic order for one session's messages (``ORDER BY *message_order_by()``).
+
+    The ``(created_at, id)`` tuple is still the compaction watermark — membership of a fold
+    range is unchanged; this only fixes the order rows are read and rendered in.
+    """
+    return (MessageModel.created_at, _TURN_ORDER, MessageModel.id)
+
+
+def _batch_timestamps(count: int) -> list:
+    """Strictly increasing ``created_at`` expressions for a batch INSERT, in VALUES order.
+
+    ``now()`` is the transaction start time, so it is identical for every row of the batch;
+    adding one microsecond per row (in VALUES order) gives the turn a real intra-turn order
+    while staying on the DB clock — other writers (e.g. :func:`insert_plain_message`) keep
+    using the same server clock, so no client/server skew can reorder their rows.
+    """
+    return [func.now() + timedelta(microseconds=i) for i in range(count)]
+
+
+async def _history_page(session, session_id: UUID, limit: int, before):
+    """One bounded slice of a session's transcript — the newest ``limit`` rows before ``before``.
+
+    ``before`` is a cursor ``(created_at, turn_rank, id)`` naming the oldest row the client
+    already holds, or ``None`` for the newest page. The returned list is in DISPLAY order
+    (newest first), and :func:`load_session_detail` re-sorts ascending before returning.
+
+    The scan is a keyset walk on ``(created_at, id)`` — an index range, never a full read —
+    which is exact only if a page never ends in the middle of a timestamp group. Both hazards
+    are handled explicitly:
+
+    - a page that reached its limit but whose oldest group did not fit is rebuilt from that
+      group's NEWEST members in display order ``(turn_rank, id)`` → the cut is in display
+      space, so nothing is skipped and nothing repeats across pages;
+    - a single group larger than ``limit`` (bulk-imported legacy data) is therefore paged by
+      the display key inside the group and can never inflate a page past ``limit``.
+
+    Returns ``(rows, has_more, next_before)``; ``next_before`` is the cursor for the next
+    older page and is ``None`` when the transcript start was reached.
+    """
+    picked: list = []
+    resume_ts = before[0] if before is not None else None
+
+    # Resuming INSIDE a timestamp group that the previous page cut in display order.
+    if before is not None and before[1] is not None:
+        ts, rank, mid = before
+        picked = list(
+            (
+                await session.execute(
+                    select(
+                        MessageModel.id,
+                        MessageModel.created_at,
+                        _TURN_ORDER.label("turn_rank"),
+                    )
+                    .where(
+                        MessageModel.session_id == session_id,
+                        MessageModel.created_at == ts,
+                        tuple_(_TURN_ORDER, MessageModel.id) < tuple_(rank, mid),
+                    )
+                    .order_by(_TURN_ORDER.desc(), MessageModel.id.desc())
+                    .limit(limit)
+                )
+            ).all()
+        )
+        if len(picked) == limit:
+            last = picked[-1]
+            return picked, True, (ts, int(last.turn_rank), last.id)
+        limit -= len(picked)
+        resume_ts = ts
+        if not limit:
+            return picked, False, None
+
+    # Regular keyset walk: strictly older than every row already returned.
+    stmt = select(
+        MessageModel.id, MessageModel.created_at, _TURN_ORDER.label("turn_rank")
+    ).where(MessageModel.session_id == session_id)
+    if resume_ts is not None:
+        stmt = stmt.where(MessageModel.created_at < resume_ts)
+    rows = list(
+        (
+            await session.execute(
+                stmt.order_by(
+                    MessageModel.created_at.desc(), MessageModel.id.desc()
+                ).limit(limit)
+            )
+        ).all()
+    )
+    if not rows:
+        return picked, False, None
+    picked += rows
+    if len(rows) < limit:
+        return picked, False, None  # the walk reached the transcript start
+
+    ts_min = rows[-1].created_at
+    in_page = [r for r in rows if r.created_at == ts_min]
+    total = (
+        await session.execute(
+            select(func.count())
+            .select_from(MessageModel)
+            .where(
+                MessageModel.session_id == session_id,
+                MessageModel.created_at == ts_min,
+            )
+        )
+    ).scalar_one()
+
+    if total == len(in_page):
+        # The page ends exactly on a group boundary: the next page starts strictly older.
+        older = (
+            await session.execute(
+                select(MessageModel.id)
+                .where(
+                    MessageModel.session_id == session_id,
+                    MessageModel.created_at < ts_min,
+                )
+                .order_by(MessageModel.created_at.desc())
+                .limit(1)
+            )
+        ).first()
+        if older is None:
+            return picked, False, None
+        return picked, True, (ts_min, None, None)
+
+    # The oldest group does not fit: keep its newest members, ordered by the DISPLAY key so
+    # the next page continues inside the group without skipping or repeating rows.
+    room = limit - (len(rows) - len(in_page))
+    group = list(
+        (
+            await session.execute(
+                select(
+                    MessageModel.id,
+                    MessageModel.created_at,
+                    _TURN_ORDER.label("turn_rank"),
+                )
+                .where(
+                    MessageModel.session_id == session_id,
+                    MessageModel.created_at == ts_min,
+                )
+                .order_by(_TURN_ORDER.desc(), MessageModel.id.desc())
+                .limit(room)
+            )
+        ).all()
+    )
+    page = picked[: -len(in_page)] + group
+    last = page[-1]
+    return page, True, (last.created_at, int(last.turn_rank), last.id)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Compaction checkpoint (sessions.compaction JSONB, canonical schema)
@@ -204,14 +373,18 @@ class _SessionWriteQueue:
             if not self._pending:
                 return []
             items = list(self._pending)
+            stamps = _batch_timestamps(len(items))
             values = [
                 {
                     "user_id": it["user_id"],
                     "session_id": it["session_id"],
                     "role": it["role"],
                     "text": it["text"],
+                    # Explicit, strictly increasing: see _batch_timestamps. Without it both
+                    # rows of the turn share now() and the read order falls back to UUIDs.
+                    "created_at": stamp,
                 }
-                for it in items
+                for it, stamp in zip(items, stamps)
             ]
             last_error: Exception | None = None
             for _attempt in range(3):  # first try + 2 retries
@@ -464,7 +637,8 @@ async def apply_compaction(
                     tuple_(MessageModel.created_at, MessageModel.id)
                     <= tuple_(brow.created_at, brow.id),
                 )
-                .order_by(MessageModel.created_at, MessageModel.id)
+                # Fold order (model context): same total order as history reads.
+                .order_by(*message_order_by())
             )
         ).scalars().all()
 
@@ -780,7 +954,9 @@ async def finalize_session(session_factory, embedder, llm, session_id: UUID) -> 
             await session.execute(
                 select(MessageModel)
                 .where(MessageModel.session_id == session_id)
-                .order_by(MessageModel.created_at)
+                # Archival/summary order: a turn's user row before its assistant row even
+                # when both carry the same created_at.
+                .order_by(*message_order_by())
             )
         ).scalars().all()
 
@@ -910,7 +1086,7 @@ async def load_session_messages(
                 MessageModel.session_id == session_id,
                 MessageModel.role.in_(("user", "assistant")),
             )
-            .order_by(MessageModel.created_at, MessageModel.id)
+            .order_by(*message_order_by())
         )
         if after_row is not None:
             stmt = stmt.where(
@@ -939,14 +1115,17 @@ async def append_messages_batch(
     """
     if not items:
         return []
+    stamps = _batch_timestamps(len(items))
     values = [
         {
             "user_id": user_id,
             "session_id": session_id,
             "role": it["role"],
             "text": it["text"],
+            # Same rule as the session write queue: one batch ⇒ one instant, ordered by µs.
+            "created_at": stamp,
         }
-        for it in items
+        for it, stamp in zip(items, stamps)
     ]
     async with session_factory() as session:
         rows = (
@@ -974,6 +1153,51 @@ async def append_messages_batch(
 _SESSION_KIND_TYPES: dict[str, int] = {"chat": 0, "workspace": 2}
 
 
+def _session_list_stmt(user_id: UUID, q: str | None, kind: str):
+    """Base SELECT for one user's session lane, newest first.
+
+    ``id`` breaks ``created_at`` ties: sessions created in one transaction share a
+    timestamp, so the timestamp alone does not name a position (and cannot page).
+    """
+    if kind not in _SESSION_KIND_TYPES:
+        raise ValueError(f"unknown session kind: {kind!r}")
+    stmt = select(SessionModel).where(
+        SessionModel.user_id == user_id,
+        SessionModel.type == _SESSION_KIND_TYPES[kind],
+    )
+    if q:
+        like = f"%{q}%"
+        stmt = (
+            stmt.outerjoin(MessageModel, MessageModel.session_id == SessionModel.id)
+            .filter(
+                or_(
+                    SessionModel.title.ilike(like),
+                    SessionModel.summary.ilike(like),
+                    MessageModel.text.ilike(like),
+                )
+            )
+            .distinct()
+        )
+    return stmt
+
+
+def _session_rows_payload(rows) -> list[dict]:
+    """Serialize session rows for the list API (``has_more`` is added by the pager)."""
+    return [
+        {
+            "id": str(s.id),
+            "created_at": s.created_at.isoformat() if s.created_at else None,
+            "summary": s.summary,
+            "title": s.title,
+            # 0 = chat, 1 = research task session, 2 = WorkSpace assistant session.
+            "type": s.type,
+            # Descriptive scope for WorkSpace sessions; ``{}`` for everything else.
+            "meta": s.meta or {},
+        }
+        for s in rows
+    ]
+
+
 async def list_sessions(
     session_factory,
     user_id: UUID,
@@ -989,48 +1213,93 @@ async def list_sessions(
     case-insensitive substring. When ``q`` is set each result also carries ``snippet`` —
     the earliest matching message's text (truncated) — so the client can show where the
     match landed even when it is not in the title.
+
+    This is the unpaginated reader (every matching row). Clients that page use
+    :func:`list_sessions_page` so the database applies the ``LIMIT``.
     """
-    if kind not in _SESSION_KIND_TYPES:
-        raise ValueError(f"unknown session kind: {kind!r}")
+    stmt = _session_list_stmt(user_id, q, kind)
     async with session_factory() as session:
-        stmt = select(SessionModel).where(
-            SessionModel.user_id == user_id,
-            SessionModel.type == _SESSION_KIND_TYPES[kind],
-        )
-        if q:
-            like = f"%{q}%"
-            stmt = (
-                stmt.outerjoin(MessageModel, MessageModel.session_id == SessionModel.id)
-                .filter(
-                    or_(
-                        SessionModel.title.ilike(like),
-                        SessionModel.summary.ilike(like),
-                        MessageModel.text.ilike(like),
-                    )
-                )
-                .distinct()
-            )
         rows = (
-            (await session.execute(stmt.order_by(SessionModel.created_at.desc()))).scalars().all()
-        )
-        out = [
-            {
-                "id": str(s.id),
-                "created_at": s.created_at.isoformat() if s.created_at else None,
-                "summary": s.summary,
-                "title": s.title,
-                # 0 = chat, 1 = research task session, 2 = WorkSpace assistant session.
-                "type": s.type,
-                # Descriptive scope for WorkSpace sessions; ``{}`` for everything else.
-                "meta": s.meta or {},
-            }
-            for s in rows
-        ]
+            await session.execute(
+                stmt.order_by(SessionModel.created_at.desc(), SessionModel.id.desc())
+            )
+        ).scalars().all()
+        out = _session_rows_payload(rows)
         if q:
             snippets = await _first_matching_text(session, [s.id for s in rows], f"%{q}%")
             for s, row in zip(out, rows):
                 s["snippet"] = snippets.get(row.id)
         return out
+
+
+async def list_sessions_page(
+    session_factory,
+    user_id: UUID,
+    q: str | None = None,
+    kind: str = "chat",
+    *,
+    limit: int = 50,
+    before: tuple[datetime, UUID] | None = None,
+) -> tuple[list[dict], bool]:
+    """One page of the session list plus whether an older page exists.
+
+    Ordered ``(created_at DESC, id DESC)`` and paged with a keyset: ``before`` is the
+    exclusive position of the oldest row the caller already holds, so no ``OFFSET`` is
+    used and a row inserted while the caller pages cannot shift the boundary. The
+    ``LIMIT`` is the caller's page size; one extra row is read only to answer
+    ``has_more`` and is never returned.
+    """
+    if limit < 1:
+        raise ValueError("limit must be positive")
+    stmt = _session_list_stmt(user_id, q, kind)
+    if before is not None:
+        ts, sid = before
+        stmt = stmt.where(
+            or_(
+                SessionModel.created_at < ts,
+                and_(SessionModel.created_at == ts, SessionModel.id < sid),
+            )
+        )
+    stmt = (
+        stmt.order_by(SessionModel.created_at.desc(), SessionModel.id.desc())
+        .limit(limit + 1)
+    )
+    async with session_factory() as session:
+        rows = (await session.execute(stmt)).scalars().all()
+        has_more = len(rows) > limit
+        rows = rows[:limit]
+        out = _session_rows_payload(rows)
+        if q and rows:
+            snippets = await _first_matching_text(session, [r.id for r in rows], f"%{q}%")
+            for s, row in zip(out, rows):
+                s["snippet"] = snippets.get(row.id)
+        return out, has_more
+
+
+async def list_sessions_by_ids(
+    session_factory,
+    user_id: UUID,
+    session_ids: list[UUID],
+    *,
+    kind: str = "chat",
+) -> list[dict]:
+    """Rows among ``session_ids`` that belong to ``user_id`` in this lane (pinned batch).
+
+    The ownership filter is part of the SQL: ids supplied by a client are only ever a
+    lookup key, never an authorization. Ids the user does not own simply do not come back.
+    """
+    if kind not in _SESSION_KIND_TYPES:
+        raise ValueError(f"unknown session kind: {kind!r}")
+    if not session_ids:
+        return []
+    stmt = select(SessionModel).where(
+        SessionModel.user_id == user_id,
+        SessionModel.type == _SESSION_KIND_TYPES[kind],
+        SessionModel.id.in_(session_ids),
+    ).order_by(SessionModel.created_at.desc(), SessionModel.id.desc())
+    async with session_factory() as session:
+        rows = (await session.execute(stmt)).scalars().all()
+    return _session_rows_payload(rows)
 
 
 async def _first_matching_text(
@@ -1043,7 +1312,7 @@ async def _first_matching_text(
         await session.execute(
             select(MessageModel.session_id, MessageModel.text)
             .where(MessageModel.session_id.in_(session_ids), MessageModel.text.ilike(like))
-            .order_by(MessageModel.session_id, MessageModel.created_at)
+            .order_by(MessageModel.session_id, *message_order_by())
         )
     ).all()
     seen: set = set()
@@ -1055,8 +1324,17 @@ async def _first_matching_text(
     return out
 
 
-async def load_session_detail(session_factory, session_id: UUID) -> dict:
+async def load_session_detail(
+    session_factory, session_id: UUID, *, limit: int | None = None, before=None
+) -> dict:
     """Return a session's title + messages (with ids) + compaction checkpoint for resume.
+
+    ``limit`` pages the transcript from the newest message backwards; ``before`` is the
+    opaque page cursor (``(created_at, turn_rank, id)`` of the oldest row the client holds).
+    The response then carries ``has_more`` and ``next_before``. With ``limit=None`` — the
+    default, and what the worker's full-session imports use — every message is returned
+    exactly as before. Paging is always done by the DATABASE (``LIMIT`` + keyset), never by
+    reading the session and slicing in Python.
 
     Messages carry their ``id`` so the client can delete a single message, plus the
     per-message ``imported_rag`` flag so the "✓ Imported" button state comes straight from
@@ -1073,17 +1351,43 @@ async def load_session_detail(session_factory, session_id: UUID) -> dict:
         sess = (
             await session.execute(select(SessionModel).where(SessionModel.id == session_id))
         ).scalar_one_or_none()
-        rows = (
-            await session.execute(
-                select(MessageModel, AssetModel, ChatAttachmentModel.id)
-                .outerjoin(
-                    ChatAttachmentModel, ChatAttachmentModel.message_id == MessageModel.id
-                )
-                .outerjoin(AssetModel, AssetModel.id == ChatAttachmentModel.asset_id)
-                .where(MessageModel.session_id == session_id)
-                .order_by(MessageModel.created_at, MessageModel.id)
+        message_ids: list | None = None
+        has_more = False
+        next_before = None
+        first_message = None
+        if limit is not None:
+            page, has_more, next_before = await _history_page(
+                session, session_id, limit, before
             )
-        ).all()
+            message_ids = [r.id for r in page]
+            if sess is not None and sess.title is None:
+                # A paged client no longer holds the session's first row, but the pane's
+                # fallback heading is derived from it. Read exactly one row for that case
+                # (untitled sessions only) instead of widening the page.
+                first = (
+                    await session.execute(
+                        select(MessageModel.text)
+                        .where(MessageModel.session_id == session_id)
+                        .order_by(*message_order_by())
+                        .limit(1)
+                    )
+                ).first()
+                first_message = first[0] if first else None
+        stmt = (
+            select(MessageModel, AssetModel, ChatAttachmentModel.id)
+            .outerjoin(
+                ChatAttachmentModel, ChatAttachmentModel.message_id == MessageModel.id
+            )
+            .outerjoin(AssetModel, AssetModel.id == ChatAttachmentModel.asset_id)
+            .where(MessageModel.session_id == session_id)
+            # Client-facing history order: matches what the live turn appended.
+            .order_by(*message_order_by())
+        )
+        if message_ids is not None:
+            # One page of rows only — the join fan-out (N attachments ⇒ N rows) never
+            # consumes the page budget because the budget was applied to message ids.
+            stmt = stmt.where(MessageModel.id.in_(message_ids))
+        rows = (await session.execute(stmt)).all()
         # A message with N attachments joins to N rows. ``attach`` stays the FIRST one (the
         # single inline bubble media) while ``attachments`` lists every link, so the client
         # can resolve the images a turn prepared as viewer selections by asset id.
@@ -1131,6 +1435,13 @@ async def load_session_detail(session_factory, session_id: UUID) -> dict:
             "title": sess.title if sess is not None else None,
             "compaction": sess.compaction if sess is not None else None,
             "messages": messages,
+            # Paging state. ``limit=None`` callers see the same full list as before with
+            # ``has_more=False``; the fields are always present so the response shape is
+            # uniform.
+            "has_more": has_more,
+            "next_before": next_before,
+            # Only the paged, untitled-session case: the row the heading falls back to.
+            "first_message": first_message,
         }
 
 
@@ -1170,7 +1481,7 @@ async def reconcile_messages(
                 MessageModel.user_id == user_id,  # ownership predicate: foreign ids cannot align
                 MessageModel.role.in_(("user", "assistant")),
             )
-            .order_by(MessageModel.created_at, MessageModel.id)
+            .order_by(*message_order_by())
         )
         if boundary is not None:
             stmt = stmt.where(

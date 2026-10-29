@@ -117,14 +117,17 @@ async def test_list_sessions_rejects_unknown_kind():
 async def test_workspace_route_passes_kind_and_keeps_only_type_two(monkeypatch):
     captured = {}
 
-    async def _fake_list(_factory, _user_id, q, kind="chat"):
+    async def _fake_page(_factory, _user_id, q, kind="chat", *, limit=50, before=None):
         captured["kind"] = kind
-        return [
-            {"id": "a", "created_at": None, "summary": None, "title": "ws", "type": 2},
-            {"id": "b", "created_at": None, "summary": None, "title": "chat", "type": 0},
-        ]
+        return (
+            [
+                {"id": "a", "created_at": None, "summary": None, "title": "ws", "type": 2},
+                {"id": "b", "created_at": None, "summary": None, "title": "chat", "type": 0},
+            ],
+            False,
+        )
 
-    monkeypatch.setattr(sessions_module, "list_sessions", _fake_list)
+    monkeypatch.setattr(sessions_module, "list_sessions_page", _fake_page)
     result = await sessions_module.get_sessions(user=_auth(USER), q=None, kind="workspace")
     assert captured["kind"] == "workspace"
     assert [s["id"] for s in result["sessions"]] == ["a"]

@@ -95,6 +95,9 @@ class Db:
         self.inserts: list[int] = []  # row counts per INSERT
         self.added: list = []
         self.deleted: list = []
+        # Every statement the layer executed, in order — lets an ordering test inspect the
+        # compiled INSERT / SELECT instead of guessing from the returned rows.
+        self.statements: list = []
 
     def reset_reads(self):
         self.messages_selects = self.sessions_selects = 0
@@ -107,6 +110,7 @@ class FakeSession:
     async def execute(self, stmt, params=None):
         sql = str(stmt).lower()
         db = self.db
+        db.statements.append(stmt)
         if sql.startswith("update"):
             db.saved_payloads.append(str((params or {}).get("payload")))
             return Result(rowcount=1 if db.cas_ok else 0)

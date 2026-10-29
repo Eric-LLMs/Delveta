@@ -52,16 +52,28 @@
     // context scope from sessions.meta. Both are descriptive: scope never gates retrieval yet.
     wsSessions: null,
     wsListFailed: false,
+    wsHasMore: false,
+    // Cursor for the workspace picker's older pages, and the single lock that keeps two
+    // "load older" clicks from stacking the same request.
+    wsCursor: null,
+    wsLoadingMore: false,
     wsScope: {},
     // Per-mode composer draft + staged attachment, swapped on every mode switch so one
     // mode's unsent text never appears (or gets sent) in another.
     modeDrafts: { files: "", chats: "", research: "" },
     modeAttach: { files: null, chats: null, research: null },
     modeSeq: 0,                // guards async session restores against a newer switch
+    // Guards a stale async restore against a newer restore *within* the same mode (two
+    // quick row clicks): only the most recently started restore may paint or write state.
+    restoreSeq: 0,
     // Research session state machine (T4): every task owns exactly one chat session (bound at
     // creation), opened silently on selection. ``activeResearch`` is the task whose session the
     // chat is currently in (session_id may be null before the first typed message binds it).
     activeResearch: null,      // { task_id, name, session_id } | null
+    // Reload budget per gate approval id for the research gate-note path. A note older
+    // than the newest history page cannot be reached by reloading, so each approval may
+    // trigger a small fixed number of reloads instead of one per status refresh.
+    gateNoteAttempts: new Map(),
     // True while the Research tab shows its blank "new research chat" (no task selected).
     // Guards against re-clicking the Research tab wiping a chat already started there;
     // cleared when a task's session takes the pane over or another tab is switched to.
@@ -70,6 +82,15 @@
     // session and appends only rows whose id is NOT here, so worker-inserted progress never
     // duplicates a bubble that's already on screen (and a reopen never re-emits).
     renderedMsgIds: new Set(),
+    // Top-scroll history paging for the open session. ``cursor`` names the oldest row on
+    // screen (opaque to this side), ``hasMore`` says whether an older page exists, and
+    // ``loading`` is the single lock that keeps fast scrolling from issuing overlapping
+    // requests. ``epoch`` invalidates an in-flight page the moment the conversation changes.
+    history: { sessionId: null, cursor: null, hasMore: false, loading: false, epoch: 0 },
+    // Bottom-scroll paging for the Chat session list. ``cursor`` names the oldest session
+    // already listed (opaque to this side), ``q`` is the query the current list belongs to,
+    // and ``epoch`` drops a response that lands after a newer query / mode switch.
+    sessionList: { q: "", cursor: null, hasMore: false, loading: false, epoch: 0 },
     // Deep-copied viewer payload of the LAST sent message. The approval handler reads it
     // after the turn is in flight, so the source the model was asked about (cloud asset
     // id/name) survives any later viewer navigation.
@@ -825,13 +846,16 @@
   });
 
   // Plain message for error/notice rows (no per-message actions).
-  function appendMsg(role, text, id) {
+  // ``opts.before`` inserts ahead of an existing node (history paging prepends older rows);
+  // ``opts.noScroll`` keeps the viewport where it is while that happens.
+  function appendMsg(role, text, id, opts = {}) {
     if (id) state.renderedMsgIds.add(id); // tracked so live refresh never re-renders it
     const div = document.createElement("div");
     div.className = `msg ${role}`;
     div.textContent = text;
-    chatLog.appendChild(div);
-    chatLog.scrollTop = chatLog.scrollHeight;
+    if (opts.before) chatLog.insertBefore(div, opts.before);
+    else chatLog.appendChild(div);
+    if (!opts.noScroll) chatLog.scrollTop = chatLog.scrollHeight;
     return div;
   }
 
@@ -1242,7 +1266,9 @@
   // message created (a 📷 screenshot or an attached file). When present, the media is
   // rendered inside the bubble above the text — images show as an inline thumbnail, other
   // files as a chip — mirroring how Gemini/ChatGPT display sent images.
-  function appendMessage(id, role, text, attach, retrieval, viewer, attachments) {
+  // ``opts`` (optional): ``before`` / ``noScroll`` — see appendMsg. History paging uses them
+  // to prepend an older page without moving the reader.
+  function appendMessage(id, role, text, attach, retrieval, viewer, attachments, opts = {}) {
     if (role !== "user" && role !== "assistant") return appendMsg(role, text);
     const div = document.createElement("div");
     div.className = `msg ${role}`;
@@ -1271,23 +1297,24 @@
     // assistant reply to the question above it via previousElementSibling, which only
     // exists once the div is in the DOM. Building first meant the walk always came up
     // empty and an already-imported pair never rendered as "✓ Imported" on reopen.
-    chatLog.appendChild(div);
+    if (opts.before) chatLog.insertBefore(div, opts.before);
+    else chatLog.appendChild(div);
     div.appendChild(buildMsgActions(div, role, () => text));
     div.__getText = () => text;
     if (retrieval) {
       div.__retrieval = retrieval; // reopen path passes the row's meta.retrieval
       if (id) state.retrievalByMsg[id] = retrieval;
     }
-    chatLog.scrollTop = chatLog.scrollHeight;
+    if (!opts.noScroll) chatLog.scrollTop = chatLog.scrollHeight;
     return div;
   }
 
   // Render one DB message row the way a session open does: tool rows are hidden, deterministic
   // ``system`` notes are plain text (never markdown/HTML-parsed), everything else is a normal
   // user/assistant bubble. Shared by resumeSession and the live auto-run chat refresh.
-  function appendMsgRow(m) {
+  function appendMsgRow(m, opts = {}) {
     if (m.role === "tool") return;
-    if (m.role === "system") { appendMsg("system", m.content, m.id); return; }
+    if (m.role === "system") { appendMsg("system", m.content, m.id, opts); return; }
     // The top-level ``attachment_id`` is the FIRST link's chat-attachment id; carry it into
     // the inline media so a scope='chat' capture loads through the session route (the drive
     // download route deliberately refuses chat-scope assets).
@@ -1295,7 +1322,7 @@
       ? { ...m.attach, attachment_id: m.attachment_id || undefined }
       : null;
     appendMessage(m.id, m.role === "assistant" ? "assistant" : "user", m.content,
-      attach, m.retrieval, m.viewer, m.attachments);
+      attach, m.retrieval, m.viewer, m.attachments, opts);
   }
 
   // Build the inline media element for a message attachment. Images are fetched from the
@@ -2375,6 +2402,7 @@
   // New chat: drop the active session reference and clear the pane.
   function newChat() {
     state.sessionId = null;
+    resetHistory(); // a blank conversation has no cursor into the previous session
     // A blank conversation replaces the mode's remembered session; switching away and
     // back must not resurrect the previous conversation behind the blank pane.
     if (state.mode === "files" || state.mode === "chats") state.modeSessions[state.mode] = null;
@@ -2933,7 +2961,11 @@
     if (!sid) return;
     let data;
     try {
-      const res = await fetch(`/api/sessions/${sid}`, { headers: authHeaders() });
+      // Only the newest page is needed: this poll appends rows it has not seen, and older
+      // history is loaded on demand by the shared top-scroll pager.
+      const res = await fetch(`/api/sessions/${sid}?limit=${HISTORY_PAGE_SIZE}`, {
+        headers: authHeaders(),
+      });
       if (!res.ok) return;
       data = await res.json();
     } catch { /* transient — the next tick retries */ return; }
@@ -2983,8 +3015,13 @@
   // Rebuild only when the on-screen chat is *missing* a note for a still-pending override — i.e.
   // the chat was built before a run parked, or before a note commit caught up. Gate notes are
   // recognized by their deterministic head ("Review needed — …"); once every pending override has
-  // its note on screen, further status refreshes are no-ops, so the live monitor never reload-loops,
-  // and a Reject → new approval (new id, new note) reloads again because the count comes up short.
+  // its note on screen, further status refreshes are no-ops, and a Reject → new approval (new id,
+  // new note) loads again because the count comes up short.
+  //
+  // A long run can push an old note past the newest history page, where reloading can never
+  // reach it. Each approval id therefore gets a small fixed reload budget
+  // (ResearchGateNotes.MAX_ATTEMPTS): enough to ride out a commit that was still in flight, and
+  // finite so status polling can never turn into a reload loop.
   window.researchReloadGateNotes = async (ctx) => {
     if (!chatLog) return false;
     const active = state.activeResearch;
@@ -2992,12 +3029,22 @@
       active && active.task_id === ctx.task_id && ctx.session_id && state.sessionId === ctx.session_id
     );
     if (!onScreen) return false;
-    const pending = (ctx.pending_overrides || []).filter((o) => o.approval_id);
+    const pending = (ctx.pending_overrides || [])
+      .map((o) => o && o.approval_id)
+      .filter(Boolean);
     if (!pending.length) return false;
     const visible = [...chatLog.querySelectorAll(".msg.system")].filter(
       (n) => (n.textContent || "").trimStart().startsWith("Review needed")
     ).length;
-    if (visible >= pending.length) return false; // every pending override's note is on screen
+    const attempt = ResearchGateNotes.reloadAttempt(
+      visible, pending, state.gateNoteAttempts
+    );
+    if (!attempt) return false;
+    // Charge before reloading: a failed or superseded reload must not retry on every status
+    // tick. Any approval without budget left is one whose note the newest page cannot hold.
+    for (const id of attempt.ids) {
+      state.gateNoteAttempts.set(id, (state.gateNoteAttempts.get(id) || 0) + 1);
+    }
     await resumeSession(ctx.session_id); // rebuild from DB: notes + last messages appear
     return true;
   };
@@ -3850,8 +3897,9 @@
     });
 
     // Fetch the session title so the default-name hint is accurate in session mode.
+    // ``limit=1``: this only needs the title, not a history page.
     if (hasSession) {
-      fetch(`/api/sessions/${state.sessionId}`, { headers: authHeaders() })
+      fetch(`/api/sessions/${state.sessionId}?limit=1`, { headers: authHeaders() })
         .then((r) => (r.ok ? r.json() : null))
         .then((d) => { if (d && d.title) { sessionTitle = d.title; refresh(); } })
         .catch(() => {});
@@ -7019,23 +7067,40 @@
         chatLog.innerHTML = "";
         state.renderedMsgIds = new Set();
         setSessionHeading("Loading…");
-        const ok = await resumeSession(target, { modeSeq: seq });
-        if (!ok && seq === state.modeSeq && next === "files") {
-          // The remembered session was deleted elsewhere (another window/user): drop the
-          // stale pointer and open a blank WorkSpace conversation instead of an error.
-          setWsPointer(null);
-          state.modeSessions.files = null;
+        // Drop the outgoing mode's session id while the restore is in flight: a message sent
+        // during the fetch must never continue the previous mode's conversation.
+        state.sessionId = null;
+        const outcome = {};
+        const ok = await resumeSession(target, { modeSeq: seq, outcome });
+        // Only fall back when the newest switch is still this one and this restore was not
+        // superseded by a newer one (e.g. a row click in the same mode): a stale restore's
+        // failure must never wipe the conversation the user just opened.
+        if (!ok && seq === state.modeSeq && !outcome.superseded) {
+          if (next === "files") {
+            // The remembered session was deleted elsewhere, or no longer belongs to the
+            // WorkSpace lane (an old build's chat pointer): drop it and open a blank
+            // WorkSpace conversation instead of an error.
+            setWsPointer(null);
+            state.modeSessions.files = null;
+          } else {
+            // Same for Chat: the remembered row is gone, so start a blank chat rather than
+            // leaving the pane on "Loading…".
+            state.modeSessions.chats = null;
+          }
           newChat();
         }
       } else if (seq === state.modeSeq) {
         newChat();
       }
       if (next === "files") loadWorkspaceSessions();
-    } else {
+    } else if (next === "research") {
       chatLog.innerHTML = "";
       state.renderedMsgIds = new Set();
+      resetHistory(); // Research has no list cursor of its own; a task switch re-arms it
       if (!window.currentResearchTask && !state.researchBlankChat) showResearchBlankChat();
     }
+    // Home leaves the chat pane exactly as it was (hidden, not reset): the mode the user
+    // came from must come back with its conversation, draft and scroll position intact.
     renderWsScope();
   }
 
@@ -7111,28 +7176,151 @@
   });
 
   let sessionSearchSeq = 0;
-  async function loadSessions() {
+  // ── session-list paging: one page at a time, older rows on downward scroll ──
+  // The sidebar opens on the newest SESSION_PAGE_SIZE sessions. Reaching the bottom asks
+  // for the rows before the oldest one on screen and appends them; the server pages on
+  // (created_at, id), so equal timestamps neither repeat nor skip. Pinned sessions are
+  // fetched by id in the same load, so a pin never disappears just because it is old.
+  const SESSION_PAGE_SIZE = 50;
+  const SESSION_PREFETCH_PX = 200;
+  const SESSION_PIN_LIMIT = 50;
+
+  // Only a gesture from the user may open the next page. A scroll event also fires when the
+  // browser restores an offset after a reload, or when a list rebuild clamps scrollTop; both
+  // happen without the user scrolling and must not advance the first page.
+  let sessionListTouched = false;
+  for (const gesture of ["pointerdown", "wheel", "touchstart", "keydown"]) {
+    sessionsList.addEventListener(gesture, () => { sessionListTouched = true; }, { passive: true });
+  }
+
+  function sessionPageUrl(q, before) {
+    const params = new URLSearchParams();
+    if (q) params.set("q", q);
+    params.set("limit", String(SESSION_PAGE_SIZE));
+    if (before) params.set("before", before);
+    return `/api/sessions?${params.toString()}`;
+  }
+
+  async function fetchSessionPage(q, before) {
+    const res = await fetch(sessionPageUrl(q, before), { headers: authHeaders() });
+    if (!res.ok) throw new Error(`${res.status}`);
+    return res.json();
+  }
+
+  // Pinned ids live in localStorage and may point outside the current page (or at rows
+  // another lane owns). One bounded batch request returns the ones this user still has in
+  // this lane; the server scopes by owner, so an id can never reveal someone else's row.
+  async function fetchPinnedSessions() {
+    const ids = getPinned().slice(0, SESSION_PIN_LIMIT).map(String);
+    if (!ids.length) return [];
+    try {
+      const res = await fetch(
+        `/api/sessions?ids=${ids.map(encodeURIComponent).join(",")}`,
+        { headers: authHeaders() },
+      );
+      if (!res.ok) return []; // pins are an enhancement; the page still renders
+      return (await res.json()).sessions || [];
+    } catch {
+      return [];
+    }
+  }
+
+  // Entering Chats asks for the list twice in one tick (the mode switch loads it, then
+  // newChat refreshes it). The two calls are the same request: share the one already in
+  // flight instead of sending it twice. A different query always starts a new load.
+  let sessionListInflight = null;
+
+  function loadSessions() {
+    const q = (state.sessionQuery || "").trim();
+    if (sessionListInflight && sessionListInflight.q === q) return sessionListInflight.promise;
+    const entry = { q, promise: null };
+    entry.promise = runLoadSessions(q).finally(() => {
+      if (sessionListInflight === entry) sessionListInflight = null;
+    });
+    sessionListInflight = entry;
+    return entry.promise;
+  }
+
+  async function runLoadSessions(q) {
+    sessionListTouched = false; // a fresh first page always opens at the top of the list
     if (!state.token) {
       state.sessions = [];
+      state.sessionList = { ...state.sessionList, q: "", cursor: null, hasMore: false, loading: false };
       renderSessions();
       return;
     }
     const seq = ++sessionSearchSeq;
+    // A new query / mode starts a new paging generation: an older response is dropped when
+    // it lands instead of being appended to a list it does not belong to.
+    const epoch = state.sessionList.epoch + 1;
+    state.sessionList = { q, cursor: null, hasMore: false, loading: false, epoch };
     try {
-      const q = (state.sessionQuery || "").trim();
-      const url = q ? `/api/sessions?q=${encodeURIComponent(q)}` : "/api/sessions";
-      const res = await fetch(url, { headers: authHeaders() });
-      if (!res.ok) throw new Error(`${res.status}`);
-      const data = await res.json();
-      if (seq !== sessionSearchSeq) return; // a newer search superseded this one
-      state.sessions = data.sessions || [];
+      const [page, pinned] = await Promise.all([
+        fetchSessionPage(q, null),
+        q ? Promise.resolve([]) : fetchPinnedSessions(),
+      ]);
+      if (seq !== sessionSearchSeq || state.sessionList.epoch !== epoch) return;
+      const next = SessionListModel.cursorAfter(null, page);
+      state.sessionList.cursor = next.cursor;
+      state.sessionList.hasMore = next.hasMore;
+      // Pinned first, then the page minus anything already pinned (deduped by id).
+      state.sessions = SessionListModel.mergeRows(pinned, page.sessions || []);
       renderSessions();
+      fillSessionList();
     } catch {
-      if (seq !== sessionSearchSeq) return;
+      if (seq !== sessionSearchSeq || state.sessionList.epoch !== epoch) return;
       state.sessions = [];
       renderSessions(true);
     }
   }
+
+  async function loadMoreSessions() {
+    const st = state.sessionList;
+    if (!state.token || !st.hasMore || st.loading || !st.cursor) return;
+    const epoch = st.epoch;
+    const seq = sessionSearchSeq;
+    st.loading = true; // the single lock: rapid scrolling never stacks requests
+    try {
+      const page = await fetchSessionPage(st.q, st.cursor);
+      if (epoch !== state.sessionList.epoch || seq !== sessionSearchSeq) return;
+      const seen = new Set((state.sessions || []).map((s) => String(s.id)));
+      const fresh = (page.sessions || []).filter(
+        (row) => row && row.id != null && !seen.has(String(row.id)),
+      );
+      const next = SessionListModel.cursorAfter(st.cursor, page);
+      st.cursor = next.cursor;
+      st.hasMore = next.hasMore; // no cursor progress ⇒ treat as exhausted, never loop
+      state.sessions = SessionListModel.mergeRows(state.sessions, fresh);
+      appendSessionRows(fresh);
+    } catch {
+      // Keep what is on screen; the next scroll retries the same cursor.
+    } finally {
+      if (epoch === state.sessionList.epoch) {
+        st.loading = false;
+        fillSessionList();
+      }
+    }
+  }
+
+  // A tall window can fit the whole first page without ever scrolling; keep filling so the
+  // sidebar is scrollable and page size never depends on viewport height.
+  function fillSessionList() {
+    const st = state.sessionList;
+    if (!st.hasMore || st.loading || !st.cursor) return;
+    if (state.mode !== "chats" || !sessionsList.clientHeight) return;
+    if (sessionsList.scrollHeight <= sessionsList.clientHeight + 4) loadMoreSessions();
+  }
+
+  sessionsList.addEventListener("scroll", () => {
+    if (!sessionListTouched) return; // restored / clamped offset, not a user scroll
+    if (sessionsList.scrollHeight <= sessionsList.clientHeight + 4) return; // nothing to page past
+    if (
+      sessionsList.scrollTop + sessionsList.clientHeight
+      >= sessionsList.scrollHeight - SESSION_PREFETCH_PX
+    ) {
+      loadMoreSessions();
+    }
+  }, { passive: true });
 
   function escapeHtml(text) {
     return String(text).replace(/[&<>"']/g, (c) => (
@@ -7299,6 +7487,10 @@
 
   function renderSessions(failed) {
     sessionsList.innerHTML = "";
+    // A full render starts again from the newest row. Keeping an offset from the previous
+    // list would land the user in the middle of a different one (after a lane switch, a
+    // search, or a refresh that resets paging to the first page).
+    sessionsList.scrollTop = 0;
     if (failed) {
       sessionsList.innerHTML = '<div class="session-item"><span class="session-summary">Failed to load sessions.</span></div>';
       return;
@@ -7319,80 +7511,119 @@
       const pb = pinnedIds.includes(String(b.id)) ? 0 : 1;
       return pa - pb;
     });
-    for (const s of sorted) {
-      const item = document.createElement("div");
-      item.className = "session-item";
-      if (String(s.id) === String(state.sessionId)) item.classList.add("active");
-      const importing = importingSessions.has(String(s.id));
-      const genLabel = generatingSessions.get(String(s.id));
-      if (importing) item.classList.add("session-importing");
-      else if (genLabel) item.classList.add("session-generating");
-      const row = document.createElement("div");
-      row.className = "session-row";
-      const summary = document.createElement("span");
-      summary.className = "session-summary";
-      const displayText = s.title || s.summary || s.id.slice(0, 8);
-      if (q) summary.innerHTML = highlightText(displayText, q);
-      else summary.textContent = displayText;
-      const more = document.createElement("button");
-      more.type = "button";
-      more.className = "session-more";
-      more.title = "Session actions";
-      more.innerHTML = SESSION_ICONS.more;
-      more.disabled = importing || genLabel;
-      more.addEventListener("click", (e) => {
-        e.stopPropagation();
-        openSessionMenu(more, buildSessionMenu(s, summary));
-      });
-      if (isPinned(s.id)) {
-        const pin = document.createElement("span");
-        pin.className = "session-pinned";
-        pin.title = "Pinned";
-        pin.innerHTML = SESSION_ICONS.pin;
-        row.append(pin, summary, more);
-      } else {
-        row.append(summary, more);
-      }
-      const time = document.createElement("span");
-      if (importing) {
-        time.className = "session-import-status";
-        time.textContent = "⏳ Importing…";
-      } else if (genLabel) {
-        time.className = "session-gen-status";
-        const spin = document.createElement("span");
-        spin.className = "session-gen-spinner";
-        time.append(spin, document.createTextNode(` Generating ${genLabel}…`));
-      } else {
-        time.className = "session-time";
-        time.textContent = s.created_at ? new Date(s.created_at).toLocaleString() : "";
-      }
-      item.append(row, time);
-      if (q && s.snippet) {
-        const snip = document.createElement("div");
-        snip.className = "session-snippet";
-        snip.innerHTML = highlightText(snippetPreview(s.snippet, q), q);
-        item.appendChild(snip);
-      }
-      item.addEventListener("click", () => {
-        if (importing) return; // locked while the import job is running
-        if (genLabel) return; // locked while an artifact job is running
-        resumeSession(s.id);
-      });
-      sessionsList.appendChild(item);
+    for (const s of sorted) sessionsList.appendChild(buildSessionItem(s, q));
+  }
+
+  // One sidebar row. Shared by the first render and by later pages, which only append.
+  function buildSessionItem(s, q) {
+    const item = document.createElement("div");
+    item.className = "session-item";
+    if (String(s.id) === String(state.sessionId)) item.classList.add("active");
+    const importing = importingSessions.has(String(s.id));
+    const genLabel = generatingSessions.get(String(s.id));
+    if (importing) item.classList.add("session-importing");
+    else if (genLabel) item.classList.add("session-generating");
+    const row = document.createElement("div");
+    row.className = "session-row";
+    const summary = document.createElement("span");
+    summary.className = "session-summary";
+    const displayText = s.title || s.summary || s.id.slice(0, 8);
+    if (q) summary.innerHTML = highlightText(displayText, q);
+    else summary.textContent = displayText;
+    const more = document.createElement("button");
+    more.type = "button";
+    more.className = "session-more";
+    more.title = "Session actions";
+    more.innerHTML = SESSION_ICONS.more;
+    more.disabled = importing || genLabel;
+    more.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openSessionMenu(more, buildSessionMenu(s, summary));
+    });
+    if (isPinned(s.id)) {
+      const pin = document.createElement("span");
+      pin.className = "session-pinned";
+      pin.title = "Pinned";
+      pin.innerHTML = SESSION_ICONS.pin;
+      row.append(pin, summary, more);
+    } else {
+      row.append(summary, more);
     }
+    const time = document.createElement("span");
+    if (importing) {
+      time.className = "session-import-status";
+      time.textContent = "⏳ Importing…";
+    } else if (genLabel) {
+      time.className = "session-gen-status";
+      const spin = document.createElement("span");
+      spin.className = "session-gen-spinner";
+      time.append(spin, document.createTextNode(` Generating ${genLabel}…`));
+    } else {
+      time.className = "session-time";
+      time.textContent = s.created_at ? new Date(s.created_at).toLocaleString() : "";
+    }
+    item.append(row, time);
+    if (q && s.snippet) {
+      const snip = document.createElement("div");
+      snip.className = "session-snippet";
+      snip.innerHTML = highlightText(snippetPreview(s.snippet, q), q);
+      item.appendChild(snip);
+    }
+    item.addEventListener("click", () => {
+      if (state.mode !== "chats") return; // the Chat list only drives Chat mode (hidden rows keep handlers)
+      if (importing) return; // locked while the import job is running
+      if (genLabel) return; // locked while an artifact job is running
+      resumeSession(s.id, { modeSeq: state.modeSeq });
+    });
+    return item;
+  }
+
+  // Append a page's rows without re-rendering the ones already on screen.
+  function appendSessionRows(rows) {
+    if (!rows.length) return;
+    const q = state.sessionList.q;
+    const frag = document.createDocumentFragment();
+    for (const s of rows) frag.appendChild(buildSessionItem(s, q));
+    sessionsList.appendChild(frag);
   }
 
   // Load a session into the pane. Returns true when it was painted, false when the fetch
-  // failed or a newer mode switch superseded it — callers that restore a remembered pointer
-  // use that to fall back to a blank conversation instead of a dead panel.
+  // failed, the session belongs to another lane, or a newer restore superseded it — callers
+  // that restore a remembered pointer use that to fall back to a blank conversation instead
+  // of a dead panel. ``opts.outcome`` (optional object) receives ``superseded: true`` when a
+  // newer restore/switch won, so a caller can tell "stale" apart from "this session is gone"
+  // and only fall back in the latter case.
   async function resumeSession(id, opts = {}) {
+    const restoreId = ++state.restoreSeq;
+    // The pane is changing owners: disable top-scroll paging for the outgoing conversation
+    // until this restore paints its own state (an in-flight page sees a stale epoch and drops).
+    resetHistory();
+    const superseded = () => (
+      restoreId !== state.restoreSeq || (opts.modeSeq != null && opts.modeSeq !== state.modeSeq)
+    );
     try {
-      const res = await fetch(`/api/sessions/${id}`, { headers: authHeaders() });
+      // One page, newest-first. The title/type/meta/compaction come with it, so opening a
+      // long session never reads (or ships) the whole transcript.
+      const res = await fetch(`/api/sessions/${id}?limit=${HISTORY_PAGE_SIZE}`, {
+        headers: authHeaders(),
+      });
       if (!res.ok) throw new Error(`${res.status}`);
       const data = await res.json();
       // A mode switch issued during the fetch wins: drop this stale restore instead of
       // painting the previous mode's conversation into the newly selected one.
-      if (opts.modeSeq != null && opts.modeSeq !== state.modeSeq) return false;
+      if (superseded()) { if (opts.outcome) opts.outcome.superseded = true; return false; }
+      // Lane check BEFORE any state write or rendering. A session may only be restored by
+      // the mode that owns its lane (Chat = type 0, WorkSpace = type 2). Every restore path
+      // funnels through here — Chat rows, Workspace rows, and the remembered Workspace
+      // pointer — and hidden lists keep their handlers, so a stray click (or a pointer left
+      // by an older build) must never paint one mode's conversation into the other, nor make
+      // the next send continue that foreign session. Research is exempt: its chat is bound
+      // to the selected task by research.js, not selected from a list.
+      const expectedType = state.mode === "files" ? 2 : state.mode === "chats" ? 0 : null;
+      if (expectedType !== null && data.type !== expectedType) {
+        if (opts.outcome) opts.outcome.lane = true;
+        return false;
+      }
       state.sessionId = id;
       if (state.mode === "files" || state.mode === "chats") state.modeSessions[state.mode] = id;
       // Per-message import state comes straight from the rows returned by GET /sessions/{id}:
@@ -7408,11 +7639,18 @@
       // Second epoch check: refreshImportedState is another await point, so a newer
       // switch/picker-click can have superseded this restore since the fetch above. The
       // newest conversation always wins — a stale one must never paint into the log.
-      if (opts.modeSeq != null && opts.modeSeq !== state.modeSeq) return false;
+      if (superseded()) { if (opts.outcome) opts.outcome.superseded = true; return false; }
       chatLog.innerHTML = "";
       state.renderedMsgIds = new Set(); // every row below is now on screen; live refresh dedupes against it
       for (const m of data.messages) appendMsgRow(m);
-      setSessionHeading(data.title || (data.messages[0] ? data.messages[0].content.slice(0, 30) : "Chat"));
+      // Arm top-scroll paging for what this page did not include (older pages load on demand).
+      initHistory(id, data);
+      // Heading fallback: the server sends the session's first message only when it has no
+      // title, so a paged open still names the conversation after its opening turn.
+      const heading = data.title
+        || (data.first_message ? data.first_message.slice(0, 30) : "")
+        || (data.messages[0] ? data.messages[0].content.slice(0, 30) : "Chat");
+      setSessionHeading(heading);
       // WorkSpace: the session's recorded scope comes back with the detail payload, and
       // opening a session re-arms the reload pointer.
       if (state.mode === "files") {
@@ -7433,12 +7671,154 @@
       applyImportedStateToDom();
       return true;
     } catch (err) {
-      if (opts.modeSeq != null && opts.modeSeq !== state.modeSeq) return false;
+      if (superseded()) { if (opts.outcome) opts.outcome.superseded = true; return false; }
       if (opts.silent) console.warn("Session restore failed:", err.message);
       else appendMsg("error", `Failed to load session: ${err.message}`);
       return false;
     }
   }
+
+  // ── history paging: older pages load when the reader reaches the top ──
+  // A session opens on its newest HISTORY_PAGE_SIZE rows. Scrolling up asks for the page
+  // before the oldest row on screen and prepends it, keeping the viewport on the same
+  // content. Pages are keyed by (created_at, turn_rank, id) on the server, so the cursor is
+  // stable across equal timestamps; this side only carries it around.
+  const HISTORY_PAGE_SIZE = 50;
+  // Start the next page slightly before the true top: the transcript then reads as one
+  // continuous scroll instead of pausing at the boundary.
+  const HISTORY_PREFETCH_PX = 120;
+
+  // Drop paging state and ghost the loading chip. Called whenever the pane changes owners
+  // (new chat, mode switch, session restore) so no cursor can cross conversations.
+  function resetHistory() {
+    state.history = {
+      sessionId: null,
+      cursor: null,
+      hasMore: false,
+      loading: false,
+      epoch: state.history.epoch + 1,
+    };
+    setHistoryLoading(false);
+  }
+
+  // Arm paging for the page just painted. A page without a cursor has nothing older.
+  function initHistory(sessionId, data) {
+    state.history = {
+      sessionId,
+      cursor: data.next_before || null,
+      hasMore: Boolean(data.has_more && data.next_before),
+      loading: false,
+      epoch: state.history.epoch + 1,
+    };
+    setHistoryLoading(false);
+    // A tall window may fit this page without a scrollbar, in which case the scroll trigger
+    // can never fire; fill until the log is scrollable or history is exhausted.
+    scheduleHistoryFill();
+  }
+
+  // Keep asking for older pages while the log is still too short to scroll. Scheduled a
+  // tick later so the page just painted finishes its layout first; the paging state object
+  // is captured so a pane that changed owners in between is left alone.
+  function scheduleHistoryFill() {
+    const h = state.history;
+    if (!h.hasMore) return;
+    setTimeout(() => {
+      if (state.history !== h) return;
+      if (!HistoryPagingModel.needsFill(h, {
+        scrollHeight: chatLog.scrollHeight,
+        clientHeight: chatLog.clientHeight,
+      })) return;
+      loadEarlierMessages();
+    }, 0);
+  }
+
+  let historyChip = null;
+  // A chip floating over the log's top edge. It is absolutely positioned in #chat (which is
+  // `position: relative`, outside the flex column) so showing it never reflows the log.
+  function setHistoryLoading(on, text = "Loading earlier messages…") {
+    if (!historyChip) {
+      historyChip = document.createElement("div");
+      historyChip.id = "history-loading";
+      historyChip.classList.add("hidden");
+      chatEl.appendChild(historyChip);
+    }
+    historyChip.textContent = text;
+    if (!on) { historyChip.classList.add("hidden"); return; }
+    historyChip.style.top = `${chatLog.offsetTop + 10}px`;
+    historyChip.classList.remove("hidden");
+  }
+
+  async function loadEarlierMessages() {
+    const h = state.history;
+    if (!h.sessionId || h.sessionId !== state.sessionId) return;
+    // The single lock: rapid scroll events and the fill loop share it, so two triggers can
+    // never stack the same page request.
+    if (!HistoryPagingModel.claim(h)) return;
+    const sessionId = h.sessionId;
+    const epoch = h.epoch;
+    // Anything that changes the conversation (restore, new chat, mode switch) replaces the
+    // state object, so a page that lands late can tell it no longer owns the pane.
+    const stale = () => state.history !== h || h.epoch !== epoch || state.sessionId !== sessionId;
+    setHistoryLoading(true);
+    const prevHeight = chatLog.scrollHeight;
+    const prevTop = chatLog.scrollTop;
+    let failed = false;
+    try {
+      const res = await fetch(
+        `/api/sessions/${sessionId}?limit=${HISTORY_PAGE_SIZE}`
+        + `&before=${encodeURIComponent(h.cursor)}`,
+        { headers: authHeaders() },
+      );
+      if (res.status === 401) { openAccount(); throw new Error("Session expired — sign in again."); }
+      if (!res.ok) throw new Error(`${res.status}`);
+      const data = await res.json();
+      if (stale()) return;
+      // The page arrives oldest-first. Inserting every row ahead of the same anchor keeps
+      // the global order without touching (or re-rendering) what is already on screen.
+      const anchor = chatLog.firstElementChild;
+      for (const m of data.messages || []) {
+        if (m.id && state.renderedMsgIds.has(m.id)) continue; // already loaded
+        if (m.id && m.imported_rag) state.importedByMsgId.set(m.id, true);
+        appendMsgRow(m, { before: anchor, noScroll: true });
+      }
+      // Keep the reader's place: everything above grew by (newHeight - prevHeight), so the
+      // same content sits exactly that much further down.
+      chatLog.scrollTop = prevTop + (chatLog.scrollHeight - prevHeight);
+      const next = HistoryPagingModel.pageAfter(h.cursor, data);
+      h.cursor = next.cursor;
+      h.hasMore = next.hasMore; // no cursor progress ⇒ treat as exhausted, never loop
+      // No import-state sweep here: each row's button is built from state.importedByMsgId
+      // (filled above), so a page never re-walks the whole transcript.
+      // A tall window may fit a whole page without ever scrolling; keep filling so the top
+      // is reachable and page size never depends on viewport height.
+      scheduleHistoryFill();
+    } catch (err) {
+      if (stale()) return;
+      failed = true;
+      console.warn("Earlier messages failed:", err.message);
+      setHistoryLoading(true, "Couldn't load earlier messages — scroll up to retry");
+    } finally {
+      if (!stale()) {
+        HistoryPagingModel.release(h);
+        if (!failed) setHistoryLoading(false);
+      }
+    }
+  }
+
+  // Top-scroll trigger, coalesced so one scroll burst runs one check. A timer rather than
+  // requestAnimationFrame: frames pause in an occluded/minimized window, and the pane can be
+  // scrolled there too — the check must still run (the loading lock keeps it idempotent).
+  let historyScrollQueued = false;
+  chatLog.addEventListener("scroll", () => {
+    if (historyScrollQueued) return;
+    historyScrollQueued = true;
+    setTimeout(() => {
+      historyScrollQueued = false;
+      const h = state.history;
+      if (!h.hasMore || h.loading || !h.sessionId) return;
+      if (chatLog.scrollTop <= HISTORY_PREFETCH_PX) loadEarlierMessages();
+    }, 0);
+  }, { passive: true });
 
   // ── WorkSpace assistant sessions (Files mode) ──
   // A WorkSpace conversation is a real server session tagged type=2, listed only by
@@ -7548,23 +7928,88 @@
     if (!state.token) {
       state.wsSessions = [];
       state.wsListFailed = false;
+      state.wsHasMore = false;
+      state.wsCursor = null;
+      state.wsLoadingMore = false;
       renderWsMenu();
       return;
     }
     const seq = ++wsListSeq;
     try {
-      const res = await fetch("/api/sessions?kind=workspace", { headers: authHeaders() });
+      // The picker opens on the newest page; older conversations are reached with the
+      // "Load older sessions" row at the bottom, paged on the same (created_at, id) cursor
+      // the Chat sidebar uses. Nothing here is ever silently unreachable.
+      const res = await fetch(
+        `/api/sessions?kind=workspace&limit=${SESSION_PAGE_SIZE}`,
+        { headers: authHeaders() },
+      );
       if (!res.ok) throw new Error(`${res.status}`);
       const data = await res.json();
       if (seq !== wsListSeq) return;
+      const next = SessionListModel.cursorAfter(null, data);
       state.wsSessions = data.sessions || [];
+      state.wsCursor = next.cursor;
+      state.wsHasMore = next.hasMore;
+      state.wsLoadingMore = false;
       state.wsListFailed = false;
     } catch {
       if (seq !== wsListSeq) return;
       state.wsSessions = [];
+      state.wsHasMore = false;
+      state.wsCursor = null;
+      state.wsLoadingMore = false;
       state.wsListFailed = true;
     }
     renderWsMenu();
+  }
+
+  // One older page for the picker. Rows are appended in place (never a full re-render), so
+  // the menu keeps its scroll position while the user walks back through their sessions.
+  async function loadMoreWorkspaceSessions() {
+    if (!state.token || !state.wsHasMore || state.wsLoadingMore || !state.wsCursor) return;
+    const seq = wsListSeq;
+    const cursor = state.wsCursor;
+    state.wsLoadingMore = true;
+    const btn = wsSessionList.querySelector(".ws-session-load-more");
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = "Loading…";
+    }
+    try {
+      const res = await fetch(
+        `/api/sessions?kind=workspace&limit=${SESSION_PAGE_SIZE}`
+        + `&before=${encodeURIComponent(cursor)}`,
+        { headers: authHeaders() },
+      );
+      if (!res.ok) throw new Error(`${res.status}`);
+      const data = await res.json();
+      if (seq !== wsListSeq) return; // a newer first-page load owns the menu now
+      const seen = new Set((state.wsSessions || []).map((s) => String(s.id)));
+      const fresh = (data.sessions || []).filter((s) => s && s.id != null && !seen.has(String(s.id)));
+      const next = SessionListModel.cursorAfter(cursor, data);
+      state.wsSessions = SessionListModel.mergeRows(state.wsSessions, fresh);
+      state.wsCursor = next.cursor;
+      state.wsHasMore = next.hasMore;
+      if (btn) {
+        const frag = document.createDocumentFragment();
+        for (const s of fresh) frag.appendChild(buildWsSessionRow(s));
+        wsSessionList.insertBefore(frag, btn);
+        if (!state.wsHasMore) btn.remove();
+        else {
+          btn.disabled = false;
+          btn.textContent = "Load older sessions";
+        }
+      }
+      positionWsMenu();
+    } catch {
+      // Keep what is on screen; the row asks for the same cursor again.
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = "Couldn't load older sessions — retry";
+      }
+    } finally {
+      if (seq === wsListSeq) state.wsLoadingMore = false;
+    }
   }
 
   // Session-menu actions (Pin / Rename / Import to Knowledge / Generate) can be invoked
@@ -7610,71 +8055,92 @@
       const pb = pinnedIds.includes(String(b.id)) ? 0 : 1;
       return pa - pb;
     });
-    for (const s of sorted) {
-      const item = document.createElement("div");
-      item.className = "ws-session-item";
-      if (String(s.id) === String(state.sessionId)) item.classList.add("active");
-      const importing = importingSessions.has(String(s.id));
-      const genLabel = generatingSessions.get(String(s.id));
-      if (importing) item.classList.add("session-importing");
-      else if (genLabel) item.classList.add("session-generating");
-      // A div rather than a button: Rename swaps an <input> into the title slot, and a
-      // form control must not be nested inside a button. The row click performs the switch.
-      const main = document.createElement("div");
-      main.className = "ws-session-main";
-      const head = document.createElement("span");
-      head.className = "ws-session-row-head";
-      if (isPinned(s.id)) {
-        const pin = document.createElement("span");
-        pin.className = "session-pinned";
-        pin.title = "Pinned";
-        pin.innerHTML = SESSION_ICONS.pin;
-        head.appendChild(pin);
-      }
-      const title = document.createElement("span");
-      title.className = "ws-session-row-title";
-      title.textContent = s.title || s.summary || s.id.slice(0, 8);
-      head.appendChild(title);
-      const metaRow = document.createElement("span");
-      metaRow.className = "ws-session-row-meta";
-      // Last update + where the session was started (folder wins over workspace: it is the
-      // narrower, more useful hint when a user has several sessions in one workspace).
-      const metaBits = [];
-      if (s.created_at) metaBits.push(new Date(s.created_at).toLocaleString());
-      const scopeName = s.meta && (s.meta.folder_name || s.meta.workspace_name);
-      if (scopeName) metaBits.push(scopeName);
-      if (importing) metaRow.textContent = "⏳ Importing…";
-      else if (genLabel) metaRow.textContent = `Generating ${genLabel}…`;
-      else metaRow.textContent = metaBits.join(" · ");
-      main.append(head, metaRow);
-      const preview = String(s.summary || "").trim();
-      if (preview && preview !== String(s.title || "") && !importing && !genLabel) {
-        const p = document.createElement("span");
-        p.className = "ws-session-preview";
-        p.textContent = preview;
-        main.append(p);
-      }
-      main.addEventListener("click", () => {
-        if (importing || genLabel) return; // locked while a job runs on this session
-        switchWorkspaceSession(s.id);
-      });
-      const more = document.createElement("button");
-      more.type = "button";
-      more.className = "ws-session-more";
-      more.title = "Session actions";
-      more.innerHTML = SESSION_ICONS.more;
-      more.disabled = importing || genLabel;
-      more.addEventListener("click", (e) => {
-        e.stopPropagation();
-        // Identical to the Chat row menu: same component (openSessionMenu), same entries
-        // (buildSessionMenu), same handlers — every action targets this row's session id
-        // only. A Workspace session is a full session, so Import / Mind Map / Slides /
-        // Summary all apply here exactly as they do in Chat.
-        openSessionMenu(more, buildSessionMenu(s, title));
-      });
-      item.append(main, more);
-      wsSessionList.appendChild(item);
+    for (const s of sorted) wsSessionList.appendChild(buildWsSessionRow(s));
+    if (state.wsHasMore) wsSessionList.appendChild(buildWsLoadMore());
+  }
+
+  // One picker row. Shared by the first render and by older pages, which insert rows in
+  // place so the menu keeps its scroll position.
+  function buildWsSessionRow(s) {
+    const item = document.createElement("div");
+    item.className = "ws-session-item";
+    if (String(s.id) === String(state.sessionId)) item.classList.add("active");
+    const importing = importingSessions.has(String(s.id));
+    const genLabel = generatingSessions.get(String(s.id));
+    if (importing) item.classList.add("session-importing");
+    else if (genLabel) item.classList.add("session-generating");
+    // A div rather than a button: Rename swaps an <input> into the title slot, and a
+    // form control must not be nested inside a button. The row click performs the switch.
+    const main = document.createElement("div");
+    main.className = "ws-session-main";
+    const head = document.createElement("span");
+    head.className = "ws-session-row-head";
+    if (isPinned(s.id)) {
+      const pin = document.createElement("span");
+      pin.className = "session-pinned";
+      pin.title = "Pinned";
+      pin.innerHTML = SESSION_ICONS.pin;
+      head.appendChild(pin);
     }
+    const title = document.createElement("span");
+    title.className = "ws-session-row-title";
+    title.textContent = s.title || s.summary || s.id.slice(0, 8);
+    head.appendChild(title);
+    const metaRow = document.createElement("span");
+    metaRow.className = "ws-session-row-meta";
+    // Last update + where the session was started (folder wins over workspace: it is the
+    // narrower, more useful hint when a user has several sessions in one workspace).
+    const metaBits = [];
+    if (s.created_at) metaBits.push(new Date(s.created_at).toLocaleString());
+    const scopeName = s.meta && (s.meta.folder_name || s.meta.workspace_name);
+    if (scopeName) metaBits.push(scopeName);
+    if (importing) metaRow.textContent = "⏳ Importing…";
+    else if (genLabel) metaRow.textContent = `Generating ${genLabel}…`;
+    else metaRow.textContent = metaBits.join(" · ");
+    main.append(head, metaRow);
+    const preview = String(s.summary || "").trim();
+    if (preview && preview !== String(s.title || "") && !importing && !genLabel) {
+      const p = document.createElement("span");
+      p.className = "ws-session-preview";
+      p.textContent = preview;
+      main.append(p);
+    }
+    main.addEventListener("click", () => {
+      if (state.mode !== "files") return; // the WorkSpace list only drives Files mode
+      if (importing || genLabel) return; // locked while a job runs on this session
+      switchWorkspaceSession(s.id);
+    });
+    const more = document.createElement("button");
+    more.type = "button";
+    more.className = "ws-session-more";
+    more.title = "Session actions";
+    more.innerHTML = SESSION_ICONS.more;
+    more.disabled = importing || genLabel;
+    more.addEventListener("click", (e) => {
+      e.stopPropagation();
+      // Identical to the Chat row menu: same component (openSessionMenu), same entries
+      // (buildSessionMenu), same handlers — every action targets this row's session id
+      // only. A Workspace session is a full session, so Import / Mind Map / Slides /
+      // Summary all apply here exactly as they do in Chat.
+      openSessionMenu(more, buildSessionMenu(s, title));
+    });
+    item.append(main, more);
+    return item;
+  }
+
+  // The picker's paging control. It stays at the bottom of the list (inside the scroller),
+  // so reaching it is the same gesture as reaching the end of the list.
+  function buildWsLoadMore() {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "ws-session-load-more";
+    btn.textContent = state.wsLoadingMore ? "Loading…" : "Load older sessions";
+    btn.disabled = state.wsLoadingMore;
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      loadMoreWorkspaceSessions();
+    });
+    return btn;
   }
 
   async function switchWorkspaceSession(id) {
@@ -7690,10 +8156,14 @@
     // Clear immediately: the previous conversation must never linger under the new name.
     chatLog.innerHTML = "";
     state.renderedMsgIds = new Set();
+    resetHistory(); // its cursor belongs to the conversation being replaced
     // A picker switch is a conversation transition just like a mode switch: take part in
     // the epoch guard so two rapid switches cannot interleave their restores.
-    const ok = await resumeSession(id, { silent: true, modeSeq: ++state.modeSeq });
-    if (!ok) {
+    const outcome = {};
+    const ok = await resumeSession(id, { silent: true, modeSeq: ++state.modeSeq, outcome });
+    // A superseded restore means a newer picker click owns the pane now — leave its session
+    // (and the pointer it wrote) alone; only a genuine failure resets to a blank chat.
+    if (!ok && !outcome.superseded) {
       setWsPointer(null);
       state.modeSessions.files = null;
       newChat();

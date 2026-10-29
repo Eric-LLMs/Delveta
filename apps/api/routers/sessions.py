@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import datetime
 from uuid import UUID
 
 from agent.security.approvals import get_approval_bridge
@@ -14,11 +15,22 @@ from api.deps import get_agent, get_drive_service
 from api.routers._shared import byte_stream as _stream
 from api.routers._shared import disposition_header as _disposition
 from api.schemas import ApprovalResolveRequest, ReconcileRequest, SessionRenameRequest
+from api.session_history_cursor import CursorError, decode_cursor, encode_cursor
+from api.session_list_cursor import (
+    SessionCursorError,
+    decode_session_cursor,
+    encode_session_cursor,
+)
 from core.application.chat_asset_service import ChatAssetService
 from core.application.drive_service import DriveService
 from core.infrastructure.db import ChunkModel, MessageModel, SessionLocal, SessionModel
-from core.infrastructure.memory import list_sessions, load_session_detail, reconcile_messages
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from core.infrastructure.memory import (
+    list_sessions_by_ids,
+    list_sessions_page,
+    load_session_detail,
+    reconcile_messages,
+)
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select, update
 
@@ -54,12 +66,6 @@ async def _backfill_imported_rag(session_factory, user_id: UUID, session_id: UUI
                 )
             )
         ).all()
-        msg_rows = (
-            await session.execute(
-                select(MessageModel.id, MessageModel.role, MessageModel.imported_rag)
-                .where(MessageModel.session_id == session_id)
-            )
-        ).all()
     covered: set[str] = set()
     legacy_blanket = False
     for source_id, meta in chunk_rows:
@@ -73,8 +79,18 @@ async def _backfill_imported_rag(session_factory, user_id: UUID, session_id: UUI
                 covered.update(str(c) for c in cov)
             else:
                 covered.add(source_id)  # legacy single-pair: source_id is the user-message id
+    # Nothing was ever imported into the repo: return BEFORE reading the session's message
+    # rows. History is paged now, and a session-wide read here would undo that for every
+    # open (this is the common case — most sessions have no chat chunks).
     if not covered and not legacy_blanket:
         return
+    async with session_factory() as session:
+        msg_rows = (
+            await session.execute(
+                select(MessageModel.id, MessageModel.role, MessageModel.imported_rag)
+                .where(MessageModel.session_id == session_id)
+            )
+        ).all()
     already = {str(mid) for mid, _, flag in msg_rows if flag}
     user_ids = [str(mid) for mid, role, _ in msg_rows if role == "user"]
     if legacy_blanket or covered.issuperset(user_ids):
@@ -91,11 +107,41 @@ async def _backfill_imported_rag(session_factory, user_id: UUID, session_id: UUI
         await session.commit()
 
 
+_MAX_SESSION_IDS = 50
+
+
+def _parse_session_ids(raw: str) -> list[UUID]:
+    """Parse ``ids=a,b,c`` (deduped, order kept); a bad or oversized list is a 400."""
+    parts = [p.strip() for p in raw.split(",") if p.strip()]
+    out: list[UUID] = []
+    seen: set[UUID] = set()
+    for part in parts:
+        try:
+            sid = UUID(part)
+        except ValueError:
+            raise HTTPException(
+                status_code=400, detail="ids must be comma-separated UUIDs"
+            ) from None
+        if sid not in seen:
+            seen.add(sid)
+            out.append(sid)
+    if not out:
+        raise HTTPException(status_code=400, detail="ids must not be empty")
+    if len(out) > _MAX_SESSION_IDS:
+        raise HTTPException(
+            status_code=400, detail=f"at most {_MAX_SESSION_IDS} ids per request"
+        )
+    return out
+
+
 @router.get("/sessions")
 async def get_sessions(
     user: AuthUser = Depends(require_user),
     q: str | None = None,
     kind: str = "chat",
+    limit: int = Query(50, ge=1, le=200),
+    before: str | None = None,
+    ids: str | None = None,
 ) -> dict:
     """List the authenticated user's sessions (newest first) for one surface.
 
@@ -104,15 +150,52 @@ async def get_sessions(
     WorkSpace conversation and vice versa. Research sessions (type 1) belong to their
     task and are listed by neither lane. ``?q=`` filters by title / summary / message
     content (case-insensitive substring).
+
+    Paged by default: ``limit`` (1–200) rows, oldest position echoed as ``next_before``,
+    and ``has_more`` says whether an older page exists. ``?before=`` walks strictly
+    older. ``?ids=a,b,c`` (≤50) is the pinned-session batch: it returns exactly those of
+    the caller's sessions in this lane and ignores paging; ids the caller does not own
+    are simply absent.
     """
     if kind not in ("chat", "workspace"):
         raise HTTPException(status_code=400, detail="kind must be 'chat' or 'workspace'")
     q = (q or "").strip()
-    sessions = await list_sessions(SessionLocal, user.user_id, q or None, kind=kind)
     # The lane filter already ran in SQL; re-assert it at the route boundary so a session of
     # another kind can never leak into this list (research-session isolation contract).
     lane_type = 0 if kind == "chat" else 2
-    return {"sessions": [s for s in sessions if s.get("type") == lane_type]}
+
+    if ids is not None:
+        if before:
+            raise HTTPException(
+                status_code=400, detail="ids and before cannot be combined"
+            )
+        rows = await list_sessions_by_ids(
+            SessionLocal, user.user_id, _parse_session_ids(ids), kind=kind
+        )
+        return {
+            "sessions": [s for s in rows if s.get("type") == lane_type],
+            "has_more": False,
+            "next_before": None,
+        }
+
+    position = None
+    if before:
+        try:
+            position = decode_session_cursor(before)
+        except SessionCursorError:
+            raise HTTPException(status_code=400, detail="invalid cursor") from None
+
+    sessions, has_more = await list_sessions_page(
+        SessionLocal, user.user_id, q or None, kind=kind, limit=limit, before=position
+    )
+    sessions = [s for s in sessions if s.get("type") == lane_type]
+    next_before = None
+    if has_more and sessions:
+        oldest = sessions[-1]
+        next_before = encode_session_cursor(
+            (datetime.fromisoformat(oldest["created_at"]), UUID(oldest["id"]))
+        )
+    return {"sessions": sessions, "has_more": has_more, "next_before": next_before}
 
 
 @router.post("/sessions/attachments")
@@ -196,17 +279,37 @@ async def download_chat_attachment(
 
 
 @router.get("/sessions/{session_id}")
-async def get_session_messages(session_id: UUID, user: AuthUser = Depends(require_user)):
-    """Return a session's title + messages (with ids) if it belongs to the current user."""
+async def get_session_messages(
+    session_id: UUID,
+    limit: int = Query(50, ge=1, le=200),
+    before: str | None = Query(None),
+    user: AuthUser = Depends(require_user),
+):
+    """Return a session's title + one page of messages (with ids) for the current user.
+
+    History is paged newest-first: the default page is the latest 50 rows, and ``before``
+    (the ``next_before`` of the previous page) walks further back. ``has_more`` says whether
+    an older page exists; ``next_before`` is the cursor to request it. Paging happens in the
+    database (keyset ``LIMIT``), never by loading the session and slicing it here.
+    """
     async with SessionLocal() as session:
         sess = (
             await session.execute(select(SessionModel).where(SessionModel.id == session_id))
         ).scalar_one_or_none()
     if sess is None or sess.user_id != user.user_id:
         raise HTTPException(status_code=404, detail="session not found")
+    cursor = None
+    if before is not None:
+        try:
+            cursor = decode_cursor(before)
+        except CursorError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
     # Recover pre-flag imported state onto the message rows so the response below carries it.
-    await _backfill_imported_rag(SessionLocal, user.user_id, session_id)
-    detail = await load_session_detail(SessionLocal, session_id)
+    # First page only: the flags are persisted, and the newest page is always requested
+    # first, so every later page already reads correct flags without another backfill pass.
+    if before is None:
+        await _backfill_imported_rag(SessionLocal, user.user_id, session_id)
+    detail = await load_session_detail(SessionLocal, session_id, limit=limit, before=cursor)
     # ``compaction`` is the durable checkpoint inlined for Live-State RECOVERY: a client
     # that lost its in-memory state rebuilds [summary]+[tail] from here, then returns to
     # zero-read turns. Recovery is its only purpose — normal chat never reads it.
@@ -218,6 +321,11 @@ async def get_session_messages(session_id: UUID, user: AuthUser = Depends(requir
         "meta": sess.meta or {},
         "compaction": detail["compaction"],
         "messages": detail["messages"],
+        "has_more": detail["has_more"],
+        "next_before": encode_cursor(detail["next_before"]) if detail["has_more"] else None,
+        # The session's first message, sent only when the title is unset (a paged client
+        # cannot derive the fallback heading from the newest page alone).
+        "first_message": detail["first_message"],
     }
 
 

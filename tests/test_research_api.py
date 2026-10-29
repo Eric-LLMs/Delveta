@@ -491,13 +491,16 @@ class TestSessionIsolation:
         normal_id = str(uuid.uuid4())
         research_session_id = str(uuid.uuid4())
 
-        async def _fake_list_sessions(*_args, **_kwargs):
-            return [
-                {"id": normal_id, "created_at": None, "summary": None, "title": "normal", "type": 0},
-                {"id": research_session_id, "created_at": None, "summary": None, "title": "research", "type": 1},
-            ]
+        async def _fake_list_page(*_args, **_kwargs):
+            return (
+                [
+                    {"id": normal_id, "created_at": None, "summary": None, "title": "normal", "type": 0},
+                    {"id": research_session_id, "created_at": None, "summary": None, "title": "research", "type": 1},
+                ],
+                False,
+            )
 
-        monkeypatch.setattr(sessions_module, "list_sessions", _fake_list_sessions)
+        monkeypatch.setattr(sessions_module, "list_sessions_page", _fake_list_page)
         result = await sessions_module.get_sessions(user=_auth(USER), q=None)
         assert [s["id"] for s in result["sessions"]] == [normal_id]
 

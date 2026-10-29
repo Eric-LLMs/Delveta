@@ -52,6 +52,7 @@ from core.infrastructure.memory import (
     assemble_recovery_history,
     finalize_session,
     load_session_detail,
+    message_order_by,
 )
 from core.infrastructure.repositories import (
     SqlArticleRepository,
@@ -1057,7 +1058,8 @@ async def chat_session_import(ctx, job_id: str, payload: dict) -> dict:
                         MessageModel.session_id == session_id,
                         MessageModel.role.in_(("user", "assistant")),
                     )
-                    .order_by(MessageModel.created_at)
+                    # Pair user/assistant rows in the same order the transcript shows them.
+                    .order_by(*message_order_by())
                 )
             ).scalars().all()
             # The message → owned chat-asset map, read from the chat_attachments authority

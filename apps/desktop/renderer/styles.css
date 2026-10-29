@@ -1045,6 +1045,26 @@ pre.text-viewer {
 
 #chat-log { flex: 1; min-height: 0; overflow: auto; padding: 16px 16px 12px; display: flex; flex-direction: column; gap: 10px; }
 
+/* History-paging chip. Absolutely positioned in #chat (the log's positioned ancestor) so
+   showing "Loading earlier messages…" never reflows or scrolls the transcript. */
+#history-loading {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 3;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border-soft);
+  background: var(--bg-elev);
+  color: var(--fg-dim);
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: var(--shadow-1);
+}
+#history-loading.hidden { display: none; }
+
 .msg { max-width: min(80%, 760px); display: flex; flex-direction: column; gap: 2px; position: relative; }
 .msg.user { align-self: flex-end; align-items: flex-end; }
 .msg.assistant { align-self: flex-start; align-items: flex-start; }
