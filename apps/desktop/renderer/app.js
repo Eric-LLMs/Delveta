@@ -612,9 +612,15 @@
         localCtxEl.appendChild(mk("trash", "Delete file", () => deleteFileFromWorkspace(ctx.targetPath)));
       }
     }
-    localCtxEl.style.left = `${Math.min(x, window.innerWidth - 200)}px`;
-    localCtxEl.style.top = `${Math.min(y, window.innerHeight - 120)}px`;
     document.body.appendChild(localCtxEl);
+    // x/y are pointer coordinates (painted px); the menu is positioned in layout px, so the
+    // point is converted before it is clamped against the live viewport.
+    const p = placeAtPoint(layoutPoint(x, y), {
+      width: localCtxEl.offsetWidth,
+      height: localCtxEl.offsetHeight,
+    }, layoutViewport());
+    localCtxEl.style.left = `${p.left}px`;
+    localCtxEl.style.top = `${p.top}px`;
   }
   function closeLocalCtxMenu() {
     if (localCtxEl) { localCtxEl.remove(); localCtxEl = null; }
@@ -4042,7 +4048,80 @@
     // and clip the chat form / sidebar footer. #app divides its height by --ui-zoom
     // to land exactly inside the viewport with a small bottom clearance.
     document.body.style.setProperty("--ui-zoom", String(z));
+    // Menus already on screen moved and resized with the zoom; let each re-place itself.
+    repositionOpenPopovers();
   }
+
+  // ── Popover placement (body zoom aware) ──
+  // Body zoom (font size × UI scale) scales painted pixels, but getBoundingClientRect() and
+  // inline left/top offsets stay in the zoomed layout space, while pointer coordinates
+  // (clientX/clientY) and elementFromPoint() use painted pixels. Mixing the two let a fixed
+  // menu paint past the right edge at font sizes above 100% — it was invisible, not missing.
+  // Every popover therefore converts at its entry point, measures its own rendered size, and
+  // is placed against the layout viewport taken at open time.
+  const POPOVER_GAP = 4;
+  const POPOVER_MARGIN = 8;
+
+  function layoutZoom() {
+    return parseFloat(document.body.style.zoom) || 1;
+  }
+  // Visible bounds in layout px — the space rects and inline offsets share. clientWidth
+  // already excludes scrollbars; dividing by the live zoom makes the two ends comparable.
+  function layoutViewport() {
+    const zoom = layoutZoom();
+    return {
+      left: 0,
+      top: 0,
+      width: document.documentElement.clientWidth / zoom,
+      height: document.documentElement.clientHeight / zoom,
+    };
+  }
+  function layoutPoint(x, y) {
+    const zoom = layoutZoom();
+    return { x: x / zoom, y: y / zoom };
+  }
+  // bounds and anchor are layout px; size is the menu's rendered size (offsetWidth/Height).
+  // "beside" opens right of the anchor and flips left when it does not fit; "start" lines the
+  // left edges up and slides left to fit (the WorkSpace picker). Both flip vertically.
+  function placePopover(anchor, size, bounds, opts = {}) {
+    const gap = opts.gap ?? POPOVER_GAP;
+    const margin = opts.margin ?? POPOVER_MARGIN;
+    const right = bounds.left + bounds.width;
+    const bottom = bounds.top + bounds.height;
+    const fitsAt = (left) => left >= bounds.left + margin && left + size.width <= right - margin;
+    let left = opts.align === "start" ? anchor.left : anchor.right + gap;
+    if (!fitsAt(left)) {
+      left = opts.align === "start" ? right - margin - size.width : anchor.left - gap - size.width;
+    }
+    let top = anchor.bottom + gap;
+    if (top + size.height > bottom - margin && anchor.top - gap - size.height >= bounds.top + margin) {
+      top = anchor.top - gap - size.height;
+    }
+    const minLeft = bounds.left + margin;
+    const minTop = bounds.top + margin;
+    return {
+      left: Math.max(minLeft, Math.min(left, Math.max(minLeft, right - margin - size.width))),
+      top: Math.max(minTop, Math.min(top, Math.max(minTop, bottom - margin - size.height))),
+    };
+  }
+  // A popover anchored to a pointer (context menu): the cursor is the top-left corner, and
+  // the menu opens towards the inside when it would cross the right or bottom edge.
+  function placeAtPoint(point, size, bounds, margin = POPOVER_MARGIN) {
+    return {
+      left: Math.max(bounds.left + margin,
+        Math.min(point.x, bounds.left + bounds.width - margin - size.width)),
+      top: Math.max(bounds.top + margin,
+        Math.min(point.y, bounds.top + bounds.height - margin - size.height)),
+    };
+  }
+  // A font-size or zoom change rescales both the anchor and the rendered menu, so open popovers
+  // re-measure through their own callback instead of being corrected by a delta.
+  const popoverRepositioners = [];
+  function repositionOpenPopovers() {
+    for (const fn of popoverRepositioners) fn();
+  }
+  window.addEventListener("resize", () => repositionOpenPopovers());
+
   function applyFontSize(px) {
     if (fontSizeSelect) fontSizeSelect.value = String(px);
     try { localStorage.setItem(FONT_SIZE_KEY, String(px)); } catch { /* ignore */ }
@@ -5673,8 +5752,18 @@
     if (!text || !inViewer || !sel.rangeCount) { viewerPinBtn.classList.add("hidden"); return; }
     const rect = sel.getRangeAt(0).getBoundingClientRect();
     if (!rect || (!rect.width && !rect.height)) { viewerPinBtn.classList.add("hidden"); return; }
-    viewerPinBtn.style.left = Math.max(8, Math.min(rect.right + 6, window.innerWidth - 120)) + "px";
-    viewerPinBtn.style.top = Math.max(8, rect.top - 32) + "px";
+    // The range rect and the button's inline offset are both layout px; only the viewport
+    // bounds need the live zoom, so the whole button stays inside the window at any font size.
+    const p = placeAtPoint(
+      { x: rect.right + 6, y: rect.top - 32 },
+      {
+        width: viewerPinBtn.offsetWidth || 120,
+        height: viewerPinBtn.offsetHeight || 28,
+      },
+      layoutViewport(),
+    );
+    viewerPinBtn.style.left = `${p.left}px`;
+    viewerPinBtn.style.top = `${p.top}px`;
     viewerPinBtn.classList.remove("hidden");
   });
   viewerPinBtn.addEventListener("click", (e) => {
@@ -7379,8 +7468,9 @@
     setPinned(list);
   }
 
-  // One shared dropdown, positioned under the ⋯ button that opened it.
+  // One shared dropdown, positioned next to the ⋮/⋯ button that opened it.
   let sessionMenuEl = null;
+  let sessionMenuAnchor = null;
   function ensureSessionMenu() {
     if (sessionMenuEl) return sessionMenuEl;
     sessionMenuEl = document.createElement("div");
@@ -7388,6 +7478,19 @@
     document.body.appendChild(sessionMenuEl);
     return sessionMenuEl;
   }
+  // Measured on each placement: the entries and the font size decide the rendered size, so a
+  // font change moves the flip point instead of leaving the menu partly off-screen.
+  function positionSessionMenu(anchor) {
+    if (!sessionMenuEl || !anchor || !sessionMenuEl.classList.contains("open")) return;
+    sessionMenuAnchor = anchor;
+    const p = placePopover(anchor.getBoundingClientRect(), {
+      width: sessionMenuEl.offsetWidth || 200,
+      height: sessionMenuEl.offsetHeight || 0,
+    }, layoutViewport());
+    sessionMenuEl.style.left = `${p.left}px`;
+    sessionMenuEl.style.top = `${p.top}px`;
+  }
+  popoverRepositioners.push(() => positionSessionMenu(sessionMenuAnchor));
   function closeSessionMenu() {
     if (sessionMenuEl) {
       sessionMenuEl.classList.remove("open");
@@ -7409,17 +7512,7 @@
       menu.appendChild(row);
     }
     menu.classList.add("open");
-    const r = anchor.getBoundingClientRect();
-    const mw = menu.offsetWidth || 200;
-    const mh = menu.offsetHeight || items.length * 34 + 8;
-    let left = r.right + 4;
-    if (left + mw > window.innerWidth - 8) left = r.left - mw - 4;
-    if (left < 8) left = 8;
-    let top = r.bottom + 4;
-    if (top + mh > window.innerHeight - 8) top = r.top - mh - 4;
-    if (top < 8) top = 8;
-    menu.style.left = `${left}px`;
-    menu.style.top = `${top}px`;
+    positionSessionMenu(anchor);
   }
   document.addEventListener("click", (e) => {
     if (sessionMenuEl && sessionMenuEl.classList.contains("open") && !sessionMenuEl.contains(e.target)) closeSessionMenu();
@@ -8173,22 +8266,35 @@
 
   function positionWsMenu() {
     if (!wsSessionTrigger || !wsSessionMenu) return;
-    const r = wsSessionTrigger.getBoundingClientRect();
-    const mw = wsSessionMenu.offsetWidth || 340;
-    const mh = wsSessionMenu.offsetHeight || 320;
-    let left = r.left;
-    if (left + mw > window.innerWidth - 8) left = window.innerWidth - mw - 8;
-    if (left < 8) left = 8;
-    let top = r.bottom + 6;
-    if (top + mh > window.innerHeight - 8) top = Math.max(8, r.top - mh - 6);
-    // #chat declares `container-type: inline-size`, whose layout containment makes it the
-    // containing block for this fixed-position menu. Express the viewport-clamped point in
-    // that block's coordinate space or the menu lands off-screen by the panel's offset.
+    // The panel is fixed inside #chat (its `container-type` makes that pane the containing
+    // block), so the anchor and the viewport are both expressed in the block's layout space
+    // first; placement then uses the same units on every side.
     const block = wsSessionTrigger.offsetParent;
-    const br = block ? block.getBoundingClientRect() : { left: 0, top: 0 };
-    wsSessionMenu.style.left = `${left - br.left}px`;
-    wsSessionMenu.style.top = `${top - br.top}px`;
+    const origin = block ? block.getBoundingClientRect() : { left: 0, top: 0 };
+    const viewport = layoutViewport();
+    const bounds = {
+      left: viewport.left - origin.left,
+      top: viewport.top - origin.top,
+      width: viewport.width,
+      height: viewport.height,
+    };
+    const r = wsSessionTrigger.getBoundingClientRect();
+    const anchor = {
+      left: r.left - origin.left,
+      right: r.right - origin.left,
+      top: r.top - origin.top,
+      bottom: r.bottom - origin.top,
+    };
+    const p = placePopover(anchor, {
+      width: wsSessionMenu.offsetWidth || 340,
+      height: wsSessionMenu.offsetHeight || 320,
+    }, bounds, { align: "start", gap: 6 });
+    wsSessionMenu.style.left = `${p.left}px`;
+    wsSessionMenu.style.top = `${p.top}px`;
   }
+  popoverRepositioners.push(() => {
+    if (wsSessionMenu && !wsSessionMenu.classList.contains("hidden")) positionWsMenu();
+  });
 
   function openWsMenu() {
     if (!wsSessionMenu) return;
