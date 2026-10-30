@@ -33,6 +33,7 @@ global/config key is ever consulted):
 from __future__ import annotations
 
 import base64
+import logging
 from typing import Any, Optional
 from uuid import UUID
 
@@ -44,9 +45,12 @@ from core.infrastructure.db import (
     RoleCredentialModel,
     UserModel,
 )
+from core.infrastructure.request_context import get_request_content_sink
 from core.infrastructure.security import authorize_usage, get_role
 from fastapi import HTTPException
 from sqlalchemy import select
+
+logger = logging.getLogger(__name__)
 
 # The model sees this prompt when the caller did not pass a specific question.
 DEFAULT_PROMPT = (
@@ -278,24 +282,35 @@ async def describe_image(
     hard-block, the model's own response decides. When the whole chain fails
     :class:`VisionUnsupported` is raised; callers print the friendly "image processing is
     not supported" (chat) or skip the image (ingest captioning).
+
+    Inside a live chat turn (the executor installed its content sink) the same chain is
+    walked with ``chat_stream``: each content delta reaches the user immediately and the
+    accumulated text stays the tool's return value. Everywhere else — worker captioning,
+    non-streaming ``/chat`` — the sink is absent and the whole answer is returned as before.
     """
     url = data_url(data, mime)
     chain = await resolve_vision_channels(
         session_factory, user_id=user_id, role_id=role_id
     )
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": prompt or DEFAULT_PROMPT},
+                {"type": "image_url", "image_url": {"url": url}},
+            ],
+        }
+    ]
+    sink = get_request_content_sink()
+    if sink is not None and hasattr(llm, "chat_stream"):
+        return await _describe_streaming(
+            llm=llm, messages=messages, chain=chain, sink=sink
+        )
     errors: list[str] = []
     for base_url, api_key, provider_model in chain:
         try:
             resp = await llm.chat(
-                [
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": prompt or DEFAULT_PROMPT},
-                            {"type": "image_url", "image_url": {"url": url}},
-                        ],
-                    }
-                ],
+                messages,
                 model=provider_model,
                 base_url=base_url,
                 api_key=api_key,
@@ -306,6 +321,50 @@ async def describe_image(
             errors.append(f"{provider_model}: {exc}")
         if text:
             return text
+    raise VisionUnsupported(
+        "vision: no authorized model could process the image"
+        + (f" — {'; '.join(errors)}" if errors else "")
+    )
+
+
+async def _describe_streaming(*, llm, messages: list[dict],
+                             chain: list[tuple[str, str, str]],
+                             sink) -> str:
+    """Stream one analysis down the chain, emitting each delta to ``sink``.
+
+    Fail-over follows the non-streaming rule (a channel that errors or produces no text
+    moves to the next one) with ONE exception: once a delta has reached the user, the
+    text on screen is final — a later fault returns that prefix instead of replaying a
+    second, different answer. The returned string is exactly what was streamed, so the
+    executor's ``done.answer`` and the persisted row cannot diverge from it.
+    """
+    parts: list[str] = []
+    errors: list[str] = []
+    for base_url, api_key, provider_model in chain:
+        try:
+            async for event in llm.chat_stream(
+                messages,
+                model=provider_model,
+                base_url=base_url,
+                api_key=api_key,
+            ):
+                if event.get("type") != "content":
+                    continue
+                delta = event.get("data") or ""
+                if not delta:
+                    continue
+                parts.append(delta)
+                sink(delta)
+        except Exception as exc:  # noqa: BLE001 — see the fail-over rule above
+            errors.append(f"{provider_model}: {exc}")
+            if parts:
+                logger.warning("vision: stream failed after %d chars, keeping the "
+                               "prefix (model=%s): %r", len("".join(parts)),
+                               provider_model, exc)
+                return "".join(parts)
+            continue
+        if parts:
+            return "".join(parts)
     raise VisionUnsupported(
         "vision: no authorized model could process the image"
         + (f" — {'; '.join(errors)}" if errors else "")
