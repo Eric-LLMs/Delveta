@@ -23,6 +23,7 @@ from api.session_list_cursor import (
 )
 from core.application.chat_asset_service import ChatAssetService
 from core.application.drive_service import DriveService
+from core.config import settings
 from core.infrastructure.db import ChunkModel, MessageModel, SessionLocal, SessionModel
 from core.infrastructure.memory import (
     list_sessions_by_ids,
@@ -490,6 +491,13 @@ async def revert_checkpoint(checkpoint_id: str, user: AuthUser = Depends(require
     rolls the workspace back to a known-good state after a bad batch of agent file edits.
     """
     agent = get_agent()
+    if not settings.checkpoint_enabled:
+        # Automatic snapshots are off by default (checkpoint_enabled=false), so no
+        # checkpoint id exists. Answer 410 — a retired capability, not a transient outage.
+        raise HTTPException(
+            status_code=410,
+            detail="workspace checkpoints are disabled (checkpoint_enabled=false)",
+        )
     if agent.checkpoints is None:
         raise HTTPException(status_code=503, detail="workspace checkpoints are disabled")
     try:

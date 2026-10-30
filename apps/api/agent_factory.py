@@ -250,8 +250,16 @@ def get_agent_kernel() -> AgentKernel:
         memory=memory,
         skills=skills,
         sandbox=sandbox,
-        checkpoints=CheckpointStore(
-            settings.workspace_dir, settings.workspace_dir / settings.checkpoint_dir
+        # Automatic workspace snapshots are opt-in (settings.checkpoint_enabled, default
+        # OFF). With no store wired the kernel takes no snapshot and never registers
+        # revert_to_checkpoint, so no shadow repo is created. The implementation stays
+        # in agent.tools.checkpoints for when the feature is re-enabled.
+        checkpoints=(
+            CheckpointStore(
+                settings.workspace_dir, settings.workspace_dir / settings.checkpoint_dir
+            )
+            if settings.checkpoint_enabled
+            else None
         ),
         config=KernelConfig(recall_top_k=settings.memory_recall_top_k),
     )

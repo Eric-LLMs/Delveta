@@ -665,6 +665,12 @@ roll the workspace back to a known-good state after a bad batch of agent file ed
 is initialized once with ignore rules in ``info/exclude`` (never a ``.gitignore`` in the user's
 workspace); large media and derived artifacts never enter a snapshot, keeping each commit small.
 
+Automatic snapshots are **off by default** (``settings.checkpoint_enabled = false``). With the
+switch off no ``CheckpointStore`` is wired into the kernel, so no shadow repo is created, no
+snapshot is taken, and ``revert_to_checkpoint`` is not registered; the revert endpoint answers
+**410 Gone**. The implementation stays intact and the feature can be re-enabled by turning the
+switch back on.
+
 [↑ Back to top](#table-of-contents)
 
 ## 6. Tool Runtime

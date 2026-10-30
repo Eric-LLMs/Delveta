@@ -288,6 +288,11 @@ class Settings(BaseSettings):
     max_budget_per_turn_usd: float = 1.0
     # Workspace checkpoints: shadow-git snapshot dir (relative to the workspace root).
     checkpoint_dir: Path = Path(".delveta-snapshots")
+    # Automatic pre-turn workspace snapshots. OFF by default: snapshotting the whole
+    # workspace costs seconds on every turn and the shadow repo grows to gigabytes. The
+    # implementation (CheckpointStore, revert_to_checkpoint, the revert API) stays intact;
+    # this switch only decides whether a store is wired into the agent kernel.
+    checkpoint_enabled: bool = False
     # Agent audit trail: one JSONL line per turn event (best-effort; dir created on demand).
     audit_log_path: Path = Path("data/audit.jsonl")
 
