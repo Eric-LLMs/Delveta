@@ -6,12 +6,18 @@ side-effect tools (``create_folder`` …), whose deterministic output IS the
 confirmation, and wrong for query tools (web / rag / social search), whose output is
 retrieved MATERIAL — titles, URLs, snippets, page text — not an answer.
 
-The same split applies to a document the user asked about: ``read_document`` hands
-back the document's own text, which is material, not an answer. The user's sentence
-decides what the turn makes of it — explain, summarize, analyse, compare, or (when the
-sentence asks for the text itself) reproduce it faithfully. Capabilities whose whole
-purpose is to hand the material back unchanged (``pdf_extract_text``, ``read_file``)
-stay out of this set: their own exact output is the deliverable.
+The same split applies to a document the user asked about: ``read_document``,
+``pdf_extract_text`` and ``read_file`` hand back the document's own text, which is
+material, not an answer. The user's sentence decides what the turn makes of it —
+explain, summarize, analyse, compare — or, when the sentence asks for the text itself,
+hand that text back untouched.
+
+"Ask for the text itself" is decided by the model inside the SAME completion: when the
+request is only to see the material's own text it replies with :data:`_VERBATIM_TOKEN`
+and nothing else, and the executor streams the tool's own text in chunks instead of the
+model's copy. That keeps one model call per turn while guaranteeing the verbatim answer
+is complete, in order, unrewritten and never truncated by the model's output limit. The
+marker is internal: it is never streamed and never saved.
 
 This module owns the missing step for exactly those tools: one LLM completion that
 turns (user question + retrieved material) into a user-facing answer. It reuses
@@ -37,11 +43,21 @@ from collections.abc import AsyncIterator
 logger = logging.getLogger(__name__)
 
 # The query capabilities whose tool output is material rather than an answer. Every
-# other tool keeps the deterministic output it already produces. ``read_document``'s
-# capability is "read the document and answer from its contents", so its extracted
-# text is input to the turn's answer, never the answer itself.
+# other tool keeps the deterministic output it already produces. ``read_document``,
+# ``pdf_extract_text`` and ``read_file`` return the user's own text: the turn's
+# sentence decides whether it is answered from (explain/summarize/analyse/compare) or
+# handed back as-is (the verbatim marker).
 SYNTHESIS_TOOLS = frozenset(
-    {"web_search", "rag_search", "search_social", "read_document"})
+    {"web_search", "rag_search", "search_social",
+     "read_document", "pdf_extract_text", "read_file"})
+
+# The model's internal control marker for "the user only asked for the text". It is
+# never streamed and never saved: the executor answers with the tool's own text.
+_VERBATIM_TOKEN = "[[VERBATIM]]"
+
+# Raw material is streamed in chunks of this size so a long document renders
+# progressively instead of arriving as one frame.
+_VERBATIM_CHUNK_CHARS = 512
 
 # Belt against pathological tool output blowing the prompt (the search tools bound
 # their own page text): truncation is stated in the prompt so the model never reads a
@@ -53,14 +69,34 @@ _SYSTEM_PROMPT = (
     "prompt. Use ONLY that material: do not add facts, numbers, dates or events it "
     "does not state, and never invent a source, citation or link. If the material "
     "does not answer the question, say so plainly and name what is missing. When the "
-    "user asks for the material's own text — to extract, transcribe, export, quote "
-    "or read the original — reproduce that text faithfully and completely, without "
-    "summarizing, rewriting or omitting any of it. Otherwise organize the material "
-    "into a direct answer — summarize, compare or analyse as the question requires — "
-    "instead of repeating it verbatim. Preserve the sources, URLs and citations the "
-    "material carries, and cite nothing else. Reply in the same language as the "
-    "user's question."
+    "user's request is ONLY to see the material's own text — to read, extract, "
+    "transcribe, export, show or quote the original — reply with exactly "
+    f"{_VERBATIM_TOKEN} and nothing else; the system then delivers the material "
+    "itself, so never reproduce it. Do not use that marker when the request also "
+    "asks for anything done WITH the text (summarize, explain, analyse, compare, "
+    "extend, or quote parts while answering): answer normally instead. Otherwise "
+    "organize the material into a direct answer — summarize, compare or analyse as "
+    "the question requires — instead of repeating it verbatim. Preserve the sources, "
+    "URLs and citations the material carries, and cite nothing else. Reply in the "
+    "same language as the user's question."
 )
+
+
+def _verbatim_chunks(text: str, size: int = _VERBATIM_CHUNK_CHARS) -> list[str]:
+    """The material in fixed-size chunks, in order, with nothing dropped or added."""
+    return [text[i:i + size] for i in range(0, len(text), size)] or [text]
+
+
+async def _close_stream(stream: object) -> None:
+    """Stop the model stream once the reply's mode is known (best effort)."""
+    close = getattr(stream, "aclose", None)
+    if close is None:
+        return
+    try:
+        await close()
+    except Exception:  # noqa: BLE001 - closing is best-effort, never a turn failure
+        logger.debug("chat.answer-synthesis: closing the model stream failed",
+                     exc_info=True)
 
 
 def build_prompt(query: str, tool: str, raw_output: str) -> str:
@@ -72,9 +108,9 @@ def build_prompt(query: str, tool: str, raw_output: str) -> str:
     return (
         f"User question:\n{query}\n\n"
         f"Material (tool: {tool}):\n{material}\n\n"
-        "Answer the user's question from this material: do what the question asks "
-        "with it — explain, summarize, analyse or compare it, or reproduce its text "
-        "when that is what was asked."
+        "Answer the user's question from this material: explain, summarize, analyse, "
+        "compare or otherwise work on it as the question requires. If the request is "
+        f"only to see the material's own text, reply with {_VERBATIM_TOKEN} alone."
     )
 
 
@@ -110,6 +146,14 @@ async def synthesize_answer(deps, ctx, tool: str, raw_output: str) -> str:
 
     duration_ms = (time.perf_counter() - t0) * 1000
     answer = (answer or "").strip()
+    if answer.startswith(_VERBATIM_TOKEN):
+        # The user asked for the text itself: the tool's own output IS the answer.
+        logger.info(
+            "chat.answer-synthesis verbatim tool=%s duration_ms=%.0f "
+            "material_chars=%d",
+            tool, duration_ms, len(raw_output),
+        )
+        return raw_output
     if not answer:
         logger.warning(
             "chat.answer-synthesis empty tool=%s duration_ms=%.0f; "
@@ -141,6 +185,8 @@ async def stream_synthesis(
       non-streaming path does;
     * a failure AFTER the first delta keeps the streamed prefix and yields nothing
       more — never the raw material spliced onto a partial answer;
+    * a reply that is only :data:`_VERBATIM_TOKEN` yields the tool's own text in
+      chunks and nothing from the model: complete, in order, unrewritten;
     * a seam without ``complete_stream`` degrades to one whole-answer delta.
     """
     llm = getattr(deps, "llm", None)
@@ -164,20 +210,43 @@ async def stream_synthesis(
     # all-whitespace reply must emit NOTHING so the caller falls back to the raw
     # material, and the joined deltas must stay identical to the caller's message.
     started = False
+    # The reply's mode is not known until its first characters arrive: a verbatim
+    # reply must never reach the user. Only a marker-length prefix is held back, so
+    # the answer is still streamed as it is written.
+    mode = ""          # "" unknown | "answer" | "verbatim"
+    pending = ""
+    stream = llm.complete_stream(
+        build_prompt(query, tool, raw_output), system_prompt=_SYSTEM_PROMPT)
     try:
         # No model/base_url/api_key override: the turn's pinned channel wins (see the
         # module docstring). Passing them here would fork onto a different route.
-        async for delta in llm.complete_stream(
-            build_prompt(query, tool, raw_output), system_prompt=_SYSTEM_PROMPT
-        ):
+        async for delta in stream:
             if not delta:
                 continue
-            if not started:
-                if not delta.strip():
-                    continue
-                started = True
-            parts.append(delta)
-            yield delta
+            if mode == "answer":
+                if not started:
+                    if not delta.strip():
+                        continue
+                    started = True
+                parts.append(delta)
+                yield delta
+                continue
+            pending += delta
+            head = pending.lstrip()
+            if head.startswith(_VERBATIM_TOKEN):
+                mode = "verbatim"
+                await _close_stream(stream)   # none of the model's text is used
+                break
+            if len(head) < len(_VERBATIM_TOKEN) and _VERBATIM_TOKEN.startswith(head):
+                continue                      # could still become the marker
+            mode = "answer"
+            if not head:
+                pending = ""
+                continue
+            started = True
+            parts.append(head)
+            pending = ""
+            yield head
     except Exception:  # noqa: BLE001 - fail-open DOWN to the raw tool output
         logger.exception(
             "chat.answer-synthesis stream failed tool=%s duration_ms=%.0f "
@@ -189,6 +258,18 @@ async def stream_synthesis(
         return
 
     duration_ms = (time.perf_counter() - t0) * 1000
+    if mode == "verbatim":
+        # The user asked for the text itself: stream the tool's own text, unchanged
+        # and complete — never the model's copy, which could be truncated or rewritten.
+        for chunk in _verbatim_chunks(raw_output):
+            parts.append(chunk)
+            yield chunk
+        logger.info(
+            "chat.answer-synthesis stream verbatim tool=%s duration_ms=%.0f "
+            "material_chars=%d chunks=%d",
+            tool, duration_ms, len(raw_output), len(parts),
+        )
+        return
     answer = "".join(parts)
     if not answer.strip():
         logger.warning(

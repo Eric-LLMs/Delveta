@@ -6,11 +6,11 @@ ONE synthesis completion over (question + material) before returning. The tests 
 both sides of that boundary:
 
   * web_search / rag_search / search_social ⇒ synthesized answer;
-  * read_document ⇒ the document's extracted text is MATERIAL: the turn answers the
-    user's sentence from it, and reproduces it faithfully when the sentence asked for
-    the text itself;
-  * pure extraction / file-read capabilities (pdf_extract_text, read_file) ⇒ their own
-    exact output is the deliverable, never laundered through a model;
+  * read_document / pdf_extract_text / read_file ⇒ the text is MATERIAL: the turn
+    answers the user's sentence from it, and the model replies with the internal
+    ``[[VERBATIM]]`` marker when the sentence only asks for the text itself — the
+    executor then streams the tool's own text, complete and unrewritten, never the
+    model's copy;
   * side-effect tools (create_folder / edit_file / bash) ⇒ deterministic output, no
     model call;
   * tool denial / state-unknown / a failed or empty synthesis ⇒ never a fake success:
@@ -30,6 +30,7 @@ from core.application.chat.executors.action import ActionExecutor
 from core.application.chat.executors.answer_synthesis import (
     SYNTHESIS_TOOLS,
     _MAX_MATERIAL_CHARS,
+    _VERBATIM_TOKEN,
     build_prompt,
 )
 from core.application.chat.executors.base import ChatDeps, TurnRequest
@@ -41,9 +42,9 @@ from core.application.chat.intent_funnel.registry.entry import (
 
 QUERY_TOOLS = ("web_search", "rag_search", "search_social")
 DOCUMENT_TOOLS = ("read_document",)
-# Capabilities whose contract IS "hand the material back unchanged": their own exact
-# output is the answer, so the executor must not run a model over it.
-RAW_PASSTHROUGH_TOOLS = ("pdf_extract_text", "read_file")
+# Every text-material capability: the user's sentence decides between "answer from
+# it" and "hand the text back untouched" (the model's [[VERBATIM]] marker).
+VERBATIM_TOOLS = ("read_document", "pdf_extract_text", "read_file")
 SIDE_EFFECT_TOOLS = ("create_folder", "edit_file", "bash")
 
 
@@ -272,32 +273,95 @@ async def test_document_answer_streams_delta_by_delta(tool):
     assert "".join(content) == done["answer"] == llm.answer
 
 
-async def test_extraction_requests_are_reproduced_not_rewritten():
-    # The same document, two sentences: the standing prompt must keep "give me the
-    # text" faithful instead of always summarizing, and must never invent.
+async def test_the_prompt_offers_the_verbatim_marker_only_for_pure_extraction():
+    # The same document, two sentences: "give me the text" must hand the tool's own
+    # text back (through the marker), while a mixed request must still be answered.
     run_tool, _ = _tool(DOC)
     llm = _FakeLLM()
     await _answer("read_document", run_tool, llm)
 
     prompt, system = llm.calls[0]["prompt"], llm.calls[0]["system_prompt"]
     assert DOC in prompt
-    for phrase in ("extract", "transcribe", "export", "quote"):
-        assert phrase in system
-    assert "faithfully and completely" in system
-    assert "without summarizing" in system
+    assert _VERBATIM_TOKEN in system and _VERBATIM_TOKEN in prompt
+    assert "ONLY to see the material's own text" in system
+    assert "Do not use that marker" in system        # mixed requests stay generated
+    assert "quote parts while answering" in system   # "analyse and quote" ≠ verbatim
     assert "never invent a source" in system
+    assert "Preserve the sources" in system
 
 
-@pytest.mark.parametrize("tool", RAW_PASSTHROUGH_TOOLS)
-async def test_extraction_capabilities_keep_their_own_exact_output(tool):
-    # pdf_extract_text / read_file exist to hand the text back unchanged — running a
-    # model over them could rewrite numbers or truncate a long document's text.
-    run_tool, calls = _tool(DOC)
-    llm = _FakeLLM(answer="改写后的摘要")
+@pytest.mark.parametrize("tool", VERBATIM_TOOLS)
+async def test_verbatim_marker_streams_the_tools_own_text_in_chunks(tool):
+    # The marker arrives split across model deltas; the model's own text is discarded
+    # and the tool's text is streamed instead — chunked, complete, in order.
+    material = DOC * 20
+    run_tool, calls = _tool(material)
+    llm = _FakeLLM(answer=_VERBATIM_TOKEN)
 
-    assert await _answer(tool, run_tool, llm) == DOC
-    assert len(calls) == 1
-    assert llm.calls == []
+    events, done = await _events(tool, run_tool, llm)
+
+    content = [e["data"] for e in events if e["type"] == "content"]
+    assert len(content) > 1                       # chunked, not one whole frame
+    assert "".join(content) == done["answer"] == material
+    assert all(_VERBATIM_TOKEN not in piece for piece in content)
+    assert _VERBATIM_TOKEN not in done["answer"]
+    assert len(calls) == 1                        # the tool ran exactly once
+    assert len(llm.calls) == 1                    # exactly ONE model call
+
+
+@pytest.mark.parametrize("tool", VERBATIM_TOOLS)
+async def test_verbatim_marker_keeps_a_long_document_complete(tool):
+    # Well past both the prompt cap and any model output limit: verbatim mode must
+    # never truncate, and the saved row must equal the streamed frames byte for byte.
+    huge = "".join(f"第{i:05d}行：原始内容不得改写。\n" for i in range(2000))
+    assert len(huge) > _MAX_MATERIAL_CHARS
+    run_tool, _ = _tool(huge)
+    llm = _FakeLLM(answer=_VERBATIM_TOKEN)
+
+    events, done = await _events(tool, run_tool, llm)
+
+    content = [e["data"] for e in events if e["type"] == "content"]
+    assert "".join(content) == done["answer"] == huge
+    assert len(content) > 1
+
+
+async def test_verbatim_marker_on_the_non_streaming_seam_returns_the_material():
+    run_tool, _ = _tool(DOC)
+
+    class _CompleteOnly:
+        async def complete(self, prompt: str, system_prompt: str = "", **kwargs) -> str:
+            return _VERBATIM_TOKEN
+
+    events, done = await _events("read_document", run_tool, _CompleteOnly())
+
+    assert [e["data"] for e in events if e["type"] == "content"] == [DOC]
+    assert done["answer"] == DOC
+
+
+@pytest.mark.parametrize("tool", ("pdf_extract_text", "read_file"))
+async def test_text_capabilities_are_answered_from_the_request_when_a_transform_is_asked(
+        tool):
+    # The capability is chosen by the funnel; the ANSWER still comes from the sentence.
+    run_tool, _ = _tool(DOC)
+    llm = _FakeLLM(answer="这份文档一共三页：前两页讲做法，第三页给结论。")
+
+    assert await _answer(tool, run_tool, llm) == llm.answer
+    assert DOC in llm.calls[0]["prompt"]
+    assert len(llm.calls) == 1
+
+
+async def test_a_request_that_quotes_and_analyses_streams_the_analysis_not_the_text():
+    # "分析内容并引用原文" is a transform: the model's own answer streams in full and
+    # verbatim mode is never entered.
+    run_tool, _ = _tool(DOC)
+    prose = "文档指出“k1 主张证据不足”，因此结论只对 k3、k4 成立。"
+    llm = _FakeLLM(answer=prose)
+
+    events, done = await _events("read_document", run_tool, llm)
+
+    content = [e["data"] for e in events if e["type"] == "content"]
+    assert "".join(content) == done["answer"] == prose
+    assert DOC not in done["answer"]
 
 
 @pytest.mark.parametrize("tool", SIDE_EFFECT_TOOLS)
@@ -429,12 +493,12 @@ async def test_a_seam_without_a_streaming_method_answers_in_one_frame():
     assert done["answer"] == _CompleteOnly.answer
 
 
-def test_registry_set_is_exactly_the_query_and_document_tools():
-    # Documents join the query tools: their text is material. Pure extraction
-    # capabilities (pdf_extract_text / read_file) must stay OUT — their exact output
-    # is the deliverable and a model pass could rewrite or truncate it.
+def test_registry_set_is_exactly_the_query_and_text_material_tools():
+    # Documents and plain files join the query tools: their text is material, and the
+    # sentence decides whether it is answered from or handed back via the marker.
     assert SYNTHESIS_TOOLS == {
-        "web_search", "rag_search", "search_social", "read_document"}
+        "web_search", "rag_search", "search_social",
+        "read_document", "pdf_extract_text", "read_file"}
 
 
 # ── a tool that WRITES its answer streams through the turn's content sink ──────
