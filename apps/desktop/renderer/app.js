@@ -884,7 +884,7 @@
     const items = [];
     if (role === "user") items.push(["edit", "edit", () => startEdit(div)]);
     items.push(
-      ["copy", "copy", () => copyText(getText())],
+      ["copy", "copy", (b) => copyText(getText(), b)],
       ["speak", "volume", () => speakMessage(getText())],
     );
     // Bind a reply to its question and push the Q&A pair into the query repository.
@@ -921,7 +921,7 @@
         e.stopPropagation();
         if (a === "speak") speakMessage(getText(), b);
         else if (a === "import") fn(b); // importPair(div, b): button shows importing / done / failed
-        else fn();
+        else fn(b); // copy flashes its own glyph; the remaining handlers ignore the button
       });
       actions.appendChild(b);
     }
@@ -1575,13 +1575,31 @@
     };
   }
 
-  async function copyText(text) {
+  async function copyText(text, btn) {
     try {
       await navigator.clipboard.writeText(text);
       Viewer.toast("Copied to clipboard.");
+      if (btn) flashCopied(btn);
     } catch {
       Viewer.toast("Copy failed.");
     }
+  }
+
+  // Copy succeeded: the button's own glyph becomes a check. The action row is icon-only, so
+  // the icon is the feedback; it reverts as soon as the pointer leaves the button (a `once`
+  // listener, so repeat clicks never stack handlers). The toast stays alongside it.
+  function flashCopied(btn) {
+    const icon = btn.querySelector(".icon");
+    if (!icon) return;
+    btn.classList.add("copied");
+    btn.title = "Copied";
+    icon.replaceWith(dvIcon("check", "glyph"));
+    btn.addEventListener("mouseleave", () => {
+      btn.classList.remove("copied");
+      btn.title = ACTION_LABELS.copy;
+      const current = btn.querySelector(".icon");
+      if (current) current.replaceWith(dvIcon("copy", "glyph"));
+    }, { once: true });
   }
 
   // Sequential voice playback queue: segments are appended as the /tts/stream SSE feeds them,

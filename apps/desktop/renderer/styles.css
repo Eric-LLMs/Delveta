@@ -1496,6 +1496,14 @@ pre.text-viewer {
 .msg-actions button .lbl { display: none; }
 .msg-actions button[data-state] .lbl { display: inline; font-size: var(--fs-xs); }
 .msg-actions button:hover { color: var(--accent); background: var(--bg-soft-2); border-color: var(--accent-line); }
+/* Copy just succeeded: the glyph is a check (and stays green under the pointer) until the
+   pointer leaves, when app.js swaps the copy glyph back. */
+.msg-actions button.copied,
+.msg-actions button.copied:hover {
+  color: var(--success);
+  background: color-mix(in srgb, var(--success) 12%, transparent);
+  border-color: color-mix(in srgb, var(--success) 45%, transparent);
+}
 .msg-actions button[data-a="delete"]:hover {
   color: var(--danger);
   background: color-mix(in srgb, var(--danger) 14%, transparent);
