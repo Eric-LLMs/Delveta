@@ -34,8 +34,12 @@ Stage order encodes the side-effect boundary isolation:
 
 Everything before the first yielded event is pre-commit; the events after
 (content → internal done, user+assistant rows persisted) mirror the former
-DIRECT lane. No LLM call: the confirmation text is the tool's own deterministic
-output.
+DIRECT lane. The lane is deterministic EXCEPT for the query capabilities in
+:data:`~core.application.chat.executors.answer_synthesis.SYNTHESIS_TOOLS`, whose
+tool output is retrieved material rather than an answer: a successful dispatch of
+one of those gets exactly ONE synthesis completion (:mod:`answer_synthesis`)
+before it is returned. Every failure, denial and non-query tool keeps the
+deterministic contract.
 """
 from __future__ import annotations
 
@@ -50,6 +54,10 @@ from core.application.chat.actions import (
     validate_action,
 )
 from core.application.chat.execution_plan import PlanKind
+from core.application.chat.executors.answer_synthesis import (
+    SYNTHESIS_TOOLS,
+    synthesize_answer,
+)
 from core.application.chat.executors.base import (
     ChatEvent,
     EscalateToAgent,
@@ -390,9 +398,18 @@ class ActionExecutor:
         if result.get("ok") is False:
             return DispatchOutcome(
                 _DENIED_PREFIX + str(result.get("reason") or "the operation was denied."))
-        return DispatchOutcome(str(result.get("output") or "Done."))
+        raw = str(result.get("output") or "Done.")
+        # Query tools returned MATERIAL, not an answer. Synthesize one answer from
+        # (question + material) — only after a successful dispatch, and a failed or
+        # empty synthesis falls back to `raw` so the retrieved data is never lost.
+        if validated["tool"] in SYNTHESIS_TOOLS:
+            answer = await synthesize_answer(req.deps, req.ctx, validated["tool"], raw)
+            if answer:
+                return DispatchOutcome(answer)
+        return DispatchOutcome(raw)
 
-    # ── stream / run: identical terminal shape, no LLM call ──────────────────────
+    # ── stream / run: identical terminal shape (any query synthesis already ran
+    #    in _dispatch, so both entry points return the same final text) ────────────
     async def stream(
         self, req: TurnRequest, *, progress_sink: ProgressSink
     ) -> AsyncIterator[ChatEvent]:
