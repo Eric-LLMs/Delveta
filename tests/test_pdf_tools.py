@@ -110,6 +110,7 @@ async def test_explanation_request_reaches_the_model_verbatim(monkeypatch, tmp_p
     prompt = calls[0]["prompt"]
     assert "解释一下这个表格" in prompt                          # the user's own sentence
     assert "output only the transcribed text" not in prompt      # never pinned to transcription
+    assert "不要把整张表格先逐行抄一遍" in prompt                # explaining ≠ dumping the table first
 
 
 async def test_extraction_request_also_carries_the_sentence(monkeypatch, tmp_path):

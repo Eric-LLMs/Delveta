@@ -6,6 +6,11 @@ ONE synthesis completion over (question + material) before returning. The tests 
 both sides of that boundary:
 
   * web_search / rag_search / search_social ⇒ synthesized answer;
+  * read_document ⇒ the document's extracted text is MATERIAL: the turn answers the
+    user's sentence from it, and reproduces it faithfully when the sentence asked for
+    the text itself;
+  * pure extraction / file-read capabilities (pdf_extract_text, read_file) ⇒ their own
+    exact output is the deliverable, never laundered through a model;
   * side-effect tools (create_folder / edit_file / bash) ⇒ deterministic output, no
     model call;
   * tool denial / state-unknown / a failed or empty synthesis ⇒ never a fake success:
@@ -35,6 +40,10 @@ from core.application.chat.intent_funnel.registry.entry import (
 )
 
 QUERY_TOOLS = ("web_search", "rag_search", "search_social")
+DOCUMENT_TOOLS = ("read_document",)
+# Capabilities whose contract IS "hand the material back unchanged": their own exact
+# output is the answer, so the executor must not run a model over it.
+RAW_PASSTHROUGH_TOOLS = ("pdf_extract_text", "read_file")
 SIDE_EFFECT_TOOLS = ("create_folder", "edit_file", "bash")
 
 
@@ -50,6 +59,9 @@ _VIEW = RegistryLiveView(
         _entry("cap-web-search", "web_search"),
         _entry("cap-rag-search", "rag_search"),
         _entry("cap-social-search", "search_social"),
+        _entry("cap-read-document", "read_document"),
+        _entry("cap-pdf-extract-text", "pdf_extract_text"),
+        _entry("cap-read-file", "read_file"),
         _entry("cap-create-folder", "create_folder"),
         _entry("cap-edit-file", "edit_file"),
         _entry("cap-bash", "bash"),
@@ -69,15 +81,20 @@ _FAKE_KERNEL = SimpleNamespace(runtime=SimpleNamespace(schemas=lambda: [
     _schema("web_search", "query"),
     _schema("rag_search", "query"),
     _schema("search_social", "query"),
+    _schema("read_document", "asset_id"),
+    _schema("pdf_extract_text", "asset_id"),
+    _schema("read_file", "path"),
     _schema("create_folder", "name"),
     _schema("edit_file", "path"),
     _schema("bash", "command"),
 ]))
 
 _ARGS = {"query": "北京今天的天气怎么样?", "name": "x", "path": "a.md",
-         "command": "ls"}
+         "asset_id": "a-1", "command": "ls"}
 _CAP = {"web_search": "cap-web-search", "rag_search": "cap-rag-search",
-        "search_social": "cap-social-search", "create_folder": "cap-create-folder",
+        "search_social": "cap-social-search", "read_document": "cap-read-document",
+        "pdf_extract_text": "cap-pdf-extract-text", "read_file": "cap-read-file",
+        "create_folder": "cap-create-folder",
         "edit_file": "cap-edit-file", "bash": "cap-bash"}
 
 
@@ -221,6 +238,68 @@ async def test_synthesis_does_not_override_the_turn_channel():
     assert llm.calls[0]["kwargs"] == {}
 
 
+# ── the document's extracted text is material, not the answer ──────────────────
+
+DOC = ("[[PAGE:1]]\n西红柿炒鸡蛋的做法：去皮、切块、热锅下蛋。\n"
+       "[[PAGE:2]]\nk1 主张证据不足；k3、k4 获得支持。\n"
+       "[[PAGE:3]]\n挂面汤底按 k4 调味。")
+
+
+@pytest.mark.parametrize("tool", DOCUMENT_TOOLS)
+async def test_document_material_is_answered_from_the_users_request(tool):
+    run_tool, calls = _tool(DOC)
+    llm = _FakeLLM(answer="这份文档讲的是西红柿炒鸡蛋的做法与证据判定。")
+
+    answer = await _answer(tool, run_tool, llm)
+
+    assert answer == llm.answer
+    assert calls[0][0] == tool and len(calls) == 1
+    prompt = llm.calls[0]["prompt"]
+    assert DOC in prompt                        # the extracted text, verbatim
+    assert "北京今天的天气怎么样?" in prompt     # ...read against the user's sentence
+    assert len(llm.calls) == 1                  # exactly ONE answer completion
+
+
+@pytest.mark.parametrize("tool", DOCUMENT_TOOLS)
+async def test_document_answer_streams_delta_by_delta(tool):
+    run_tool, _ = _tool(DOC)
+    llm = _FakeLLM(answer="这份文档讲的是西红柿炒鸡蛋的做法与证据判定。")
+
+    events, done = await _events(tool, run_tool, llm)
+
+    content = [e["data"] for e in events if e["type"] == "content"]
+    assert len(content) > 1
+    assert "".join(content) == done["answer"] == llm.answer
+
+
+async def test_extraction_requests_are_reproduced_not_rewritten():
+    # The same document, two sentences: the standing prompt must keep "give me the
+    # text" faithful instead of always summarizing, and must never invent.
+    run_tool, _ = _tool(DOC)
+    llm = _FakeLLM()
+    await _answer("read_document", run_tool, llm)
+
+    prompt, system = llm.calls[0]["prompt"], llm.calls[0]["system_prompt"]
+    assert DOC in prompt
+    for phrase in ("extract", "transcribe", "export", "quote"):
+        assert phrase in system
+    assert "faithfully and completely" in system
+    assert "without summarizing" in system
+    assert "never invent a source" in system
+
+
+@pytest.mark.parametrize("tool", RAW_PASSTHROUGH_TOOLS)
+async def test_extraction_capabilities_keep_their_own_exact_output(tool):
+    # pdf_extract_text / read_file exist to hand the text back unchanged — running a
+    # model over them could rewrite numbers or truncate a long document's text.
+    run_tool, calls = _tool(DOC)
+    llm = _FakeLLM(answer="改写后的摘要")
+
+    assert await _answer(tool, run_tool, llm) == DOC
+    assert len(calls) == 1
+    assert llm.calls == []
+
+
 @pytest.mark.parametrize("tool", SIDE_EFFECT_TOOLS)
 async def test_side_effect_tools_never_call_the_model(tool):
     run_tool, calls = _tool("Done.")
@@ -278,7 +357,10 @@ def test_prompt_truncates_pathological_material_with_an_explicit_marker():
     huge = "x" * (_MAX_MATERIAL_CHARS + 10)
     prompt = build_prompt("q", "web_search", huge)
     assert "[material truncated]" in prompt
-    assert prompt.count("x") == _MAX_MATERIAL_CHARS
+    # The material itself is cut at the cap (the prompt's own wording may contain an
+    # "x" — e.g. "explain" — so pin the run length, not the character count).
+    assert "x" * _MAX_MATERIAL_CHARS in prompt
+    assert "x" * (_MAX_MATERIAL_CHARS + 1) not in prompt
 
 
 # ── streaming: the answer arrives as the model writes it ───────────────────────
@@ -347,8 +429,12 @@ async def test_a_seam_without_a_streaming_method_answers_in_one_frame():
     assert done["answer"] == _CompleteOnly.answer
 
 
-def test_registry_set_is_exactly_the_query_tools():
-    assert SYNTHESIS_TOOLS == {"web_search", "rag_search", "search_social"}
+def test_registry_set_is_exactly_the_query_and_document_tools():
+    # Documents join the query tools: their text is material. Pure extraction
+    # capabilities (pdf_extract_text / read_file) must stay OUT — their exact output
+    # is the deliverable and a model pass could rewrite or truncate it.
+    assert SYNTHESIS_TOOLS == {
+        "web_search", "rag_search", "search_social", "read_document"}
 
 
 # ── a tool that WRITES its answer streams through the turn's content sink ──────

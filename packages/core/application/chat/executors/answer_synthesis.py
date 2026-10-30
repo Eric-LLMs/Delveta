@@ -6,6 +6,13 @@ side-effect tools (``create_folder`` …), whose deterministic output IS the
 confirmation, and wrong for query tools (web / rag / social search), whose output is
 retrieved MATERIAL — titles, URLs, snippets, page text — not an answer.
 
+The same split applies to a document the user asked about: ``read_document`` hands
+back the document's own text, which is material, not an answer. The user's sentence
+decides what the turn makes of it — explain, summarize, analyse, compare, or (when the
+sentence asks for the text itself) reproduce it faithfully. Capabilities whose whole
+purpose is to hand the material back unchanged (``pdf_extract_text``, ``read_file``)
+stay out of this set: their own exact output is the deliverable.
+
 This module owns the missing step for exactly those tools: one LLM completion that
 turns (user question + retrieved material) into a user-facing answer. It reuses
 ``deps.llm``, so ``OpenAILLM._call_channel``'s explicit-args > request-contextvar >
@@ -29,9 +36,12 @@ from collections.abc import AsyncIterator
 
 logger = logging.getLogger(__name__)
 
-# The query capabilities whose tool output is retrieved material rather than an
-# answer. Every other tool keeps the deterministic output it already produces.
-SYNTHESIS_TOOLS = frozenset({"web_search", "rag_search", "search_social"})
+# The query capabilities whose tool output is material rather than an answer. Every
+# other tool keeps the deterministic output it already produces. ``read_document``'s
+# capability is "read the document and answer from its contents", so its extracted
+# text is input to the turn's answer, never the answer itself.
+SYNTHESIS_TOOLS = frozenset(
+    {"web_search", "rag_search", "search_social", "read_document"})
 
 # Belt against pathological tool output blowing the prompt (the search tools bound
 # their own page text): truncation is stated in the prompt so the model never reads a
@@ -42,11 +52,14 @@ _SYSTEM_PROMPT = (
     "You answer the user's question from the retrieved material supplied in the "
     "prompt. Use ONLY that material: do not add facts, numbers, dates or events it "
     "does not state, and never invent a source, citation or link. If the material "
-    "does not answer the question, say so plainly and name what is missing. Organize "
-    "the material into a direct answer — summarize, compare or analyse as the "
-    "question requires — instead of repeating it verbatim. Preserve the sources, "
-    "URLs and citations the material carries, and cite nothing else. Reply in the "
-    "same language as the user's question."
+    "does not answer the question, say so plainly and name what is missing. When the "
+    "user asks for the material's own text — to extract, transcribe, export, quote "
+    "or read the original — reproduce that text faithfully and completely, without "
+    "summarizing, rewriting or omitting any of it. Otherwise organize the material "
+    "into a direct answer — summarize, compare or analyse as the question requires — "
+    "instead of repeating it verbatim. Preserve the sources, URLs and citations the "
+    "material carries, and cite nothing else. Reply in the same language as the "
+    "user's question."
 )
 
 
@@ -58,8 +71,10 @@ def build_prompt(query: str, tool: str, raw_output: str) -> str:
         material = raw_output
     return (
         f"User question:\n{query}\n\n"
-        f"Retrieved material (tool: {tool}):\n{material}\n\n"
-        "Answer the user's question from this material."
+        f"Material (tool: {tool}):\n{material}\n\n"
+        "Answer the user's question from this material: do what the question asks "
+        "with it — explain, summarize, analyse or compare it, or reproduce its text "
+        "when that is what was asked."
     )
 
 
