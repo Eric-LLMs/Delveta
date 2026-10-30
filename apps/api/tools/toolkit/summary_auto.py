@@ -9,7 +9,10 @@ the open document's identity (never its body). It decides the target
 (``previous_message`` / ``document`` / ``current_page`` / ``session``), whether
 the answer is already producible from that material (``ready`` + ``summary``),
 the page range when one is needed, and the SAVE intent (``save_to_file`` /
-``save_path``). When ``ready`` is true the turn ends here — ONE model call.
+``save_path``). When ``ready`` is true the turn ends here — ONE model call. The
+exception is a live chat turn (a content sink is installed, no save): the body is
+shown as it is written, so the shortcut is declined and the material path below
+streams it.
 
 **Second call** — only when the first call resolved a target whose content it did
 not have. The material is MINIMAL: a document target sends that document's
@@ -46,7 +49,10 @@ from api.tools.turn_material import (
 )
 from core.application.drive_service import DriveService
 from core.infrastructure.pdf_pages import parse_pages_spec
-from core.infrastructure.request_context import get_request_user_id
+from core.infrastructure.request_context import (
+    get_request_content_sink,
+    get_request_user_id,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -301,7 +307,15 @@ async def run_auto_summary(*, args: dict, ctx, llm, pipeline) -> str:
         decision.target, decision.ready, decision.reason or "-",
         decision.save_to_file, decision.save_path or "-")
 
-    if decision.ready:
+    # The chat-window lane writes the body it shows, streamed (the pipeline's live
+    # lane). The first call's ``summary`` is a structured-output by-product — it is
+    # whole the moment it arrives and cannot stream — so on a live turn the ready
+    # shortcut is declined and the SAME decision's material path below produces the
+    # body as it is written. Save turns keep the shortcut: nothing is displayed
+    # there, only written. The non-streaming /chat lane is untouched.
+    streaming = (get_request_content_sink() is not None
+                 and hasattr(llm, "complete_stream"))
+    if decision.ready and not (streaming and not decision.save_to_file):
         text = decision.summary
         if decision.save_to_file:
             saved = await _save_to_drive(ctx, text, decision.save_path, stem="summary")
@@ -382,9 +396,11 @@ async def _summarize_text(*, query, name, text, pipeline, decision: SummaryDecis
             current_cwd() is not None or declared_error()):
         # Cloud lane: render ONCE, then write the rendered body at the resolved
         # destination. The local persist stage is not used — it is confined to the
-        # desktop workspace and would land the file in the wrong place.
+        # desktop workspace and would land the file in the wrong place. Rendering
+        # must NOT stream into the chat: the turn's answer is the saved-file note.
         rendered = await pipeline.run_sources(
-            [from_text(name, body)], None, persist=False, stem=stem)
+            [from_text(name, body)], None, persist=False, stem=stem,
+            stream_text=False)
         saved = await _save_to_drive(ctx, rendered.text, decision.save_path, stem=stem)
         return f"{rendered.text}\n{saved}"
 

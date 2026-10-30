@@ -10,8 +10,10 @@ pipeline validates it and renders), and each tool enforces its own density rules
   are short noun phrases (no duplicated sub-branches).
 - **slides**: one core idea per slide, exactly three support points, and presenter notes.
 
-All three prompts keep the word "JSON" so providers that enforce ``json_object`` mode are
-satisfied, and each ends with "Reply with JSON only."
+All three JSON prompts keep the word "JSON" so providers that enforce ``json_object`` mode
+are satisfied, and each ends with "Reply with JSON only." The one exception is
+:data:`SUMMARY_STREAM_SYSTEM`, used only by the chat-window lane, which asks the model for
+the finished Markdown directly so the answer can stream to the user as it is written.
 """
 from __future__ import annotations
 
@@ -24,6 +26,19 @@ SUMMARY_SYSTEM = (
     "factual claim MUST cite its source as [file.md:line] using the line markers in the "
     "input; never invent content. Omit a section if the source has no content for it. "
     "Reply with JSON only."
+)
+
+# The chat-window lane writes the finished Markdown itself so the answer can stream.
+# Same grounding rules and same rendered structure as ``render_summary_md``; the only
+# difference is that the model emits Markdown instead of schema-validated JSON.
+SUMMARY_STREAM_SYSTEM = (
+    "You are a grounding-first document analyst. Write a research summary as Markdown "
+    "in exactly this structure: '# <title>', '## Executive Summary' (one paragraph), "
+    "'## Key Points' (bullet list), one '## <heading>' section per theme, then "
+    "'## Q&A' as '**Q:** …' / '**A:** …' pairs. Every factual claim MUST cite its "
+    "source as [file.md:line] using the line markers in the input; never invent "
+    "content. Omit a section if the source has no content for it. Write the finished "
+    "Markdown only — no code fences, no JSON, no preamble."
 )
 
 MINDMAP_SYSTEM = (
@@ -48,11 +63,16 @@ SYSTEM_PROMPTS = {
 }
 
 
-def build_user_prompt(tool: str, sources: list[WorkspaceSource], params: dict) -> str:
+def build_user_prompt(tool: str, sources: list[WorkspaceSource], params: dict, *,
+                      markdown: bool = False) -> str:
     """Assemble the generation request: sources with line-marker headers + tool nudge.
 
     Each source is prefixed with an HTML-comment header carrying its file name and line
     count so the model can ground ``[file.md:line]`` citations in the block that follows.
+
+    ``markdown`` asks the summary model for the finished Markdown body instead of the
+    JSON payload — only the chat-window lane streams, so only that lane pays for a
+    model-written layout (see :data:`SUMMARY_STREAM_SYSTEM`).
     """
     blocks = []
     for src in sources:
@@ -70,6 +90,11 @@ def build_user_prompt(tool: str, sources: list[WorkspaceSource], params: dict) -
         return (
             "Build a mind map (max depth 4) from the sources below, citing [file.md:line]. "
             f"Reply with JSON only.\n\n{body}"
+        )
+    if markdown:
+        return (
+            "Summarize the sources below, citing [file.md:line] for every factual claim. "
+            f"Write the finished Markdown summary only.\n\n{body}"
         )
     return (
         "Summarize the sources below, citing [file.md:line] for every factual claim. "

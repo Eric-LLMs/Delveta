@@ -45,7 +45,7 @@ contract.
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 
 from core.application.chat.actions import (
@@ -82,6 +82,10 @@ from core.application.chat.intent_funnel.failure import (
     STAGE_EXECUTOR,
     build_failure,
     publish_failure,
+)
+from core.infrastructure.request_context import (
+    reset_request_content_sink,
+    set_request_content_sink,
 )
 
 logger = logging.getLogger(__name__)
@@ -233,7 +237,24 @@ def _tool_roster(deps) -> dict[str, dict[str, dict]] | None:
 class ActionExecutor:
     kind = PlanKind.ACTION
 
-    async def _dispatch(self, req: TurnRequest) -> DispatchOutcome:
+    async def _execute_tool(self, req: TurnRequest, tool: str, args: dict,
+                            emit: Callable[[str], None] | None) -> dict:
+        """Run the bound tool through the seam, exposing the turn's live-content sink.
+
+        A tool that WRITES its answer (``summary_gen``) may publish deltas while it
+        generates instead of returning one finished string. The sink lives on the
+        request context for exactly this call, so the tool can never outlive the turn
+        or leak text into another one; the tool's return value stays the full text.
+        """
+        token = set_request_content_sink(emit) if emit is not None else None
+        try:
+            return await req.deps.run_tool(tool, args, req.ctx)
+        finally:
+            if token is not None:
+                reset_request_content_sink(token)
+
+    async def _dispatch(self, req: TurnRequest, *,
+                        emit: Callable[[str], None] | None = None) -> DispatchOutcome:
         """Run the staged dispatch; returns the terminal outcome. Raises
         :class:`EscalateToAgent` ONLY on proven pre-execution user-input failure."""
         action = req.plan.action or {}
@@ -368,7 +389,7 @@ class ActionExecutor:
 
         # 3. the side-effect boundary.
         try:
-            result = await req.deps.run_tool(validated["tool"], validated["args"], req.ctx)
+            result = await self._execute_tool(req, validated["tool"], validated["args"], emit)
         except ActionIntegrityFailure as exc:
             # C2: registry/runtime inconsistency (unknown tool, arg-schema drift).
             # Provably pre-body, but system faults must not launder through the
@@ -421,7 +442,28 @@ class ActionExecutor:
         self, req: TurnRequest, *, progress_sink: ProgressSink
     ) -> AsyncIterator[ChatEvent]:
         # Everything up to the first yield is pre-commit: an escalation here is legal.
-        outcome = await self._dispatch(req)
+        # A tool that WRITES its answer (summary_gen) publishes each delta through this
+        # sink while it runs, so the text is on screen before the tool returns.
+        live: list[str] = []
+
+        def _emit(delta: str) -> None:
+            if not delta:
+                return
+            live.append(delta)
+            progress_sink({"type": "content", "data": delta})
+
+        try:
+            outcome = await self._dispatch(req, emit=_emit)
+        except EscalateToAgent:
+            if not live:
+                raise
+            # The commit point has passed (text is on screen): a late failure keeps the
+            # streamed prefix — never a second, different answer on a locked channel.
+            logger.warning(
+                "chat.action escalated after %d streamed chars; keeping the prefix",
+                len("".join(live)),
+            )
+            outcome = DispatchOutcome("".join(live))
         ctx = req.ctx
         history = [
             {"role": m["role"], "content": m["content"]}
@@ -439,7 +481,7 @@ class ActionExecutor:
             async for delta in stream_synthesis(req.deps, ctx, tool, raw):
                 parts.append(delta)
                 yield {"type": "content", "data": delta}
-        message = "".join(parts)
+        message = "".join(live) if live else "".join(parts)
         if not message.strip():
             # No delta at all, or a whitespace-only reply: keep the deterministic
             # material and emit it as the one content frame.

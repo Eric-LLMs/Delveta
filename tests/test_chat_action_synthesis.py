@@ -349,3 +349,105 @@ async def test_a_seam_without_a_streaming_method_answers_in_one_frame():
 
 def test_registry_set_is_exactly_the_query_tools():
     assert SYNTHESIS_TOOLS == {"web_search", "rag_search", "search_social"}
+
+
+# ── a tool that WRITES its answer streams through the turn's content sink ──────
+
+
+_SUMMARY_FRAMES = [
+    "# Deep Dive\n\n", "## Executive Summary\n", "The document explains retrieval.\n"]
+_SUMMARY_TEXT = "".join(_SUMMARY_FRAMES)
+
+
+def _summary_req(run_tool):
+    """A certified ACTION turn for ``summary_gen`` (not a query tool: no synthesis)."""
+    ctx = SimpleNamespace(
+        user_text="总结一下", session_memory=_SM(), history=[])
+    deps = ChatDeps(
+        session_factory=None, queue=None, drive=None,
+        agent=SimpleNamespace(runtime=SimpleNamespace(schemas=lambda: [{
+            "name": "summary_gen", "description": "d", "parameters": {
+                "type": "object",
+                "properties": {"context": {"type": "string", "maxLength": 2000}},
+                "required": ["context"]},
+        }])),
+        llm=None, embedder=None, viewer=None, new_approval_bridge=None,
+        persist_turn_meta=None, log_usage=None, resolve_research=None,
+        run_tool=run_tool,
+    )
+    plan = ExecutionPlan(kind=PlanKind.ACTION, action={
+        "tool": "summary_gen", "args": {"context": "总结一下"},
+        "capability_id": "cap-summary"})
+    return TurnRequest(ctx=ctx, deps=deps, plan=plan)
+
+
+@pytest.fixture
+def _summary_view(monkeypatch):
+    view = RegistryLiveView(
+        fingerprint="live1-summary-stream",
+        entries=(_entry("cap-summary", "summary_gen"),),
+    )
+
+    async def fake_active(*, session_factory=None):
+        return view
+
+    monkeypatch.setattr(
+        "core.application.chat.intent_funnel.registry.active_view", fake_active)
+    return view
+
+
+async def _events_with_sink(req) -> tuple[list[dict], list[dict], dict]:
+    """(progress-sink events, yielded events, done) — the orchestrator pumps both."""
+    sunk: list[dict] = []
+    events = []
+    async for evt in ActionExecutor().stream(req, progress_sink=sunk.append):
+        events.append(evt)
+    done = next((e["data"] for e in events if e["type"] == "done"), {})
+    return sunk, events, done
+
+
+async def test_a_writing_tool_streams_its_deltas_before_it_returns(_summary_view):
+    from core.infrastructure.request_context import get_request_content_sink
+
+    async def run_tool(tool, args, ctx):
+        sink = get_request_content_sink()
+        assert sink is not None  # installed for exactly this call
+        for piece in _SUMMARY_FRAMES:
+            sink(piece)
+        return {"ok": True, "output": _SUMMARY_TEXT}
+
+    req = _summary_req(run_tool)
+    sunk, events, done = await _events_with_sink(req)
+
+    content = [e["data"] for e in sunk if e["type"] == "content"]
+    assert content == _SUMMARY_FRAMES                  # not one finished string
+    assert [e["data"] for e in events if e["type"] == "content"] == []
+    assert done["answer"] == _SUMMARY_TEXT
+    assert req.ctx.session_memory.rows[-1] == ("assistant", _SUMMARY_TEXT)
+    # The sink never outlives the tool call.
+    assert get_request_content_sink() is None
+
+
+async def test_a_writing_tool_failing_midway_keeps_the_streamed_prefix(_summary_view):
+    async def run_tool(tool, args, ctx):
+        from core.infrastructure.request_context import get_request_content_sink
+
+        sink = get_request_content_sink()
+        for piece in _SUMMARY_FRAMES[:2]:
+            sink(piece)
+        raise RuntimeError("upstream 500")
+
+    sunk, _events_seen, done = await _events_with_sink(_summary_req(run_tool))
+
+    assert [e["data"] for e in sunk if e["type"] == "content"] == _SUMMARY_FRAMES[:2]
+    assert done["answer"] == "".join(_SUMMARY_FRAMES[:2])
+
+
+async def test_a_writing_tool_that_returns_one_string_answers_in_one_frame(_summary_view):
+    async def run_tool(tool, args, ctx):
+        return {"ok": True, "output": _SUMMARY_TEXT}
+
+    events, done = await _events_req(_summary_req(run_tool))
+
+    assert [e["data"] for e in events if e["type"] == "content"] == [_SUMMARY_TEXT]
+    assert done["answer"] == _SUMMARY_TEXT

@@ -22,11 +22,22 @@ harnesses pin their own mode so billing can exclude them.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Callable
 from contextvars import ContextVar, Token
 
 request_user: ContextVar[uuid.UUID | None] = ContextVar("request_user", default=None)
 request_llm_channel: ContextVar[tuple[str | None, str | None, str | None] | None] = ContextVar(
     "request_llm_channel", default=None
+)
+
+# ── Live tool content ────────────────────────────────────────────────────────────
+# A chat turn may let a tool emit the text it is WRITING (summary_gen's body) instead
+# of returning one finished string, so the user sees it being generated. The turn's
+# executor installs the sink for the duration of the tool call only; a tool reads it
+# when it wants to stream. ``None`` (the default everywhere else — agent lane, worker,
+# non-streaming /chat) means "return the whole text", the pre-existing contract.
+request_content_sink: ContextVar[Callable[[str], None] | None] = ContextVar(
+    "request_content_sink", default=None
 )
 
 # ── Execution mode (docs/temp.md 8.14) ───────────────────────────────────────────
@@ -74,6 +85,20 @@ def get_request_execution_mode() -> str:
 
 def set_request_user(user_id: uuid.UUID | None) -> None:
     request_user.set(user_id)
+
+
+def get_request_content_sink() -> Callable[[str], None] | None:
+    """Return the current turn's live-content sink, or ``None`` when nothing streams."""
+    return request_content_sink.get()
+
+
+def set_request_content_sink(sink: Callable[[str], None] | None) -> Token:
+    """Install the sink for the duration of ONE tool call (reset it in ``finally``)."""
+    return request_content_sink.set(sink)
+
+
+def reset_request_content_sink(token: Token) -> None:
+    request_content_sink.reset(token)
 
 
 def get_request_llm_channel() -> tuple[str | None, str | None, str | None] | None:

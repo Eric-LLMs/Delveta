@@ -22,7 +22,7 @@ from apps.api.tools.toolkit import outputs, sources
 from apps.api.tools.toolkit.errors import GenerationError, SourceError
 from apps.api.tools.toolkit.pipeline import ToolKitPipeline
 from apps.api.tools.toolkit.plugins import build_toolkit_plugin
-from apps.api.tools.toolkit.prompts import SYSTEM_PROMPTS
+from apps.api.tools.toolkit.prompts import SUMMARY_STREAM_SYSTEM, SYSTEM_PROMPTS
 
 SUMMARY_DATA = {
     "title": "Deep Dive",
@@ -511,6 +511,220 @@ async def test_after_persist_observer_runs(tmp_path):
     pipe = ToolKitPipeline(_FakeLLM([SUMMARY_DATA]), "summary", workspace=tmp_path, events=events)
     await pipe.run(["doc.md"])
     assert len(seen) == 1 and seen[0]
+
+
+# ── chat-window streaming: the summary body arrives as it is written ──
+
+
+class _StreamLLM(_FakeLLM):
+    """JSON mode (saved lane) plus ``complete_stream`` (chat-window lane)."""
+
+    def __init__(self, responses=None, chunks=None, fail_after=None) -> None:
+        super().__init__(responses)
+        self.chunks = list(chunks or [])
+        self.fail_after = fail_after
+        self.stream_calls: list[tuple[str, str]] = []
+
+    async def complete_stream(self, text: str, system_prompt: str = "", **kwargs):
+        self.stream_calls.append((text, system_prompt))
+        for idx, piece in enumerate(self.chunks):
+            if self.fail_after is not None and idx >= self.fail_after:
+                raise RuntimeError("upstream 500 mid-stream")
+            yield piece
+
+
+STREAMED_BODY = (
+    "# Deep Dive\n\n"
+    "## Executive Summary\nThe document explains retrieval [doc.md:1].\n\n"
+    "## Key Points\n- RRF blends scores [doc.md:1].\n"
+)
+
+
+@pytest.fixture
+def content_sink():
+    """The turn's live-content sink, exactly as the ACTION executor installs it."""
+    from core.infrastructure.request_context import (
+        reset_request_content_sink,
+        set_request_content_sink,
+    )
+
+    frames: list[str] = []
+    token = set_request_content_sink(frames.append)
+    try:
+        yield frames
+    finally:
+        reset_request_content_sink(token)
+
+
+async def test_chat_lane_streams_the_summary_body_delta_by_delta(tmp_path, content_sink):
+    _doc(tmp_path)
+    chunks = [STREAMED_BODY[i:i + 16] for i in range(0, len(STREAMED_BODY), 16)]
+    llm = _StreamLLM(chunks=chunks)
+    pipe = ToolKitPipeline(llm, "summary", workspace=tmp_path)
+
+    result = await pipe.run(["doc.md"], persist=False)
+
+    assert content_sink == chunks              # every delta reached the turn as written
+    assert result.text == "".join(chunks).strip()
+    assert "".join(content_sink).strip() == result.text
+    assert llm.complete_json_calls == []       # no structured pass on this lane
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["doc.md"]  # nothing written
+
+
+async def test_the_streamed_lane_asks_for_markdown_not_json(tmp_path, content_sink):
+    _doc(tmp_path)
+    llm = _StreamLLM(chunks=["x"])
+    pipe = ToolKitPipeline(llm, "summary", workspace=tmp_path)
+
+    await pipe.run(["doc.md"], persist=False, prompt="Make it bilingual.")
+
+    prompt, system = llm.stream_calls[0]
+    assert system.startswith(SUMMARY_STREAM_SYSTEM)
+    assert system.endswith("Make it bilingual.")
+    assert "Write the finished Markdown summary only." in prompt
+    assert "Reply with JSON only" not in prompt
+    assert "file: doc.md (" in prompt  # citations stay groundable
+
+
+async def test_a_saved_summary_never_streams_into_the_chat(tmp_path, content_sink):
+    _doc(tmp_path)
+    llm = _StreamLLM(responses=[SUMMARY_DATA], chunks=["never shown"])
+    pipe = ToolKitPipeline(llm, "summary", workspace=tmp_path)
+
+    result = await pipe.run(["doc.md"])  # persist=True
+
+    assert content_sink == []
+    assert llm.stream_calls == []
+    assert len(result.files) == 1
+    assert "# Deep Dive" in Path(result.files[0]).read_text(encoding="utf-8")
+
+
+async def test_stream_text_false_keeps_the_render_only_json_flow(tmp_path, content_sink):
+    _doc(tmp_path)
+    llm = _StreamLLM(responses=[SUMMARY_DATA], chunks=["never shown"])
+    pipe = ToolKitPipeline(llm, "summary", workspace=tmp_path)
+
+    result = await pipe.run_sources(
+        [sources.from_text("doc.md", "Body [doc.md:1]")], None,
+        persist=False, stream_text=False)
+
+    assert content_sink == []
+    assert "# Deep Dive" in result.text
+
+
+async def test_an_llm_without_streaming_keeps_the_json_flow(tmp_path, content_sink):
+    _doc(tmp_path)
+    llm = _FakeLLM([SUMMARY_DATA])
+    pipe = ToolKitPipeline(llm, "summary", workspace=tmp_path)
+
+    result = await pipe.run(["doc.md"], persist=False)
+
+    assert content_sink == []
+    assert "# Deep Dive" in result.text
+
+
+async def test_a_big_document_never_streams(tmp_path, content_sink, monkeypatch):
+    monkeypatch.setattr(sources, "token_count", lambda t: max(1, len(t) // 4))
+    monkeypatch.setattr(sources.settings, "toolkit_max_input_tokens", 40)
+    text = "\n".join(f"L{i:02d} " + "x" * 20 for i in range(8)) + "\n"
+    _doc(tmp_path, text=text)
+    llm = _StreamLLM(responses=[SUMMARY_DATA, SUMMARY_DATA], chunks=["never shown"])
+    pipe = ToolKitPipeline(llm, "summary", workspace=tmp_path)
+
+    await pipe.run(["doc.md"], persist=False)
+
+    assert content_sink == []
+    assert llm.stream_calls == []
+    assert len(llm.complete_json_calls) == 2
+
+
+async def test_an_empty_stream_raises_instead_of_returning_an_empty_answer(
+        tmp_path, content_sink):
+    _doc(tmp_path)
+    pipe = ToolKitPipeline(_StreamLLM(chunks=["   "]), "summary", workspace=tmp_path)
+
+    with pytest.raises(GenerationError, match="empty summary"):
+        await pipe.run(["doc.md"], persist=False)
+    assert content_sink == ["   "]
+
+
+async def test_a_midstream_failure_reaches_the_caller_with_its_prefix_emitted(
+        tmp_path, content_sink):
+    _doc(tmp_path)
+    llm = _StreamLLM(chunks=["# Deep Dive\n", "## Key Points\n", "never"], fail_after=2)
+    pipe = ToolKitPipeline(llm, "summary", workspace=tmp_path)
+
+    with pytest.raises(Exception, match="upstream 500 mid-stream"):
+        await pipe.run(["doc.md"], persist=False)
+    assert content_sink == llm.chunks[:2]
+
+
+# ── the auto flow's ready shortcut vs. the live lane ──
+
+
+class _DecisionStreamLLM(_StreamLLM):
+    """First call ``complete_json_once`` (the decision) + ``complete_stream``."""
+
+    def __init__(self, decision: dict, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.decision = decision
+        self.decision_calls: list[str] = []
+
+    async def complete_json_once(self, text: str, system_prompt: str = "",
+                                 max_tokens: int = 0) -> dict:
+        self.decision_calls.append(text)
+        return self.decision
+
+
+def _auto_turn(monkeypatch, previous: str):
+    from types import SimpleNamespace
+
+    from api.tools.turn_material import ChatMessage, ViewerInfo
+
+    from apps.api.tools.toolkit import summary_auto
+
+    row = ChatMessage("assistant", previous)
+    monkeypatch.setattr(summary_auto, "turn_query", lambda: "总结一下")
+    monkeypatch.setattr(summary_auto, "recent_messages", lambda n: (row,))
+    monkeypatch.setattr(summary_auto, "turn_history", lambda: (row,))
+    monkeypatch.setattr(summary_auto, "viewer_info", lambda: ViewerInfo())
+    return SimpleNamespace()
+
+
+async def test_a_live_turn_declines_the_ready_shortcut_and_streams(
+        tmp_path, content_sink, monkeypatch):
+    from apps.api.tools.toolkit.summary_auto import run_auto_summary
+
+    ctx = _auto_turn(monkeypatch, "The release is on Friday.")
+    chunks = ["# Summary\n\n", "The release is on Friday [previous message:1].\n"]
+    llm = _DecisionStreamLLM(
+        {"target": "previous_message", "ready": True, "summary": "Reused body."},
+        chunks=chunks)
+    pipe = ToolKitPipeline(llm, "summary", workspace=tmp_path)
+
+    text = await run_auto_summary(args={}, ctx=ctx, llm=llm, pipeline=pipe)
+
+    assert content_sink == chunks            # written to the chat as it is produced
+    assert text == "".join(chunks).strip()
+    assert text != "Reused body."
+    assert len(llm.decision_calls) == 1      # the decision call itself is unchanged
+    assert "The release is on Friday." in llm.stream_calls[0][0]  # same material
+
+
+async def test_the_ready_shortcut_still_answers_in_one_call_without_a_sink(
+        tmp_path, monkeypatch):
+    from apps.api.tools.toolkit.summary_auto import run_auto_summary
+
+    ctx = _auto_turn(monkeypatch, "The release is on Friday.")
+    llm = _DecisionStreamLLM(
+        {"target": "previous_message", "ready": True, "summary": "Reused body."},
+        chunks=["never"])
+    pipe = ToolKitPipeline(llm, "summary", workspace=tmp_path)
+
+    text = await run_auto_summary(args={}, ctx=ctx, llm=llm, pipeline=pipe)
+
+    assert text == "Reused body."            # the non-streaming lane is untouched
+    assert llm.stream_calls == []
 
 
 # ── plugin wiring ──

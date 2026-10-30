@@ -24,7 +24,11 @@ Stage order and responsibilities:
    model-written diagram markup).
 5. **persist**  — atomic write into the workspace output dir with collision-proof names.
    SKIPPED (``persist=False``) when the caller wants the rendered text itself — the
-   chat-window summary lane — so nothing is written to disk on that path.
+   chat-window summary lane — so nothing is written to disk on that path. That lane is
+   also the ONE live path: when the turn installed a content sink, the summary model
+   writes the finished Markdown and every delta is forwarded as it is produced
+   (:meth:`ToolKitPipeline._stream_summary`); the saved and big-document lanes keep the
+   schema-validated JSON flow.
 
 Every stage raises a :class:`ToolKitError` subclass; ``run`` maps any other failure to a
 generic :class:`ToolKitError` so callers get one readable message.
@@ -35,6 +39,7 @@ import asyncio
 import logging
 import os
 import secrets
+import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -42,10 +47,11 @@ from pathlib import Path
 from agent.tools.fs_tools import _atomic_write, _resolve
 from core.config import settings
 from core.infrastructure import media as media_lib
+from core.infrastructure.request_context import get_request_content_sink
 
 from . import outputs
 from .errors import GenerationError, PersistError, SourceError, ToolKitError
-from .prompts import SYSTEM_PROMPTS, build_user_prompt
+from .prompts import SUMMARY_STREAM_SYSTEM, SYSTEM_PROMPTS, build_user_prompt
 from .sources import (
     WorkspaceSource,
     load_sources,
@@ -146,6 +152,7 @@ class ToolKitPipeline:
     async def run_sources(self, sources: list[WorkspaceSource],
                           output_dir: str | None = None, *,
                           persist: bool = True, stem: str = "artifact",
+                          stream_text: bool = True,
                           **params) -> ToolKitResult:
         """Run generation/render/(persist) over ALREADY-EXTRACTED text.
 
@@ -153,12 +160,17 @@ class ToolKitPipeline:
         the conversation itself — the validate/ingest stages do not apply, because
         the caller already read the bytes through its own authorized reader. The
         generate/render/persist stages are the SAME code ``run`` uses.
+
+        ``stream_text=False`` pins the JSON flow even when the turn installed a
+        content sink — a caller that only needs the rendered body to save it must
+        not also push it into the chat.
         """
         try:
             if not sources:
                 raise SourceError("no content to summarize")
             return await self._run_sources(sources, output_dir, params,
-                                           persist=persist, stem=stem)
+                                           persist=persist, stem=stem,
+                                           stream_text=stream_text)
         except ToolKitError:
             raise
         except Exception as exc:
@@ -205,15 +217,17 @@ class ToolKitPipeline:
 
     async def _run_sources(self, sources: list[WorkspaceSource],
                            output_dir: str | None, params: dict, *,
-                           persist: bool, stem: str) -> ToolKitResult:
+                           persist: bool, stem: str,
+                           stream_text: bool = True) -> ToolKitResult:
         # No validate/ingest hooks: there is no path to validate and no bytes to
         # extract — the caller's reader owns both, and it already succeeded.
         return await self._finish(
-            sources, params, persist=persist, stem=stem,
+            sources, params, persist=persist, stem=stem, stream_text=stream_text,
             out_dir=self._resolve_output_dir(output_dir) if persist else None)
 
     async def _finish(self, sources: list[WorkspaceSource], params: dict, *,
-                      persist: bool, stem: str, out_dir: Path | None) -> ToolKitResult:
+                      persist: bool, stem: str, out_dir: Path | None,
+                      stream_text: bool = True) -> ToolKitResult:
         """generate → render → persist (or return the rendered text)."""
         self._deck_stats = {}
 
@@ -227,6 +241,16 @@ class ToolKitPipeline:
                 self.tool, total_input_tokens(sources),
                 settings.toolkit_max_input_tokens, len(batches))
         bigdoc_calls = len(batches) if batches else None
+
+        # Live lane: the turn installed a content sink and the result goes straight
+        # back to the chat (no artifact), so the model writes the FINISHED body and
+        # every delta reaches the user while it is still being generated. The saved
+        # and big-document lanes keep the schema-validated JSON flow untouched.
+        sink = get_request_content_sink()
+        if (sink is not None and stream_text and not persist and not batches
+                and self.tool == "summary"
+                and hasattr(self.llm, "complete_stream")):
+            return await self._stream_summary(sources, params, sink)
 
         await self._hook("before-generate", sources)
         data = await self.stage_generate(sources, params, batches=batches)
@@ -265,6 +289,50 @@ class ToolKitPipeline:
             stats=dict(getattr(self, "_deck_stats", None) or {}),
             text=str(primary),
         )
+
+    async def _stream_summary(self, sources: list[WorkspaceSource], params: dict,
+                              sink) -> ToolKitResult:
+        """Write the finished summary body live, delta by delta, into ``sink``.
+
+        The JSON flow exists so the renderer owns the artifact's layout; this lane
+        returns text to the chat instead, so the model writes that same rendered
+        structure directly and the turn's executor forwards every delta. Only the
+        FINAL body streams — the auto flow's JSON decision call is untouched.
+        """
+        system = SUMMARY_STREAM_SYSTEM
+        custom = (params.get("prompt") or "").strip()
+        if custom:
+            system = f"{system}\n\n{custom}"
+        prompt = build_user_prompt(self.tool, sources, params, markdown=True)
+
+        await self._hook("before-generate", sources)
+        t0 = time.perf_counter()
+        first_ms: float | None = None
+        parts: list[str] = []
+        deltas = 0
+        async for delta in self.llm.complete_stream(
+                prompt, system_prompt=system,
+                timeout=settings.toolkit_llm_timeout_s):
+            if not delta:
+                continue
+            if first_ms is None:
+                first_ms = (time.perf_counter() - t0) * 1000
+            parts.append(delta)
+            deltas += 1
+            sink(delta)
+
+        text = "".join(parts).strip()
+        if not text:
+            raise GenerationError("model returned an empty summary")
+        logger.info(
+            "toolkit summary stream sources=%d first_delta_ms=%.0f duration_ms=%.0f "
+            "chars=%d deltas=%d",
+            len(sources), first_ms or 0.0, (time.perf_counter() - t0) * 1000,
+            len(text), deltas)
+        await self._observe("after-generate", {"markdown": text})
+        return ToolKitResult(
+            tool=self.tool, files=[],
+            summary="Rendered summary output (not saved).", text=text)
 
     # ── stage 1: validate ──
     def _resolve_output_dir(self, output_dir: str | None) -> Path:
