@@ -1523,8 +1523,16 @@
     box.className = "thinking-text";
     details.appendChild(sum);
     details.appendChild(box);
-    chatLog.appendChild(details);
     const scroll = () => { chatLog.scrollTop = chatLog.scrollHeight; };
+    // The bar lands after the transcript was already scrolled to the end, and its phase
+    // line can reflow as the label changes, so pin the view to the newest content — but
+    // only when the reader is still near the bottom; scrolling up into history must not
+    // be yanked back by a status update. Same 160px threshold the live session refresh uses.
+    const stick = () => {
+      if (chatLog.scrollHeight - chatLog.scrollTop - chatLog.clientHeight < 160) scroll();
+    };
+    chatLog.appendChild(details);
+    stick();
     // Whether any real activity (streamed reasoning or a tool call) ever landed. FOCUS
     // turns run with the model's thinking suppressed (server-side) and can answer
     // straight from the injected viewer text without calling a tool — the bar is then a
@@ -1546,6 +1554,7 @@
         phase = txt; phaseT0 = Date.now();
         sumIcon.innerHTML = dvIconHTML(phaseIcon(txt));
         sumText.textContent = txt;
+        stick();
         if (!phaseTimer) phaseTimer = setInterval(() => {
           if (!sum.isConnected) { stopTicker(); return; }
           sumText.textContent = `${phase} · ${Math.floor((Date.now() - phaseT0) / 1000)}s`;
