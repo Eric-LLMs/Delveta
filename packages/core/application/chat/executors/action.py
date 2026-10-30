@@ -38,8 +38,9 @@ DIRECT lane. The lane is deterministic EXCEPT for the query capabilities in
 :data:`~core.application.chat.executors.answer_synthesis.SYNTHESIS_TOOLS`, whose
 tool output is retrieved material rather than an answer: a successful dispatch of
 one of those gets exactly ONE synthesis completion (:mod:`answer_synthesis`)
-before it is returned. Every failure, denial and non-query tool keeps the
-deterministic contract.
+before it is returned — streamed delta by delta on ``stream()``, whole on
+``run()``. Every failure, denial and non-query tool keeps the deterministic
+contract.
 """
 from __future__ import annotations
 
@@ -56,6 +57,7 @@ from core.application.chat.actions import (
 from core.application.chat.execution_plan import PlanKind
 from core.application.chat.executors.answer_synthesis import (
     SYNTHESIS_TOOLS,
+    stream_synthesis,
     synthesize_answer,
 )
 from core.application.chat.executors.base import (
@@ -123,10 +125,16 @@ class DispatchOutcome:
 
     ``refusal_reason`` is set only when the dispatch was refused before the seam;
     a normal tool result (success, denial, state-unknown) has ``None`` here.
+
+    ``synthesis`` is set when the dispatch SUCCEEDED on a query tool: the output is
+    retrieved material, so ``(tool, material)`` still needs one LLM completion
+    before it is user-facing. ``message`` then carries that raw material — the
+    fallback both entry points keep when synthesis fails or comes back empty.
     """
 
     message: str
     refusal_reason: str | None = None
+    synthesis: tuple[str, str] | None = None
 
 
 def _refusal(reason: str, *, stamped: bool = False) -> DispatchOutcome:
@@ -399,23 +407,21 @@ class ActionExecutor:
             return DispatchOutcome(
                 _DENIED_PREFIX + str(result.get("reason") or "the operation was denied."))
         raw = str(result.get("output") or "Done.")
-        # Query tools returned MATERIAL, not an answer. Synthesize one answer from
-        # (question + material) — only after a successful dispatch, and a failed or
-        # empty synthesis falls back to `raw` so the retrieved data is never lost.
-        if validated["tool"] in SYNTHESIS_TOOLS:
-            answer = await synthesize_answer(req.deps, req.ctx, validated["tool"], raw)
-            if answer:
-                return DispatchOutcome(answer)
+        # Query tools returned MATERIAL, not an answer. The synthesis itself is the
+        # caller's: it needs the question + material, and only the streaming entry
+        # point can emit it token by token. A failed or empty synthesis falls back
+        # to `raw` so the retrieved data is never lost.
+        if str(validated["tool"]) in SYNTHESIS_TOOLS:
+            return DispatchOutcome(raw, synthesis=(str(validated["tool"]), raw))
         return DispatchOutcome(raw)
 
-    # ── stream / run: identical terminal shape (any query synthesis already ran
-    #    in _dispatch, so both entry points return the same final text) ────────────
+    # ── stream / run: identical terminal shape; only the query-tool synthesis
+    #    differs (streamed deltas vs one completion) ──────────────────────────────
     async def stream(
         self, req: TurnRequest, *, progress_sink: ProgressSink
     ) -> AsyncIterator[ChatEvent]:
         # Everything up to the first yield is pre-commit: an escalation here is legal.
         outcome = await self._dispatch(req)
-        message = outcome.message
         ctx = req.ctx
         history = [
             {"role": m["role"], "content": m["content"]}
@@ -423,8 +429,23 @@ class ActionExecutor:
             if isinstance(m.get("content"), str) and m.get("role") in ("user", "assistant")
         ]
         await ctx.session_memory.append_message("user", ctx.user_text)
+        # Query-tool answer: the model's own deltas ARE the content frames, so the
+        # user watches the answer being written. The joined text is what the done
+        # payload, the history row and the saved assistant message carry — byte for
+        # byte, the four never diverge.
+        parts: list[str] = []
+        if outcome.synthesis is not None:
+            tool, raw = outcome.synthesis
+            async for delta in stream_synthesis(req.deps, ctx, tool, raw):
+                parts.append(delta)
+                yield {"type": "content", "data": delta}
+        message = "".join(parts)
+        if not message.strip():
+            # No delta at all, or a whitespace-only reply: keep the deterministic
+            # material and emit it as the one content frame.
+            message = outcome.message
+            yield {"type": "content", "data": message}
         await ctx.session_memory.append_message("assistant", message)
-        yield {"type": "content", "data": message}
         done = {
             "answer": message,
             "messages": [*history, {"role": "user", "content": ctx.user_text},
@@ -440,6 +461,9 @@ class ActionExecutor:
     async def run(self, req: TurnRequest) -> ExecutorResult:
         outcome = await self._dispatch(req)
         message = outcome.message
+        if outcome.synthesis is not None:
+            tool, raw = outcome.synthesis
+            message = await synthesize_answer(req.deps, req.ctx, tool, raw) or raw
         ctx = req.ctx
         history = [
             {"role": m["role"], "content": m["content"]}

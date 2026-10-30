@@ -517,12 +517,18 @@ class OpenAILLM:
         # Per-call timeout/max_retries overrides force a fresh client (the shared
         # self.client carries process-wide settings); otherwise reuse it.
         client, mdl = self._call_channel(model, base_url, api_key, timeout=timeout, max_retries=max_retries)
+        # Same thinking switch as ``_stream_accumulate``: a reasoning pass would be
+        # generated (and paid for) before the first visible token, so a streamed
+        # chat answer would sit silent instead of streaming.
+        body = dict(extra_body or {})
+        if settings.llm_disable_thinking:
+            body.setdefault("enable_thinking", False)
         stream = await client.chat.completions.create(
             model=mdl,
             messages=self._messages(prompt, system_prompt),
             temperature=0.3,
             stream=True,
-            **({"extra_body": extra_body} if extra_body else {}),
+            **({"extra_body": body} if body else {}),
         )
         async for chunk in stream:
             if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content:

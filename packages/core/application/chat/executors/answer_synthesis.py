@@ -14,11 +14,18 @@ allowance and billing path stay the same, and no second client is constructed he
 
 Failure is fail-open DOWNWARDS: a failed or empty completion returns "" and the
 caller keeps the raw tool output — retrieved data is never lost.
+
+Two entry points, one contract:
+
+* :func:`synthesize_answer` — the whole answer (non-streaming ``/chat``);
+* :func:`stream_synthesis` — the SAME prompt over ``complete_stream``, yielding the
+  answer as the model produces it (the streaming ``/chat/stream`` path).
 """
 from __future__ import annotations
 
 import logging
 import time
+from collections.abc import AsyncIterator
 
 logger = logging.getLogger(__name__)
 
@@ -100,3 +107,83 @@ async def synthesize_answer(deps, ctx, tool: str, raw_output: str) -> str:
         tool, duration_ms, len(raw_output), len(answer),
     )
     return answer
+
+
+async def stream_synthesis(
+    deps, ctx, tool: str, raw_output: str
+) -> AsyncIterator[str]:
+    """Stream the synthesized answer as the model produces it.
+
+    Same prompt, same channel resolution as :func:`synthesize_answer`; only the wire
+    changes (``complete_stream`` instead of an accumulated completion). The caller
+    accumulates the deltas — it needs the full text for the session row and the done
+    payload.
+
+    Contract:
+
+    * no delta is ever yielded after a failure, and a failure BEFORE the first delta
+      yields nothing, so the caller falls back to the raw tool output exactly as the
+      non-streaming path does;
+    * a failure AFTER the first delta keeps the streamed prefix and yields nothing
+      more — never the raw material spliced onto a partial answer;
+    * a seam without ``complete_stream`` degrades to one whole-answer delta.
+    """
+    llm = getattr(deps, "llm", None)
+    if llm is None:
+        logger.warning("chat.answer-synthesis skipped tool=%s: no llm seam", tool)
+        return
+    if not raw_output.strip():
+        return
+
+    if not hasattr(llm, "complete_stream"):
+        # Duck-typed seam without the streaming capability: same text, one frame.
+        answer = await synthesize_answer(deps, ctx, tool, raw_output)
+        if answer:
+            yield answer
+        return
+
+    query = str(getattr(ctx, "user_text", "") or "").strip()
+    t0 = time.perf_counter()
+    parts: list[str] = []
+    # Leading whitespace deltas are held back until the answer really starts: an
+    # all-whitespace reply must emit NOTHING so the caller falls back to the raw
+    # material, and the joined deltas must stay identical to the caller's message.
+    started = False
+    try:
+        # No model/base_url/api_key override: the turn's pinned channel wins (see the
+        # module docstring). Passing them here would fork onto a different route.
+        async for delta in llm.complete_stream(
+            build_prompt(query, tool, raw_output), system_prompt=_SYSTEM_PROMPT
+        ):
+            if not delta:
+                continue
+            if not started:
+                if not delta.strip():
+                    continue
+                started = True
+            parts.append(delta)
+            yield delta
+    except Exception:  # noqa: BLE001 - fail-open DOWN to the raw tool output
+        logger.exception(
+            "chat.answer-synthesis stream failed tool=%s duration_ms=%.0f "
+            "streamed_chars=%d; %s",
+            tool, (time.perf_counter() - t0) * 1000, sum(len(p) for p in parts),
+            "keeping the streamed prefix"
+            if parts else "falling back to the raw tool output",
+        )
+        return
+
+    duration_ms = (time.perf_counter() - t0) * 1000
+    answer = "".join(parts)
+    if not answer.strip():
+        logger.warning(
+            "chat.answer-synthesis stream empty tool=%s duration_ms=%.0f; "
+            "falling back to the raw tool output",
+            tool, duration_ms,
+        )
+        return
+    logger.info(
+        "chat.answer-synthesis stream tool=%s duration_ms=%.0f material_chars=%d "
+        "answer_chars=%d deltas=%d",
+        tool, duration_ms, len(raw_output), len(answer), len(parts),
+    )

@@ -10,6 +10,8 @@ both sides of that boundary:
     model call;
   * tool denial / state-unknown / a failed or empty synthesis ⇒ never a fake success:
     the raw material (or the honest terminal message) is returned unchanged;
+  * the synthesis streams: one content frame per model delta, and the joined frames
+    are byte-identical to done.answer and the saved assistant row;
   * the synthesis call carries no model/channel override, so the turn's pinned
     channel resolution is the one that applies.
 """
@@ -81,17 +83,38 @@ _CAP = {"web_search": "cap-web-search", "rag_search": "cap-rag-search",
 
 class _FakeLLM:
     def __init__(self, answer: str = "北京今天晴，25℃（来源：https://weather.example/beijing）",
-                 error: Exception | None = None):
+                 error: Exception | None = None,
+                 chunks: list[str] | None = None,
+                 fail_after: int | None = None):
         self.answer = answer
         self.error = error
+        self.chunks = list(chunks) if chunks is not None else _split(answer)
+        # Raise on the Nth delta (0 = before the first one).
+        self.fail_after = fail_after
         self.calls: list[dict] = []
 
-    async def complete(self, prompt: str, system_prompt: str = "", **kwargs) -> str:
+    def _record(self, prompt, system_prompt, kwargs):
         self.calls.append({"prompt": prompt, "system_prompt": system_prompt,
                            "kwargs": kwargs})
+
+    async def complete(self, prompt: str, system_prompt: str = "", **kwargs) -> str:
+        self._record(prompt, system_prompt, kwargs)
         if self.error is not None:
             raise self.error
         return self.answer
+
+    async def complete_stream(self, prompt: str, system_prompt: str = "", **kwargs):
+        self._record(prompt, system_prompt, kwargs)
+        if self.error is not None:
+            raise self.error
+        for idx, piece in enumerate(self.chunks):
+            if self.fail_after is not None and idx >= self.fail_after:
+                raise RuntimeError("upstream 500 mid-stream")
+            yield piece
+
+
+def _split(text: str, size: int = 8) -> list[str]:
+    return [text[i:i + size] for i in range(0, len(text), size)] or [text]
 
 
 class _SM:
@@ -130,14 +153,21 @@ def _req(tool: str, run_tool, llm):
     return TurnRequest(ctx=ctx, deps=deps, plan=plan)
 
 
-async def _answer(tool: str, run_tool, llm) -> str:
+async def _events_req(req) -> tuple[list[dict], dict]:
     events = []
-    async for evt in ActionExecutor().stream(_req(tool, run_tool, llm),
-                                             progress_sink=lambda e: None):
+    async for evt in ActionExecutor().stream(req, progress_sink=lambda e: None):
         events.append(evt)
-    content = [e for e in events if e["type"] == "content"]
-    assert len(content) == 1
-    return content[0]["data"]
+    done = next((e["data"] for e in events if e["type"] == "done"), {})
+    return events, done
+
+
+async def _events(tool: str, run_tool, llm) -> tuple[list[dict], dict]:
+    return await _events_req(_req(tool, run_tool, llm))
+
+
+async def _answer(tool: str, run_tool, llm) -> str:
+    events, _done = await _events(tool, run_tool, llm)
+    return "".join(e["data"] for e in events if e["type"] == "content")
 
 
 def _tool(output: str):
@@ -249,6 +279,72 @@ def test_prompt_truncates_pathological_material_with_an_explicit_marker():
     prompt = build_prompt("q", "web_search", huge)
     assert "[material truncated]" in prompt
     assert prompt.count("x") == _MAX_MATERIAL_CHARS
+
+
+# ── streaming: the answer arrives as the model writes it ───────────────────────
+
+
+@pytest.mark.parametrize("tool", QUERY_TOOLS)
+async def test_query_answer_streams_as_multiple_content_events(tool):
+    run_tool, _ = _tool(RAW)
+    llm = _FakeLLM()
+
+    events, _done = await _events(tool, run_tool, llm)
+
+    content = [e["data"] for e in events if e["type"] == "content"]
+    assert len(content) > 1  # one frame per model delta, not one whole answer
+    assert "".join(content) == llm.answer
+    assert len(llm.calls) == 1
+
+
+async def test_streamed_frames_done_answer_and_saved_row_are_the_same_text():
+    run_tool, _ = _tool(RAW)
+    llm = _FakeLLM()
+    req = _req("web_search", run_tool, llm)
+
+    events, done = await _events_req(req)
+
+    streamed = "".join(e["data"] for e in events if e["type"] == "content")
+    assert streamed == done["answer"] == llm.answer
+    assert done["messages"][-1] == {"role": "assistant", "content": done["answer"]}
+    assert req.ctx.session_memory.rows[-1] == ("assistant", done["answer"])
+    # The user row is still written before any output.
+    assert req.ctx.session_memory.rows[0] == ("user", req.ctx.user_text)
+
+
+async def test_a_midstream_failure_keeps_the_prefix_and_never_appends_the_material():
+    run_tool, _ = _tool(RAW)
+    llm = _FakeLLM(fail_after=2)
+
+    events, done = await _events("web_search", run_tool, llm)
+
+    content = [e["data"] for e in events if e["type"] == "content"]
+    assert content == llm.chunks[:2]
+    assert done["answer"] == "".join(llm.chunks[:2])
+    assert RAW not in done["answer"]  # the raw material is never spliced on
+
+
+async def test_a_stream_failing_before_the_first_delta_falls_back_to_the_material():
+    run_tool, _ = _tool(RAW)
+    llm = _FakeLLM(fail_after=0)
+
+    assert await _answer("web_search", run_tool, llm) == RAW
+
+
+async def test_a_seam_without_a_streaming_method_answers_in_one_frame():
+    run_tool, _ = _tool(RAW)
+
+    class _CompleteOnly:
+        answer = "合成后的答案"
+
+        async def complete(self, prompt: str, system_prompt: str = "", **kwargs) -> str:
+            return self.answer
+
+    events, done = await _events("web_search", run_tool, _CompleteOnly())
+
+    content = [e["data"] for e in events if e["type"] == "content"]
+    assert content == [_CompleteOnly.answer]
+    assert done["answer"] == _CompleteOnly.answer
 
 
 def test_registry_set_is_exactly_the_query_tools():
