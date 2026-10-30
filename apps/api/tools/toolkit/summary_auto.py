@@ -10,9 +10,10 @@ the open document's identity (never its body). It decides the target
 the answer is already producible from that material (``ready`` + ``summary``),
 the page range when one is needed, and the SAVE intent (``save_to_file`` /
 ``save_path``). When ``ready`` is true the turn ends here — ONE model call. The
-exception is a live chat turn (a content sink is installed, no save): the body is
-shown as it is written, so the shortcut is declined and the material path below
-streams it.
+only exception is a live chat turn (a content sink is installed, no save): the
+same concise summary is then produced by ONE streamed call over the very same
+material, so the user watches it being written instead of receiving the whole
+short paragraph at once. The summary's type and length do not change.
 
 **Second call** — only when the first call resolved a target whose content it did
 not have. The material is MINIMAL: a document target sends that document's
@@ -93,6 +94,21 @@ Rules:
   save_path is the exact path text they wrote; when they did not write one,
   leave it empty. NEVER invent a path.
 - Use ONLY the supplied material; never invent document content."""
+
+# The live lane's body call for the ``ready`` case: the SAME concise summary the
+# first call would have carried in its ``summary`` field, written as plain text so
+# it can stream. No structure, no headings — the ready summary was always a short
+# paragraph, and it stays one.
+_READY_SUMMARY_SYSTEM = """You are the summarizing step of a summarizer inside
+a document/video reader and chat window.
+Reply with ONLY the summary the user asked for, written from the material below.
+Rules:
+- Write in the user's language and match the scope of their request.
+- Be concise: a short paragraph of roughly 3-6 sentences.
+- Plain prose only: no title, no Markdown headings, no bullet lists, no JSON.
+- End with the summary itself: no follow-up questions, no offers, no notes about
+  how it was produced.
+- Use ONLY the supplied material; never invent content."""
 
 
 @dataclass(frozen=True)
@@ -254,7 +270,9 @@ def _transcript(messages: tuple[ChatMessage, ...]) -> str:
 
 
 def _first_call_prompt(query: str, previous: ChatMessage | None, viewer,
-                       doc_asset: str) -> str:
+                       doc_asset: str, *,
+                       instruction: str = "Decide the summary target and the save intent.",
+                       ) -> str:
     parts = [f"<user_request>\n{query}\n</user_request>"]
     if previous is not None:
         parts.append(
@@ -271,13 +289,55 @@ def _first_call_prompt(query: str, previous: ChatMessage | None, viewer,
         parts.append("<open_document/>")
     parts.append(
         f"<chat_rows>{len(turn_history())}</chat_rows>\n"
-        "Decide the summary target and the save intent.")
+        f"{instruction}")
     return "\n\n".join(parts)
 
 
 def _render_persisted(result) -> str:
     lines = [result.summary, *(f"- {f}" for f in result.files)]
     return "\n".join(lines)
+
+
+async def _stream_ready_summary(*, query: str, previous: ChatMessage | None, viewer,
+                                doc_asset: str, decision: SummaryDecision,
+                                llm) -> str:
+    """Write the ``ready`` summary as plain text, delta by delta, into the turn's sink.
+
+    Same material the first call decided on, same concise style as the ``summary``
+    field it carried — only the transport differs. The decided summary stays in hand
+    as the fallback, so a stream that yields nothing never costs a broken turn and
+    never triggers a second, fuller generation.
+    """
+    sink = get_request_content_sink()
+    if sink is None:  # not a live turn (defensive): the decided body is the answer
+        return decision.summary
+    prompt = _first_call_prompt(
+        query, previous, viewer, doc_asset,
+        instruction="Write the summary the user asked for from the material above. "
+                    "Reply with the summary only.")
+    parts: list[str] = []
+    started = False
+    try:
+        async for delta in llm.complete_stream(
+                prompt, system_prompt=_READY_SUMMARY_SYSTEM):
+            if not delta:
+                continue
+            if not started:
+                if not delta.strip():
+                    continue  # the joined frames start with real text
+                started = True
+            parts.append(delta)
+            sink(delta)
+    except Exception:  # the decided summary is a complete fallback
+        logger.exception("summary auto: ready-summary stream failed")
+        return "".join(parts) if parts else decision.summary
+    text = "".join(parts).strip()
+    if text:
+        logger.info("summary auto: ready stream chars=%d deltas=%d",
+                    len(text), len(parts))
+        return text
+    logger.warning("summary auto: ready-summary stream was empty; using the decided summary")
+    return decision.summary
 
 
 async def run_auto_summary(*, args: dict, ctx, llm, pipeline) -> str:
@@ -307,15 +367,17 @@ async def run_auto_summary(*, args: dict, ctx, llm, pipeline) -> str:
         decision.target, decision.ready, decision.reason or "-",
         decision.save_to_file, decision.save_path or "-")
 
-    # The chat-window lane writes the body it shows, streamed (the pipeline's live
-    # lane). The first call's ``summary`` is a structured-output by-product — it is
-    # whole the moment it arrives and cannot stream — so on a live turn the ready
-    # shortcut is declined and the SAME decision's material path below produces the
-    # body as it is written. Save turns keep the shortcut: nothing is displayed
-    # there, only written. The non-streaming /chat lane is untouched.
+    # On a live chat turn the ready summary is WRITTEN as it streams: the same
+    # concise summary over the same material, so the type and length do not change —
+    # only the delivery does. Save turns and the non-streaming /chat lane keep the
+    # single-call shortcut verbatim.
     streaming = (get_request_content_sink() is not None
                  and hasattr(llm, "complete_stream"))
-    if decision.ready and not (streaming and not decision.save_to_file):
+    if decision.ready:
+        if streaming and not decision.save_to_file:
+            return await _stream_ready_summary(
+                query=query, previous=previous, viewer=viewer,
+                doc_asset=doc_asset, decision=decision, llm=llm)
         text = decision.summary
         if decision.save_to_file:
             saved = await _save_to_drive(ctx, text, decision.save_path, stem="summary")

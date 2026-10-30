@@ -23,6 +23,7 @@ from apps.api.tools.toolkit.errors import GenerationError, SourceError
 from apps.api.tools.toolkit.pipeline import ToolKitPipeline
 from apps.api.tools.toolkit.plugins import build_toolkit_plugin
 from apps.api.tools.toolkit.prompts import SUMMARY_STREAM_SYSTEM, SYSTEM_PROMPTS
+from apps.api.tools.toolkit.summary_auto import _READY_SUMMARY_SYSTEM
 
 SUMMARY_DATA = {
     "title": "Deep Dive",
@@ -691,24 +692,77 @@ def _auto_turn(monkeypatch, previous: str):
     return SimpleNamespace()
 
 
-async def test_a_live_turn_declines_the_ready_shortcut_and_streams(
+async def test_a_live_turn_streams_the_ready_summary_in_the_same_concise_style(
         tmp_path, content_sink, monkeypatch):
     from apps.api.tools.toolkit.summary_auto import run_auto_summary
 
     ctx = _auto_turn(monkeypatch, "The release is on Friday.")
-    chunks = ["# Summary\n\n", "The release is on Friday [previous message:1].\n"]
+    chunks = ["The release ", "is on Friday ", "[previous message:1]."]
     llm = _DecisionStreamLLM(
-        {"target": "previous_message", "ready": True, "summary": "Reused body."},
+        {"target": "previous_message", "ready": True, "summary": "Decided body."},
         chunks=chunks)
     pipe = ToolKitPipeline(llm, "summary", workspace=tmp_path)
 
     text = await run_auto_summary(args={}, ctx=ctx, llm=llm, pipeline=pipe)
 
-    assert content_sink == chunks            # written to the chat as it is produced
-    assert text == "".join(chunks).strip()
-    assert text != "Reused body."
-    assert len(llm.decision_calls) == 1      # the decision call itself is unchanged
-    assert "The release is on Friday." in llm.stream_calls[0][0]  # same material
+    assert content_sink == chunks             # written to the chat as it is produced
+    assert text == "".join(chunks)
+    assert len(llm.decision_calls) == 1       # the decision call itself is unchanged
+    assert len(llm.stream_calls) == 1         # ONE short streamed body, no JSON pass
+    assert llm.complete_json_calls == []      # never the full structured summary
+    prompt, system = llm.stream_calls[0]
+    assert system == _READY_SUMMARY_SYSTEM    # the concise ready style, not the pipeline's
+    assert "The release is on Friday." in prompt      # the same material as the decision
+    assert "Write the summary the user asked for" in prompt
+
+
+async def test_a_ready_stream_that_yields_nothing_falls_back_to_the_decided_summary(
+        tmp_path, content_sink, monkeypatch):
+    from apps.api.tools.toolkit.summary_auto import run_auto_summary
+
+    ctx = _auto_turn(monkeypatch, "The release is on Friday.")
+    llm = _DecisionStreamLLM(
+        {"target": "previous_message", "ready": True, "summary": "Decided body."},
+        chunks=[])
+    pipe = ToolKitPipeline(llm, "summary", workspace=tmp_path)
+
+    assert await run_auto_summary(args={}, ctx=ctx, llm=llm, pipeline=pipe) == "Decided body."
+    assert content_sink == []
+
+
+async def test_a_ready_stream_failing_midway_keeps_the_prefix(
+        tmp_path, content_sink, monkeypatch):
+    from apps.api.tools.toolkit.summary_auto import run_auto_summary
+
+    ctx = _auto_turn(monkeypatch, "The release is on Friday.")
+    llm = _DecisionStreamLLM(
+        {"target": "previous_message", "ready": True, "summary": "Decided body."},
+        chunks=["The release ", "is on Friday.", "never"], fail_after=2)
+    pipe = ToolKitPipeline(llm, "summary", workspace=tmp_path)
+
+    text = await run_auto_summary(args={}, ctx=ctx, llm=llm, pipeline=pipe)
+    assert text == "The release is on Friday."
+    assert content_sink == llm.chunks[:2]
+
+
+async def test_a_ready_save_never_streams_into_the_chat(
+        tmp_path, content_sink, monkeypatch):
+    from apps.api.tools.toolkit import summary_auto
+
+    ctx = _auto_turn(monkeypatch, "The release is on Friday.")
+    monkeypatch.setattr(summary_auto, "save_target", lambda path: (str(tmp_path), ""))
+    llm = _DecisionStreamLLM(
+        {"target": "previous_message", "ready": True, "summary": "Decided body.",
+         "save_to_file": True},
+        chunks=["never"])
+    pipe = ToolKitPipeline(llm, "summary", workspace=tmp_path)
+
+    text = await summary_auto.run_auto_summary(args={}, ctx=ctx, llm=llm, pipeline=pipe)
+
+    assert content_sink == []
+    assert llm.stream_calls == []
+    assert "Decided body." not in text  # the saved-file note, not the body
+    assert list(tmp_path.glob("summary_*.md"))
 
 
 async def test_the_ready_shortcut_still_answers_in_one_call_without_a_sink(
