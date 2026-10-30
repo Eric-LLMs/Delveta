@@ -212,7 +212,8 @@ class ExtractorDouble:
         self.calls = 0
         self.seen: list[str] = []
 
-    async def __call__(self, *, query, entry, model_slots, bundle, prompt=None):
+    async def __call__(self, *, llm=None, query, entry, model_slots, bundle,
+                       prompt=None):
         self.calls += 1
         self.seen.append(entry.capability_id)
         if self.values is not None:
@@ -272,7 +273,7 @@ def _setup(monkeypatch, *, timeout=5.0, steps=None, delay=0.0,
     # per request). No real service and no real model is ever called.
     monkeypatch.setattr(cap_router_mod, "default_selector",
                         lambda: selector if selector is not None else SelectorDouble())
-    monkeypatch.setattr(chat_mod, "_extract_arguments",
+    monkeypatch.setattr(chat_mod, "_extract_arguments_with_llm",
                         extractor if extractor is not None else ExtractorDouble())
     _funnel_gates(monkeypatch, timeout=timeout)
     _wire_world(monkeypatch, embedder=embedder, view=view, boom=boom)

@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from functools import partial
 from types import SimpleNamespace
 from uuid import UUID
 
@@ -76,8 +77,8 @@ from core.application.chat.context import (
     _frame_asset_readable as _capture_asset_readable,
 )
 from core.application.chat.executors.base import ChatDeps, ViewerDeps
-from core.application.chat.intent_funnel.argument_acquisition.extractor import (
-    extract as _extract_arguments,
+from core.application.chat.intent_funnel.argument_acquisition.llm_extractor import (
+    extract as _extract_arguments_with_llm,
 )
 from core.application.chat.intent_funnel.argument_acquisition.page_scope_resolver import (
     for_llm as _page_scope_for_llm,
@@ -377,11 +378,13 @@ def _build_chat_deps(queue: TaskQueue, drive: DriveService) -> ChatDeps:
         resolve_research=_resolve_research_context,
         # The ACTION branch dispatches registered tools through the SAME runtime.
         run_tool=_run_tool,
-        # Phase 4 MODEL acquisition: the argument extractor for a decided capability
-        # (current implementation: Qwen over the local tool-intent endpoint). The
+        # Phase 4 MODEL acquisition: the argument extractor for a decided capability.
+        # Two stages, ONE seam: the local extractor (Qwen) runs first; the request's
+        # own LLM re-extracts the full parameter set only when Qwen timed out,
+        # errored, returned an unusable reply, or left a required slot empty. The
         # acquisition provider is NOT wired here — the cascade builds the production
         # one per turn from the live Registry (it needs the turn's ctx/facts).
-        argument_extractor=_extract_arguments,
+        argument_extractor=partial(_extract_arguments_with_llm, llm=llm),
         # Page-scope acquisition for the file capabilities: the ONLINE LLM
         # settles the sentence's reading scope (all / single / range), while
         # document identity stays in TurnFacts. Every page-addressed file
@@ -550,6 +553,8 @@ async def chat(
     drive: DriveService = Depends(get_drive_service),
 ):
     """One non-streaming chat turn through the control plane."""
+    # Request-acceptance anchor for the aggregate ``chat-turn-end`` record.
+    t_entry = time.perf_counter()
     ident = await _resolve_identity(request, body, user)
     deps = _build_chat_deps(queue, drive)
     try:
@@ -560,6 +565,7 @@ async def chat(
         raise HTTPException(status_code=403, detail=str(exc))
     except ResearchConflict as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail)
+    ctx.t_entry = t_entry
     if ctx.viewer_abort:
         return {
             "answer": None,
@@ -600,6 +606,7 @@ async def chat_stream(
         raise HTTPException(status_code=403, detail=str(exc))
     except ResearchConflict as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail)
+    ctx.t_entry = t_entry
     # Viewer context: assemble + permission-check pre-stream; FULL over budget / untrusted
     # full capture aborts the turn BEFORE the agent runs (no session write, no LLM call).
     if ctx.viewer_abort:

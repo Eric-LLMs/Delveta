@@ -7788,6 +7788,18 @@ empty extraction (the Binder then lands `MISSING`). The adapter is wired as a
 turn-independent seam (`ChatDeps.argument_extractor`) in
 `apps/api/routers/chat.py`.
 
+**Cold start is visible to the caller.** The service's health check confirms the
+model is registered, not that it is loaded. The first inference request after the
+service starts loads the model into memory and is much slower than later
+requests. The extractor has a per-call timeout and runs inside the funnel's
+wall-clock budget, so a first turn that arrives before the model is warm can exit
+as `ACQUISITION_TIMEOUT` even though the upstream capability decision was correct.
+The API therefore warms the extractor in a background task during startup
+(`apps/api/main.py`): the same endpoint, model tag and HTTP mechanism, with a
+loading-specific timeout that is independent of the per-call extraction budget.
+The task never blocks startup, runs at most once per process, and only logs a
+failure. The sidecar's `OLLAMA_KEEP_ALIVE` keeps the loaded model resident.
+
 **One extractor, two callers.** The seam is reached by **both** acquisition
 paths, so there is no second model implementation to drift:
 

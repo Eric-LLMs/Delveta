@@ -190,6 +190,13 @@ that a tag with that name exists.
 The health check passes only when the model is registered:
 `ollama list | grep -q "$OLLAMA_MODEL"`.
 
+> Registration only makes the weights available; it does not load them. The first
+> inference request after the service starts loads the model into memory and is
+> much slower than later requests. The API starts a background warm-up request
+> during startup, with a loading-specific timeout that is independent of the
+> per-call extraction budget; a failed warm-up is logged and does not affect
+> startup. The sidecar's `OLLAMA_KEEP_ALIVE` setting keeps the model loaded.
+
 ### 4.3 Granularity of the reuse check
 
 A normal start compares only the receipt and file lengths; it does not recompute

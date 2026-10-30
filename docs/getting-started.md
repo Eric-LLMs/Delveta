@@ -54,7 +54,11 @@ offline transfer, see [model-deployment.en.md](model-deployment.en.md).
 To add the local parameter extractor, run `docker compose up -d tool-intent`.
 That also starts the one-shot `tool-intent-model` service, which downloads and
 verifies a 444 MB GGUF before the extractor is allowed to serve. The launchers
-do not start it by default.
+do not start it by default. Registration does not load the model: the first
+inference request loads it into memory and is much slower than later requests. The
+API starts a background warm-up request during startup, with its own timeout, so
+the extractor is normally resident before the first turn; the sidecar's existing
+`OLLAMA_KEEP_ALIVE` setting keeps it loaded.
 
 > Skip `embedding` if you don't use semantic search, and `tts` / `stt` if you don't need audio or transcription — the API degrades gracefully.
 >

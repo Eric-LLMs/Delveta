@@ -76,6 +76,11 @@ class TurnOrchestrator:
         executor boundary.
         """
         requirements = resolve_source_facts(ctx.body.message)
+        # Timing anchors for the aggregate ``chat-turn-end`` record: everything
+        # before the funnel is request preparation; the funnel span ends when the
+        # capability decision (ACTION vs Agent) is final, so the Agent's own
+        # execution time can never be charged to it.
+        t_funnel = time.perf_counter()
         # Single path (ruling): the funnel cascade owns every turn's
         # routing attempt — gate + QIR cascade + argument binding live in
         # intent_funnel; the orchestrator keeps only the lifecycle and this
@@ -88,6 +93,10 @@ class TurnOrchestrator:
             ctx, deps=deps, requirements=requirements,
         )
         plan = build_execution_plan(requirements)
+        t_funnel_end = time.perf_counter()
+        ctx.funnel_ms = (t_funnel_end - t_funnel) * 1000
+        t_entry = getattr(ctx, "t_entry", None)
+        ctx.prepare_ms = None if t_entry is None else (t_funnel - t_entry) * 1000
         # Sink the turn's execution facts for the Agent:
         # * SOURCE POLICY — sandbox fencing comes from the ORIGINAL request, exactly
         #   as the control plane resolved it for this turn (Sandbox._turn_denied);
@@ -104,6 +113,39 @@ class TurnOrchestrator:
                 agent_context["intent_funnel"] = dict(fallback)
             ctx.agent_context = agent_context
         return plan
+
+    @staticmethod
+    def _log_chat_turn_end(
+        ctx: ChatTurnContext,
+        *,
+        entry: str,
+        lane: str,
+        executor_ms: float,
+        finalize_ms: float,
+        first_content_ms: float | None,
+    ) -> None:
+        """Write the aggregate ``chat-turn-end`` record for one complete request.
+
+        This is the SECOND of the two approved records: the Agent's own
+        ``turn-end`` (audit) covers Agent execution only, while this line covers
+        the whole request — acceptance → finalize — for both transports and both
+        lanes. ``duration_s`` is the real wall clock; the stage fields are
+        individually measured and are never summed to produce it.
+        """
+        now = time.perf_counter()
+        lane = getattr(lane, "value", lane)  # PlanKind -> its stable wire name
+        # ``t_entry`` is absent only on test doubles standing in for the dataclass.
+        t_entry = getattr(ctx, "t_entry", None)
+        t_entry = now if t_entry is None else t_entry
+        logger.info(
+            "chat-turn-end entry=%s lane=%s request_prep_ms=%s funnel_ms=%s "
+            "executor_ms=%.0f finalize_ms=%.0f duration_s=%.3f first_content_ms=%s",
+            entry, lane,
+            "n/a" if ctx.prepare_ms is None else f"{ctx.prepare_ms:.0f}",
+            "n/a" if ctx.funnel_ms is None else f"{ctx.funnel_ms:.0f}",
+            executor_ms, finalize_ms, now - t_entry,
+            "n/a" if first_content_ms is None else f"{first_content_ms:.0f}",
+        )
 
     def executor_for(self, plan: ExecutionPlan) -> ChatExecutor:
         executor = self._executors.get(plan.kind)
@@ -147,6 +189,7 @@ class TurnOrchestrator:
         logger.info(
             "chat.plan-resolved turn_kind=%s reason=%s", plan.kind.value, plan.reason
         )
+        t_exec = time.perf_counter()
         try:
             try:
                 result = await executor.run(req)
@@ -165,17 +208,25 @@ class TurnOrchestrator:
             # /chat owns the run for the lifetime of this request. Hand the finished
             # interactive turn to the worker chain unless it hit a stop condition; the
             # single-task run slot is released only when the run is NOT handed off.
+            executor_ms = (time.perf_counter() - t_exec) * 1000
             research_continuing = await handle_research_post_turn(ctx, self.deps)
         payload = {
             "answer": result.final_answer,
             "messages": result.messages,
             "usage": result.usage,
         }
+        t_fin = time.perf_counter()
         try:
             resp = await finalize_turn(ctx, self.deps, payload, tool="chat")
         finally:
             if ctx.log_tokens is not None:
                 reset_log_context(ctx.log_tokens)
+        self._log_chat_turn_end(
+            ctx, entry="/chat", lane=executor.kind, executor_ms=executor_ms,
+            finalize_ms=(time.perf_counter() - t_fin) * 1000,
+            # A non-streaming transport has no content DELTA to timestamp.
+            first_content_ms=None,
+        )
         resp["messages"] = result.messages
         if research_continuing:
             resp["research_continuing"] = True
@@ -384,6 +435,7 @@ class TurnOrchestrator:
                 # including on cancellation (the loop already logs turn-cancelled).
                 frames.put_nowait(("agent", {"type": "done", "data": None}))
 
+        t_exec = time.perf_counter()
         pump_task = asyncio.create_task(pump(executor))
         final = None
         research_continuing = False
@@ -459,6 +511,7 @@ class TurnOrchestrator:
                 yield {"data": json.dumps(data, ensure_ascii=False)}
         finally:
             set_request_approval(None)
+            executor_ms = (time.perf_counter() - t_exec) * 1000
             if ctx.research_turn:
                 # Server-owned research run (T4 invariant #3): a client disconnect must
                 # never cancel an active run. Let the pump drain to completion so the
@@ -469,8 +522,16 @@ class TurnOrchestrator:
                 if final is None:
                     # The loop was abandoned (client disconnect) before the done frame;
                     # run the same post-turn bookkeeping even though no client is left.
+                    t_fin = time.perf_counter()
                     with contextlib.suppress(Exception):
                         await finalize_turn(ctx, deps, collect_done_payload(), tool="chat_stream")
+                    self._log_chat_turn_end(
+                        ctx, entry="/chat/stream",
+                        lane=AgentExecutor.kind if switched else executor.kind,
+                        executor_ms=executor_ms,
+                        finalize_ms=(time.perf_counter() - t_fin) * 1000,
+                        first_content_ms=first_content_ms,
+                    )
                 research_continuing = await handle_research_post_turn(ctx, deps)
             else:
                 # Non-research turn: the run is owned by the SSE pipe. Client disconnect
@@ -485,10 +546,16 @@ class TurnOrchestrator:
         # Normal completion path: the loop broke on the run's done frame.
         t_fin = time.perf_counter()
         done = await finalize_turn(ctx, deps, final, tool="chat_stream")
+        finalize_ms = (time.perf_counter() - t_fin) * 1000
         logger.info(
             "chat.stream-end total_ms=%.0f finalize_ms=%.0f committed=%s",
-            (time.perf_counter() - t_entry) * 1000, (time.perf_counter() - t_fin) * 1000,
-            committed,
+            (time.perf_counter() - t_entry) * 1000, finalize_ms, committed,
+        )
+        self._log_chat_turn_end(
+            ctx, entry="/chat/stream",
+            lane=AgentExecutor.kind if switched else executor.kind,
+            executor_ms=executor_ms, finalize_ms=finalize_ms,
+            first_content_ms=first_content_ms,
         )
         if research_continuing:
             done["research_continuing"] = True

@@ -262,6 +262,9 @@ def _render_acquisition(record: dict) -> str:
     lines.extend([
         "Nothing was executed. Treat the missing arguments as a question you may need",
         "to resolve from the user's request or the available context before acting.",
+        "Continue with the capability the Intent Funnel selected: keep THIS tool and do",
+        "not re-select or substitute another one. Ask the user for anything still",
+        "missing, then carry out the original request with this tool.",
         _SCOPE,
     ])
     return "\n".join(lines)[:_MAX_SECTION_CHARS]
@@ -291,8 +294,9 @@ def _render_contract(record: dict) -> str:
         lines.append(f"- original error: {original}")
     lines.extend([
         "Nothing was executed, so acting on the user's request now cannot duplicate a",
-        "prior run. Correct the arguments (or ask the user for the missing value) using",
-        "your own tools, permissions and approvals.",
+        "prior run. Continue with the capability the Intent Funnel selected: keep THIS",
+        "tool and do not re-select or substitute another one. Correct the arguments",
+        "(asking the user for any missing value), then use this tool.",
         _SCOPE,
     ])
     return "\n".join(lines)[:_MAX_SECTION_CHARS]

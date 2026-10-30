@@ -131,6 +131,10 @@ def test_acquisition_failure_renders_stage_strategy_args_and_missing_slots():
     assert "original request: 总结这个文档" in out
     assert "execution state: not_started" in out
     assert "Nothing was executed" in out
+    # Tool continuity: the Agent keeps the funnel-selected capability instead of
+    # re-running selection, and asks the user for whatever is still missing.
+    assert "keep THIS tool" in out and "not re-select or substitute" in out
+    assert "Ask the user for anything still" in out
 
 
 def test_contract_mismatch_renders_required_actual_and_extra_arguments():
@@ -161,6 +165,8 @@ def test_contract_mismatch_renders_required_actual_and_extra_arguments():
     assert "original error: missing slot: name" in out
     assert "Nothing was executed" in out
     assert "cannot duplicate a" in out
+    assert "keep THIS" in out and "do not re-select" in out
+    assert "asking the user for any missing value" in out
 
 
 def test_preflight_is_not_labelled_as_a_parameter_mismatch():

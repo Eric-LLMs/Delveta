@@ -2,10 +2,14 @@
 
 Start: uvicorn api.main:app --reload
 """
+import asyncio
+import contextlib
 import logging
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
+
+import httpx
 
 from agent.security.approvals import configure_approval_broker
 from api.routers.admin import router as admin_router
@@ -68,6 +72,47 @@ class RequestLogContext:
             reset_log_context(tokens)
 
 
+# ── tool-intent warm-up (O2) ───────────────────────────────────────────────────
+# The extractor sidecar's health check proves the model is REGISTERED, not loaded.
+# Loading happens on the first inference and is far slower than the per-call
+# extraction timeout, so a cold process can time out a correct first turn. Warm it
+# in the background at boot: the same endpoint, model tag and httpx mechanism the
+# extractor itself uses, with its own generous timeout (the 4s extraction guardrail
+# does not apply to loading). Ollama keeps the model resident via the sidecar's
+# OLLAMA_KEEP_ALIVE=24h; no client, connection pool or config is added.
+_WARMUP_TIMEOUT_SECONDS = 600.0
+_warmup_task: asyncio.Task | None = None
+
+
+async def _warm_tool_intent_model() -> None:
+    url = (settings.chat_tool_intent_local_url or "").strip()
+    model = (settings.chat_tool_intent_local_model or "").strip()
+    if not url or not model:
+        logger.info("tool-intent warmup skipped: no extractor endpoint configured")
+        return
+    payload = {
+        "model": model,
+        "messages": [{"role": "user", "content": "warmup"}],
+        "max_tokens": 1,
+        "stream": False,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=_WARMUP_TIMEOUT_SECONDS) as client:
+            resp = await client.post(url.rstrip("/") + "/chat/completions", json=payload)
+            resp.raise_for_status()
+        logger.info("tool-intent warmup complete model=%s", model)
+    except Exception:  # noqa: BLE001 — a failed warm-up must never affect startup
+        logger.warning("tool-intent warmup failed model=%s", model, exc_info=True)
+
+
+def _schedule_tool_intent_warmup() -> None:
+    """Start ONE background warm-up task per process (never blocks startup)."""
+    global _warmup_task
+    if _warmup_task is not None and not _warmup_task.done():
+        return
+    _warmup_task = asyncio.create_task(_warm_tool_intent_model())
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Route root loggers → logs/api.log (rotating) before anything logs.
@@ -105,7 +150,16 @@ async def lifespan(app: FastAPI):
             await bump_corpus_version(redis)
     except Exception:
         logger.warning("product-manual seed failed — retrying next boot", exc_info=True)
+    # Load the local extractor while the API starts serving; failures are logged only.
+    _schedule_tool_intent_warmup()
     yield
+    # Stop the background warm-up cleanly if it is still loading.
+    global _warmup_task
+    if _warmup_task is not None and not _warmup_task.done():
+        _warmup_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await _warmup_task
+    _warmup_task = None
     await aclose_llm_clients()
     await redis.aclose()
 

@@ -465,14 +465,18 @@ async def _main() -> int:
 
     # real deps: the SAME bundle production wires (chat.py); shadow writes files
     # only — no event rows, no dispatch, no settings mutation.
-    from api.routers.chat import _embedder, _extract_arguments
+    from api.routers.chat import _embedder, _extract_arguments_with_llm
     from core.infrastructure.db import SessionLocal
 
     # cap_router_selector is deliberately absent: a real run resolves the ONE
     # deployed selector (cap_router.default_selector()).
-    _DEPS = types.SimpleNamespace(session_factory=SessionLocal,
-                                  embedder=_embedder,
-                                  argument_extractor=_extract_arguments)
+    # Shadow replay has no live LLM channel: bind ``llm=None`` (Qwen-only), which
+    # is exactly the pre-fallback behavior this diagnostic tool measures.
+    _DEPS = types.SimpleNamespace(
+        session_factory=SessionLocal,
+        embedder=_embedder,
+        argument_extractor=lambda **kw: _extract_arguments_with_llm(llm=None, **kw),
+    )
     t0 = time.monotonic()
     turns = await replay_records(version=args.version, limit=args.limit)
     sessions = build_session_rows(turns, args.version)

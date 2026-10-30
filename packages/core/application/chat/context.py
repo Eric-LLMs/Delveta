@@ -119,6 +119,13 @@ class ChatTurnContext:
     # the sentence names no resolvable asset; the Binder reads it via
     # TurnFacts.path_asset_id and never guesses.
     path_asset_id: str = ""
+    # ── chat-turn telemetry (two records) ──────────────────────────────────────
+    # ``t_entry`` is the transport's request-acceptance anchor; the control plane
+    # fills the two spans it owns. They feed ONE aggregate ``chat-turn-end`` line
+    # and never alter execution: Agent time is never folded into ``funnel_ms``.
+    t_entry: float | None = None
+    prepare_ms: float | None = None
+    funnel_ms: float | None = None
 
 
 def _attach_asset_id(body: Any) -> str:
