@@ -11,7 +11,6 @@ from __future__ import annotations
 import json
 import logging
 import time
-from functools import partial
 from types import SimpleNamespace
 from uuid import UUID
 
@@ -77,8 +76,8 @@ from core.application.chat.context import (
     _frame_asset_readable as _capture_asset_readable,
 )
 from core.application.chat.executors.base import ChatDeps, ViewerDeps
-from core.application.chat.intent_funnel.argument_acquisition.llm_extractor import (
-    extract as _extract_arguments_with_llm,
+from core.application.chat.intent_funnel.argument_acquisition.extractor import (
+    extract as _extract_arguments,
 )
 from core.application.chat.intent_funnel.argument_acquisition.page_scope_resolver import (
     for_llm as _page_scope_for_llm,
@@ -378,13 +377,14 @@ def _build_chat_deps(queue: TaskQueue, drive: DriveService) -> ChatDeps:
         resolve_research=_resolve_research_context,
         # The ACTION branch dispatches registered tools through the SAME runtime.
         run_tool=_run_tool,
-        # Phase 4 MODEL acquisition: the argument extractor for a decided capability.
-        # Two stages, ONE seam: the local extractor (Qwen) runs first; the request's
-        # own LLM re-extracts the full parameter set only when Qwen timed out,
-        # errored, returned an unusable reply, or left a required slot empty. The
-        # acquisition provider is NOT wired here — the cascade builds the production
-        # one per turn from the live Registry (it needs the turn's ctx/facts).
-        argument_extractor=partial(_extract_arguments_with_llm, llm=llm),
+        # Phase 4 MODEL acquisition: the LOCAL extractor for a decided capability
+        # — the ONLY model the funnel calls inside its wall-clock budget. The
+        # request's own LLM is not on this seam: when the local stage cannot
+        # settle the arguments, the funnel ends and the chat layer runs
+        # ``intent_funnel.resume_with_llm`` AFTER the funnel returned. The
+        # acquisition provider is NOT wired here — the cascade builds the
+        # production one per turn from the live Registry (it needs ctx/facts).
+        argument_extractor=_extract_arguments,
         # Page-scope acquisition for the file capabilities: the ONLINE LLM
         # settles the sentence's reading scope (all / single / range), while
         # document identity stays in TurnFacts. Every page-addressed file

@@ -5446,6 +5446,20 @@ on either boundary fails open to the Agent (`CapabilityRouterUnavailable` /
 user text byte-identical. Neither model invents a decision out of its own
 outage.
 
+**The LLM fallback is not part of the funnel.** When the local extractor cannot
+settle the slots (timeout, transport fault, unusable reply, or an empty required
+slot), the funnel writes the handoff facts onto `ChatTurnContext` (selected
+capability, original query, already-settled args, strategy, model slots) and
+returns — it never spends its wall-clock budget on a second model. After
+`intent_funnel.route` returns, `TurnOrchestrator.resolve_plan` calls
+`intent_funnel.resume_with_llm`, which asks the request's own LLM
+(`deps.llm.complete` — same channel, routing and billing context) for the full
+parameter set and runs the result through the SAME Binder / certification gate.
+A complete set certifies an ACTION; a failure or an incomplete set leaves the
+turn with the Agent, which keeps the originally selected capability and asks for
+what is missing. `funnel_ms` therefore covers the funnel only (selection + local
+extraction); `duration_s` includes the fallback.
+
 Provider and model names live in configuration (`chat_cap_router_url`,
 `chat_tool_intent_local_url` / `_model`); wire parsing and payload assembly live
 inside the two modules above, so the chain sees only decisions and values.

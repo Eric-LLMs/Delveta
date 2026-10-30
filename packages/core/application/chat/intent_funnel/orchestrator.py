@@ -96,6 +96,42 @@ def _mark(capture: dict | None, key: str, t0: float) -> None:
     capture.setdefault("timings", {})[key] = int((time.monotonic() - t0) * 1000)
 
 
+# ── post-funnel LLM handoff ────────────────────────────────────────────────────
+# A MODEL acquisition need is the ONE point where the funnel is allowed to call a
+# model inside its wall-clock budget: the local extractor (Qwen). The request's
+# own LLM is a SEPARATE, later concern — it must never be charged to the funnel's
+# 5s. The funnel therefore records what it already knows on the turn context
+# BEFORE it awaits the extractor; :func:`resume_with_llm` consumes that record
+# after the funnel returned. The record is plain turn state (no schema, no lock).
+
+
+def _mark_pending(ctx, *, entry, query, args, arg_sources, strategy,
+                  model_slots, bundle_source) -> None:
+    """Save the handoff facts on the turn context (before the extractor await).
+
+    Written explicitly rather than derived later: when the outer budget cancels
+    the cascade mid-extraction, these values are the ONLY surviving record of the
+    selected capability, the original sentence and the args already settled."""
+    if ctx is None:
+        return
+    ctx.intent_funnel_pending = {
+        "capability_id": entry.capability_id,
+        "tool_binding": entry.tool_binding,
+        "query": query,
+        "args": dict(args or {}),
+        "arg_sources": dict(arg_sources or {}),
+        "strategy": str(strategy or ""),
+        "model_slots": list(model_slots or ()),
+        "bundle_source": bundle_source,
+    }
+
+
+def _clear_pending(ctx) -> None:
+    """Certified: the funnel settled the turn, so no LLM fallback may run."""
+    if ctx is not None:
+        ctx.intent_funnel_pending = None
+
+
 def _present(raw: object) -> bool:
     """A value the acquisition layer would actually carry (presence only)."""
     if raw is None:
@@ -337,7 +373,7 @@ async def run_nodes(ctx, deps, requirements, trace, *,
         out = await _acquisition_hop(requirements, deps, entry, query=message,
                                      facts=facts, view=view, trace=trace,
                                      capture=capture, provider=acq_provider,
-                                     history=history, failure=failure)
+                                     history=history, failure=failure, ctx=ctx)
         _mark(capture, "acquisition_ms", _t_acq)
         if out is None and failure:
             publish_failure(ctx, failure)
@@ -562,7 +598,7 @@ async def run_nodes(ctx, deps, requirements, trace, *,
     out = await _acquisition_hop(requirements, deps, entry, query=message,
                                  facts=facts, view=view, trace=trace,
                                  capture=capture, provider=acq_provider,
-                                 history=history, failure=failure)
+                                 history=history, failure=failure, ctx=ctx)
     _mark(capture, "acquisition_ms", _t_acq)
     if out is None and failure:
         publish_failure(ctx, failure)
@@ -724,7 +760,7 @@ def _terminal(requirements, entry, *, trace, capture, record, detail):
 
 
 async def _acquisition_hop(requirements, deps, entry, *, query, facts, view, trace,
-                           capture, provider=None, history=(), failure=None):
+                           capture, provider=None, history=(), failure=None, ctx=None):
     """Argument Path Router hop for a DECIDED capability (Phase 4 Step 2/3).
 
     The capability is already pinned (Matcher HIT or cap_router SELECTED); this
@@ -979,6 +1015,12 @@ async def _acquisition_hop(requirements, deps, entry, *, query, facts, view, tra
                     # capture of every other capability stays unchanged.
                     capture["acquisition"]["slot_plan"]["required_model_slots"] = (
                         list(required_slots))
+            # Handoff BEFORE the await: a cancelled/timed-out extraction must
+            # still leave the selected capability and the handler draft behind.
+            _mark_pending(ctx, entry=entry, query=query, args=args,
+                          arg_sources={slot: "handler" for slot in args},
+                          strategy=acq_policy.strategy, model_slots=model_slots,
+                          bundle_source=context_bundle.SOURCE_QUERY)
             extractor = getattr(deps, "argument_extractor", None)
             if extractor is None:
                 extraction_error = "no shared argument extractor is wired"
@@ -1053,10 +1095,13 @@ async def _acquisition_hop(requirements, deps, entry, *, query, facts, view, tra
                     arg_sources=arg_sources, missing=missing_model,
                     detail=detail, acquisition=record,
                 )
-        return _certify(requirements, entry, args, facts=facts,
-                        view=view, trace=trace, capture=capture,
-                        failure=failure, strategy=acq_policy.strategy,
-                        arg_sources=arg_sources)
+        out = _certify(requirements, entry, args, facts=facts,
+                       view=view, trace=trace, capture=capture,
+                       failure=failure, strategy=acq_policy.strategy,
+                       arg_sources=arg_sources)
+        if out is not None:
+            _clear_pending(ctx)  # certified HERE: the LLM fallback must not run
+        return out
 
     inputs = provider(entry.capability_id) if callable(provider) else None
     declaration = dict(inputs.declaration) if inputs else {}
@@ -1118,6 +1163,13 @@ async def _acquisition_hop(requirements, deps, entry, *, query, facts, view, tra
             if not _present(existing_args.get(slot))
         )
         if not model_values:
+            # Handoff BEFORE the await (and before the seam check): a missing
+            # extractor and a cancelled/timed-out extraction alike must still
+            # leave the selected capability, the query and the settled args.
+            _mark_pending(ctx, entry=entry, query=query, args=existing_args,
+                          arg_sources=system_sources, strategy=decision.strategy,
+                          model_slots=decision.model_slots,
+                          bundle_source=decision.bundle_source)
             # No MODEL values injected (test seam) -> run the REAL extractor over
             # the sanctioned bundle (query alone, or query + last-5 user turns).
             extractor = getattr(deps, "argument_extractor", None)
@@ -1172,18 +1224,24 @@ async def _acquisition_hop(requirements, deps, entry, *, query, facts, view, tra
                     {"slot": p.slot, "source": p.source, "produced_by": p.produced_by}
                     for p in merged.provenance
                 ]
-            return _certify(requirements, entry, merged.args, facts=facts,
-                            view=view, trace=trace, capture=capture,
-                            failure=failure, strategy=decision.strategy,
-                            arg_sources={p.slot: p.source
-                                         for p in merged.provenance})
+            out = _certify(requirements, entry, merged.args, facts=facts,
+                           view=view, trace=trace, capture=capture,
+                           failure=failure, strategy=decision.strategy,
+                           arg_sources={p.slot: p.source
+                                        for p in merged.provenance})
+            if out is not None:
+                _clear_pending(ctx)
+            return out
         # QUERY_TO_EXTRACTOR / QUERY_PLUS_5TURNS_TO_EXTRACTOR: the extracted MODEL
         # values ARE the draft; the Binder validates them.
-        return _certify(requirements, entry, model_values, facts=facts,
-                        view=view, trace=trace, capture=capture,
-                        failure=failure, strategy=decision.strategy,
-                        arg_sources={slot: (model_source or "model")
-                                     for slot in model_values})
+        out = _certify(requirements, entry, model_values, facts=facts,
+                       view=view, trace=trace, capture=capture,
+                       failure=failure, strategy=decision.strategy,
+                       arg_sources={slot: (model_source or "model")
+                                    for slot in model_values})
+        if out is not None:
+            _clear_pending(ctx)
+        return out
     # MISSING handled above; any other label is not a MODEL acquisition need.
     return _acq_fail(
         REASON_ACQUISITION_MODEL_PENDING, strategy=decision.strategy,
@@ -1230,3 +1288,103 @@ def certified(requirements, entry, args, registry_fp, *,
         private_only=requirements.private_only,
         external_ok=requirements.external_ok,
     )
+
+
+async def resume_with_llm(ctx, *, deps, requirements: TurnRequirements) -> TurnRequirements | None:
+    """Post-funnel LLM fallback for ONE already-selected capability.
+
+    Called by the chat layer AFTER :func:`funnel.route` returned, i.e. outside the
+    funnel's wall-clock budget. The funnel runs ONLY the local extractor (Qwen);
+    when that failed, timed out or left required slots empty, it exited with the
+    handoff record on the turn context (:func:`_mark_pending`). This function asks
+    the request's OWN LLM (``deps.llm`` — same client, routing and billing
+    context) to fill the full parameter set, then runs the result through the SAME
+    certification gate as every other acquisition exit (``_certify`` → Binder).
+
+    Returns the certified requirements, or ``None`` when the LLM failed or the
+    Binder still rejects the values — the turn then stays with the Agent, with a
+    structured failure record. It NEVER re-selects a capability and never re-runs
+    the funnel.
+    """
+    import time
+
+    pending = getattr(ctx, "intent_funnel_pending", None)
+    if not isinstance(pending, dict) or not pending:
+        return None  # Qwen settled the turn (or no MODEL acquisition ran)
+    llm = getattr(deps, "llm", None)
+    if llm is None or not hasattr(llm, "complete"):
+        return None  # no channel: the Agent owns the clarification (unchanged)
+
+    from .argument_acquisition import context_bundle
+    from .argument_acquisition.llm_extractor import extract as _llm_extract
+    from .registry import active_view as registry_active_view
+    from .registry.entry import is_intent_funnel_capability_allowed
+
+    query = str(pending.get("query") or "")
+    strategy = str(pending.get("strategy") or "")
+    existing = dict(pending.get("args") or {})
+    sources = dict(pending.get("arg_sources") or {})
+    capability_id = str(pending.get("capability_id") or "")
+
+    view = await registry_active_view(
+        session_factory=getattr(deps, "session_factory", None))
+    entry = next((e for e in (view.entries if view is not None else ())
+                  if e.capability_id == capability_id), None)
+    if entry is None or not is_intent_funnel_capability_allowed(entry):
+        return None  # the table no longer honors the pick: the Agent decides
+
+    bundle = context_bundle.build(
+        query, history=list(getattr(ctx, "history", None) or []),
+        source=pending.get("bundle_source"))
+    t0 = time.monotonic()
+    try:
+        values, source = await _llm_extract(
+            llm=llm, query=query, entry=entry,
+            model_slots=tuple(pending.get("model_slots") or ()),
+            bundle=bundle, values=existing,
+        )
+    except Exception as exc:  # noqa: BLE001 - a fallback fault must not sink the turn
+        logger.info("post-funnel-llm failed capability=%s ms=%d error=%r",
+                    capability_id, int((time.monotonic() - t0) * 1000), exc)
+        _publish_pending_failure(ctx, entry, pending, description=repr(exc))
+        return None
+
+    merged = {**existing, **dict(values or {})}
+    failure: dict = {}
+    out = _certify(requirements, entry, merged, facts=TurnFacts.of(ctx), view=view,
+                   trace={}, capture=None, failure=failure, strategy=strategy,
+                   arg_sources={**sources,
+                                **{slot: (source or "llm") for slot in (values or {})}})
+    logger.info("post-funnel-llm capability=%s ok=%s ms=%d parsed=%r",
+                capability_id, out is not None,
+                int((time.monotonic() - t0) * 1000), merged)
+    if out is not None:
+        _clear_pending(ctx)
+        ctx.intent_funnel_failure = None  # certified: no stale record for the Agent
+        return out
+    if failure:
+        publish_failure(ctx, failure)  # the Binder's verdict, for the Agent
+    return None
+
+
+def _publish_pending_failure(ctx, entry, pending: dict, *, description: str) -> None:
+    """Give the Agent the handoff facts when the LLM also failed.
+
+    The normal MODEL_PENDING exits already published a record inside the cascade;
+    the outer-timeout exit could not. This fills that gap so the Agent keeps the
+    SAME selected capability and asks for the missing values instead of
+    re-selecting. It never overwrites an existing record."""
+    if getattr(ctx, "intent_funnel_failure", None):
+        return
+    args = dict(pending.get("args") or {})
+    publish_failure(ctx, build_failure(
+        kind=KIND_ACQUISITION_FAILURE, stage=STAGE_ACQUISITION,
+        reason=REASON_ACQUISITION_MODEL_PENDING,
+        capability_id=entry.capability_id, tool_binding=entry.tool_binding,
+        strategy=str(pending.get("strategy") or ""), query=pending.get("query") or "",
+        args=args, arg_sources=pending.get("arg_sources") or {},
+        missing=missing_required_parameters(entry.parameters, args),
+        required=entry.parameters, facts=TurnFacts.of(ctx),
+        detail="the local extractor did not finish and the LLM fallback failed: "
+               f"{description}",
+    ))

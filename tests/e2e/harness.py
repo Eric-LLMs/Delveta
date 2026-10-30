@@ -639,7 +639,7 @@ def build_stack(
     # content capabilities (translate / summary) never reach it.
     from api.routers import chat as chat_mod   # the module the app's router is built from
 
-    monkeypatch.setattr(chat_mod, "_extract_arguments_with_llm", slot_seam.extract)
+    monkeypatch.setattr(chat_mod, "_extract_arguments", slot_seam.extract)
     # The page-scope lane is the OTHER online-LLM seam. Keep the e2e stack
     # hermetic by answering from the viewer facts (the production resolver's
     # verdict for an explicit range), never from a live model.

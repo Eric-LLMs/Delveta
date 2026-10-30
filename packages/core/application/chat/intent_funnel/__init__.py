@@ -29,6 +29,6 @@ CLAUDE.md, ``__init__.py`` Responsibility Rule).
 from __future__ import annotations
 
 from . import contract
-from .funnel import funnel_live, route
+from .funnel import funnel_live, resume_with_llm, route
 
-__all__ = ["contract", "funnel_live", "route"]
+__all__ = ["contract", "funnel_live", "resume_with_llm", "route"]

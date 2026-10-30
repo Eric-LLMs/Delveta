@@ -71,6 +71,11 @@ class TurnOrchestrator:
                      so ``build_execution_plan`` maps it to AGENT (fail-open) with
                      the user text byte-identical.
 
+        A funnel exit that left a MODEL-argument handoff on the context gets ONE
+        post-funnel LLM attempt (same client, outside the funnel budget) before
+        the plan is built; when that also fails the requirements stay untouched
+        and the Agent owns the turn.
+
         ``build_execution_plan`` stays the SOLE policy mapper: ACTION eligibility
         and ``source_policy`` live there; execution authorization lives at the
         executor boundary.
@@ -92,11 +97,24 @@ class TurnOrchestrator:
         requirements = await intent_funnel.route(
             ctx, deps=deps, requirements=requirements,
         )
-        plan = build_execution_plan(requirements)
+        # The funnel span ENDS here: only capability selection + the local
+        # extractor are charged to ``funnel_ms``.
         t_funnel_end = time.perf_counter()
         ctx.funnel_ms = (t_funnel_end - t_funnel) * 1000
         t_entry = getattr(ctx, "t_entry", None)
         ctx.prepare_ms = None if t_entry is None else (t_funnel - t_entry) * 1000
+        # Post-funnel LLM fallback (outside the funnel's budget): the funnel hands
+        # off the already-selected capability, the original query and its settled
+        # args when the LOCAL extractor could not finish; the request's own LLM
+        # fills the full parameter set and the SAME Binder certifies it. No
+        # handoff -> this is a no-op. Its time is inside the request's total, never
+        # inside ``funnel_ms``.
+        resumed = await intent_funnel.resume_with_llm(
+            ctx, deps=deps, requirements=requirements,
+        )
+        if resumed is not None:
+            requirements = resumed
+        plan = build_execution_plan(requirements)
         # Sink the turn's execution facts for the Agent:
         # * SOURCE POLICY — sandbox fencing comes from the ORIGINAL request, exactly
         #   as the control plane resolved it for this turn (Sandbox._turn_denied);

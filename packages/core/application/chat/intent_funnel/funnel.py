@@ -29,7 +29,11 @@ if TYPE_CHECKING:  # typing only: the requirements contract lives in understandi
     from core.application.chat.understanding import TurnRequirements
 
 from .observability import new_trace as _new_trace, persist_event as _persist_event
-from .orchestrator import cascade as _cascade, run_cascade as _run_cascade
+from .orchestrator import (
+    cascade as _cascade,
+    resume_with_llm,
+    run_cascade as _run_cascade,
+)
 from .policy import funnel_live, kind_enabled
 from .preview import preview
 from .shadow import cascade_shadow

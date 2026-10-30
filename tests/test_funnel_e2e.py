@@ -273,7 +273,7 @@ def _setup(monkeypatch, *, timeout=5.0, steps=None, delay=0.0,
     # per request). No real service and no real model is ever called.
     monkeypatch.setattr(cap_router_mod, "default_selector",
                         lambda: selector if selector is not None else SelectorDouble())
-    monkeypatch.setattr(chat_mod, "_extract_arguments_with_llm",
+    monkeypatch.setattr(chat_mod, "_extract_arguments",
                         extractor if extractor is not None else ExtractorDouble())
     _funnel_gates(monkeypatch, timeout=timeout)
     _wire_world(monkeypatch, embedder=embedder, view=view, boom=boom)

@@ -112,6 +112,13 @@ class ChatTurnContext:
     # can act with the same facts. It neither grants nor restricts the Agent's
     # own tools.
     intent_funnel_failure: dict | None = None
+    # Post-funnel LLM handoff for THIS turn: the funnel writes it when it starts a
+    # MODEL-owned argument extraction (selected capability, original query,
+    # already-known args, missing slots, strategy) and clears it once the turn is
+    # certified. The chat layer reads it AFTER the funnel returns, so a Qwen
+    # failure/timeout never spends the funnel's 5s budget on the LLM fallback.
+    # None = no handoff. Never a permission, never persisted.
+    intent_funnel_pending: dict | None = None
     disable_thinking: bool = False
     # Turn facts for the Funnel (E2E-matrix ruling): the asset a
     # "My Drive/…" path in the SENTENCE resolves to, settled once here at
