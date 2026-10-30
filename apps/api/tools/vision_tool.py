@@ -84,6 +84,31 @@ def _build_prompt(question: str, page_text: str) -> str:
     return "\n\n".join(parts)
 
 
+def _page_arg(raw: Any) -> int | None:
+    """The ``page`` slot as a 1-based int, or ``None`` when the caller omitted it.
+
+    Two callers reach the same slot with different spellings: a model-authored call
+    sends the integer the schema declares, while the intent funnel hands over its
+    draft through the Binder, which normalises EVERY slot to ``str``. Both name
+    the same page, so both are accepted here instead of failing the runtime schema
+    gate before the body ever runs. A blank value means "absent"; anything else
+    that is not a positive integer is refused with a readable message.
+    """
+    if raw is None:
+        return None
+    if isinstance(raw, bool):                     # bool is an int subclass
+        raise ValueError(f"page must be a positive integer, got {raw!r}")
+    if isinstance(raw, int):
+        return raw
+    text = str(raw).strip()
+    if not text:
+        return None
+    try:
+        return int(text)
+    except ValueError:
+        raise ValueError(f"page must be a positive integer, got {raw!r}") from None
+
+
 def _viewer_page_from_turn() -> int | None:
     """The open viewer's current page for THIS turn, or ``None``.
 
@@ -138,6 +163,13 @@ def register(runtime: ToolRuntime, ctx: Context, llm) -> None:
     async def vision_analyze(args: dict, exec: ToolExecution) -> str:
         asset_id = args["asset_id"]
         question = (args.get("question") or "").strip()
+        if not question:
+            # The caller passed no question: the turn's own sentence is the request the
+            # model must answer with the image — explaining, summarizing, comparing or
+            # transcribing according to what the user actually asked, never a generic
+            # description chosen for them.
+            turn = current_turn()
+            question = str(getattr(turn, "user_msg", "") or "").strip()
         user_id = get_request_user_id()
         if user_id is None:
             raise ValueError("vision requires an authenticated request user context")
@@ -153,7 +185,7 @@ def register(runtime: ToolRuntime, ctx: Context, llm) -> None:
         # never asked to locate or transcribe first). Everything else is its own bytes.
         page_text = ""
         if _is_pdf(asset):
-            page = args.get("page")
+            page = _page_arg(args.get("page"))
             if page is None:
                 page = _viewer_page_from_turn()
             region = args.get("region") or None
@@ -219,9 +251,9 @@ def register(runtime: ToolRuntime, ctx: Context, llm) -> None:
             "inspect the visual content before answering — even if the filename seems "
             "descriptive. For a PDF, pass `page` (and optionally a fractional `region`) to "
             "read that page visually — the page is rendered locally and read by the model "
-            "in ONE call. The configured vision model returns its analysis, or answers the "
-            "user's question about the content. Pass the user's specific question via "
-            "`question` when they ask about a detail.",
+            "in ONE call. The configured vision model answers the user's request about "
+            "the content. Pass `question` to narrow it; omitted, the user's own message "
+            "is used as the request.",
             parameters={
                 "type": "object",
                 "properties": {
@@ -236,7 +268,10 @@ def register(runtime: ToolRuntime, ctx: Context, llm) -> None:
                         "a general analysis of the visual content.",
                     },
                     "page": {
-                        "type": "integer",
+                        # Both spellings of the same 1-based page: an integer from a
+                        # model-authored call, and the funnel's normalised string slot
+                        # (the Binder stringifies every slot before validating here).
+                        "type": ["integer", "string"],
                         "description": "1-based PDF page to render and read. Omit to use "
                         "the page open in the viewer. A multi-page PDF with no page in view "
                         "is refused (never a silent page 1); a single-page PDF reads page 1. "

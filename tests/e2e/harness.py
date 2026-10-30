@@ -289,6 +289,13 @@ class FakePdfLib:
         return b"png-strip"
 
     async def pdf_table_to_text(self, png, llm, prompt):
+        # Ingest/headless transcription seam (worker captioning path).
+        self.transcribe_calls.append(prompt)
+        return "[table text]"
+
+    async def describe(self, data, mime, *, llm=None, session_factory=None,
+                       prompt="", user_id=None):
+        # The chat table tool's ONE vision call: it carries the user's request.
         self.transcribe_calls.append(prompt)
         return "[table text]"
 
@@ -585,6 +592,8 @@ def build_stack(
     # then read the stored object — same seams as read_document.
     monkeypatch.setattr(pdf_mod, "DriveService", _read_drive(pdf_asset))
     monkeypatch.setattr(pdf_mod, "pdf_lib", pdf_seam)
+    # The chat table tool's vision call goes through the shared ``describe_image`` entry.
+    monkeypatch.setattr(pdf_mod, "describe_image", pdf_seam.describe)
 
     # Register the REAL tool bodies (create_folder/add_term/web_search were already
     # registered by build_kernel).

@@ -179,6 +179,30 @@ async def test_explicit_page_arg_wins_over_the_viewer_context(monkeypatch, tmp_p
     assert calls[0]["data"] == pdf_lib.render_page_png(raw, 2)
 
 
+async def test_funnel_string_page_slot_renders_that_page(monkeypatch, tmp_path):
+    # The intent funnel hands over its draft through the Binder, which normalises EVERY
+    # slot to str: ``page`` arrives as "2". It names the same page as the integer 2 and
+    # must clear the runtime schema gate instead of failing the turn before the body runs.
+    raw = _pdf_pages(["p1", "p2", "p3"])
+    runtime, asset_id, _, _ = await _register(monkeypatch, tmp_path, "paper.pdf", raw)
+    calls = _stub_describe(monkeypatch)
+
+    async with _turn({"viewer": {"asset": {"page": 3}}}):
+        res = await _call(runtime, asset_id, page="2")   # the funnel's string slot
+
+    assert res.is_error is False, _err(res)
+    assert len(calls) == 1
+    assert calls[0]["data"] == pdf_lib.render_page_png(raw, 2)
+
+
+def test_page_arg_rejects_a_non_numeric_string():
+    assert vision_tool._page_arg(None) is None
+    assert vision_tool._page_arg("") is None
+    assert vision_tool._page_arg(3) == 3 and vision_tool._page_arg("3") == 3
+    with pytest.raises(ValueError, match="positive integer"):
+        vision_tool._page_arg("third")
+
+
 async def test_multipage_pdf_without_any_page_fails_closed(monkeypatch, tmp_path):
     # No ``page`` arg AND no viewer page for this turn: a multi-page PDF must be REFUSED,
     # never silently read as page 1 — and the model is never reached.

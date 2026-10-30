@@ -17,6 +17,7 @@ import pytest
 from PIL import Image
 
 from core.infrastructure import pdf as pdf_lib
+from core.infrastructure import vision_caption as vc
 
 from apps.api.tools import pdf_tools
 
@@ -84,7 +85,21 @@ class _FakeRuntime:
         self.defs[definition.name] = definition
 
 
+class _Ctx:
+    """Minimal context: ``session_factory``/``storage`` resolve to inert stand-ins."""
+
+    def __init__(self, storage=None) -> None:
+        self._storage = storage
+
+    def resolve(self, name):
+        if name == "storage" and self._storage is not None:
+            return self._storage
+        return object()
+
+
 class _CountingLLM:
+    """Counts real downstream model requests (no ``chat_stream``: the non-streaming path)."""
+
     def __init__(self) -> None:
         self.calls = 0
 
@@ -97,10 +112,14 @@ async def _run(monkeypatch, llm, tables: list[bytes]):
     async def _load(asset_id, ctx):
         return b"%PDF-fake"
 
+    async def _chain(session_factory, *, user_id=None, role_id=None):
+        return [("https://v.example/v1", "key", "vision-model")]
+
     monkeypatch.setattr(pdf_tools, "_load_asset_bytes", _load)
     monkeypatch.setattr(pdf_lib, "detect_tables", lambda *a, **k: tables)
+    monkeypatch.setattr(vc, "resolve_vision_channels", _chain)
     rt = _FakeRuntime()
-    pdf_tools.register(rt, ctx=None, llm=llm)
+    pdf_tools.register(rt, ctx=_Ctx(), llm=llm)
     return await rt.defs["pdf_table_to_text"].execute({"asset_id": "a"}, None)
 
 
@@ -121,14 +140,6 @@ async def test_tool_reports_no_tables_without_a_model_call(monkeypatch):
 
 
 # ── permission before bytes ────────────────────────────────────────────────────────
-
-class _Ctx:
-    def __init__(self, storage) -> None:
-        self._storage = storage
-
-    def resolve(self, name):
-        return self._storage if name == "storage" else object()
-
 
 async def _register_asset(monkeypatch, tmp_path, *, owner):
     import hashlib

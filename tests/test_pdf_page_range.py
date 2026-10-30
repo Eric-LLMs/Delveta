@@ -105,6 +105,23 @@ class _FakeLLM:
         return {"content": "TABLE::" + str(len(messages))}
 
 
+class _FakeCtx:
+    def resolve(self, name):
+        return object()
+
+
+class _FakeDescribe:
+    """Stand-in for the shared ``describe_image`` entry — counts the ONE vision call."""
+
+    def __init__(self):
+        self.calls = 0
+
+    async def __call__(self, data, mime="", *, llm=None, session_factory=None,
+                       prompt=None, user_id=None, role_id=None):
+        self.calls += 1
+        return "TABLE::" + str(self.calls)
+
+
 @pytest.fixture
 def pdf_tools_with(monkeypatch):
     """Register both PDF tools with the asset-bytes fetch stubbed to ``data``."""
@@ -113,8 +130,9 @@ def pdf_tools_with(monkeypatch):
             return data
 
         monkeypatch.setattr(pdf_tools, "_load_asset_bytes", _fake_load)
+        monkeypatch.setattr(pdf_tools, "describe_image", _FakeDescribe())
         rt = _FakeRuntime()
-        pdf_tools.register(rt, ctx=None, llm=_FakeLLM())
+        pdf_tools.register(rt, ctx=_FakeCtx(), llm=_FakeLLM())
         return rt.defs
 
     return _build
