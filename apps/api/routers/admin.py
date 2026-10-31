@@ -737,12 +737,16 @@ async def test_chat(body: ChatTestRequest, _: AuthAdmin = Depends(require_admin)
 
     from openai import AsyncOpenAI
 
+    from core.infrastructure.llm import thinking_kwargs
+
     client = AsyncOpenAI(base_url=base_url, api_key=api_key, timeout=30.0, max_retries=0)
     try:
         resp = await client.chat.completions.create(
             model=model,
             messages=[{"role": "user", "content": body.message}],
             temperature=0.3,
+            # Same global policy as every other call: thinking OFF by default.
+            **thinking_kwargs(client, model, None),
         )
         answer = (resp.choices[0].message.content or "").strip()
         usage = resp.usage

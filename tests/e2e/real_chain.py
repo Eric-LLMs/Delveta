@@ -125,7 +125,8 @@ class ScriptedPort:
             "arguments": args if isinstance(args, str) else json.dumps(args, ensure_ascii=False),
         }
 
-    async def chat(self, messages, *, tools=None, model=None, base_url=None, api_key=None):
+    async def chat(self, messages, *, tools=None, model=None, base_url=None, api_key=None,
+                   disable_thinking=None):
         self.requests.append([dict(m) for m in messages])
         if self._is_judge(messages):
             self.judged += 1
@@ -145,7 +146,7 @@ class ScriptedPort:
 
     async def chat_stream(
         self, messages, *, tools=None, model=None, base_url=None, api_key=None,
-        disable_thinking=False,
+        disable_thinking=None,
     ):
         self.requests.append([dict(m) for m in messages])
         if tools is None:

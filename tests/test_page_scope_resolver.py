@@ -329,12 +329,12 @@ class _Client:
         self.api_key = "test-key"
 
 
-def _llm_with(content: str, monkeypatch):
+def _llm_with(content: str, monkeypatch, base_url: str = "https://api.deepseek.com",
+              model: str = "deepseek-chat"):
     completions = _Completions(content)
     monkeypatch.setattr(llm_mod, "AsyncOpenAI",
                         lambda **kwargs: _Client(completions))
-    client = llm_mod.OpenAILLM(api_key="test-key", base_url="http://test/v1",
-                               model="test-model")
+    client = llm_mod.OpenAILLM(api_key="test-key", base_url=base_url, model=model)
     return client, completions
 
 
@@ -355,8 +355,10 @@ async def test_complete_json_once_is_non_streaming_json_mode_thinking_off(
     assert completions.seen["temperature"] == 0.0
 
 
-async def test_complete_json_once_honours_the_global_thinking_knob(monkeypatch):
-    monkeypatch.setattr(llm_mod.settings, "llm_disable_thinking", True)
+async def test_complete_json_once_defaults_to_thinking_off(monkeypatch):
+    # The global policy (not the settings knob) decides the default: turning the old
+    # knob OFF must not re-enable reasoning for an omitted flag.
+    monkeypatch.setattr(llm_mod.settings, "llm_disable_thinking", False)
     llm, completions = _llm_with('{"ok": true}', monkeypatch)
 
     await llm.complete_json_once("prompt", "system")
@@ -365,14 +367,24 @@ async def test_complete_json_once_honours_the_global_thinking_knob(monkeypatch):
     assert completions.seen["reasoning_effort"] == "none"
 
 
-async def test_complete_json_once_leaves_reasoning_on_when_thinking_is_on(
+async def test_complete_json_once_keeps_reasoning_only_on_explicit_opt_in(
         monkeypatch):
-    monkeypatch.setattr(llm_mod.settings, "llm_disable_thinking", False)
     llm, completions = _llm_with('{"ok": true}', monkeypatch)
+
+    await llm.complete_json_once("prompt", "system", disable_thinking=False)
+
+    assert "extra_body" not in completions.seen
+    assert "reasoning_effort" not in completions.seen
+
+
+async def test_complete_json_once_never_sends_reasoning_effort_to_other_providers(
+        monkeypatch):
+    llm, completions = _llm_with('{"ok": true}', monkeypatch,
+                                 base_url="http://test/v1", model="test-model")
 
     await llm.complete_json_once("prompt", "system")
 
-    assert "extra_body" not in completions.seen
+    assert completions.seen["extra_body"] == {"enable_thinking": False}
     assert "reasoning_effort" not in completions.seen
 
 

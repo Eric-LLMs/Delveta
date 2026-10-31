@@ -9,6 +9,8 @@ Second regression: batch generation must ride a STREAMED wire with thinking
 disabled — dashscope cuts non-streaming requests at ~300s while a full-context Pass A is
 still legitimately generating.
 """
+import pytest
+
 from core.infrastructure.llm import OpenAILLM, _wire_messages
 
 
@@ -206,12 +208,17 @@ async def test_usage_sink_still_captures_unsolicited_usage():
     assert captured[0]["stream_options"] == {"include_usage": True}
 
 
-# ── chat_stream thinking switch: one switch, two provider dialects ───────────────
+# ── global thinking policy: OFF everywhere unless the user opts in ───────────────
 #
-# ``enable_thinking`` is the Qwen dialect; DeepSeek ignores it and exposes
-# ``reasoning_effort`` instead. The flag is per-turn (voice / video FOCUS), never the
-# global structured-call knob, and a non-DeepSeek provider must never receive the
-# DeepSeek-only key.
+# The flag is TRI-STATE: ``None`` (omitted) = global default OFF, ``True`` = force OFF
+# (voice / FOCUS), ``False`` = an explicit user opt-in to reasoning. Omitting the flag
+# must never enable thinking, and a client that sends its own default ``false`` is the
+# only way to turn it on. ``enable_thinking`` is the Qwen dialect; DeepSeek ignores it
+# and exposes ``reasoning_effort`` instead — that key goes ONLY to a DeepSeek channel.
+
+DEEPSEEK = ("https://api.deepseek.com", "deepseek-flash")
+QWEN = ("https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen3-max")
+
 
 class _ChatFakeCompletions:
     def __init__(self, captured: list[dict]):
@@ -239,10 +246,10 @@ async def _chat_stream_kwargs(base_url: str, model: str = "test-model", **kwargs
     return captured[0]
 
 
-async def test_chat_stream_keeps_thinking_on_by_default():
-    kw = await _chat_stream_kwargs("https://api.deepseek.com", "deepseek-flash")
-    assert "extra_body" not in kw
-    assert "reasoning_effort" not in kw
+async def test_chat_stream_disables_thinking_by_default_on_deepseek():
+    kw = await _chat_stream_kwargs(*DEEPSEEK)
+    assert kw["extra_body"] == {"enable_thinking": False}
+    assert kw["reasoning_effort"] == "none"
     # the rest of the chat request is untouched
     assert kw["stream"] is True
     assert kw["temperature"] == 0.3
@@ -250,26 +257,122 @@ async def test_chat_stream_keeps_thinking_on_by_default():
     assert "tools" not in kw
 
 
-async def test_chat_stream_disables_both_dialects_on_deepseek():
-    kw = await _chat_stream_kwargs(
-        "https://api.deepseek.com", "deepseek-flash", disable_thinking=True
-    )
-    assert kw["extra_body"] == {"enable_thinking": False}
-    assert kw["reasoning_effort"] == "none"
+async def test_chat_stream_keeps_thinking_only_on_explicit_opt_in():
+    kw = await _chat_stream_kwargs(*DEEPSEEK, disable_thinking=False)
+    assert "extra_body" not in kw
+    assert "reasoning_effort" not in kw
 
 
 async def test_chat_stream_detects_deepseek_behind_a_gateway_by_model():
     # A proxy/gateway host does not name the provider; the model prefix still does.
-    kw = await _chat_stream_kwargs(
-        "https://gateway.internal/v1", "deepseek-flash", disable_thinking=True
-    )
+    kw = await _chat_stream_kwargs("https://gateway.internal/v1", "deepseek-flash")
     assert kw["extra_body"] == {"enable_thinking": False}
     assert kw["reasoning_effort"] == "none"
 
 
 async def test_chat_stream_sends_only_the_qwen_dialect_elsewhere():
-    kw = await _chat_stream_kwargs(
-        "https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen3-max", disable_thinking=True
-    )
+    kw = await _chat_stream_kwargs(*QWEN)
     assert kw["extra_body"] == {"enable_thinking": False}
     assert "reasoning_effort" not in kw
+
+
+# ── every LLM entry point follows the same policy ────────────────────────────────
+
+class _Message:
+    def __init__(self, content):
+        self.content = content
+        self.tool_calls = None
+
+
+class _NonStreamChoice:
+    def __init__(self, content):
+        self.message = _Message(content)
+
+
+class _NonStreamResponse:
+    def __init__(self, content):
+        self.choices = [_NonStreamChoice(content)]
+        self.usage = None
+
+
+class _MatrixFakeCompletions:
+    """Captures kwargs for every entry point; answers with a stream or a plain reply."""
+
+    def __init__(self, captured: list[dict]):
+        self.captured = captured
+
+    async def create(self, **kwargs):
+        self.captured.append(kwargs)
+        if kwargs.get("stream"):
+            return _FakeStream(['{"a": 1}'] if kwargs.get("response_format") else ["ok"])
+        return _NonStreamResponse('{"a": 1}')
+
+
+class _MatrixFakeClient:
+    def __init__(self, captured: list[dict], base_url: str):
+        self.base_url = base_url
+        self.chat = type("C", (), {"completions": _MatrixFakeCompletions(captured)})()
+
+
+async def _entry_kwargs(entry: str, base_url: str, model: str, **kwargs) -> dict:
+    captured: list[dict] = []
+    llm = OpenAILLM(api_key="k", base_url=base_url, model=model)
+    llm.client = _MatrixFakeClient(captured, base_url)
+    if entry == "complete":
+        await llm.complete("p", "s", **kwargs)
+    elif entry == "complete_json":
+        await llm.complete_json("p", "s", **kwargs)
+    elif entry == "complete_json_once":
+        await llm.complete_json_once("p", "s", **kwargs)
+    elif entry == "complete_stream":
+        async for _ in llm.complete_stream("p", "s", **kwargs):
+            pass
+    elif entry == "chat":
+        await llm.chat([{"role": "user", "content": "hi"}], **kwargs)
+    else:  # pragma: no cover - guards the parametrization below
+        raise AssertionError(entry)
+    assert len(captured) == 1
+    return captured[0]
+
+
+ENTRIES = ["complete", "complete_json", "complete_json_once", "complete_stream", "chat"]
+
+
+async def test_explain_term_disables_thinking():
+    # ``explain_term`` builds its own request (no flag parameter) and must still
+    # follow the policy rather than silently keeping reasoning on.
+    captured: list[dict] = []
+    llm = OpenAILLM(api_key="k", base_url=DEEPSEEK[0], model=DEEPSEEK[1])
+    llm.client = _MatrixFakeClient(captured, DEEPSEEK[0])
+    await llm.explain_term("MFU", "MFU is model flops utilization")
+    assert captured[0]["extra_body"] == {"enable_thinking": False}
+    assert captured[0]["reasoning_effort"] == "none"
+
+
+@pytest.mark.parametrize("entry", ENTRIES)
+async def test_every_entry_point_disables_thinking_by_default(entry):
+    kw = await _entry_kwargs(entry, *DEEPSEEK)
+    assert kw["extra_body"] == {"enable_thinking": False}
+    assert kw["reasoning_effort"] == "none"
+
+
+@pytest.mark.parametrize("entry", ENTRIES)
+async def test_every_entry_point_honours_the_explicit_opt_in(entry):
+    kw = await _entry_kwargs(entry, *DEEPSEEK, disable_thinking=False)
+    assert "extra_body" not in kw
+    assert "reasoning_effort" not in kw
+
+
+@pytest.mark.parametrize("entry", ENTRIES)
+async def test_non_deepseek_entry_points_never_receive_reasoning_effort(entry):
+    kw = await _entry_kwargs(entry, *QWEN)
+    assert kw["extra_body"] == {"enable_thinking": False}
+    assert "reasoning_effort" not in kw
+
+
+async def test_the_global_knob_cannot_enable_thinking(monkeypatch):
+    from core.infrastructure import llm as llm_mod
+
+    monkeypatch.setattr(llm_mod.settings, "llm_disable_thinking", False)
+    kw = await _entry_kwargs("complete", *DEEPSEEK)
+    assert kw["reasoning_effort"] == "none"

@@ -65,6 +65,7 @@ class AgentLLMPort(Protocol):
         model: str | None = None,
         base_url: str | None = None,
         api_key: str | None = None,
+        disable_thinking: bool | None = None,
     ) -> dict:
         """Return {"content": str | None, "tool_calls": [{id, name, arguments}]}."""
         ...
@@ -76,15 +77,16 @@ class AgentLLMPort(Protocol):
         model: str | None = None,
         base_url: str | None = None,
         api_key: str | None = None,
-        disable_thinking: bool = False,
+        disable_thinking: bool | None = None,
     ) -> AsyncIterator[dict]:
         """Optional streaming variant of :meth:`chat`.
 
         Yields event dicts ``{"type": "thinking"|"content", "data": <delta>}`` per chunk,
         then a final ``{"type": "tool_calls", "data": [...]}`` event. The agent loop's
         :meth:`ReactLoopAgent.run_stream` consumes these; a port that only implements
-        ``chat`` still works for the non-streaming :meth:`run`. ``disable_thinking``
-        requests no reasoning tokens for this turn's calls (the live voice-call path).
+        ``chat`` still works for the non-streaming :meth:`run`. ``disable_thinking`` is
+        tri-state: ``None`` = global default (OFF), ``True`` = force OFF, ``False`` =
+        explicit user opt-in to reasoning.
         """
         ...
 
@@ -689,7 +691,8 @@ class ReactLoopAgent:
         t_llm = time.monotonic()
         try:
             resp = await self.llm.chat(
-                request, tools=tools, model=model, base_url=base_url, api_key=api_key
+                request, tools=tools, model=model, base_url=base_url, api_key=api_key,
+                disable_thinking=turn.disable_thinking,
             )
         except (LLMFatalError, LLMTemporaryError) as exc:
             # Opt-in trace: the FULL failing request + the error (never emitted by default).

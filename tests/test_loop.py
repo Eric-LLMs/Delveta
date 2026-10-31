@@ -38,6 +38,48 @@ def _echo_tool():
     )
 
 
+class _ThinkingRecorder:
+    """Records the thinking flag each LLM entry point receives."""
+
+    def __init__(self):
+        self.seen: list[bool | None] = []
+
+    async def chat(self, messages, tools=None, model=None, base_url=None, api_key=None,
+                   disable_thinking=None):
+        self.seen.append(disable_thinking)
+        return {"content": "done", "tool_calls": [], "usage": {}}
+
+    async def chat_stream(self, messages, tools=None, model=None, base_url=None, api_key=None,
+                          disable_thinking=None):
+        self.seen.append(disable_thinking)
+        yield {"type": "content", "data": "done"}
+        yield {"type": "tool_calls", "data": []}
+
+
+async def test_the_agent_loop_forwards_the_thinking_flag():
+    # The loop must not reinterpret the tri-state value: whatever the turn carries
+    # (None = global default, True = force OFF, False = opt-in) reaches the LLM port.
+    for requested in (None, True, False):
+        llm = _ThinkingRecorder()
+        await ReactLoopAgent(llm, ToolRuntime(), SystemPrompt()).run(
+            "hi", turn=AgentTurn(user_msg="hi", disable_thinking=requested)
+        )
+        assert llm.seen == [requested]
+
+
+async def test_the_streaming_loop_forwards_the_thinking_flag():
+    for requested in (None, True, False):
+        llm = _ThinkingRecorder()
+        agent = ReactLoopAgent(llm, ToolRuntime(), SystemPrompt())
+        events = [
+            evt async for evt in agent.run_stream(
+                "hi", turn=AgentTurn(user_msg="hi", disable_thinking=requested)
+            )
+        ]
+        assert any(evt.get("type") == "done" for evt in events)
+        assert llm.seen == [requested]
+
+
 class _FakeMemory:
     def __init__(self):
         self.messages = []
@@ -217,7 +259,8 @@ async def test_step_tokens_conserve_under_fatal_error_exit():
         def __init__(self, scripted):
             self.scripted = list(scripted)
 
-        async def chat(self, messages, tools=None, model=None, base_url=None, api_key=None):
+        async def chat(self, messages, tools=None, model=None, base_url=None, api_key=None,
+                       disable_thinking=None):
             if not self.scripted:
                 raise LLMTemporaryError("provider down")
             return self.scripted.pop(0)

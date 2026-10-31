@@ -98,9 +98,11 @@ class Settings(BaseSettings):
     # Batch generation (``complete``/``complete_json``) streams the response and
     # accumulates it, so the provider's ~300s non-stream gateway cutoff can never kill a
     # legitimate full-context generation; ``toolkit_llm_timeout_s`` becomes an
-    # idle-between-chunks deadline. ``llm_disable_thinking`` sends the Qwen-compatible
-    # ``enable_thinking: false`` flag on those calls — reasoning tokens are pure latency
-    # for schema-validated JSON output. Interactive chat (``chat_stream``) keeps thinking.
+    # idle-between-chunks deadline.
+    #
+    # Thinking is now governed globally by the LLM client: every entry point defaults
+    # to OFF and only an explicit per-call ``disable_thinking=False`` keeps reasoning.
+    # This flag is retained for config compatibility; it no longer changes behavior.
     llm_disable_thinking: bool = True
 
     # Deck (content-to-slides) Pass C throughput knobs. Effective fan-out per deck =

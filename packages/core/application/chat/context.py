@@ -119,7 +119,9 @@ class ChatTurnContext:
     # failure/timeout never spends the funnel's 5s budget on the LLM fallback.
     # None = no handoff. Never a permission, never persisted.
     intent_funnel_pending: dict | None = None
-    disable_thinking: bool = False
+    # Tri-state thinking switch handed to the agent: None = global default (OFF),
+    # True = force OFF (FOCUS / voice), False = explicit user opt-in to reasoning.
+    disable_thinking: bool | None = None
     # Turn facts for the Funnel (E2E-matrix ruling): the asset a
     # "My Drive/…" path in the SENTENCE resolves to, settled once here at
     # context-build (the only place with drive I/O in the fact chain). "" =
@@ -674,6 +676,21 @@ def _begin_run(research_service: Any, user_id: Any, bound_task_id: str, session_
         raise
 
 
+def _effective_disable_thinking(
+    requested: bool | None, is_focus: bool
+) -> bool | None:
+    """Resolve the turn's thinking switch from the request and the viewer mode.
+
+    FOCUS turns (video on-screen Q&A) always force OFF. Otherwise the request passes
+    through untouched: ``None`` = the global default (OFF, decided by the LLM client),
+    ``True`` = force OFF, ``False`` = an explicit user opt-in to reasoning. Streaming
+    and non-streaming resolve identically — the policy no longer depends on the wire.
+    """
+    if is_focus:
+        return True
+    return requested
+
+
 async def build_turn_context(
     *,
     body: Any,
@@ -695,8 +712,9 @@ async def build_turn_context(
     """Run the shared pre-execution sequence (identical to the legacy router's).
 
     ``stream`` selects the streaming route's differences that Phase 1 preserves
-    verbatim: ephemeral-session typing, no inline-image in the kernel context, and
-    the effective ``disable_thinking`` flag. ``log_tag`` (legacy route only) pins the
+    verbatim: ephemeral-session typing and no inline-image in the kernel context.
+    The thinking switch is resolved the same way on both routes (see
+    :func:`_effective_disable_thinking`). ``log_tag`` (legacy route only) pins the
     turn's user/session onto every log line emitted during resolution.
     """
     drive = deps.drive
@@ -836,8 +854,11 @@ async def build_turn_context(
     ctx.agent_context = agent_context
     # Video FOCUS turns are on-screen Q&A about a small subtitle window — never pay the
     # thinking prefill tax for them (voice-call precedent). Documents never reach
-    # "focus" anymore (they go through the stub).
-    ctx.disable_thinking = bool(
-        stream and (body.disable_thinking or (viewer_assembly or {}).get("mode") == "focus")
+    # "focus" anymore (they go through the stub). Every other turn keeps the tri-state
+    # request value so an omitted flag means the global default (OFF) and only an
+    # explicit user opt-in (``false``) can turn reasoning on.
+    ctx.disable_thinking = _effective_disable_thinking(
+        getattr(body, "disable_thinking", None),
+        (viewer_assembly or {}).get("mode") == "focus",
     )
     return ctx

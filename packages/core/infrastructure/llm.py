@@ -215,16 +215,51 @@ def _wire_messages(messages: list[dict]) -> list[dict]:
     return out
 
 
-def _is_deepseek_channel(client: AsyncOpenAI, model: str) -> bool:
+def is_deepseek_channel(client: AsyncOpenAI, model: str) -> bool:
     """True when this call targets DeepSeek's reasoning dialect.
 
     DeepSeek ignores the Qwen-style ``enable_thinking`` body switch and exposes
-    ``reasoning_effort`` instead (see ``complete_json_once``). Detection is by endpoint
-    host or model prefix — no provider registry, no new abstraction. Other providers
-    reject unknown request parameters, so only this dialect may receive the extra key.
+    ``reasoning_effort`` instead. Detection is by endpoint host or model prefix — no
+    provider registry, no new abstraction. Other providers reject unknown request
+    parameters, so only this dialect may receive the extra key.
     """
     base = str(getattr(client, "base_url", "") or "").lower()
     return "deepseek" in base or str(model or "").lower().startswith("deepseek")
+
+
+def _thinking_off(disable_thinking: bool | None) -> bool:
+    """Global thinking policy: OFF unless the caller explicitly opts in with ``False``.
+
+    ``None`` is the policy default (off) — an omitted value can never turn reasoning on,
+    which is why the flag is tri-state rather than a plain bool. ``True`` states the same
+    intent explicitly (voice/FOCUS turns). ``False`` is the only way to keep reasoning,
+    and it is only reachable from an explicit user request.
+
+    ``settings.llm_disable_thinking`` used to drive this default. The global policy now
+    makes OFF unconditional, so the knob no longer changes behavior (it cannot enable
+    thinking either, and the per-call opt-in outranks it); it is retained for config
+    compatibility.
+    """
+    return disable_thinking is not False
+
+
+def thinking_kwargs(
+    client: AsyncOpenAI, model: str, disable_thinking: bool | None
+) -> dict:
+    """Request keys that turn reasoning off for this call (empty dict = thinking on).
+
+    Two dialects, one intent: Qwen-compatible channels read ``enable_thinking`` inside
+    the request body; DeepSeek ignores it and reads the top-level ``reasoning_effort``.
+    The second key goes ONLY to a DeepSeek channel — other providers may reject unknown
+    parameters. Every LLM entry point funnels through this helper so the policy cannot
+    drift between streaming and non-streaming, chat and structured calls.
+    """
+    if not _thinking_off(disable_thinking):
+        return {}
+    kwargs: dict = {"extra_body": {"enable_thinking": False}}
+    if is_deepseek_channel(client, model):
+        kwargs["reasoning_effort"] = "none"
+    return kwargs
 
 
 class OpenAILLM:
@@ -337,7 +372,7 @@ class OpenAILLM:
         usage_out: dict | None = None,
         temperature: float | None = None,
         max_tokens: int | None = None,
-        disable_thinking: bool = False,
+        disable_thinking: bool | None = None,
     ) -> str:
         """One streamed completion, accumulated to the full text.
 
@@ -345,14 +380,13 @@ class OpenAILLM:
         dashscope enforce a ~300s cutoff on NON-streaming requests, so a full-context
         Pass A that legitimately needs 4-5 minutes dies at the gateway while the model
         is still generating. Streaming moves the per-call timeout to an idle-between-
-        chunks deadline, and ``enable_thinking: false`` (Qwen-compatible flag,
-        ``llm_disable_thinking``) removes reasoning tokens — pure latency for
-        schema-validated JSON output. Interactive chat paths are untouched.
+        chunks deadline, and thinking is off by default (see ``_thinking_off``) —
+        reasoning tokens are pure latency for schema-validated output.
 
         ``max_tokens`` bounds the output length for callers whose reply shape is
-        known small (tool-intent verdicts); ``disable_thinking`` makes the thinking-off
-        request EXPLICIT at that call site instead of riding the global knob —
-        the experiments pin both per-call.
+        known small (tool-intent verdicts). ``disable_thinking=False`` is an explicit
+        opt-in to reasoning; ``None`` (omitted) follows the global default, which is
+        OFF.
 
         When ``usage_out`` is given, the provider's real token counts are merged into
         it (``stream_options.include_usage``): the usage chunk arrives last, with no
@@ -369,8 +403,7 @@ class OpenAILLM:
             kwargs["response_format"] = response_format
         if usage_out is not None:
             kwargs["stream_options"] = {"include_usage": True}
-        if settings.llm_disable_thinking or disable_thinking:
-            kwargs["extra_body"] = {"enable_thinking": False}
+        kwargs.update(thinking_kwargs(client, mdl, disable_thinking))
         stream = await client.chat.completions.create(**kwargs)
         parts: list[str] = []
         async for chunk in stream:
@@ -396,6 +429,7 @@ class OpenAILLM:
         api_key: str | None = None,
         timeout: float | None = None,
         temperature: float | None = None,
+        disable_thinking: bool | None = None,
     ) -> str:
         # A per-call ``timeout`` (e.g. toolkit full-context generation) forces a fresh
         # client; without it the shared client's global wall time applies. Under the
@@ -403,7 +437,8 @@ class OpenAILLM:
         client, mdl = self._call_channel(model, base_url, api_key, timeout=timeout)
         return await self._stream_accumulate(
             client, mdl, self._messages(prompt, system_prompt),
-            temperature=temperature)
+            temperature=temperature,
+            disable_thinking=disable_thinking)
 
     async def complete_json(
         self,
@@ -417,7 +452,7 @@ class OpenAILLM:
         images: list[str] | None = None,
         temperature: float | None = None,
         max_tokens: int | None = None,
-        disable_thinking: bool = False,
+        disable_thinking: bool | None = None,
     ) -> dict:
         """Structured completion: ask the provider for a JSON object.
 
@@ -428,8 +463,8 @@ class OpenAILLM:
         full-context generations (toolkit); under the streaming wire it is an idle-between-
         chunks deadline, not a total-generation cutoff. ``images`` (data-URL list) makes
         the user turn multimodal — used by the deck visual-understanding pass.
-        ``max_tokens``/``disable_thinking`` are pinned per-call by structured-output
-        callers; every other caller keeps the old behavior.
+        ``max_tokens`` is pinned per-call by structured-output callers. Thinking is off
+        by default; ``disable_thinking=False`` is the explicit opt-in.
         """
         client, mdl = self._call_channel(model, base_url, api_key, timeout=timeout)
         try:
@@ -458,7 +493,7 @@ class OpenAILLM:
         timeout: float | None = None,
         temperature: float = 0.0,
         max_tokens: int | None = 256,
-        disable_thinking: bool = False,
+        disable_thinking: bool | None = None,
         usage_out: dict | None = None,
     ) -> dict:
         """One non-streaming structured completion (``stream=False``).
@@ -468,12 +503,10 @@ class OpenAILLM:
         :meth:`complete_json` streams. A small, bounded extraction call is the
         opposite case — one request, one response, no partial-JSON assembly.
 
-        Thinking is disabled with both provider dialects this repository uses:
-        the Qwen-compatible ``enable_thinking`` body switch and
-        ``reasoning_effort="none"`` for reasoning-first providers such as
-        DeepSeek (which ignores ``enable_thinking``). Both are gated by
-        ``settings.llm_disable_thinking`` unless the caller pins them with
-        ``disable_thinking=True``.
+        Thinking is off by default and disabled with the provider's own dialect:
+        the Qwen-compatible ``enable_thinking`` body switch, plus
+        ``reasoning_effort="none"`` on DeepSeek (which ignores
+        ``enable_thinking``). ``disable_thinking=False`` is the explicit opt-in.
 
         Raises the classified provider error on transport failure and
         :class:`TypeError` when the reply is not a JSON object — neither is
@@ -489,14 +522,7 @@ class OpenAILLM:
         }
         if max_tokens is not None:
             kwargs["max_tokens"] = max_tokens
-        if settings.llm_disable_thinking or disable_thinking:
-            # Two dialects for one intent: Qwen reads ``enable_thinking``, while
-            # reasoning-first providers (DeepSeek) ignore it and expose
-            # ``reasoning_effort``. Send both so a structured call never spends
-            # its bounded ``max_tokens`` budget on reasoning, whichever channel
-            # the request resolved to.
-            kwargs["extra_body"] = {"enable_thinking": False}
-            kwargs["reasoning_effort"] = "none"
+        kwargs.update(thinking_kwargs(client, mdl, disable_thinking))
         try:
             resp = await client.chat.completions.create(**kwargs)
         except Exception as exc:
@@ -525,23 +551,30 @@ class OpenAILLM:
         timeout: float | None = None,
         max_retries: int | None = None,
         extra_body: dict | None = None,
+        disable_thinking: bool | None = None,
     ) -> AsyncIterator[str]:
         # Per-call timeout/max_retries overrides force a fresh client (the shared
         # self.client carries process-wide settings); otherwise reuse it.
         client, mdl = self._call_channel(model, base_url, api_key, timeout=timeout, max_retries=max_retries)
         # Same thinking switch as ``_stream_accumulate``: a reasoning pass would be
         # generated (and paid for) before the first visible token, so a streamed
-        # chat answer would sit silent instead of streaming.
+        # chat answer would sit silent instead of streaming. A caller-supplied
+        # ``extra_body`` keeps its own ``enable_thinking`` when it set one.
         body = dict(extra_body or {})
-        if settings.llm_disable_thinking:
-            body.setdefault("enable_thinking", False)
-        stream = await client.chat.completions.create(
-            model=mdl,
-            messages=self._messages(prompt, system_prompt),
-            temperature=0.3,
-            stream=True,
-            **({"extra_body": body} if body else {}),
-        )
+        thinking = thinking_kwargs(client, mdl, disable_thinking)
+        body.update({k: v for k, v in thinking.get("extra_body", {}).items()
+                     if k not in body})
+        kwargs: dict = {
+            "model": mdl,
+            "messages": self._messages(prompt, system_prompt),
+            "temperature": 0.3,
+            "stream": True,
+        }
+        if "reasoning_effort" in thinking:
+            kwargs["reasoning_effort"] = thinking["reasoning_effort"]
+        if body:
+            kwargs["extra_body"] = body
+        stream = await client.chat.completions.create(**kwargs)
         async for chunk in stream:
             if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content:
                 yield chunk.choices[0].delta.content
@@ -553,7 +586,7 @@ class OpenAILLM:
         model: str | None = None,
         base_url: str | None = None,
         api_key: str | None = None,
-        disable_thinking: bool = False,
+        disable_thinking: bool | None = None,
     ) -> AsyncIterator[dict]:
         """Stream a chat completion, yielding per-chunk event dicts.
 
@@ -566,11 +599,11 @@ class OpenAILLM:
           total_tokens}`` (all 0 when the provider omits them).
 
         ``base_url`` / ``api_key`` optionally route this call through a specific LLM
-        channel without mutating the shared client. ``disable_thinking`` sends the
-        Qwen-compatible ``enable_thinking: false`` flag — the live voice-call path uses
-        it because reasoning tokens are pure time-to-first-sentence there; interactive
-        typed chat keeps thinking on. On a DeepSeek channel the same flag also sends
-        ``reasoning_effort="none"``, because that provider ignores ``enable_thinking``.
+        channel without mutating the shared client. Thinking follows the global policy:
+        OFF when the flag is omitted (``None``) or ``True``; ``disable_thinking=False``
+        is the explicit user opt-in that keeps reasoning on. The provider's dialect is
+        chosen by ``thinking_kwargs`` — ``enable_thinking`` everywhere, plus
+        ``reasoning_effort="none"`` on DeepSeek, which ignores the body switch.
         """
         client, mdl = self._call_channel(model, base_url, api_key)
         kwargs = {
@@ -582,13 +615,7 @@ class OpenAILLM:
         }
         if tools:
             kwargs["tools"] = tools
-        if disable_thinking:
-            kwargs["extra_body"] = {"enable_thinking": False}
-            # DeepSeek ignores ``enable_thinking`` and reads ``reasoning_effort``
-            # instead (same two-dialect rule as ``complete_json_once``). Send the
-            # second key only on that channel: other providers may reject it.
-            if _is_deepseek_channel(client, mdl):
-                kwargs["reasoning_effort"] = "none"
+        kwargs.update(thinking_kwargs(client, mdl, disable_thinking))
         stream = await client.chat.completions.create(**kwargs)
 
         # Tool-call arguments/name arrive as fragmented deltas keyed by index; accumulate
@@ -676,6 +703,7 @@ class OpenAILLM:
                 messages=self._messages(user_prompt, system_prompt),
                 response_format={"type": "json_object"},
                 temperature=0.3,
+                **thinking_kwargs(client, mdl, None),
             )
             return json.loads(resp.choices[0].message.content)
         except Exception as exc:
@@ -688,6 +716,7 @@ class OpenAILLM:
         model: str | None = None,
         base_url: str | None = None,
         api_key: str | None = None,
+        disable_thinking: bool | None = None,
     ) -> dict:
         """Conversation with tool calls (used by the Agent loop).
 
@@ -702,6 +731,7 @@ class OpenAILLM:
         kwargs = {"model": mdl, "messages": _wire_messages(messages), "temperature": 0.3}
         if tools:
             kwargs["tools"] = tools
+        kwargs.update(thinking_kwargs(client, mdl, disable_thinking))
         resp = await client.chat.completions.create(**kwargs)
         msg = resp.choices[0].message
         usage = resp.usage

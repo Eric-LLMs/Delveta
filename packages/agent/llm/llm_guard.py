@@ -63,12 +63,14 @@ class ReliableLLM:
         model: str | None = None,
         base_url: str | None = None,
         api_key: str | None = None,
+        disable_thinking: bool | None = None,
     ) -> dict:
         async def attempt() -> dict:
             try:
                 return await asyncio.wait_for(
                     self._inner.chat(
-                        messages, tools=tools, model=model, base_url=base_url, api_key=api_key
+                        messages, tools=tools, model=model, base_url=base_url, api_key=api_key,
+                        disable_thinking=disable_thinking,
                     ),
                     timeout=self.timeout_s,
                 )
@@ -84,7 +86,7 @@ class ReliableLLM:
         model: str | None = None,
         base_url: str | None = None,
         api_key: str | None = None,
-        disable_thinking: bool = False,
+        disable_thinking: bool | None = None,
     ) -> AsyncIterator[dict]:
         # The stream generator is returned through the retry wrapper and kept only in the
         # local frame of this coroutine — never stored on the instance. Two overlapping

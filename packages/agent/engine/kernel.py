@@ -246,7 +246,7 @@ class AgentKernel:
         api_key: str | None,
         progress_sink: Callable[[dict], None] | None = None,
         context: dict | None = None,
-        disable_thinking: bool = False,
+        disable_thinking: bool | None = None,
     ) -> AgentTurn:
         """Build the per-turn :class:`AgentTurn`, load its memory brief, and bind it.
 
@@ -336,12 +336,13 @@ class AgentKernel:
         progress_sink: Callable[[dict], None] | None = None,
         context: dict | None = None,
         max_steps: int | None = None,
-        disable_thinking: bool = False,
+        disable_thinking: bool | None = None,
     ):
         """Streaming variant of :meth:`run` (same signature; see :meth:`ReactLoopAgent.run_stream`).
 
-        ``disable_thinking`` suppresses reasoning tokens for this turn's model calls —
-        set by the live voice-call path, where time-to-first-sentence is everything.
+        ``disable_thinking`` is tri-state: ``None`` = global default (OFF), ``True`` =
+        force OFF (live voice calls, where time-to-first-sentence is everything),
+        ``False`` = the user explicitly opted into reasoning.
         """
         turn = self._build_turn(
             user_msg, history, memory_keys, session_memory, model, base_url, api_key,

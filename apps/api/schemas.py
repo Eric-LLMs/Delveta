@@ -281,8 +281,11 @@ class ChatRequest(BaseModel):
                                      #   created for this turn is marked research-type (1), so
                                      #   an unbound throwaway chat never shows in the Sessions
                                      #   list. Ignored when session_id resumes an existing row.
-    disable_thinking: bool = False   # live voice-call turns: suppress reasoning tokens for
-                                     #   this turn's model calls (faster time-to-first-sentence)
+    disable_thinking: bool | None = None
+                                     #   tri-state thinking switch. Omitted (None) =
+                                     #   global default (thinking OFF); true = force OFF
+                                     #   (voice calls); false = the user explicitly asked
+                                     #   for reasoning (the ONLY way to turn it on).
     attach: dict | None = None       # optional: { kind: "asset", asset_id, name } — a cloud
                                      #   file the user wants the agent to troubleshoot; its
                                      #   name + asset_id are prefixed to the message context.
