@@ -191,7 +191,14 @@ class TavilySearch:
                     return ok_result("ddgs", fallback)
             return degraded_result(self.name, error_type, message)
         results = [
-            {"title": r.get("title", ""), "url": r.get("url", ""), "snippet": r.get("content", "")}
+            {
+                "title": r.get("title", ""),
+                "url": r.get("url", ""),
+                "snippet": r.get("content", ""),
+                # Tavily returns this only for some searches; pass it through instead of
+                # discarding the one publication date any provider gives us.
+                **({"published": r["published_date"]} if r.get("published_date") else {}),
+            }
             for r in (raw.get("results") or [])
         ]
         return ok_result(self.name, results)

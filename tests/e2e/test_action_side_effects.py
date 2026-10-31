@@ -56,7 +56,10 @@ async def test_read_web_search_effect(monkeypatch):
 
     assert stack.spy.web_queries == [cap.message]
     assert stack.recorder.call_count == 1
-    assert stack.recorder.recorded_value[0]["title"] == "t"
+    # The result list starts with the retrieval-time anchor; the hits follow it.
+    recorded = stack.recorder.recorded_value
+    assert recorded[0]["type"] == "retrieval_meta"
+    assert recorded[1]["title"] == "t"
     assert res.approvals == []
     assert stack.port.steps == 0
 

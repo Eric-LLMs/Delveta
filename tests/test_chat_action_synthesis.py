@@ -22,6 +22,7 @@ both sides of that boundary:
 """
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -234,15 +235,26 @@ async def test_prompt_carries_question_material_and_source_rules():
 def test_system_prompt_synthesizes_the_material_instead_of_copying_it():
     # soul.md never reaches the ACTION lane: a funnel-routed search turn reads THIS
     # system prompt. Without these rules a news turn listed every item verbatim.
-    assert "raw material, not the answer" in _SYSTEM_PROMPT
-    assert "do not vote, average, splice or guess" in _SYSTEM_PROMPT
-    assert "cannot be confirmed reliably" in _SYSTEM_PROMPT
-    assert "never a source-by-source walkthrough or a per-item list" in _SYSTEM_PROMPT
+    assert "The material is evidence, not the answer" in _SYSTEM_PROMPT
+    assert "Never average, vote, splice or invent a value" in _SYSTEM_PROMPT
+    assert "answer the parts that can be confirmed" in _SYSTEM_PROMPT
+    assert "Do not walk through the results site by site" in _SYSTEM_PROMPT
     assert (
         "name a source by its publication or site name rather than pasting its "
         "domain or URL" in _SYSTEM_PROMPT
     )
     assert "do not add a sources list of your own" in _SYSTEM_PROMPT
+
+
+def test_system_prompt_resolves_conflicts_and_partial_failure():
+    # A turn must not refuse the whole question because one number conflicts, and must
+    # not treat an insufficient result list as "unanswerable".
+    assert "compare their quality and time validity first" in _SYSTEM_PROMPT
+    assert "state uncertainty only for the specific facts that cannot" in _SYSTEM_PROMPT
+    assert "the question is not automatically unanswerable" in _SYSTEM_PROMPT
+    assert "never ask the user to verify it for you" in _SYSTEM_PROMPT
+    # The retrieval-metadata time anchor is the reference for "today"/"now".
+    assert "use its time as the reference for today and now" in _SYSTEM_PROMPT
 
 
 async def test_synthesis_does_not_override_the_turn_channel():
@@ -506,6 +518,47 @@ async def test_a_seam_without_a_streaming_method_answers_in_one_frame():
     content = [e["data"] for e in events if e["type"] == "content"]
     assert content == [_CompleteOnly.answer]
     assert done["answer"] == _CompleteOnly.answer
+
+
+# ── the source footer: the ACTION lane reconstructs the tool trace ─────────────
+
+WEB_RESULTS = [
+    {"title": "北京天气", "url": "https://weather.example/beijing", "snippet": "晴 25℃"},
+    {"title": "北京空气质量", "url": "https://aq.example/beijing", "snippet": "良"},
+]
+
+
+async def test_a_web_search_turn_feeds_the_existing_source_footer():
+    # extract_web_sources reads the turn's tool-call/tool messages; the loop makes
+    # them, this lane did not — so the footer used to disappear on ACTION turns.
+    # The seam hands the body ``str(canonical value)`` (a Python repr for a list),
+    # not JSON: the reconstructed tool message must still parse.
+    from core.application.chat.lifecycle import extract_web_sources
+
+    run_tool, _ = _tool(str(WEB_RESULTS))
+    llm = _FakeLLM()
+    req = _req("web_search", run_tool, llm)
+
+    _events_seen, done = await _events_req(req)
+
+    assert extract_web_sources(done["messages"]) == [
+        {"title": "北京天气", "url": "https://weather.example/beijing"},
+        {"title": "北京空气质量", "url": "https://aq.example/beijing"},
+    ]
+    # The persisted history keeps its user → assistant shape; the trace is payload-only.
+    assert [row[0] for row in req.ctx.session_memory.rows] == ["user", "assistant"]
+    assert done["messages"][-1] == {"role": "assistant", "content": done["answer"]}
+
+
+async def test_a_non_web_turn_adds_no_tool_trace():
+    from core.application.chat.lifecycle import extract_web_sources
+
+    run_tool, _ = _tool(json.dumps(WEB_RESULTS, ensure_ascii=False))
+    llm = _FakeLLM()
+    _events_seen, done = await _events("rag_search", run_tool, llm)
+
+    assert extract_web_sources(done["messages"]) is None
+    assert all(m["role"] in ("user", "assistant") for m in done["messages"])
 
 
 def test_registry_set_is_exactly_the_query_and_text_material_tools():

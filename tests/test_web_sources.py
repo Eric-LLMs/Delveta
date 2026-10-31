@@ -66,6 +66,20 @@ def test_crawled_page_entries_do_not_duplicate_a_result_url():
     assert extract_web_sources(msgs) == [{"title": "ranked", "url": "https://example.com/a"}]
 
 
+def test_the_retrieval_metadata_entry_never_becomes_a_source():
+    # ``web_search`` now prepends a retrieval-time anchor to every list; it carries no
+    # URL, so it must be skipped rather than rendered as an empty source.
+    msgs = [
+        _assistant([_tc("c1", "web_search", "q")]),
+        _tool("c1", json.dumps([
+            {"type": "retrieval_meta", "retrieved_at": "2026-10-31T09:00:00+08:00",
+             "retrieved_at_utc": "2026-10-31T01:00:00+00:00", "timezone": "UTC+08:00"},
+            {"title": "ranked", "url": "https://example.com/a"},
+        ])),
+    ]
+    assert extract_web_sources(msgs) == [{"title": "ranked", "url": "https://example.com/a"}]
+
+
 def test_only_http_and_https_urls_are_kept():
     msgs = [
         _assistant([_tc("c1", "web_search", "q")]),

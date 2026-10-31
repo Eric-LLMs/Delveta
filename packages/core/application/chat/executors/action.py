@@ -44,6 +44,8 @@ contract.
 """
 from __future__ import annotations
 
+import ast
+import json
 import logging
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
@@ -121,6 +123,45 @@ REASON_KIND_DISABLED = "KIND_DISABLED"
 REASON_TOOL_NOT_ON_ROSTER = "TOOL_NOT_ON_ROSTER"
 REASON_TOOL_ROSTER_UNAVAILABLE = "TOOL_ROSTER_UNAVAILABLE"
 REASON_BINDING_INTEGRITY = "BINDING_INTEGRITY"
+
+# One synthetic tool-call id for the source footer: the ACTION lane skips the ReAct
+# loop, so the call/result pair the footer extractor reads is reconstructed here.
+_WEB_SOURCE_CALL_ID = "action-web-search"
+
+
+def _as_json_list(raw: str) -> str:
+    """Normalize the seam's ``str(canonical value)`` into a JSON list.
+
+    ``_run_tool`` returns ``str(result.value)``, which for the list-shaped
+    ``web_search`` output is a Python repr (single quotes), while the source
+    extractor parses JSON. Re-serialize a list; leave anything else untouched so a
+    malformed payload still reads as no source."""
+    try:
+        value = ast.literal_eval(raw)
+    except (ValueError, SyntaxError, TypeError):
+        return raw
+    if not isinstance(value, list):
+        return raw
+    return json.dumps(value, ensure_ascii=False, default=str)
+
+
+def _web_search_trace(tool: str, raw: str, query: str) -> list[dict]:
+    """The tool call + result pair behind a web-searched ACTION answer.
+
+    The loop materialises exactly these messages; this lane never does, so
+    ``extract_web_sources`` would find nothing and the answer would lose its
+    ``来源 / Sources`` footer. The pair goes into the done payload only — the session
+    history stays user → assistant (the answer row is the record).
+    """
+    return [
+        {"role": "assistant", "content": "",
+         "tool_calls": [{
+             "id": _WEB_SOURCE_CALL_ID, "name": tool,
+             "arguments": json.dumps({"query": query}, ensure_ascii=False),
+         }]},
+        {"role": "tool", "tool_call_id": _WEB_SOURCE_CALL_ID,
+         "content": _as_json_list(raw)},
+    ]
 
 
 @dataclass(frozen=True)
@@ -488,10 +529,13 @@ class ActionExecutor:
             message = outcome.message
             yield {"type": "content", "data": message}
         await ctx.session_memory.append_message("assistant", message)
+        messages = [*history, {"role": "user", "content": ctx.user_text}]
+        if outcome.synthesis is not None and outcome.synthesis[0] == "web_search":
+            messages.extend(_web_search_trace(*outcome.synthesis, ctx.user_text))
+        messages.append({"role": "assistant", "content": message})
         done = {
             "answer": message,
-            "messages": [*history, {"role": "user", "content": ctx.user_text},
-                         {"role": "assistant", "content": message}],
+            "messages": messages,
             "usage": {},
             "error": None,
             "cost_usd": None,
@@ -519,6 +563,8 @@ class ActionExecutor:
             {"role": "user", "content": ctx.user_text},
             {"role": "assistant", "content": message},
         ]
+        if outcome.synthesis is not None and outcome.synthesis[0] == "web_search":
+            messages[-1:-1] = _web_search_trace(*outcome.synthesis, ctx.user_text)
         return ExecutorResult(
             messages=messages, final_answer=message, usage={},
             refusal_reason=outcome.refusal_reason,

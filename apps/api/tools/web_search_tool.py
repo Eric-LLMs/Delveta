@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import datetime, timezone
 
 from agent import Context, ToolExecution, ToolOutput, ToolRuntime, define_tool, text_block
 from agent.tools import search_reuse
@@ -32,6 +33,24 @@ def _coerce_top_k(raw) -> int:
 _SERP_ENGINES = ("bing", "google", "baidu")
 _PAGE_TOP_N = 3
 _PAGE_TEXT_CHARS = 1500
+
+
+def _retrieval_meta() -> dict:
+    """The time anchor for judging result recency, shipped with every result list.
+
+    Neither the search providers nor the page crawl carry a publication timestamp, so
+    without this the model cannot tell a cached page from this morning's. It is
+    metadata, not a result: consumers that collect sources ignore entries without a URL.
+    """
+    local = datetime.now().astimezone()
+    offset = local.strftime("%z")
+    zone = f"UTC{offset[:3]}:{offset[3:]}" if offset else "UTC"
+    return {
+        "type": "retrieval_meta",
+        "retrieved_at": local.isoformat(timespec="seconds"),
+        "retrieved_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "timezone": zone,
+    }
 
 
 async def _scrape_serps(query: str, top_k: int) -> list[dict]:
@@ -106,7 +125,7 @@ def register(runtime: ToolRuntime, ctx: Context, llm) -> None:
         if cached is not None:
             exec.trace["reused"] = True
             exec.trace["top_k"] = top_k
-            return cached
+            return [_retrieval_meta(), *cached]
         # The API search and the keyless SERP scrape are independent (SERP only needs
         # the query), so they run CONCURRENTLY — each inside its own worker thread —
         # and the turn pays max(api, serp), not the sum. Page crawling stays after
@@ -140,15 +159,19 @@ def register(runtime: ToolRuntime, ctx: Context, llm) -> None:
         search_reuse.record(cache_key, merged)
         exec.trace["top_k"] = top_k
         exec.trace["pages"] = len(pages)
-        return merged
+        return [_retrieval_meta(), *merged]
 
     runtime.register(
         define_tool(
             name="web_search",
             description="Search the web for real-time or external information, or when "
-            "the user explicitly asks you to search online. Returns a list of results "
-            "with title, url, snippet, and (for the top hits) page_text with the fetched "
-            "page content. This is NOT a fallback for the user's own material: if "
+            "the user explicitly asks you to search online. Returns a list whose FIRST "
+            "element is retrieval metadata (retrieved_at, timezone — the reference for "
+            "today/now) and whose remaining elements are results with title, url, "
+            "snippet, and (for the top hits) page_text with fetched page content, which "
+            "may be partial. Most results carry no publication date; treat undated "
+            "content as undated rather than assuming it is current. This is NOT a "
+            "fallback for the user's own material: if "
             "rag_search returned nothing, say so instead of searching the web.",
             parameters={
                 "type": "object",

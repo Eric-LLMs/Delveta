@@ -46,6 +46,15 @@ def test_web_search_is_not_a_rag_fallback():
     assert "NOT a fallback" in description
 
 
+def test_web_search_description_ships_the_time_anchor():
+    # The result list starts with retrieval metadata; the description must say so, or
+    # the model has no reference for "today" and no warning that dates are missing.
+    description = _descriptions()["web_search"]
+    assert "retrieval metadata" in description
+    assert "reference for today/now" in description
+    assert "Most results carry no publication date" in description
+
+
 def test_soul_states_one_core_query_and_no_parallel_paraphrases():
     soul = _SOUL.read_text(encoding="utf-8")
     assert "Start with the ONE query" in soul
@@ -99,47 +108,60 @@ def test_soul_keeps_ordinary_knowledge_out_of_the_search_rule():
 
 def test_soul_synthesizes_instead_of_listing_each_source():
     soul = _flat_soul()
-    assert "Search results are raw material, not the answer" in soul
-    assert "never a per-site walkthrough, a source-by-source comparison" in soul
-    assert "state one clear answer" in soul
+    assert "Search results are evidence, not the answer" in soul
+    assert "Do not walk through the results site by site" in soul
+    assert "write one coherent answer that leads with the direct answer" in soul
 
 
-def test_soul_refuses_to_average_conflicting_sources():
+def test_soul_resolves_conflicts_with_evidence_instead_of_refusing():
+    # The generic policy: judge, use the better-supported fact, answer the confirmable
+    # parts. Refusing the whole question because one number differs is not allowed.
     soul = _flat_soul()
-    assert "do not vote, average, splice or guess" in soul
-    assert "cannot be confirmed reliably" in soul
-    assert "Never dress an unconfirmed value up as fact" in soul
+    assert "When sources conflict, first compare their quality and time validity" in soul
+    assert "Answer the parts that can be confirmed" in soul
+    assert "Never average, vote, splice or invent a value" in soul
+    assert "the question is not automatically unanswerable" in soul
 
 
 def test_soul_bans_internal_process_and_raw_urls():
     soul = _flat_soul()
     assert 'No "Thoughts" or analysis headings' in soul
-    assert "no raw URLs in the body" in soul
-    assert "the italic sources entry already exposes the links" in soul
+    assert "no raw URLs or domains in the body" in soul
+    assert "let the interface render the links" in soul
 
 
 def test_soul_allows_per_site_detail_only_when_the_user_asks_to_compare():
     soul = _flat_soul()
     assert "only when the user explicitly asks to compare sources" in soul
-    assert "Do not ask the user to restate a date, place, or constraint" in soul
-    assert "never ask them what today's date is" in soul
-    assert "say the data is undated instead" in soul
+    assert 'Use the retrieval time supplied with the search results as your reference for "today"' in soul
+    assert "do not ask them to restate a date, place or constraint" in soul
 
 
 def test_soul_never_lets_the_answer_write_its_own_source_list():
     # A model-written "来源：" line duplicates the italic entry the interface renders
     # and drags domain names into the body — both were observed on a real turn.
     soul = _flat_soul()
-    assert "Name a source by its publication or site name, never by its domain or a URL" in soul
-    assert "Do not end the answer with any sources line of your own" in soul
-    assert 'not "来源：…", not an italic footnote' in soul
+    assert 'no sources list or "来源 / Sources" line of your own' in soul
+    assert "name a source by its publication, and let the interface render the links" in soul
+    assert "no raw URLs or domains in the body" in soul
+
+
+def test_soul_searches_again_on_every_new_message():
+    # In a session with earlier failed weather searches the model read "do not retry"
+    # as applying across turns, made ZERO tool calls, and repeated its own refusal.
+    soul = _flat_soul()
+    assert "Every new user message that asks for current information is a NEW search" in soul
+    assert "a previous failed or conflicting search is never a reason to skip this turn's search" in soul
+    assert "the user asking again is itself the new target" in soul
+    assert "This limit is per turn only" in soul
 
 
 def test_soul_does_not_relabel_stale_data_as_todays():
     # A weather turn pasted a 30th-of-the-month page as "today (30th)".
     soul = _flat_soul()
-    assert "when the freshest reliable result is not from today, name the date it describes" in soul
-    assert "instead of presenting it as today's" in soul
+    assert "never relabel an older page as today's" in soul
+    assert "whether a date on the page is its publication date, the event's date, or the date its data describes" in soul
+    assert 'Use the retrieval time supplied with the search results as your reference for "today"' in soul
 
 
 def test_soul_no_longer_pushes_retrieval_by_default():
