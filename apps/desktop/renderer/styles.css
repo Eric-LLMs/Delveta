@@ -1463,6 +1463,43 @@ pre.text-viewer {
   padding: 2px 2px 26px;
   border-bottom-left-radius: 0;
 }
+/* Web-search source entry: one quiet italic word under the answer. It carries no URL;
+   clicking opens a compact popover of the sources the search actually returned. */
+.msg-sources { margin-top: 6px; }
+.msg-sources-link {
+  font-style: italic;
+  font-size: var(--fs-xs);
+  color: var(--fg-dim);
+  cursor: pointer;
+  text-decoration: none;
+}
+.msg-sources-link:hover,
+.msg-sources-link:focus-visible { color: var(--accent); text-decoration: underline; }
+.msg-sources-pop {
+  position: fixed;
+  z-index: 60;
+  max-width: 320px;
+  max-height: 260px;
+  overflow-y: auto;
+  padding: 4px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  box-shadow: var(--shadow-2);
+}
+.msg-sources-item {
+  display: block;
+  padding: 6px 9px;
+  border-radius: var(--r-xs);
+  color: var(--fg);
+  font-size: var(--fs-xs);
+  line-height: 1.4;
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.msg-sources-item:hover { background: var(--bg-soft-2); color: var(--accent); }
 /* Per-message actions pinned to the bubble's bottom-right corner; hidden until hover/focus.
    Icon-only chips (label is the tooltip) so the row stays small and never covers the text
    or grows past the bubble on a narrow window. A button in a stateful label ("Importing…",

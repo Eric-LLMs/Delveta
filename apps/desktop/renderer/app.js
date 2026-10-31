@@ -928,6 +928,86 @@
     return actions;
   }
 
+  // ── Web-search sources ────────────────────────────────────────────────────────
+  // A turn whose answer was built from web_search ends with one italic 来源 / Sources
+  // entry under the text. The label carries no URL; clicking it opens a compact popover
+  // of the sources the search actually returned (titles only), each opening in the
+  // system browser. No cards, no link list inside the answer.
+  let sourcesPop = null;
+  function closeSourcesPopover() {
+    if (!sourcesPop) return;
+    sourcesPop.remove();
+    sourcesPop = null;
+    window.removeEventListener("keydown", onSourcesKey, true);
+    document.removeEventListener("click", onSourcesOutside, true);
+  }
+  function onSourcesKey(e) {
+    if (e.key === "Escape") closeSourcesPopover();
+  }
+  function onSourcesOutside(e) {
+    if (sourcesPop && !sourcesPop.contains(e.target)) closeSourcesPopover();
+  }
+  function showSourcesPopover(anchor, sources) {
+    closeSourcesPopover();
+    const pop = document.createElement("div");
+    pop.className = "msg-sources-pop";
+    pop.setAttribute("role", "menu");
+    sources.forEach((s) => {
+      const a = document.createElement("a");
+      a.className = "msg-sources-item";
+      a.href = "#";
+      a.textContent = s.title || "Source";
+      // Never surface the URL as visible text; the row opens the page instead.
+      a.title = s.title || "Source";
+      a.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        closeSourcesPopover();
+        if (window.desktopAPI && window.desktopAPI.openUrl) window.desktopAPI.openUrl(s.url);
+        else window.open(s.url, "_blank", "noopener");
+      });
+      pop.appendChild(a);
+    });
+    document.body.appendChild(pop);
+    const r = anchor.getBoundingClientRect();
+    const width = Math.min(320, pop.offsetWidth || 240);
+    pop.style.left = Math.max(8, Math.min(r.left, window.innerWidth - width - 8)) + "px";
+    const below = r.bottom + 6;
+    pop.style.top = (below + pop.offsetHeight > window.innerHeight - 8
+      ? Math.max(8, r.top - pop.offsetHeight - 6)
+      : below) + "px";
+    sourcesPop = pop;
+    document.addEventListener("click", onSourcesOutside, true);
+    window.addEventListener("keydown", onSourcesKey, true);
+  }
+  function attachWebSources(div, sources, answerText) {
+    const model = window.SourcesModel;
+    if (!model || !div || div.__webSources) return;
+    const list = model.normalizeSources(sources);
+    if (!list.length) return;
+    const bubble = div.querySelector(".msg-bubble");
+    if (!bubble) return;
+    div.__webSources = list;
+    const row = document.createElement("div");
+    row.className = "msg-sources";
+    const link = document.createElement("a");
+    link.className = "msg-sources-link";
+    link.textContent = model.sourcesLabel(answerText);
+    link.setAttribute("role", "button");
+    link.tabIndex = 0;
+    const open = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      showSourcesPopover(link, list);
+    };
+    link.addEventListener("click", open);
+    link.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") open(e);
+    });
+    row.appendChild(link);
+    bubble.appendChild(row);
+  }
+
   // ── Retrieval feedback (👍/👎) ────────────────────────────────────────────────
   // When a turn's answer was grounded on rag_search hits, the done frame carries
   // ``retrieved`` and the assistant row persists the same snapshot (messages.meta).
@@ -1299,6 +1379,7 @@
     body.innerHTML = renderMarkdown(text);
     bubble.appendChild(body);
     div.appendChild(bubble);
+    if (opts.webSources) attachWebSources(div, opts.webSources, text);
     // Append to the log BEFORE building the action row: buildMsgActions binds an
     // assistant reply to the question above it via previousElementSibling, which only
     // exists once the div is in the DOM. Building first meant the walk always came up
@@ -1328,7 +1409,7 @@
       ? { ...m.attach, attachment_id: m.attachment_id || undefined }
       : null;
     appendMessage(m.id, m.role === "assistant" ? "assistant" : "user", m.content,
-      attach, m.retrieval, m.viewer, m.attachments, opts);
+      attach, m.retrieval, m.viewer, m.attachments, { ...opts, webSources: m.web_sources });
   }
 
   // Build the inline media element for a message attachment. Images are fetched from the
@@ -2320,6 +2401,12 @@
           if (streamMsg && !streamMsg.text().trim() && lastFolded) {
             streamMsg.add(lastFolded);
             lastFolded = null;
+          }
+          // Web-searched answer: one italic 来源 / Sources entry, appended after the
+          // final text so later content frames can never wipe it.
+          if (evt.data.web_sources && streamMsg) {
+            attachWebSources(streamMsg.el, evt.data.web_sources,
+              evt.data.answer || streamMsg.text());
           }
           // Call mode: hands-free loop — read this answer aloud (Kokoro, same chain as the
           // bubble 🔊 Read); listening resumes when playback ends or the user barges in.

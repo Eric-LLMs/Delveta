@@ -59,6 +59,40 @@ def test_soul_stops_the_zero_hit_escalation_chain():
     assert "not a fallback after `rag_search`" in soul
 
 
+# ── time-sensitive questions: search proactively, honestly, and only there ────────
+# The model used to answer "I cannot check real-time weather" and ask whether to
+# search. The contract is text the model is shown; these assertions pin the four rules
+# the product depends on (search now, never confirm first, never invent, no overreach).
+
+def _flat_soul() -> str:
+    return " ".join(_SOUL.read_text(encoding="utf-8").split())
+
+
+def test_soul_requires_a_same_turn_search_for_time_sensitive_questions():
+    soul = _flat_soul()
+    assert "Time-sensitive information" in soul
+    assert "call `web_search` in this same turn" in soul
+    assert "weather, prices, news, live scores, latest releases" in soul
+
+
+def test_soul_forbids_asking_permission_before_a_search():
+    soul = _flat_soul()
+    assert "never ask the user whether they want an online search" in soul
+    assert "do not say you cannot check real-time data without having tried" in soul
+
+
+def test_soul_requires_honesty_when_the_search_fails_or_is_stale():
+    soul = _flat_soul()
+    assert "If the search fails or the results are clearly out of date, say so plainly" in soul
+    assert "never invent numbers, dates, or headlines" in soul
+
+
+def test_soul_keeps_ordinary_knowledge_out_of_the_search_rule():
+    soul = _flat_soul()
+    assert "Ordinary knowledge, explanations, summaries" in soul
+    assert "not a reason to search everything" in soul
+
+
 def test_soul_no_longer_pushes_retrieval_by_default():
     soul = _SOUL.read_text(encoding="utf-8")
     assert "search the corpus before guessing" not in soul

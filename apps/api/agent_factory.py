@@ -48,6 +48,17 @@ from rag.query_cache import wrap_retriever
 from plugins.artifact.plugin import register_artifact_plugins
 from plugins.research.plugin import register_research_plugins
 
+# Tools whose FULL schema stays resident in every step's tools array. Residency removes
+# the two-hop ``tool_search`` discovery for capabilities the model must reach on its own
+# initiative; deferred tools keep the default discovery flow unchanged.
+RESIDENT_CHAT_TOOLS: tuple[str, ...] = (
+    "rag_search",   # the user's own corpus; retrieve without a discovery step
+    "web_search",   # real-time facts; discovery made the model skip the search entirely
+    "summary_gen",  # toolkit content tools are primary user-facing actions
+    "mindmap_gen",
+    "slides_gen",
+)
+
 # Lightweight singletons
 llm = OpenAILLM()
 
@@ -264,13 +275,10 @@ def get_agent_kernel() -> AgentKernel:
         config=KernelConfig(recall_top_k=settings.memory_recall_top_k),
     )
 
-    # rag_search is the learning-corpus retrieval tool; allowlist it so the model
-    # always sees its full schema in the tools array from step 0 — no tool_search
-    # discovery step required before it can retrieve from imported material.
-    kernel.gateway.policy.allow("rag_search")
-    # Toolkit content tools are primary user-facing tools: keep them resident too.
-    for _toolkit_name in ("summary_gen", "mindmap_gen", "slides_gen"):
-        kernel.gateway.policy.allow(_toolkit_name)
+    # Resident tools: always visible in the tools array from step 0, so the model never
+    # has to discover them through ``tool_search`` first (see RESIDENT_CHAT_TOOLS).
+    for _resident in RESIDENT_CHAT_TOOLS:
+        kernel.gateway.policy.allow(_resident)
 
     # Viewer Context Provider: the per-turn reference blocks sunk into
     # ``run(context={"viewer": …})`` by the chat router render into the dynamic suffix

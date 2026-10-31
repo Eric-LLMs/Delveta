@@ -115,6 +115,58 @@ def extract_retrieval(messages: list[dict] | None) -> dict | None:
     return {"hits": list(hits.values()), "queries": queries}
 
 
+_WEB_URL_SCHEMES = ("http://", "https://")
+_MAX_WEB_SOURCES = 10
+
+
+def extract_web_sources(messages: list[dict] | None) -> list[dict] | None:
+    """Sources this turn's ``web_search`` actually returned, for the answer footnote.
+
+    ``web_search`` returns one JSON list per call (title/url/snippet plus crawled page
+    entries); a page entry repeats a result URL, so sources dedupe by URL keeping the
+    first title. Failed calls carry ``{"error": ...}`` and contribute nothing. Only
+    http(s) URLs are kept — the client never renders an arbitrary scheme. Returns None
+    when the turn ran no successful web search.
+    """
+    if not messages:
+        return None
+    web_call_ids: set[str] = set()
+    for m in messages:
+        for tc in m.get("tool_calls") or []:
+            if tc.get("id") and tc.get("name") == "web_search":
+                web_call_ids.add(str(tc["id"]))
+    if not web_call_ids:
+        return None
+    sources: list[dict] = []
+    seen: set[str] = set()
+    for m in messages:
+        if m.get("role") != "tool" or str(m.get("tool_call_id")) not in web_call_ids:
+            continue
+        content = m.get("content")
+        if isinstance(content, list):  # text-block parts shape
+            content = "".join(p.get("text", "") for p in content if isinstance(p, dict))
+        try:
+            parsed = json.loads(content) if isinstance(content, str) else None
+        except Exception:  # noqa: BLE001 - malformed payload just means no source
+            parsed = None
+        if not isinstance(parsed, list):
+            continue
+        for item in parsed:
+            if not isinstance(item, dict):
+                continue
+            url = item.get("url")
+            if not isinstance(url, str):
+                continue
+            url = url.strip()
+            if not url.lower().startswith(_WEB_URL_SCHEMES) or url in seen:
+                continue
+            seen.add(url)
+            sources.append({"title": str(item.get("title") or "").strip()[:200], "url": url})
+            if len(sources) >= _MAX_WEB_SOURCES:
+                return sources
+    return sources or None
+
+
 def _viewer_stub_reads(messages: list[dict] | None, stub_asset_id: str) -> list[dict]:
     """Every ``read_document`` call this turn made against the stub's asset.
 
@@ -245,6 +297,12 @@ async def finalize_turn(
     if retrieval:
         await deps.persist_turn_meta(assistant_message_id, "retrieval", retrieval)
         done["retrieved"] = retrieval
+    # The sources behind a web-searched answer: one hidden-URL footnote entry, persisted
+    # on the row so a reopen renders the same footer.
+    web_sources = extract_web_sources((final_payload or {}).get("messages"))
+    if web_sources and answer.strip():
+        await deps.persist_turn_meta(assistant_message_id, "web_sources", web_sources)
+        done["web_sources"] = web_sources
     viewer_payload = await viewer_post_turn(
         deps, ctx.viewer_assembly, body, answer, (final_payload or {}).get("messages"),
         user_message_id, assistant_message_id

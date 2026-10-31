@@ -1414,6 +1414,9 @@ async def load_session_detail(
                     # The viewer snapshot frozen on this turn so reopening the session can
                     # re-render the prepared document context (text excerpt, page image).
                     "viewer": (m.meta or {}).get("viewer") if m.meta else None,
+                    # Web-search sources the answer used ({title, url}); the client renders
+                    # one italic footer entry (URLs hidden behind a popover).
+                    "web_sources": (m.meta or {}).get("web_sources") if m.meta else None,
                 }
                 by_id[m.id] = msg
                 messages.append(msg)
