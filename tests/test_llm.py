@@ -204,3 +204,72 @@ async def test_usage_sink_still_captures_unsolicited_usage():
     # a sink DID request include_usage — the tolerance is about unsolicited
     # frames on sink-less calls, not about opting into them silently
     assert captured[0]["stream_options"] == {"include_usage": True}
+
+
+# ── chat_stream thinking switch: one switch, two provider dialects ───────────────
+#
+# ``enable_thinking`` is the Qwen dialect; DeepSeek ignores it and exposes
+# ``reasoning_effort`` instead. The flag is per-turn (voice / video FOCUS), never the
+# global structured-call knob, and a non-DeepSeek provider must never receive the
+# DeepSeek-only key.
+
+class _ChatFakeCompletions:
+    def __init__(self, captured: list[dict]):
+        self.captured = captured
+
+    async def create(self, **kwargs):
+        self.captured.append(kwargs)
+        return _FakeStream([])
+
+
+class _ChatFakeClient:
+    def __init__(self, captured: list[dict], base_url: str):
+        self.base_url = base_url
+        self.chat = type("C", (), {"completions": _ChatFakeCompletions(captured)})()
+
+
+async def _chat_stream_kwargs(base_url: str, model: str = "test-model", **kwargs) -> dict:
+    """Run one chat_stream against a fake client and return the wire kwargs it sent."""
+    captured: list[dict] = []
+    llm = OpenAILLM(api_key="k", base_url=base_url, model=model)
+    llm.client = _ChatFakeClient(captured, base_url)
+    async for _ in llm.chat_stream([{"role": "user", "content": "hi"}], **kwargs):
+        pass
+    assert len(captured) == 1
+    return captured[0]
+
+
+async def test_chat_stream_keeps_thinking_on_by_default():
+    kw = await _chat_stream_kwargs("https://api.deepseek.com", "deepseek-flash")
+    assert "extra_body" not in kw
+    assert "reasoning_effort" not in kw
+    # the rest of the chat request is untouched
+    assert kw["stream"] is True
+    assert kw["temperature"] == 0.3
+    assert kw["stream_options"] == {"include_usage": True}
+    assert "tools" not in kw
+
+
+async def test_chat_stream_disables_both_dialects_on_deepseek():
+    kw = await _chat_stream_kwargs(
+        "https://api.deepseek.com", "deepseek-flash", disable_thinking=True
+    )
+    assert kw["extra_body"] == {"enable_thinking": False}
+    assert kw["reasoning_effort"] == "none"
+
+
+async def test_chat_stream_detects_deepseek_behind_a_gateway_by_model():
+    # A proxy/gateway host does not name the provider; the model prefix still does.
+    kw = await _chat_stream_kwargs(
+        "https://gateway.internal/v1", "deepseek-flash", disable_thinking=True
+    )
+    assert kw["extra_body"] == {"enable_thinking": False}
+    assert kw["reasoning_effort"] == "none"
+
+
+async def test_chat_stream_sends_only_the_qwen_dialect_elsewhere():
+    kw = await _chat_stream_kwargs(
+        "https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen3-max", disable_thinking=True
+    )
+    assert kw["extra_body"] == {"enable_thinking": False}
+    assert "reasoning_effort" not in kw

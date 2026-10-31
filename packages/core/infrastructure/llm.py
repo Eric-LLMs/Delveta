@@ -215,6 +215,18 @@ def _wire_messages(messages: list[dict]) -> list[dict]:
     return out
 
 
+def _is_deepseek_channel(client: AsyncOpenAI, model: str) -> bool:
+    """True when this call targets DeepSeek's reasoning dialect.
+
+    DeepSeek ignores the Qwen-style ``enable_thinking`` body switch and exposes
+    ``reasoning_effort`` instead (see ``complete_json_once``). Detection is by endpoint
+    host or model prefix — no provider registry, no new abstraction. Other providers
+    reject unknown request parameters, so only this dialect may receive the extra key.
+    """
+    base = str(getattr(client, "base_url", "") or "").lower()
+    return "deepseek" in base or str(model or "").lower().startswith("deepseek")
+
+
 class OpenAILLM:
     def __init__(
         self,
@@ -557,7 +569,8 @@ class OpenAILLM:
         channel without mutating the shared client. ``disable_thinking`` sends the
         Qwen-compatible ``enable_thinking: false`` flag — the live voice-call path uses
         it because reasoning tokens are pure time-to-first-sentence there; interactive
-        typed chat keeps thinking on.
+        typed chat keeps thinking on. On a DeepSeek channel the same flag also sends
+        ``reasoning_effort="none"``, because that provider ignores ``enable_thinking``.
         """
         client, mdl = self._call_channel(model, base_url, api_key)
         kwargs = {
@@ -571,6 +584,11 @@ class OpenAILLM:
             kwargs["tools"] = tools
         if disable_thinking:
             kwargs["extra_body"] = {"enable_thinking": False}
+            # DeepSeek ignores ``enable_thinking`` and reads ``reasoning_effort``
+            # instead (same two-dialect rule as ``complete_json_once``). Send the
+            # second key only on that channel: other providers may reject it.
+            if _is_deepseek_channel(client, mdl):
+                kwargs["reasoning_effort"] = "none"
         stream = await client.chat.completions.create(**kwargs)
 
         # Tool-call arguments/name arrive as fragmented deltas keyed by index; accumulate
