@@ -3,7 +3,11 @@
 const test = require("node:test");
 const assert = require("node:assert");
 
-const { resolveChatLink, handleChatLinkClick } = require("../renderer/msg_links.js");
+const {
+  resolveChatLink,
+  handleChatLinkClick,
+  hideUnfinishedLink,
+} = require("../renderer/msg_links.js");
 const markdownit = require("../renderer/vendor/markdown-it.min.js");
 
 // The desktop bubble's exact config (app.js renderMarkdown).
@@ -95,6 +99,96 @@ test("a click outside any link, or without a link, is not handled", () => {
   assert.equal(handleChatLinkClick(fakeClick(undefined), (u) => opened.push(u)), false);
   assert.equal(handleChatLinkClick({ target: {} }, (u) => opened.push(u)), false);
   assert.deepEqual(opened, []);
+});
+
+// ── the streaming window: the URL must never be visible before the link closes ──────
+
+// What the user actually sees for a buffer: renderMarkdown runs hideUnfinishedLink
+// first (app.js), so the pair is the render path under test.
+function streamed(buffer) {
+  const html = md.render(hideUnfinishedLink(buffer));
+  return { html, text: visibleText(html) };
+}
+
+function assertNoUrl(text, label) {
+  assert.ok(!/https?:\/\//i.test(text), `${label}: URL leaked -> ${text}`);
+  assert.ok(!/www\./i.test(text), `${label}: host leaked -> ${text}`);
+}
+
+test("a complete link arriving in one chunk renders as a link", () => {
+  assert.equal(hideUnfinishedLink(ANSWER), ANSWER);
+  const { html, text } = streamed(ANSWER);
+  assert.ok(html.includes(`<a href="${WEATHER}">中国天气网</a>`), html);
+  assertNoUrl(text, "one chunk");
+});
+
+test("a URL split across chunks is never visible while it streams", () => {
+  const chunks = [
+    "数据来自 [中国天气网](",
+    "https://www.weather",
+    ".com.cn/weather/1010",
+    "10100.shtml) 等公开气象服务。",
+  ];
+  let buffer = "";
+  chunks.forEach((chunk, i) => {
+    buffer += chunk;
+    const { text } = streamed(buffer);
+    assertNoUrl(text, `chunk ${i + 1}`);
+  });
+  // …and it lands as the real link once closed.
+  assert.ok(streamed(buffer).html.includes(`<a href="${WEATHER}">中国天气网</a>`));
+});
+
+test("]( , the URL and the final ) may each arrive in their own chunk", () => {
+  const chunks = ["[AccuWeather", "](", "https://www.accuweather.com", "/zh/cn/beijing",
+                  ")", " 的预报。"];
+  const url = "https://www.accuweather.com/zh/cn/beijing";
+  let buffer = "";
+  for (const chunk of chunks) {
+    buffer += chunk;
+    const { text, html } = streamed(buffer);
+    assertNoUrl(text, JSON.stringify(chunk));
+    if (!buffer.includes(")")) assert.ok(!html.includes("<a "), "no anchor before the close");
+  }
+  const { html } = streamed(buffer);
+  assert.ok(html.includes(`<a href="${url}">AccuWeather</a>`), html);
+});
+
+test("with several sources, only the unfinished tail is held back", () => {
+  let buffer = `数据来自 [中国天气网](${WEATHER})、[AccuWeather](https://www.accu`;
+  const { html, text } = streamed(buffer);
+  assert.ok(html.includes(`<a href="${WEATHER}">中国天气网</a>`), html); // finished one stays
+  assert.ok(text.includes("AccuWeather"));                                // name still streams
+  assertNoUrl(text, "second link pending");
+});
+
+test("ordinary brackets and brackets that only look like a link are untouched", () => {
+  const cases = [
+    "数组 [0] 与 (括号)",
+    "见 [1]（中文括号）",
+    "引用 a]( b 不是链接",
+    "价格 [10](元) 也不含 URL",
+    "$$[a](b)$$",
+  ];
+  for (const c of cases) assert.equal(hideUnfinishedLink(c), c, c);
+});
+
+test("a stream that ends before the link closes degrades to the source name", () => {
+  const truncated = `数据来自 [中国天气网](${WEATHER.slice(0, 30)}`;
+  const { html, text } = streamed(truncated);         // this is also the final render
+  assert.ok(!html.includes("<a "), html);
+  assertNoUrl(text, "stream ended");
+  assert.ok(text.includes("中国天气网"), text);
+});
+
+test("the link still clicks once it closes", () => {
+  const { html } = streamed(`见 [中国天气网](${WEATHER})`);
+  const href = /<a href="([^"]+)"/.exec(html)[1];
+  const opened = [];
+  const event = fakeClick(href);
+  assert.equal(handleChatLinkClick(event, (u) => opened.push(u)), true);
+  assert.deepEqual(opened, [WEATHER]);
+  assert.equal(event.defaultPrevented, true);
 });
 
 test("a reopened session re-renders the same stored text into the same links", () => {

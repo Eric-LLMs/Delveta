@@ -823,8 +823,12 @@
   if (markdownIt) markdownIt.use(mathPlugin);
   function renderMarkdown(text) {
     const src = String(text ?? "");
-    if (!markdownIt) return escapeHtml(src); // lib missing → keep it plain & safe
-    return markdownIt.render(src);
+    // A source link streams in as [名称](https://… — until its ")" arrives the raw URL
+    // must not reach the screen, so an unfinished trailing link renders as its name.
+    // Complete links (and every other construct) pass through untouched.
+    const safe = window.MsgLinks ? window.MsgLinks.hideUnfinishedLink(src) : src;
+    if (!markdownIt) return escapeHtml(safe); // lib missing → keep it plain & safe
+    return markdownIt.render(safe);
   }
 
   // Click any chat image (attachment, prepared page/frame, live capture) to see it at full
