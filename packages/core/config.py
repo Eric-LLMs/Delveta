@@ -180,6 +180,11 @@ class Settings(BaseSettings):
     # TOOL_INTENT_OLLAMA_MODEL (compose), never by touching the chain.
     chat_tool_intent_local_model: str = "delveta-pe:q5km"
     chat_tool_intent_timeout_seconds: float = 4.0      # per-call guardrail inside the 5s cascade
+    # Post-funnel verify+extract call (the request's own online LLM). It runs
+    # OUTSIDE the 5s cascade, so this is a separate, larger guardrail: real
+    # post-funnel calls measured min 2.0s / median 2.6s / p90 3.0s / max 4.1s;
+    # 15s leaves headroom for provider tail latency without hanging a turn.
+    chat_capability_verify_timeout_seconds: float = 15.0
 
     # ── cap_router (the ONLY capability-selection node) ──────────────
     # cap_router = Delveta's stable capability-selection SERVICE, served OUT OF

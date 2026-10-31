@@ -155,12 +155,22 @@ class TurnOrchestrator:
         # ``t_entry`` is absent only on test doubles standing in for the dataclass.
         t_entry = getattr(ctx, "t_entry", None)
         t_entry = now if t_entry is None else t_entry
+        stages = dict(getattr(ctx, "funnel_stage_ms", None) or {})
+        verify_ms = getattr(ctx, "capability_verify_extract_ms", None)
+        verify_decision = getattr(ctx, "capability_verify_decision", None)
         logger.info(
             "chat-turn-end entry=%s lane=%s request_prep_ms=%s funnel_ms=%s "
+            "embedding_recall_ms=%s layachoice_infer_ms=%s local_extractor_ms=%s "
+            "capability_verify_extract_ms=%s capability_verify_decision=%s "
             "executor_ms=%.0f finalize_ms=%.0f duration_s=%.3f first_content_ms=%s",
             entry, lane,
             "n/a" if ctx.prepare_ms is None else f"{ctx.prepare_ms:.0f}",
             "n/a" if ctx.funnel_ms is None else f"{ctx.funnel_ms:.0f}",
+            stages.get("embedding_recall", "n/a"),
+            stages.get("layachoice_infer", "n/a"),
+            stages.get("local_extractor", "n/a"),
+            "n/a" if verify_ms is None else verify_ms,
+            verify_decision or "n/a",
             executor_ms, finalize_ms, now - t_entry,
             "n/a" if first_content_ms is None else f"{first_content_ms:.0f}",
         )
