@@ -30,6 +30,7 @@ from core.application.chat.executors.action import ActionExecutor
 from core.application.chat.executors.answer_synthesis import (
     SYNTHESIS_TOOLS,
     _MAX_MATERIAL_CHARS,
+    _SYSTEM_PROMPT,
     _VERBATIM_TOKEN,
     build_prompt,
 )
@@ -228,6 +229,20 @@ async def test_prompt_carries_question_material_and_source_rules():
     assert "never invent a source" in system
     assert "Preserve the sources" in system
     assert "same language" in system
+
+
+def test_system_prompt_synthesizes_the_material_instead_of_copying_it():
+    # soul.md never reaches the ACTION lane: a funnel-routed search turn reads THIS
+    # system prompt. Without these rules a news turn listed every item verbatim.
+    assert "raw material, not the answer" in _SYSTEM_PROMPT
+    assert "do not vote, average, splice or guess" in _SYSTEM_PROMPT
+    assert "cannot be confirmed reliably" in _SYSTEM_PROMPT
+    assert "never a source-by-source walkthrough or a per-item list" in _SYSTEM_PROMPT
+    assert (
+        "name a source by its publication or site name rather than pasting its "
+        "domain or URL" in _SYSTEM_PROMPT
+    )
+    assert "do not add a sources list of your own" in _SYSTEM_PROMPT
 
 
 async def test_synthesis_does_not_override_the_turn_channel():
