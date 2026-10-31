@@ -235,7 +235,7 @@ services:
       - toolintent-cache:/root/.ollama
     environment:
       <<: *tool-intent-model
-      OLLAMA_KEEP_ALIVE: "24h"     # ms-level first hop needs a warm model in RAM
+      OLLAMA_KEEP_ALIVE: "-1"      # resident for the life of the container (explicit warmup too)
       OLLAMA_MODEL: ${TOOL_INTENT_OLLAMA_MODEL:-delveta-pe:q5km}
     depends_on:
       tool-intent-model:
