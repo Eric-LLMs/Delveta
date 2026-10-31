@@ -73,6 +73,14 @@ class AgentTurn:
     recall_hits: list | None = None          # proactive memory recall, computed once per turn
     injected: list[tuple[str, str]] = field(default_factory=list)  # agent.inject() content
     memory_brief: str = ""                   # MEMORY.md session brief, loaded once per turn
+    # Successful search results already returned to the model this turn, keyed by
+    # (tool, normalized query, effective top_k, scope). Owned by
+    # ``agent.tools.search_reuse``; dies with the turn, never persisted.
+    search_results: dict[tuple, list] = field(default_factory=dict)
+    # How many tool calls this turn has dispatched so far. The loop numbers each call
+    # from it so ``call_index`` follows the turn's call order across steps, even when
+    # same-step calls finish in a different order.
+    tool_call_count: int = 0
 
     # ── accounting ──
     usage: dict[str, int] = field(

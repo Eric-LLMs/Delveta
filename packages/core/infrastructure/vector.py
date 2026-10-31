@@ -1,6 +1,8 @@
 """Embedding via the TEI (Text Embeddings Inference) service + pgvector vector store."""
 import asyncio
+import logging
 import random
+import time
 import uuid
 from uuid import UUID
 
@@ -9,7 +11,10 @@ from sqlalchemy import and_, or_, select
 
 from core.config import settings
 from core.infrastructure.db import AssetModel, ChunkModel
+from core.infrastructure.request_context import get_request_embedding_source
 from core.infrastructure.visibility import chunk_visible_expr
+
+logger = logging.getLogger(__name__)
 
 
 class TEIEmbedder:
@@ -40,24 +45,56 @@ class TEIEmbedder:
         # cross the fail-fast budget once. The retry hits the now-warm service; a genuinely
         # hung service still fails within 2×timeout. See run 243eb3eb1b03 vector_recall ERROR.
         timeout_retried = False
+        started = time.monotonic()
         for attempt in range(6):
             try:
                 resp = await self._client.post(
                     "/embed", json={"inputs": texts, "normalize": True}
                 )
                 resp.raise_for_status()
-                return resp.json()
+                vectors = resp.json()
+                self._log_embed(texts, started, status="ok", vectors=vectors)
+                return vectors
             except httpx.TimeoutException:
                 if timeout_retried:
+                    self._log_embed(texts, started, status="timeout")
                     raise
                 timeout_retried = True
             except httpx.HTTPStatusError as exc:
                 status = exc.response.status_code
                 if status != 429 and not (500 <= status < 600):
+                    self._log_embed(texts, started, status=f"http_{status}")
                     raise
                 if attempt == 5:
+                    self._log_embed(texts, started, status=f"http_{status}")
                     raise
                 await asyncio.sleep(0.5 * (2**attempt) + random.uniform(0, 0.2))
+
+    @staticmethod
+    def _log_embed(
+        texts: list[str],
+        started: float,
+        *,
+        status: str,
+        vectors: list[list[float]] | None = None,
+    ) -> None:
+        """One line per logical embed call, attributed to the tool call that asked for it.
+
+        The embedder is shared by RAG and memory recall; the attribution comes from the
+        tool's ``embedding_source`` context (``unattributed`` outside a tagged call, e.g.
+        ingest or a proactive recall), so concurrent searches stay distinguishable.
+        """
+        source = get_request_embedding_source() or {}
+        logger.info(
+            "embedding %s source=%s call_id=%s call_index=%s batch=%d dims=%d duration_ms=%d",
+            status,
+            source.get("source", "unattributed"),
+            source.get("call_id", "-"),
+            source.get("call_index", "-"),
+            len(texts),
+            len(vectors[0]) if vectors else 0,
+            round((time.monotonic() - started) * 1000),
+        )
 
 
 class PgVectorStore:

@@ -433,15 +433,21 @@ class ReactLoopAgent:
                     break
 
                 turn.add_usage(step_usage)
-                self._log(turn, "llm-call", tool_calls=len(tool_calls))
+                step_duration_ms = (time.monotonic() - t0) * 1000
+                # ``phase`` tells a decision call (it asked for tools) from the final
+                # answer call, so per-turn LLM time can be split without guessing.
+                self._log(
+                    turn, "llm-call", tool_calls=len(tool_calls),
+                    phase="decision" if tool_calls else "final",
+                    duration_ms=round(step_duration_ms),
+                )
                 llm_trace.emit({
                     "kind": "agent_llm", "stream": True, "step": step, "model": model,
                     "request": request,
                     "response": {"content": content, "tool_calls": tool_calls},
                     "usage": step_usage,
-                    "duration_ms": round((time.monotonic() - t0) * 1000),
+                    "duration_ms": round(step_duration_ms),
                 })
-                step_duration_ms = (time.monotonic() - t0) * 1000
                 turn.span.record_step(
                     index=step,
                     tool_calls=len(tool_calls),
@@ -696,7 +702,11 @@ class ReactLoopAgent:
         llm_duration_ms = (time.monotonic() - t_llm) * 1000
         tool_calls = resp.get("tool_calls") or []
         usage = resp.get("usage")
-        self._log(turn, "llm-call", tool_calls=len(tool_calls))
+        self._log(
+            turn, "llm-call", tool_calls=len(tool_calls),
+            phase="decision" if tool_calls else "final",
+            duration_ms=round(llm_duration_ms),
+        )
         llm_trace.emit({
             "kind": "agent_llm", "stream": False, "step": step, "model": model,
             "request": request,
@@ -734,22 +744,34 @@ class ReactLoopAgent:
                 ):
                     group.append(tool_calls[i])
                     i += 1
+                # Number the group from the turn-wide counter BEFORE awaiting, so the
+                # indices reflect call order (not completion order) and continue across
+                # steps instead of restarting at 0.
+                base = turn.tool_call_count
+                turn.tool_call_count += len(group)
                 dispatched = await asyncio.gather(
-                    *(self._dispatch(turn, tc, model) for tc in group), return_exceptions=True
+                    *(self._dispatch(turn, tc, model, call_index=base + offset)
+                      for offset, tc in enumerate(group)),
+                    return_exceptions=True,
                 )
-                for tc_, dispatched_ in zip(group, dispatched):
+                for offset, (tc_, dispatched_) in enumerate(zip(group, dispatched)):
                     if isinstance(dispatched_, BaseException):
                         # BaseException (e.g. CancelledError) propagates; ordinary Exceptions
                         # become a tool failure so healthy siblings still commit in order.
                         if isinstance(dispatched_, Exception):
-                            dispatched_ = (tc_, self._error_exec(tc_), self._error_result(dispatched_))
+                            dispatched_ = (
+                                tc_, self._error_exec(tc_, base + offset),
+                                self._error_result(dispatched_),
+                            )
                         else:
                             raise dispatched_
                     exec_, result = dispatched_[1], dispatched_[2]
                     self._commit_tool(messages, tc_, exec_, result)
                     concludes = concludes or exec_.concludes_turn
             else:
-                tc_, exec_, result = await self._dispatch(turn, tc, model)
+                base = turn.tool_call_count
+                turn.tool_call_count += 1
+                tc_, exec_, result = await self._dispatch(turn, tc, model, call_index=base)
                 self._commit_tool(messages, tc_, exec_, result)
                 concludes = concludes or exec_.concludes_turn
                 i += 1
@@ -758,8 +780,10 @@ class ReactLoopAgent:
         return concludes
 
     @staticmethod
-    def _error_exec(tc: dict) -> ToolExecution:
-        return ToolExecution(call_id=tc["id"], name=tc["name"], arguments={})
+    def _error_exec(tc: dict, call_index: int = 0) -> ToolExecution:
+        return ToolExecution(
+            call_id=tc["id"], name=tc["name"], arguments={}, call_index=call_index
+        )
 
     @staticmethod
     def _error_result(exc: Exception) -> ToolExecutionFailure:
@@ -770,22 +794,47 @@ class ReactLoopAgent:
         return tool is not None and tool.is_concurrency_safe is True
 
     async def _dispatch(
-        self, turn: AgentTurn, tc: dict, model: str | None
+        self, turn: AgentTurn, tc: dict, model: str | None, *, call_index: int = 0
     ) -> tuple[dict, ToolExecution, ToolExecutionResult]:
         args = json.loads(tc["arguments"] or "{}")
-        exec_ = ToolExecution(call_id=tc["id"], name=tc["name"], arguments=args, agent=self)
+        exec_ = ToolExecution(
+            call_id=tc["id"], name=tc["name"], arguments=args, agent=self,
+            call_index=call_index,
+        )
         if turn.loop_tracker is not None:
             turn.loop_tracker.record(tc["name"], args)
         turn.emit({"type": "tool-start", "data": {"name": tc["name"], "call_id": tc["id"]}})
-        self._log(turn, "tool-call", name=tc["name"], call_id=tc["id"])
+        self._log(
+            turn, "tool-call", name=tc["name"], call_id=tc["id"], call_index=call_index
+        )
         t0 = time.monotonic()
         result = await self.runtime.execute(exec_)
+        duration_ms = (time.monotonic() - t0) * 1000
         if turn.loop_tracker is not None and result.is_error:
             turn.loop_tracker.record_error(tc["name"], result.error.message)
         turn.span.record_tool(
-            name=tc["name"], is_error=result.is_error, duration_ms=(time.monotonic() - t0) * 1000
+            name=tc["name"], is_error=result.is_error, duration_ms=duration_ms
         )
-        self._log(turn, "tool-result", name=tc["name"], is_error=result.is_error)
+        # One log line per tool call: order (call_index survives same-timestamp parallel
+        # calls), the query the model actually sent, the effective knobs the tool used,
+        # its wall-clock time, and how many results the model received. ``exec_.trace``
+        # is what the tool itself recorded (e.g. ``reused`` for a served-from-cache
+        # search); a reused result is fast by construction and says so.
+        payload: dict[str, Any] = {
+            "name": tc["name"],
+            "call_id": tc["id"],
+            "call_index": call_index,
+            "is_error": result.is_error,
+            "duration_ms": round(duration_ms),
+        }
+        query = args.get("query")
+        if isinstance(query, str) and query:
+            payload["query"] = query[:200]
+        value = getattr(result, "value", None)
+        if isinstance(value, (list, tuple)):
+            payload["result_count"] = len(value)
+        payload = {**exec_.trace, **payload}
+        self._log(turn, "tool-result", **payload)
         turn.emit(
             {"type": "tool-result", "data": {"name": tc["name"], "call_id": tc["id"], "is_error": result.is_error}}
         )

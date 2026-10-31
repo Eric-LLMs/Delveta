@@ -51,6 +51,31 @@ request_execution_mode: ContextVar[str] = ContextVar(
     "request_execution_mode", default=BILLABLE_MODE
 )
 
+# ── Embedding attribution ────────────────────────────────────────────────────────
+# WHO is asking for an embedding right now. The embedder is shared by RAG (rag_search)
+# and memory recall (memory_search), so without this tag a ``/embed`` log line cannot
+# say which tool call paid for it. A tool call installs the tag for the duration of its
+# own body only (``finally`` restores the previous value), and each concurrent tool runs
+# in its own task context, so two parallel searches never see each other's tag.
+request_embedding_source: ContextVar[dict | None] = ContextVar(
+    "request_embedding_source", default=None
+)
+
+
+def get_request_embedding_source() -> dict | None:
+    """Return the current embedding attribution (``source``/``call_id``/``call_index``)."""
+    return request_embedding_source.get()
+
+
+def set_request_embedding_source(source: dict | None) -> Token:
+    """Install the attribution for one tool call; reset the returned token in ``finally``."""
+    return request_embedding_source.set(source)
+
+
+def reset_request_embedding_source(token: Token) -> None:
+    request_embedding_source.reset(token)
+
+
 # ── RAG lane ─────────────────────────────────────────────────────────────────────
 # Which retrieval lane this request's rag_search tool takes. Set ONCE by the /chat
 # entry point; the worker / research agent / admin never set it, so their context

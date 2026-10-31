@@ -105,6 +105,11 @@ class ToolExecution:
 
     ``deferred_contexts`` lets a tool inject extra messages into the session after it
     runs; ``concludes_turn`` signals the loop to stop early.
+
+    ``call_index`` is the position of this call in the turn's tool-call order (set by
+    the loop, never by the model), so logs can correlate concurrent calls that share a
+    completion timestamp. ``trace`` is where a tool records per-call facts the loop
+    copies into its ``tool-result`` log (e.g. a reused search result).
     """
 
     call_id: str
@@ -115,6 +120,8 @@ class ToolExecution:
     token: Any = None
     deferred_contexts: list[Any] = field(default_factory=list)
     concludes_turn: bool = False
+    call_index: int = 0
+    trace: dict[str, Any] = field(default_factory=dict)
 
     def defer_context(self, *contexts: Any) -> None:
         self.deferred_contexts.extend(contexts)

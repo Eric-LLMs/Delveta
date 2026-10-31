@@ -5,6 +5,7 @@ import asyncio
 import json
 
 from agent import Context, ToolExecution, ToolOutput, ToolRuntime, define_tool, text_block
+from agent.tools import search_reuse
 from agent.tools.tool_permissions import ToolPermission
 
 
@@ -98,6 +99,14 @@ def register(runtime: ToolRuntime, ctx: Context, llm) -> None:
             raise RuntimeError("web search is not configured")
         query = args["query"]
         top_k = _coerce_top_k(args.get("top_k"))
+        # Same-turn reuse: an identical successful search later in the turn returns the
+        # earlier list instead of hitting the provider and re-crawling pages.
+        cache_key = search_reuse.key("web_search", query, top_k)
+        cached = search_reuse.lookup(cache_key)
+        if cached is not None:
+            exec.trace["reused"] = True
+            exec.trace["top_k"] = top_k
+            return cached
         # The API search and the keyless SERP scrape are independent (SERP only needs
         # the query), so they run CONCURRENTLY — each inside its own worker thread —
         # and the turn pays max(api, serp), not the sum. Page crawling stays after
@@ -127,15 +136,20 @@ def register(runtime: ToolRuntime, ctx: Context, llm) -> None:
                 seen.add(u)
         # Append crawled page text for the top hits.
         pages = await _crawl_pages(results)
-        return results + pages
+        merged = results + pages
+        search_reuse.record(cache_key, merged)
+        exec.trace["top_k"] = top_k
+        exec.trace["pages"] = len(pages)
+        return merged
 
     runtime.register(
         define_tool(
             name="web_search",
-            description="Search the web for up-to-date information. Returns a list of "
-            "results with title, url, snippet, and (for the top hits) page_text with "
-            "the fetched page content. Use this when the answer needs external or "
-            "recent knowledge beyond the local learning material.",
+            description="Search the web for real-time or external information, or when "
+            "the user explicitly asks you to search online. Returns a list of results "
+            "with title, url, snippet, and (for the top hits) page_text with the fetched "
+            "page content. This is NOT a fallback for the user's own material: if "
+            "rag_search returned nothing, say so instead of searching the web.",
             parameters={
                 "type": "object",
                 "properties": {

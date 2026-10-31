@@ -24,7 +24,9 @@ from agent.engine.decisions import ToolExecution, text_block
 from agent.memory.base import MemoryStore
 from agent.memory.retrieval import MemoryHit, RRFMemoryRetriever
 from agent.memory.types import MEMORY_TYPES, Memory
+from agent.tools import search_reuse
 from agent.tools.definition import ToolDefinition, ToolOutput, define_tool
+from agent.tools.embedding_source import embedding_source
 from agent.tools.tool_permissions import ToolPermission
 
 # kebab-case memory key: lowercase letters/digits/hyphens.
@@ -158,14 +160,33 @@ def memory_search_tool(service: MemoryService) -> ToolDefinition:
     """The builtin ``memory_search`` tool: recall session + file memory for context."""
 
     async def execute(args: dict, exec: ToolExecution) -> list[dict]:
-        hits = await service.recall_all(args["query"], args.get("top_k", 5))
-        return [h.to_dict() for h in hits]
+        query = args["query"]
+        top_k = args.get("top_k", 5)
+        # Same-turn reuse: recall is deterministic within one turn, so an identical
+        # query/top_k returns the earlier snippets instead of embedding again.
+        cache_key = search_reuse.key("memory_search", query, top_k)
+        cached = search_reuse.lookup(cache_key)
+        if cached is not None:
+            exec.trace["reused"] = True
+            exec.trace["top_k"] = top_k
+            return cached
+        with embedding_source(
+            "memory_search", call_id=exec.call_id, call_index=exec.call_index
+        ):
+            hits = await service.recall_all(query, top_k)
+        value = [h.to_dict() for h in hits]
+        search_reuse.record(cache_key, value)
+        exec.trace["top_k"] = top_k
+        return value
 
     return define_tool(
         name="memory_search",
         description=(
-            "Search the user's memory — past conversations and archived notes — for "
-            "context relevant to the query. Returns snippets with scores."
+            "Search the user's SAVED long-term memory (earlier conversations and archived "
+            "notes) for something remembered from the past. The current conversation is "
+            "already in your context — do not search memory for what was just said, and "
+            "do not use this tool to look up general knowledge. Returns snippets with "
+            "scores."
         ),
         parameters={
             "type": "object",
