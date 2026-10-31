@@ -123,11 +123,20 @@ def test_soul_resolves_conflicts_with_evidence_instead_of_refusing():
     assert "the question is not automatically unanswerable" in soul
 
 
-def test_soul_bans_internal_process_and_raw_urls():
+def test_soul_bans_internal_process_and_bare_urls():
     soul = _flat_soul()
     assert 'No "Thoughts" or analysis headings' in soul
-    assert "no raw URLs or domains in the body" in soul
-    assert "let the interface render the links" in soul
+    assert "Never print a bare URL or domain" in soul
+
+
+def test_soul_links_a_source_name_inline_from_a_real_result_url():
+    # The body carries the source NAME as a Markdown link; the URL stays hidden in the
+    # href and may only be one the results actually returned.
+    soul = _flat_soul()
+    assert "make the name a Markdown link to that page" in soul
+    assert "with the URL copied exactly as the result gives it" in soul
+    assert "never build a URL from a domain name" in soul
+    assert "write its name as plain text" in soul
 
 
 def test_soul_allows_per_site_detail_only_when_the_user_asks_to_compare():
@@ -142,8 +151,8 @@ def test_soul_never_lets_the_answer_write_its_own_source_list():
     # and drags domain names into the body — both were observed on a real turn.
     soul = _flat_soul()
     assert 'no sources list or "来源 / Sources" line of your own' in soul
-    assert "name a source by its publication, and let the interface render the links" in soul
-    assert "no raw URLs or domains in the body" in soul
+    assert "the interface renders that entry itself" in soul
+    assert "Never print a bare URL or domain" in soul
 
 
 def test_soul_searches_again_on_every_new_message():

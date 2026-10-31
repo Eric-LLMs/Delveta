@@ -847,6 +847,10 @@
     document.body.appendChild(overlay);
   }
   chatLog.addEventListener("click", (e) => {
+    // An answer may link a source name inline — [中国天气网](https://…) — and markdown-it
+    // renders it as a plain anchor. Left alone, the click would navigate the Electron
+    // window away from the app, so an http(s) link opens in the system browser instead.
+    if (window.MsgLinks && window.MsgLinks.handleChatLinkClick(e, openUrl)) return;
     const img = e.target.closest && e.target.closest(".msg-attach-img");
     if (img && img.src) openImageLightbox(img.src);
   });

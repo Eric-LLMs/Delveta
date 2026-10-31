@@ -239,11 +239,17 @@ def test_system_prompt_synthesizes_the_material_instead_of_copying_it():
     assert "Never average, vote, splice or invent a value" in _SYSTEM_PROMPT
     assert "answer the parts that can be confirmed" in _SYSTEM_PROMPT
     assert "Do not walk through the results site by site" in _SYSTEM_PROMPT
-    assert (
-        "name a source by its publication or site name rather than pasting its "
-        "domain or URL" in _SYSTEM_PROMPT
-    )
     assert "do not add a sources list of your own" in _SYSTEM_PROMPT
+
+
+def test_system_prompt_links_a_source_name_inline_from_a_real_result_url():
+    # The answer body carries the source NAME as a Markdown link; the URL is never
+    # composed — it must be the one the material gave for that source.
+    assert "make the name a Markdown link to that page" in _SYSTEM_PROMPT
+    assert "with the URL copied exactly from the material" in _SYSTEM_PROMPT
+    assert "never build a URL from a domain name" in _SYSTEM_PROMPT
+    assert "write the name as plain text when the material gives no URL" in _SYSTEM_PROMPT
+    assert "Never print a bare URL or domain" in _SYSTEM_PROMPT
 
 
 def test_system_prompt_resolves_conflicts_and_partial_failure():
@@ -548,6 +554,32 @@ async def test_a_web_search_turn_feeds_the_existing_source_footer():
     # The persisted history keeps its user → assistant shape; the trace is payload-only.
     assert [row[0] for row in req.ctx.session_memory.rows] == ["user", "assistant"]
     assert done["messages"][-1] == {"role": "assistant", "content": done["answer"]}
+
+
+LINKED_ANSWER = (
+    "今天北京晴到多云，气温约 13℃/4℃。数据来自 "
+    "[中国天气网](https://weather.example/beijing) 与 "
+    "[AccuWeather](https://accu.example/beijing) 等公开气象服务。"
+)
+
+
+async def test_an_answer_with_inline_source_links_reaches_the_client_unchanged():
+    # Inline links are ordinary Markdown: nothing in the ACTION lane may rewrite,
+    # escape or strip them, so the renderer turns each name into an anchor — live and
+    # when the stored answer is re-rendered on reopen.
+    run_tool, _ = _tool(str(WEB_RESULTS))
+    llm = _FakeLLM(answer=LINKED_ANSWER)
+    req = _req("web_search", run_tool, llm)
+
+    events, done = await _events_req(req)
+
+    assert done["answer"] == LINKED_ANSWER
+    assert "".join(e["data"] for e in events if e["type"] == "content") == LINKED_ANSWER
+    # The footer still exposes the same turn's real results, links or not.
+    from core.application.chat.lifecycle import extract_web_sources
+
+    assert [s["url"] for s in extract_web_sources(done["messages"])] == [
+        "https://weather.example/beijing", "https://aq.example/beijing"]
 
 
 async def test_a_non_web_turn_adds_no_tool_trace():

@@ -95,9 +95,11 @@ _SYSTEM_PROMPT = (
     "extend, or quote parts while answering): answer normally instead. Otherwise "
     "organize the material into a direct answer — summarize, compare or analyse as "
     "the question requires — instead of repeating it verbatim. Preserve the sources "
-    "and citations the material carries, and cite nothing else — name a source by its "
-    "publication or site name rather than pasting its domain or URL (not even for a "
-    "site you recommend), and do not add a "
+    "and citations the material carries, and cite nothing else. When you name a source "
+    "you actually used, make the name a Markdown link to that page — "
+    "[中国天气网](https://…) — with the URL copied exactly from the material; never "
+    "build a URL from a domain name, and write the name as plain text when the "
+    "material gives no URL for it. Never print a bare URL or domain, and do not add a "
     "sources list of your own. Reply in the same language as the user's question."
 )
 
